@@ -162,14 +162,6 @@
           "helper": "Muestra notificaciones del sistema cuando las tareas terminan de ejecutarse."
         }
       },
-      "privacy": {
-        "title": "Privacidad",
-        "description": "Ayuda a mejorar Vibe-Kanban compartiendo datos de uso anónimos.",
-        "telemetry": {
-          "label": "Habilitar Telemetría",
-          "helper": "Habilita el seguimiento anónimo para ayudar a mejorar la aplicación. No se recopilan prompts ni información del proyecto."
-        }
-      },
       "taskTemplates": {
         "title": "Etiquetas",
         "description": "Crea fragmentos de texto reutilizables que se pueden insertar en descripciones de tareas usando @nombre_etiqueta."

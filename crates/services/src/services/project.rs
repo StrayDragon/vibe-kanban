@@ -7,19 +7,16 @@ use db::models::{
     project::{CreateProject, Project, ProjectError, SearchMatchType, SearchResult, UpdateProject},
     project_repo::{CreateProjectRepo, ProjectRepo},
     repo::Repo,
-    task::Task,
 };
 use ignore::WalkBuilder;
 use sqlx::SqlitePool;
 use thiserror::Error;
-use utils::api::projects::RemoteProject;
 use uuid::Uuid;
 
 use super::{
     file_ranker::FileRanker,
     file_search_cache::{CacheError, FileSearchCache, SearchMode, SearchQuery},
     repo::{RepoError, RepoService},
-    share::ShareError,
 };
 
 #[derive(Debug, Error)]
@@ -30,8 +27,6 @@ pub enum ProjectServiceError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Project(#[from] ProjectError),
-    #[error(transparent)]
-    Share(#[from] ShareError),
     #[error("Path does not exist: {0}")]
     PathNotFound(PathBuf),
     #[error("Path is not a directory: {0}")]
@@ -46,8 +41,6 @@ pub enum ProjectServiceError {
     RepositoryNotFound,
     #[error("Git operation failed: {0}")]
     GitError(String),
-    #[error("Remote client error: {0}")]
-    RemoteClient(String),
 }
 
 pub type Result<T> = std::result::Result<T, ProjectServiceError>;
@@ -149,43 +142,6 @@ impl ProjectService {
         let project = Project::update(pool, existing.id, &payload).await?;
 
         Ok(project)
-    }
-
-    /// Link a project to a remote project and sync shared tasks
-    pub async fn link_to_remote(
-        &self,
-        pool: &SqlitePool,
-        project_id: Uuid,
-        remote_project: RemoteProject,
-    ) -> Result<Project> {
-        Project::set_remote_project_id(pool, project_id, Some(remote_project.id)).await?;
-
-        let project = Project::find_by_id(pool, project_id)
-            .await?
-            .ok_or(ProjectError::ProjectNotFound)?;
-
-        Ok(project)
-    }
-
-    pub async fn unlink_from_remote(
-        &self,
-        pool: &SqlitePool,
-        project: &Project,
-    ) -> Result<Project> {
-        if let Some(remote_project_id) = project.remote_project_id {
-            let mut tx = pool.begin().await?;
-
-            Task::clear_shared_task_ids_for_remote_project(&mut *tx, remote_project_id).await?;
-            Project::set_remote_project_id_tx(&mut *tx, project.id, None).await?;
-
-            tx.commit().await?;
-        }
-
-        let updated = Project::find_by_id(pool, project.id)
-            .await?
-            .ok_or(ProjectError::ProjectNotFound)?;
-
-        Ok(updated)
     }
 
     pub async fn add_repository(
