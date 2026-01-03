@@ -20,7 +20,7 @@ import { useTranslation } from 'react-i18next';
 import { TaskWithAttemptStatus, Workspace } from 'shared/types';
 import { Loader2 } from 'lucide-react';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
-import { useAuth, useRepoBranches } from '@/hooks';
+import { useRepoBranches } from '@/hooks';
 import {
   GhCliHelpInstructions,
   GhCliSetupDialog,
@@ -45,8 +45,7 @@ const CreatePRDialogImpl = NiceModal.create<CreatePRDialogProps>(
   ({ attempt, task, repoId, targetBranch }) => {
     const modal = useModal();
     const { t } = useTranslation('tasks');
-    const { isLoaded } = useAuth();
-    const { environment, config } = useUserSystem();
+    const { environment, config, loading } = useUserSystem();
     const [prTitle, setPrTitle] = useState('');
     const [prBody, setPrBody] = useState('');
     const [prBaseBranch, setPrBaseBranch] = useState('');
@@ -72,7 +71,7 @@ const CreatePRDialogImpl = NiceModal.create<CreatePRDialogProps>(
 
     // Initialize form when dialog opens
     useEffect(() => {
-      if (!modal.visible || !isLoaded) {
+      if (!modal.visible || loading) {
         return;
       }
 
@@ -80,7 +79,7 @@ const CreatePRDialogImpl = NiceModal.create<CreatePRDialogProps>(
       setPrBody(task.description || '');
       setError(null);
       setGhCliHelp(null);
-    }, [modal.visible, isLoaded, task]);
+    }, [modal.visible, loading, task]);
 
     // Set default base branch when branches are loaded
     useEffect(() => {
@@ -253,7 +252,7 @@ const CreatePRDialogImpl = NiceModal.create<CreatePRDialogProps>(
                 {t('createPrDialog.description')}
               </DialogDescription>
             </DialogHeader>
-            {!isLoaded ? (
+            {loading ? (
               <div className="flex justify-center py-8">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>

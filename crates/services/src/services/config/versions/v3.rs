@@ -13,11 +13,9 @@ pub struct Config {
     pub disclaimer_acknowledged: bool,
     pub onboarding_acknowledged: bool,
     pub github_login_acknowledged: bool,
-    pub telemetry_acknowledged: bool,
     pub notifications: NotificationConfig,
     pub editor: EditorConfig,
     pub github: GitHubConfig,
-    pub analytics_enabled: Option<bool>,
     pub workspace_dir: Option<String>,
 }
 
@@ -39,11 +37,9 @@ impl Config {
             disclaimer_acknowledged: old_config.disclaimer_acknowledged,
             onboarding_acknowledged: old_config.onboarding_acknowledged,
             github_login_acknowledged: old_config.github_login_acknowledged,
-            telemetry_acknowledged: false,
             notifications: old_config.notifications,
             editor: old_config.editor,
             github: old_config.github,
-            analytics_enabled: old_config.analytics_enabled,
             workspace_dir: old_config.workspace_dir,
         })
     }
@@ -79,11 +75,9 @@ impl Default for Config {
             disclaimer_acknowledged: false,
             onboarding_acknowledged: false,
             github_login_acknowledged: false,
-            telemetry_acknowledged: false,
             notifications: NotificationConfig::default(),
             editor: EditorConfig::default(),
             github: GitHubConfig::default(),
-            analytics_enabled: None,
             workspace_dir: None,
         }
     }

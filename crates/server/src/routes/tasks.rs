@@ -24,12 +24,10 @@ use deployment::Deployment;
 use executors::profile::ExecutorProfileId;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
-use services::services::{
-    container::ContainerService, share::ShareError, workspace_manager::WorkspaceManager,
-};
+use services::services::{container::ContainerService, workspace_manager::WorkspaceManager};
 use sqlx::Error as SqlxError;
 use ts_rs::TS;
-use utils::{api::oauth::LoginStatus, response::ApiResponse};
+use utils::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{
@@ -125,18 +123,6 @@ pub async fn create_task(
         TaskImage::associate_many_dedup(&deployment.db().pool, task.id, image_ids).await?;
     }
 
-    deployment
-        .track_if_analytics_allowed(
-            "task_created",
-            serde_json::json!({
-            "task_id": task.id.to_string(),
-            "project_id": payload.project_id,
-            "has_description": task.description.is_some(),
-            "has_images": payload.image_ids.is_some(),
-            }),
-        )
-        .await;
-
     Ok(ResponseJson(ApiResponse::success(task)))
 }
 
@@ -165,18 +151,6 @@ pub async fn create_task_and_start(
     if let Some(image_ids) = &payload.task.image_ids {
         TaskImage::associate_many_dedup(pool, task.id, image_ids).await?;
     }
-
-    deployment
-        .track_if_analytics_allowed(
-            "task_created",
-            serde_json::json!({
-                "task_id": task.id.to_string(),
-                "project_id": task.project_id,
-                "has_description": task.description.is_some(),
-                "has_images": payload.task.image_ids.is_some(),
-            }),
-        )
-        .await;
 
     let project = Project::find_by_id(pool, task.project_id)
         .await?
@@ -221,18 +195,6 @@ pub async fn create_task_and_start(
         .await
         .inspect_err(|err| tracing::error!("Failed to start task attempt: {}", err))
         .is_ok();
-    deployment
-        .track_if_analytics_allowed(
-            "task_attempt_started",
-            serde_json::json!({
-                "task_id": task.id.to_string(),
-                "executor": &payload.executor_profile_id.executor,
-                "variant": &payload.executor_profile_id.variant,
-                "workspace_id": workspace.id.to_string(),
-            }),
-        )
-        .await;
-
     let task = Task::find_by_id(pool, task.id)
         .await?
         .ok_or(ApiError::Database(SqlxError::RowNotFound))?;
@@ -252,8 +214,6 @@ pub async fn update_task(
 
     Json(payload): Json<UpdateTask>,
 ) -> Result<ResponseJson<ApiResponse<Task>>, ApiError> {
-    ensure_shared_task_auth(&existing_task, &deployment).await?;
-
     // Use existing values if not provided in update
     let title = payload.title.unwrap_or(existing_task.title);
     let description = match payload.description {
@@ -282,38 +242,13 @@ pub async fn update_task(
         TaskImage::associate_many_dedup(&deployment.db().pool, task.id, image_ids).await?;
     }
 
-    // If task has been shared, broadcast update
-    if task.shared_task_id.is_some() {
-        let Ok(publisher) = deployment.share_publisher() else {
-            return Err(ShareError::MissingConfig("share publisher unavailable").into());
-        };
-        publisher.update_shared_task(&task).await?;
-    }
-
     Ok(ResponseJson(ApiResponse::success(task)))
-}
-
-async fn ensure_shared_task_auth(
-    existing_task: &Task,
-    deployment: &local_deployment::LocalDeployment,
-) -> Result<(), ApiError> {
-    if existing_task.shared_task_id.is_some() {
-        match deployment.get_login_status().await {
-            LoginStatus::LoggedIn { .. } => return Ok(()),
-            LoginStatus::LoggedOut => {
-                return Err(ShareError::MissingAuth.into());
-            }
-        }
-    }
-    Ok(())
 }
 
 pub async fn delete_task(
     Extension(task): Extension<Task>,
     State(deployment): State<DeploymentImpl>,
 ) -> Result<(StatusCode, ResponseJson<ApiResponse<()>>), ApiError> {
-    ensure_shared_task_auth(&task, &deployment).await?;
-
     // Validate no running execution processes
     if deployment
         .container()
@@ -340,13 +275,6 @@ pub async fn delete_task(
         .iter()
         .filter_map(|attempt| attempt.container_ref.as_ref().map(PathBuf::from))
         .collect();
-
-    if let Some(shared_task_id) = task.shared_task_id {
-        let Ok(publisher) = deployment.share_publisher() else {
-            return Err(ShareError::MissingConfig("share publisher unavailable").into());
-        };
-        publisher.delete_shared_task(shared_task_id).await?;
-    }
 
     // Use a transaction to ensure atomicity: either all operations succeed or all are rolled back
     let mut tx = pool.begin().await?;
@@ -377,17 +305,6 @@ pub async fn delete_task(
             task.id
         );
     }
-
-    deployment
-        .track_if_analytics_allowed(
-            "task_deleted",
-            serde_json::json!({
-                "task_id": task.id.to_string(),
-                "project_id": task.project_id.to_string(),
-                "attempt_count": attempts.len(),
-            }),
-        )
-        .await;
 
     let task_id = task.id;
     let pool = pool.clone();
@@ -428,43 +345,10 @@ pub async fn delete_task(
     Ok((StatusCode::ACCEPTED, ResponseJson(ApiResponse::success(()))))
 }
 
-#[derive(Debug, Serialize, Deserialize, TS)]
-pub struct ShareTaskResponse {
-    pub shared_task_id: Uuid,
-}
-
-pub async fn share_task(
-    Extension(task): Extension<Task>,
-    State(deployment): State<DeploymentImpl>,
-) -> Result<ResponseJson<ApiResponse<ShareTaskResponse>>, ApiError> {
-    let Ok(publisher) = deployment.share_publisher() else {
-        return Err(ShareError::MissingConfig("share publisher unavailable").into());
-    };
-    let profile = deployment
-        .auth_context()
-        .cached_profile()
-        .await
-        .ok_or(ShareError::MissingAuth)?;
-    let shared_task_id = publisher.share_task(task.id, profile.user_id).await?;
-
-    let props = serde_json::json!({
-        "task_id": task.id,
-        "shared_task_id": shared_task_id,
-    });
-    deployment
-        .track_if_analytics_allowed("start_sharing_task", props)
-        .await;
-
-    Ok(ResponseJson(ApiResponse::success(ShareTaskResponse {
-        shared_task_id,
-    })))
-}
-
 pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
     let task_actions_router = Router::new()
         .route("/", put(update_task))
-        .route("/", delete(delete_task))
-        .route("/share", post(share_task));
+        .route("/", delete(delete_task));
 
     let task_id_router = Router::new()
         .route("/", get(get_task))

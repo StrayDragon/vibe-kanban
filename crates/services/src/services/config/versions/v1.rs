@@ -7,13 +7,11 @@ pub(super) struct Config {
     pub(super) disclaimer_acknowledged: bool,
     pub(super) onboarding_acknowledged: bool,
     pub(super) github_login_acknowledged: bool,
-    pub(super) telemetry_acknowledged: bool,
     pub(super) sound_alerts: bool,
     pub(super) sound_file: SoundFile,
     pub(super) push_notifications: bool,
     pub(super) editor: EditorConfig,
     pub(super) github: GitHubConfig,
-    pub(super) analytics_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

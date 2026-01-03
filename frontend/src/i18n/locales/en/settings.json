@@ -162,14 +162,6 @@
           "helper": "Show system notifications when task attempts finish running."
         }
       },
-      "privacy": {
-        "title": "Privacy",
-        "description": "Help improve Vibe-Kanban by sharing anonymous usage data.",
-        "telemetry": {
-          "label": "Enable Telemetry",
-          "helper": "Enables anonymous usage events tracking to help improve the application. No prompts or project information are collected."
-        }
-      },
       "taskTemplates": {
         "title": "Tags",
         "description": "Create reusable text snippets that can be inserted into task descriptions using @tag_name."

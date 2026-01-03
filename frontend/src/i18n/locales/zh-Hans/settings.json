@@ -162,14 +162,6 @@
           "helper": "任务尝试完成运行时显示系统通知。"
         }
       },
-      "privacy": {
-        "title": "隐私",
-        "description": "通过共享匿名使用数据帮助改进 Vibe-Kanban。",
-        "telemetry": {
-          "label": "启用遥测",
-          "helper": "启用匿名使用事件跟踪以帮助改进应用程序。不会收集提示或项目信息。"
-        }
-      },
       "taskTemplates": {
         "title": "标签",
         "description": "创建可使用 @tag_name 插入到任务描述中的可重用文本片段。"

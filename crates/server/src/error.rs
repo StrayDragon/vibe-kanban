@@ -9,7 +9,7 @@ use db::models::{
     project_repo::ProjectRepoError, repo::RepoError, scratch::ScratchError, session::SessionError,
     workspace::WorkspaceError,
 };
-use deployment::{DeploymentError, RemoteClientNotConfigured};
+use deployment::DeploymentError;
 use executors::executors::ExecutorError;
 use git2::Error as Git2Error;
 use services::services::{
@@ -19,9 +19,7 @@ use services::services::{
     github::GitHubServiceError,
     image::ImageError,
     project::ProjectServiceError,
-    remote_client::RemoteClientError,
     repo::RepoError as RepoServiceError,
-    share::ShareError,
     worktree_manager::WorktreeError,
 };
 use thiserror::Error;
@@ -66,8 +64,6 @@ pub enum ApiError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     EditorOpen(#[from] EditorOpenError),
-    #[error(transparent)]
-    RemoteClient(#[from] RemoteClientError),
     #[error("Unauthorized")]
     Unauthorized,
     #[error("Bad request: {0}")]
@@ -87,12 +83,6 @@ impl From<&'static str> for ApiError {
 impl From<Git2Error> for ApiError {
     fn from(err: Git2Error) -> Self {
         ApiError::GitService(GitServiceError::from(err))
-    }
-}
-
-impl From<RemoteClientNotConfigured> for ApiError {
-    fn from(_: RemoteClientNotConfigured) -> Self {
-        ApiError::BadRequest("Remote client not configured".to_string())
     }
 }
 
@@ -141,38 +131,6 @@ impl IntoResponse for ApiError {
                 _ => (StatusCode::BAD_REQUEST, "EditorOpenError"),
             },
             ApiError::Multipart(_) => (StatusCode::BAD_REQUEST, "MultipartError"),
-            ApiError::RemoteClient(err) => match err {
-                RemoteClientError::Auth => (StatusCode::UNAUTHORIZED, "RemoteClientError"),
-                RemoteClientError::Timeout => (StatusCode::GATEWAY_TIMEOUT, "RemoteClientError"),
-                RemoteClientError::Transport(_) => (StatusCode::BAD_GATEWAY, "RemoteClientError"),
-                RemoteClientError::Http { status, .. } => (
-                    StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY),
-                    "RemoteClientError",
-                ),
-                RemoteClientError::Token(_) => (StatusCode::BAD_GATEWAY, "RemoteClientError"),
-                RemoteClientError::Api(code) => match code {
-                    services::services::remote_client::HandoffErrorCode::NotFound => {
-                        (StatusCode::NOT_FOUND, "RemoteClientError")
-                    }
-                    services::services::remote_client::HandoffErrorCode::Expired => {
-                        (StatusCode::UNAUTHORIZED, "RemoteClientError")
-                    }
-                    services::services::remote_client::HandoffErrorCode::AccessDenied => {
-                        (StatusCode::FORBIDDEN, "RemoteClientError")
-                    }
-                    services::services::remote_client::HandoffErrorCode::ProviderError
-                    | services::services::remote_client::HandoffErrorCode::InternalError => {
-                        (StatusCode::BAD_GATEWAY, "RemoteClientError")
-                    }
-                    _ => (StatusCode::BAD_REQUEST, "RemoteClientError"),
-                },
-                RemoteClientError::Storage(_) => {
-                    (StatusCode::INTERNAL_SERVER_ERROR, "RemoteClientError")
-                }
-                RemoteClientError::Serde(_) | RemoteClientError::Url(_) => {
-                    (StatusCode::BAD_REQUEST, "RemoteClientError")
-                }
-            },
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized"),
             ApiError::BadRequest(_) => (StatusCode::BAD_REQUEST, "BadRequest"),
             ApiError::Conflict(_) => (StatusCode::CONFLICT, "ConflictError"),
@@ -200,55 +158,6 @@ impl IntoResponse for ApiError {
                 _ => format!("{}: {}", error_type, self),
             },
             ApiError::Multipart(_) => "Failed to upload file. Please ensure the file is valid and try again.".to_string(),
-            ApiError::RemoteClient(err) => match err {
-                RemoteClientError::Auth => "Unauthorized. Please sign in again.".to_string(),
-                RemoteClientError::Timeout => "Remote service timeout. Please try again.".to_string(),
-                RemoteClientError::Transport(_) => "Remote service unavailable. Please try again.".to_string(),
-                RemoteClientError::Http { body, .. } => {
-                    if body.is_empty() {
-                        "Remote service error. Please try again.".to_string()
-                    } else {
-                        body.clone()
-                    }
-                }
-                RemoteClientError::Token(_) => {
-                    "Remote service returned an invalid access token. Please sign in again.".to_string()
-                }
-                RemoteClientError::Storage(_) => {
-                    "Failed to persist credentials locally. Please retry.".to_string()
-                }
-                RemoteClientError::Api(code) => match code {
-                    services::services::remote_client::HandoffErrorCode::NotFound => {
-                        "The requested resource was not found.".to_string()
-                    }
-                    services::services::remote_client::HandoffErrorCode::Expired => {
-                        "The link or token has expired.".to_string()
-                    }
-                    services::services::remote_client::HandoffErrorCode::AccessDenied => {
-                        "Access denied.".to_string()
-                    }
-                    services::services::remote_client::HandoffErrorCode::UnsupportedProvider => {
-                        "Unsupported authentication provider.".to_string()
-                    }
-                    services::services::remote_client::HandoffErrorCode::InvalidReturnUrl => {
-                        "Invalid return URL.".to_string()
-                    }
-                    services::services::remote_client::HandoffErrorCode::InvalidChallenge => {
-                        "Invalid authentication challenge.".to_string()
-                    }
-                    services::services::remote_client::HandoffErrorCode::ProviderError => {
-                        "Authentication provider error. Please try again.".to_string()
-                    }
-                    services::services::remote_client::HandoffErrorCode::InternalError => {
-                        "Internal remote service error. Please try again.".to_string()
-                    }
-                    services::services::remote_client::HandoffErrorCode::Other(msg) => {
-                        format!("Authentication error: {}", msg)
-                    }
-                },
-                RemoteClientError::Serde(_) => "Unexpected response from remote service.".to_string(),
-                RemoteClientError::Url(_) => "Remote service URL is invalid.".to_string(),
-            },
             ApiError::Unauthorized => "Unauthorized. Please sign in again.".to_string(),
             ApiError::BadRequest(msg) => msg.clone(),
             ApiError::Conflict(msg) => msg.clone(),
@@ -260,66 +169,12 @@ impl IntoResponse for ApiError {
     }
 }
 
-impl From<ShareError> for ApiError {
-    fn from(err: ShareError) -> Self {
-        match err {
-            ShareError::Database(db_err) => ApiError::Database(db_err),
-            ShareError::AlreadyShared(_) => ApiError::Conflict("Task already shared".to_string()),
-            ShareError::TaskNotFound(_) => {
-                ApiError::Conflict("Task not found for sharing".to_string())
-            }
-            ShareError::ProjectNotFound(_) => {
-                ApiError::Conflict("Project not found for sharing".to_string())
-            }
-            ShareError::ProjectNotLinked(project_id) => {
-                tracing::warn!(
-                    %project_id,
-                    "project must be linked to a remote project before sharing tasks"
-                );
-                ApiError::Conflict(
-                    "Link this project to a remote project before sharing tasks.".to_string(),
-                )
-            }
-            ShareError::MissingConfig(reason) => {
-                ApiError::Conflict(format!("Share service not configured: {reason}"))
-            }
-            ShareError::Transport(err) => {
-                tracing::error!(?err, "share task transport error");
-                ApiError::Conflict("Failed to share task with remote service".to_string())
-            }
-            ShareError::Serialization(err) => {
-                tracing::error!(?err, "share task serialization error");
-                ApiError::Conflict("Failed to parse remote share response".to_string())
-            }
-            ShareError::Url(err) => {
-                tracing::error!(?err, "share task URL error");
-                ApiError::Conflict("Share service URL is invalid".to_string())
-            }
-            ShareError::InvalidResponse => ApiError::Conflict(
-                "Remote share service returned an unexpected response".to_string(),
-            ),
-            ShareError::MissingGitHubToken => ApiError::Conflict(
-                "GitHub token is required to fetch repository metadata for sharing".to_string(),
-            ),
-            ShareError::Git(err) => ApiError::GitService(err),
-            ShareError::GitHub(err) => ApiError::GitHubService(err),
-            ShareError::MissingAuth => ApiError::Unauthorized,
-            ShareError::InvalidUserId => ApiError::Conflict("Invalid user ID format".to_string()),
-            ShareError::InvalidOrganizationId => {
-                ApiError::Conflict("Invalid organization ID format".to_string())
-            }
-            ShareError::RemoteClientError(err) => ApiError::Conflict(err.to_string()),
-        }
-    }
-}
-
 impl From<ProjectServiceError> for ApiError {
     fn from(err: ProjectServiceError) -> Self {
         match err {
             ProjectServiceError::Database(db_err) => ApiError::Database(db_err),
             ProjectServiceError::Io(io_err) => ApiError::Io(io_err),
             ProjectServiceError::Project(proj_err) => ApiError::Project(proj_err),
-            ProjectServiceError::Share(share_err) => ApiError::from(share_err),
             ProjectServiceError::PathNotFound(path) => {
                 ApiError::BadRequest(format!("Path does not exist: {}", path.display()))
             }
@@ -340,9 +195,6 @@ impl From<ProjectServiceError> for ApiError {
             }
             ProjectServiceError::GitError(msg) => {
                 ApiError::BadRequest(format!("Git operation failed: {}", msg))
-            }
-            ProjectServiceError::RemoteClient(msg) => {
-                ApiError::BadRequest(format!("Remote client error: {}", msg))
             }
         }
     }

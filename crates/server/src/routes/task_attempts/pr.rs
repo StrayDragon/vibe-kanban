@@ -311,15 +311,6 @@ pub async fn create_github_pr(
             if let Err(e) = utils::browser::open_browser(&pr_info.url).await {
                 tracing::warn!("Failed to open PR in browser: {}", e);
             }
-            deployment
-                .track_if_analytics_allowed(
-                    "github_pr_created",
-                    serde_json::json!({
-                        "workspace_id": workspace.id.to_string(),
-                    }),
-                )
-                .await;
-
             // Trigger auto-description follow-up if enabled
             if request.auto_generate_description
                 && let Err(e) = trigger_pr_description_follow_up(
@@ -425,22 +416,6 @@ pub async fn attach_existing_pr(
         // If PR is merged, mark task as done
         if matches!(pr_info.status, MergeStatus::Merged) {
             Task::update_status(pool, task.id, TaskStatus::Done).await?;
-
-            // Try broadcast update to other users in organization
-            if let Ok(publisher) = deployment.share_publisher() {
-                if let Err(err) = publisher.update_shared_task_by_id(task.id).await {
-                    tracing::warn!(
-                        ?err,
-                        "Failed to propagate shared task update for {}",
-                        task.id
-                    );
-                }
-            } else {
-                tracing::debug!(
-                    "Share publisher unavailable; skipping remote update for {}",
-                    task.id
-                );
-            }
         }
 
         Ok(ResponseJson(ApiResponse::success(AttachPrResponse {
