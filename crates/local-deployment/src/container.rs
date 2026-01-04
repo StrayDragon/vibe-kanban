@@ -399,6 +399,9 @@ impl LocalContainerService {
             }
 
             if let Ok(ctx) = ExecutionProcess::load_context(&db.pool, exec_id).await {
+                // Avoid double-finalizing the same execution (duplicate notifications).
+                let mut finalized = false;
+
                 // Update executor session summary if available
                 if let Err(e) = container.update_executor_session_summary(&exec_id).await {
                     tracing::warn!("Failed to update executor session summary: {}", e);
@@ -449,7 +452,10 @@ impl LocalContainerService {
                         );
 
                         // Manually finalize task since we're bypassing normal execution flow
-                        container.finalize_task(&ctx).await;
+                        if !finalized {
+                            container.finalize_task(&ctx).await;
+                            finalized = true;
+                        }
                     }
                 }
 
@@ -491,7 +497,10 @@ impl LocalContainerService {
                             {
                                 tracing::error!("Failed to start queued follow-up: {}", e);
                                 // Fall back to finalization if follow-up fails
-                                container.finalize_task(&ctx).await;
+                                if !finalized {
+                                    container.finalize_task(&ctx).await;
+                                    finalized = true;
+                                }
                             }
                         } else {
                             // Execution failed or was killed - discard the queued message and finalize
@@ -500,10 +509,16 @@ impl LocalContainerService {
                                 ctx.session.id,
                                 ctx.execution_process.status
                             );
-                            container.finalize_task(&ctx).await;
+                            if !finalized {
+                                container.finalize_task(&ctx).await;
+                                finalized = true;
+                            }
                         }
                     } else {
-                        container.finalize_task(&ctx).await;
+                        if !finalized {
+                            container.finalize_task(&ctx).await;
+                            finalized = true;
+                        }
                     }
                 }
 
