@@ -1,0 +1,35 @@
+flowchart TD
+    Start([ContainerService::create_and_start]) --> ValidateInput{有效请求?}
+    ValidateInput -->|否| ReturnError[返回错误]
+    ValidateInput -->|是| LoadWorkspace[从数据库加载工作区]
+    LoadWorkspace --> CreateWorktree[创建 git worktree]
+    CreateWorktree --> SetEnv[设置执行环境]
+    SetEnv --> SelectAgent[根据配置选择执行器]
+    SelectAgent --> CheckApproval{需要批准?}
+    CheckApproval -->|是| RequestApproval[发送批准请求]
+    RequestApproval --> AwaitApproval[等待用户响应]
+    AwaitApproval --> CheckTimeout{超时?}
+    CheckTimeout -->|是| ReturnError
+    CheckTimeout -->|否| SpawnProcess
+    CheckApproval -->|否| SpawnProcess
+    SpawnProcess[启动代理进程] --> CreateDBRecord[在数据库中创建 ExecutionProcess]
+    CreateDBRecord --> StartLogThread[启动日志流线程]
+    StartLogThread --> MonitorProcess[通过 MsgStore 监控进程]
+    MonitorProcess --> ProcessRunning{进程运行中?}
+    ProcessRunning -->|是| StreamLogs[将规范化日志流式传输到数据库]
+    StreamLogs --> CheckExit{检查退出状态}
+    CheckExit -->|仍在运行| ProcessRunning
+    CheckExit -->|已退出| CaptureExit[捕获退出代码]
+    CaptureExit --> DetectChanges[检测 worktree 中的文件变更]
+    DetectChanges --> SaveState[保存仓库状态到数据库]
+    SaveState --> UpdateStatus[更新 ExecutionProcess 状态]
+    UpdateStatus --> SendNotification[发送桌面通知]
+    SendNotification --> BroadcastEvent[广播完成事件]
+    BroadcastEvent --> Cleanup[清理资源]
+    Cleanup --> Complete([执行完成])
+    ReturnError --> Complete
+
+    style Start fill:#e1f5ff
+    style Complete fill:#e1ffe1
+    style SpawnProcess fill:#ffe1f5
+    style StreamLogs fill:#fff4e1
