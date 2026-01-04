@@ -67,6 +67,13 @@
           "model_reasoning_effort": "high"
         }
       },
+      "XHIGH": {
+        "CODEX": {
+          "model": "gpt-5.2-codex",
+          "sandbox": "danger-full-access",
+          "model_reasoning_effort": "xhigh"
+        }
+      },
       "APPROVALS": {
         "CODEX": {
           "model": "gpt-5.2",
