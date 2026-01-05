@@ -57,5 +57,6 @@ Do not manually edit shared/types.ts, instead edit crates/server/src/bin/generat
 - Frontend: ensure `pnpm run check` and `pnpm run lint` pass. If adding runtime logic, include lightweight tests (e.g., Vitest) in the same directory.
 
 ## Security & Config Tips
-- Use `.env` for local overrides; never commit secrets. Key envs: `FRONTEND_PORT`, `BACKEND_PORT`, `HOST` 
+- Use `.env` for local overrides; never commit secrets. Key envs: `FRONTEND_PORT`, `BACKEND_PORT`, `HOST`
 - Dev ports and assets are managed by `scripts/setup-dev-environment.js`.
+- When need add/update configs, you should consider these updated configs migrations in `crates/services/src/services/config/versions` and add version migrate logic if needed, usually old version not need change, always focus on latest version configs and breaking changed another new version config files
