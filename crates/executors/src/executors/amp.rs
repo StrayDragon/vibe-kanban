@@ -9,6 +9,7 @@ use ts_rs::TS;
 use workspace_utils::msg_store::MsgStore;
 
 use crate::{
+    auto_retry::AutoRetryConfig,
     command::{CmdOverrides, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
     executors::{
@@ -22,6 +23,8 @@ use crate::{
 pub struct Amp {
     #[serde(default)]
     pub append_prompt: AppendPrompt,
+    #[serde(default)]
+    pub auto_retry: AutoRetryConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
         title = "Dangerously Allow All",

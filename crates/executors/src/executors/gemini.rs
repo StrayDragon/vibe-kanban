@@ -9,6 +9,7 @@ use workspace_utils::msg_store::MsgStore;
 
 pub use super::acp::AcpAgentHarness;
 use crate::{
+    auto_retry::AutoRetryConfig,
     approvals::ExecutorApprovalService,
     command::{CmdOverrides, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
@@ -22,6 +23,8 @@ use crate::{
 pub struct Gemini {
     #[serde(default)]
     pub append_prompt: AppendPrompt,
+    #[serde(default)]
+    pub auto_retry: AutoRetryConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

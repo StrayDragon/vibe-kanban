@@ -10,6 +10,7 @@ use ts_rs::TS;
 use workspace_utils::msg_store::MsgStore;
 
 use crate::{
+    auto_retry::AutoRetryConfig,
     command::CommandParts,
     env::ExecutionEnv,
     executors::{AppendPrompt, ExecutorError, SpawnedChild, StandardCodingAgentExecutor},
@@ -56,6 +57,8 @@ pub enum ReasoningEffortLevel {
 pub struct Droid {
     #[serde(default)]
     pub append_prompt: AppendPrompt,
+    #[serde(default)]
+    pub auto_retry: AutoRetryConfig,
 
     #[serde(default = "default_autonomy")]
     #[schemars(

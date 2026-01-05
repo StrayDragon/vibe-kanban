@@ -375,6 +375,13 @@ impl ExecutorConfigs {
                     )));
                 }
             }
+
+            // Validate auto-retry config for each variant
+            for config in profile.configurations.values() {
+                config
+                    .validate_auto_retry()
+                    .map_err(ProfileError::Validation)?;
+            }
         }
         Ok(())
     }

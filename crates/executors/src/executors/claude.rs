@@ -23,6 +23,7 @@ use self::{
     types::PermissionMode,
 };
 use crate::{
+    auto_retry::AutoRetryConfig,
     approvals::ExecutorApprovalService,
     command::{CmdOverrides, CommandBuilder, CommandParts, apply_overrides},
     env::ExecutionEnv,
@@ -54,6 +55,8 @@ use derivative::Derivative;
 pub struct ClaudeCode {
     #[serde(default)]
     pub append_prompt: AppendPrompt,
+    #[serde(default)]
+    pub auto_retry: AutoRetryConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_code_router: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2013,6 +2016,7 @@ mod tests {
             approvals: None,
             model: None,
             append_prompt: AppendPrompt::default(),
+            auto_retry: AutoRetryConfig::default(),
             dangerously_skip_permissions: None,
             cmd: crate::command::CmdOverrides {
                 base_command_override: None,

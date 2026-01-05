@@ -15,6 +15,7 @@ use workspace_utils::msg_store::MsgStore;
 use crate::{
     actions::ExecutorAction,
     approvals::ExecutorApprovalService,
+    auto_retry::AutoRetryConfig,
     command::CommandBuildError,
     env::ExecutionEnv,
     executors::{
@@ -103,6 +104,24 @@ pub enum CodingAgent {
 }
 
 impl CodingAgent {
+    pub fn auto_retry_config(&self) -> &AutoRetryConfig {
+        match self {
+            Self::ClaudeCode(cfg) => &cfg.auto_retry,
+            Self::Amp(cfg) => &cfg.auto_retry,
+            Self::Gemini(cfg) => &cfg.auto_retry,
+            Self::Codex(cfg) => &cfg.auto_retry,
+            Self::Opencode(cfg) => &cfg.auto_retry,
+            Self::CursorAgent(cfg) => &cfg.auto_retry,
+            Self::QwenCode(cfg) => &cfg.auto_retry,
+            Self::Copilot(cfg) => &cfg.auto_retry,
+            Self::Droid(cfg) => &cfg.auto_retry,
+        }
+    }
+
+    pub fn validate_auto_retry(&self) -> Result<(), String> {
+        self.auto_retry_config().validate()
+    }
+
     pub fn get_mcp_config(&self) -> McpConfig {
         match self {
             Self::Codex(_) => McpConfig::new(

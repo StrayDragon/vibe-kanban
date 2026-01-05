@@ -22,6 +22,7 @@ use uuid::Uuid;
 use workspace_utils::{msg_store::MsgStore, path::get_vibe_kanban_temp_dir};
 
 use crate::{
+    auto_retry::AutoRetryConfig,
     command::{CmdOverrides, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
     executors::{
@@ -38,6 +39,8 @@ use crate::{
 pub struct Copilot {
     #[serde(default)]
     pub append_prompt: AppendPrompt,
+    #[serde(default)]
+    pub auto_retry: AutoRetryConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

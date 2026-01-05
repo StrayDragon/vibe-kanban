@@ -50,6 +50,9 @@ const renderJson = (v: JsonValue) => (
   <pre className="whitespace-pre-wrap">{JSON.stringify(v, null, 2)}</pre>
 );
 
+const isJsonObject = (value: JsonValue | null | undefined) =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
 const getEntryIcon = (entryType: NormalizedEntryType) => {
   const iconSize = 'h-3 w-3';
   if (entryType.type === 'user_message' || entryType.type === 'user_feedback') {
@@ -208,7 +211,8 @@ const MessageCard: React.FC<{
   variant: CardVariant;
   expanded?: boolean;
   onToggle?: () => void;
-}> = ({ children, variant, expanded, onToggle }) => {
+  className?: string;
+}> = ({ children, variant, expanded, onToggle, className }) => {
   const frameBase =
     'border px-3 py-2 w-full cursor-pointer  bg-[hsl(var(--card))] border-[hsl(var(--border))]';
   const systemTheme = 'border-400/40 text-zinc-500';
@@ -219,7 +223,7 @@ const MessageCard: React.FC<{
     <div
       className={`${frameBase} ${
         variant === 'system' ? systemTheme : errorTheme
-      }`}
+      } ${className ?? ''}`}
       onClick={onToggle}
     >
       <div className="flex items-center gap-1.5">
@@ -269,6 +273,7 @@ const CollapsibleEntry: React.FC<{
   variant: CollapsibleVariant;
   contentClassName: string;
   taskAttemptId?: string;
+  cardClassName?: string;
 }> = ({
   content,
   markdown,
@@ -276,6 +281,7 @@ const CollapsibleEntry: React.FC<{
   variant,
   contentClassName,
   taskAttemptId,
+  cardClassName,
 }) => {
   const multiline = content.includes('\n');
   const [expanded, toggle] = useExpandable(`entry:${expansionKey}`, false);
@@ -312,15 +318,29 @@ const CollapsibleEntry: React.FC<{
   );
 
   if (!multiline) {
-    return <MessageCard variant={variant}>{Inner}</MessageCard>;
+    return (
+      <MessageCard variant={variant} className={cardClassName}>
+        {Inner}
+      </MessageCard>
+    );
   }
 
   return expanded ? (
-    <MessageCard variant={variant} expanded={expanded} onToggle={toggle}>
+    <MessageCard
+      variant={variant}
+      expanded={expanded}
+      onToggle={toggle}
+      className={cardClassName}
+    >
       {Inner}
     </MessageCard>
   ) : (
-    <MessageCard variant={variant} expanded={expanded} onToggle={toggle}>
+    <MessageCard
+      variant={variant}
+      expanded={expanded}
+      onToggle={toggle}
+      className={cardClassName}
+    >
       {PreviewInner}
     </MessageCard>
   );
@@ -775,6 +795,15 @@ function DisplayConversationEntry({
   }
 
   if (isSystem || isError) {
+    const isAutoRetryTip =
+      isSystem &&
+      isNormalizedEntry(entry) &&
+      isJsonObject(entry.metadata) &&
+      entry.metadata.system_tip === 'auto_retry';
+    const autoRetryClassName = isAutoRetryTip
+      ? 'border-emerald-400/50 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/20 dark:text-emerald-200'
+      : undefined;
+
     return (
       <div
         className={`px-4 py-2 text-sm ${greyed ? 'opacity-50 pointer-events-none' : ''}`}
@@ -786,6 +815,7 @@ function DisplayConversationEntry({
           variant={isSystem ? 'system' : 'error'}
           contentClassName={getContentClassName(entryType)}
           taskAttemptId={taskAttempt?.id}
+          cardClassName={autoRetryClassName}
         />
       </div>
     );

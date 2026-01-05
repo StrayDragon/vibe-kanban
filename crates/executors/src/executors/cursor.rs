@@ -16,6 +16,7 @@ use workspace_utils::{
 };
 
 use crate::{
+    auto_retry::AutoRetryConfig,
     command::{CmdOverrides, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
     executors::{
@@ -36,6 +37,8 @@ const CURSOR_AUTH_REQUIRED_MSG: &str = "Authentication required. Please run 'cur
 pub struct CursorAgent {
     #[serde(default)]
     pub append_prompt: AppendPrompt,
+    #[serde(default)]
+    pub auto_retry: AutoRetryConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(description = "Force allow commands unless explicitly denied")]
     pub force: Option<bool>,
@@ -1222,6 +1225,7 @@ mod tests {
         let executor = CursorAgent {
             // No command field needed anymore
             append_prompt: AppendPrompt::default(),
+            auto_retry: AutoRetryConfig::default(),
             force: None,
             model: None,
             cmd: Default::default(),

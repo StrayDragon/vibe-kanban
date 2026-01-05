@@ -102,7 +102,8 @@ pub struct NormalizedEntry {
     pub timestamp: Option<String>,
     pub entry_type: NormalizedEntryType,
     pub content: String,
-    #[ts(skip)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(type = "JsonValue | null")]
     pub metadata: Option<serde_json::Value>,
 }
 

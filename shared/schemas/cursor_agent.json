@@ -11,6 +11,43 @@
       "format": "textarea",
       "default": null
     },
+    "auto_retry": {
+      "title": "Auto Retry",
+      "description": "Configure automatic retry behavior for recoverable errors.",
+      "type": "object",
+      "properties": {
+        "error_patterns": {
+          "title": "Recoverable Error Patterns",
+          "description": "Regex patterns matched against error output to trigger auto-retry.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "delay_seconds": {
+          "title": "Retry Delay (seconds)",
+          "description": "Seconds to wait before retrying after a matched error.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "max_attempts": {
+          "title": "Max Retry Attempts",
+          "description": "Maximum number of auto-retry attempts for a failed run.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        }
+      },
+      "default": {
+        "error_patterns": [],
+        "delay_seconds": 15,
+        "max_attempts": 3
+      }
+    },
     "force": {
       "description": "Force allow commands unless explicitly denied",
       "type": [

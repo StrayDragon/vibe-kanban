@@ -1,4 +1,5 @@
 pub mod actions;
+pub mod auto_retry;
 pub mod approvals;
 pub mod command;
 pub mod env;

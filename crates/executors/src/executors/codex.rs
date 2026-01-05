@@ -30,6 +30,7 @@ use self::{
     session::SessionHandler,
 };
 use crate::{
+    auto_retry::AutoRetryConfig,
     approvals::ExecutorApprovalService,
     command::{CmdOverrides, CommandBuilder, CommandParts, apply_overrides},
     env::ExecutionEnv,
@@ -107,6 +108,8 @@ pub enum ReasoningSummaryFormat {
 pub struct Codex {
     #[serde(default)]
     pub append_prompt: AppendPrompt,
+    #[serde(default)]
+    pub auto_retry: AutoRetryConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox: Option<SandboxMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

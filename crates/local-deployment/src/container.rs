@@ -16,6 +16,7 @@ use db::{
         execution_process::{
             ExecutionContext, ExecutionProcess, ExecutionProcessRunReason, ExecutionProcessStatus,
         },
+        execution_process_logs::ExecutionProcessLogs,
         execution_process_repo_state::ExecutionProcessRepoState,
         project_repo::ProjectRepo,
         repo::Repo,
@@ -27,6 +28,7 @@ use db::{
 };
 use deployment::DeploymentError;
 use executors::{
+    auto_retry::AutoRetryConfig,
     actions::{
         Executable, ExecutorAction, ExecutorActionType,
         coding_agent_follow_up::CodingAgentFollowUpRequest,
@@ -35,16 +37,23 @@ use executors::{
     approvals::{ExecutorApprovalService, NoopExecutorApprovalService},
     env::ExecutionEnv,
     executors::{BaseCodingAgent, ExecutorExitResult, ExecutorExitSignal, InterruptSender},
-    logs::{NormalizedEntryType, utils::patch::extract_normalized_entry_from_patch},
-    profile::ExecutorProfileId,
+    logs::{
+        NormalizedEntry, NormalizedEntryType,
+        utils::{
+            ConversationPatch, EntryIndexProvider,
+            patch::extract_normalized_entry_from_patch,
+        },
+    },
+    profile::{ExecutorConfigs, ExecutorProfileId},
 };
 use futures::{FutureExt, TryStreamExt, stream::select};
+use serde_json::json;
 use services::services::{
     approvals::{Approvals, executor_approvals::ExecutorApprovalBridge},
     config::Config,
     container::{ContainerError, ContainerRef, ContainerService},
     diff_stream::{self, DiffStreamHandle},
-    git::{Commit, GitCli, GitCommitOptions, GitService},
+    git::{Commit, GitCli, GitCommitOptions, GitService, WorktreeResetOptions},
     image::ImageService,
     notification::NotificationService,
     queued_message::QueuedMessageService,
@@ -61,12 +70,18 @@ use uuid::Uuid;
 
 use crate::{command, copy};
 
+#[derive(Debug, Clone, Copy)]
+struct AutoRetryState {
+    attempt: u32,
+}
+
 #[derive(Clone)]
 pub struct LocalContainerService {
     db: DBService,
     child_store: Arc<RwLock<HashMap<Uuid, Arc<RwLock<AsyncGroupChild>>>>>,
     interrupt_senders: Arc<RwLock<HashMap<Uuid, InterruptSender>>>,
     msg_stores: Arc<RwLock<HashMap<Uuid, Arc<MsgStore>>>>,
+    auto_retry_states: Arc<RwLock<HashMap<Uuid, AutoRetryState>>>,
     config: Arc<RwLock<Config>>,
     git: GitService,
     image_service: ImageService,
@@ -88,6 +103,7 @@ impl LocalContainerService {
     ) -> Self {
         let child_store = Arc::new(RwLock::new(HashMap::new()));
         let interrupt_senders = Arc::new(RwLock::new(HashMap::new()));
+        let auto_retry_states = Arc::new(RwLock::new(HashMap::new()));
         let notification_service = NotificationService::new(config.clone());
 
         let container = LocalContainerService {
@@ -95,6 +111,7 @@ impl LocalContainerService {
             child_store,
             interrupt_senders,
             msg_stores,
+            auto_retry_states,
             config,
             git,
             image_service,
@@ -334,6 +351,327 @@ impl LocalContainerService {
         any_committed
     }
 
+    fn collect_auto_retry_error_text(&self, exec_id: &Uuid) -> Option<String> {
+        let msg_stores = self.msg_stores.try_read().ok()?;
+        let msg_store = msg_stores.get(exec_id)?;
+        let history = msg_store.get_history();
+
+        let mut lines = Vec::new();
+        for msg in history.iter() {
+            if let LogMsg::JsonPatch(patch) = msg {
+                if let Some((_, entry)) = extract_normalized_entry_from_patch(patch) {
+                    match entry.entry_type {
+                        NormalizedEntryType::ErrorMessage { .. } => {
+                            lines.push(entry.content);
+                        }
+                        NormalizedEntryType::SystemMessage => {
+                            let lowered = entry.content.to_lowercase();
+                            if lowered.contains("error") || lowered.contains("failed") {
+                                lines.push(entry.content);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        if lines.is_empty() {
+            None
+        } else {
+            Some(lines.join("\n"))
+        }
+    }
+
+    async fn emit_auto_retry_tip(
+        &self,
+        exec_id: Uuid,
+        attempt: u32,
+        max_attempts: u32,
+        delay_seconds: u32,
+    ) {
+        let content = format!(
+            "Auto retry scheduled in {delay_seconds}s (attempt {attempt}/{max_attempts})"
+        );
+        let entry = NormalizedEntry {
+            timestamp: None,
+            entry_type: NormalizedEntryType::SystemMessage,
+            content,
+            metadata: Some(json!({
+                "system_tip": "auto_retry",
+                "attempt": attempt,
+                "max_attempts": max_attempts,
+                "delay_seconds": delay_seconds,
+            })),
+        };
+
+        let Some(msg_store) = self.get_msg_store_by_id(&exec_id).await else {
+            return;
+        };
+
+        let index_provider = EntryIndexProvider::start_from(&msg_store);
+        let patch = ConversationPatch::add_normalized_entry(index_provider.next(), entry);
+        msg_store.push_patch(patch.clone());
+
+        if let Ok(json_line) = serde_json::to_string::<LogMsg>(&LogMsg::JsonPatch(patch)) {
+            let _ = ExecutionProcessLogs::append_log_line(
+                &self.db.pool,
+                exec_id,
+                &format!("{json_line}\n"),
+            )
+            .await;
+        }
+    }
+
+    async fn session_has_running_processes(
+        &self,
+        session_id: Uuid,
+    ) -> Result<bool, ContainerError> {
+        let processes =
+            ExecutionProcess::find_by_session_id(&self.db.pool, session_id, false).await?;
+        Ok(processes.iter().any(|process| {
+            process.status == ExecutionProcessStatus::Running
+                && process.run_reason != ExecutionProcessRunReason::DevServer
+        }))
+    }
+
+    async fn restore_worktrees_to_process(
+        &self,
+        workspace: &Workspace,
+        session_id: Uuid,
+        target_process_id: Uuid,
+        perform_git_reset: bool,
+        force_when_dirty: bool,
+    ) -> Result<(), ContainerError> {
+        let repos = WorkspaceRepo::find_repos_for_workspace(&self.db.pool, workspace.id).await?;
+        let repo_states = ExecutionProcessRepoState::find_by_execution_process_id(
+            &self.db.pool,
+            target_process_id,
+        )
+        .await?;
+
+        let container_ref = self.ensure_container_exists(workspace).await?;
+        let workspace_dir = PathBuf::from(container_ref);
+
+        let is_dirty = self
+            .is_container_clean(workspace)
+            .await
+            .map(|is_clean| !is_clean)
+            .unwrap_or(false);
+
+        for repo in &repos {
+            let repo_state = repo_states.iter().find(|s| s.repo_id == repo.id);
+            let target_oid = match repo_state.and_then(|s| s.before_head_commit.clone()) {
+                Some(oid) => Some(oid),
+                None => {
+                    ExecutionProcess::find_prev_after_head_commit(
+                        &self.db.pool,
+                        session_id,
+                        target_process_id,
+                        repo.id,
+                    )
+                    .await?
+                }
+            };
+
+            if let Some(oid) = target_oid {
+                let worktree_path = workspace_dir.join(&repo.name);
+                self.git().reconcile_worktree_to_commit(
+                    &worktree_path,
+                    &oid,
+                    WorktreeResetOptions::new(
+                        perform_git_reset,
+                        force_when_dirty,
+                        is_dirty,
+                        perform_git_reset,
+                    ),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn start_auto_retry_follow_up(
+        &self,
+        ctx: &ExecutionContext,
+        executor_profile_id: ExecutorProfileId,
+        prompt: String,
+    ) -> Result<ExecutionProcess, ContainerError> {
+        let latest_agent_session_id =
+            ExecutionProcess::find_latest_coding_agent_turn_session_id(&self.db.pool, ctx.session.id)
+                .await?;
+
+        let project_repos =
+            ProjectRepo::find_by_project_id_with_names(&self.db.pool, ctx.project.id).await?;
+        let cleanup_action = self.cleanup_actions_for_repos(&project_repos);
+
+        let working_dir = ctx
+            .workspace
+            .agent_working_dir
+            .as_ref()
+            .filter(|dir| !dir.is_empty())
+            .cloned();
+
+        let action_type = if let Some(agent_session_id) = latest_agent_session_id {
+            ExecutorActionType::CodingAgentFollowUpRequest(CodingAgentFollowUpRequest {
+                prompt: prompt.clone(),
+                session_id: agent_session_id,
+                executor_profile_id: executor_profile_id.clone(),
+                working_dir: working_dir.clone(),
+            })
+        } else {
+            ExecutorActionType::CodingAgentInitialRequest(CodingAgentInitialRequest {
+                prompt,
+                executor_profile_id: executor_profile_id.clone(),
+                working_dir,
+            })
+        };
+
+        let action = ExecutorAction::new(action_type, cleanup_action.map(Box::new));
+
+        self.start_execution(
+            &ctx.workspace,
+            &ctx.session,
+            &action,
+            &ExecutionProcessRunReason::CodingAgent,
+        )
+        .await
+    }
+
+    async fn perform_auto_retry(
+        &self,
+        failed_process_id: Uuid,
+        session_id: Uuid,
+        prompt: String,
+        executor_profile_id: ExecutorProfileId,
+        auto_retry: AutoRetryConfig,
+        attempt: u32,
+    ) -> Result<(), ContainerError> {
+        if auto_retry.delay_seconds == 0 {
+            return Ok(());
+        }
+
+        if self.session_has_running_processes(session_id).await? {
+            return Ok(());
+        }
+
+        let ctx = ExecutionProcess::load_context(&self.db.pool, failed_process_id).await?;
+
+        self.restore_worktrees_to_process(
+            &ctx.workspace,
+            session_id,
+            failed_process_id,
+            true,
+            false,
+        )
+        .await?;
+
+        self.try_stop(&ctx.workspace, false).await;
+
+        let _ =
+            ExecutionProcess::drop_at_and_after(&self.db.pool, session_id, failed_process_id)
+                .await?;
+
+        let new_process = self
+            .start_auto_retry_follow_up(&ctx, executor_profile_id, prompt)
+            .await?;
+
+        let mut states = self.auto_retry_states.write().await;
+        states.insert(new_process.id, AutoRetryState { attempt });
+
+        Ok(())
+    }
+
+    async fn maybe_schedule_auto_retry(
+        &self,
+        ctx: &ExecutionContext,
+    ) -> Result<bool, ContainerError> {
+        if ctx.execution_process.run_reason != ExecutionProcessRunReason::CodingAgent {
+            return Ok(false);
+        }
+
+        if ctx.execution_process.status != ExecutionProcessStatus::Failed {
+            return Ok(false);
+        }
+
+        let action = ctx.execution_process.executor_action()?;
+        let (executor_profile_id, prompt) = match action.typ() {
+            ExecutorActionType::CodingAgentInitialRequest(request) => {
+                (request.executor_profile_id.clone(), request.prompt.clone())
+            }
+            ExecutorActionType::CodingAgentFollowUpRequest(request) => {
+                (request.executor_profile_id.clone(), request.prompt.clone())
+            }
+            _ => return Ok(false),
+        };
+
+        let agent = ExecutorConfigs::get_cached().get_coding_agent_or_default(&executor_profile_id);
+        let auto_retry = agent.auto_retry_config().clone();
+
+        if !auto_retry.is_enabled() || auto_retry.delay_seconds == 0 {
+            return Ok(false);
+        }
+
+        let current_attempt = {
+            let states = self.auto_retry_states.read().await;
+            states
+                .get(&ctx.execution_process.id)
+                .map(|state| state.attempt)
+                .unwrap_or(0)
+        };
+
+        if current_attempt >= auto_retry.max_attempts {
+            return Ok(false);
+        }
+
+        let Some(error_text) = self.collect_auto_retry_error_text(&ctx.execution_process.id) else {
+            return Ok(false);
+        };
+
+        if !auto_retry.matches_error(&error_text) {
+            return Ok(false);
+        }
+
+        let next_attempt = current_attempt + 1;
+        self.emit_auto_retry_tip(
+            ctx.execution_process.id,
+            next_attempt,
+            auto_retry.max_attempts,
+            auto_retry.delay_seconds,
+        )
+        .await;
+
+        let failed_process_id = ctx.execution_process.id;
+        let session_id = ctx.session.id;
+        let container = self.clone();
+        let prompt = prompt.clone();
+        let executor_profile_id = executor_profile_id.clone();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(u64::from(auto_retry.delay_seconds))).await;
+            if let Err(err) = container
+                .perform_auto_retry(
+                    failed_process_id,
+                    session_id,
+                    prompt,
+                    executor_profile_id,
+                    auto_retry,
+                    next_attempt,
+                )
+                .await
+            {
+                tracing::warn!(
+                    "Auto retry failed for process {}: {}",
+                    failed_process_id,
+                    err
+                );
+            }
+        });
+
+        Ok(true)
+    }
+
     /// Spawn a background task that polls the child process for completion and
     /// cleans up the execution entry when it exits.
     pub fn spawn_exit_monitor(
@@ -463,6 +801,12 @@ impl LocalContainerService {
                         }
                     }
                 }
+
+                if let Err(e) = container.maybe_schedule_auto_retry(&ctx).await {
+                    tracing::warn!("Auto retry scheduling failed: {}", e);
+                }
+
+                container.auto_retry_states.write().await.remove(&exec_id);
 
                 if container.should_finalize(&ctx) {
                     // Only execute queued messages if the execution succeeded
