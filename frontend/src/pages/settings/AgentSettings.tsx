@@ -26,11 +26,13 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Checkbox } from '@/components/ui/checkbox';
 import { JSONEditor } from '@/components/ui/json-editor';
+import { Input } from '@/components/ui/input';
 import { ChevronDown, Loader2 } from 'lucide-react';
 
 import { ExecutorConfigForm } from '@/components/ExecutorConfigForm';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useUserSystem } from '@/components/ConfigProvider';
+import { profilesApi } from '@/lib/api';
 import { CreateConfigurationDialog } from '@/components/dialogs/settings/CreateConfigurationDialog';
 import { DeleteConfigurationDialog } from '@/components/dialogs/settings/DeleteConfigurationDialog';
 import { useAgentAvailability } from '@/hooks/useAgentAvailability';
@@ -39,6 +41,7 @@ import type {
   BaseCodingAgent,
   ExecutorConfigs,
   ExecutorProfileId,
+  ImportLlmanProfilesResponse,
 } from 'shared/types';
 
 type ExecutorsMap = Record<string, Record<string, Record<string, unknown>>>;
@@ -53,6 +56,7 @@ export function AgentSettings() {
     isSaving: profilesSaving,
     error: profilesError,
     save: saveProfiles,
+    refetch,
   } = useProfiles();
 
   const { config, updateAndSaveConfig, profiles, reloadSystem } =
@@ -81,6 +85,18 @@ export function AgentSettings() {
   const [executorSuccess, setExecutorSuccess] = useState(false);
   const [executorError, setExecutorError] = useState<string | null>(null);
 
+  // LLMAN config path + import state
+  const [llmanPathDraft, setLlmanPathDraft] = useState<string>(
+    () => config?.llman_claude_code_path ?? ''
+  );
+  const [llmanPathSaving, setLlmanPathSaving] = useState(false);
+  const [llmanPathSuccess, setLlmanPathSuccess] = useState(false);
+  const [llmanPathError, setLlmanPathError] = useState<string | null>(null);
+  const [llmanImporting, setLlmanImporting] = useState(false);
+  const [llmanImportResult, setLlmanImportResult] =
+    useState<ImportLlmanProfilesResponse | null>(null);
+  const [llmanImportError, setLlmanImportError] = useState<string | null>(null);
+
   // Check agent availability when draft executor changes
   const agentAvailability = useAgentAvailability(executorDraft?.executor);
 
@@ -104,6 +120,8 @@ export function AgentSettings() {
     executorDraft && config?.executor_profile
       ? !isEqual(executorDraft, config.executor_profile)
       : false;
+  const llmanPathDirty =
+    (config?.llman_claude_code_path ?? '') !== llmanPathDraft;
 
   // Sync executor draft when config changes (only if not dirty)
   useEffect(() => {
@@ -117,6 +135,10 @@ export function AgentSettings() {
       });
     }
   }, [config?.executor_profile]);
+
+  useEffect(() => {
+    setLlmanPathDraft(config?.llman_claude_code_path ?? '');
+  }, [config?.llman_claude_code_path]);
 
   // Update executor draft
   const updateExecutorDraft = (newProfile: ExecutorProfileId) => {
@@ -140,6 +162,50 @@ export function AgentSettings() {
       console.error('Error saving executor profile:', err);
     } finally {
       setExecutorSaving(false);
+    }
+  };
+
+  const handleSaveLlmanPath = async () => {
+    if (!config) return;
+    setLlmanPathSaving(true);
+    setLlmanPathError(null);
+
+    const trimmed = llmanPathDraft.trim();
+    const nextPath = trimmed.length > 0 ? trimmed : null;
+
+    try {
+      const saved = await updateAndSaveConfig({
+        llman_claude_code_path: nextPath,
+      });
+      if (!saved) {
+        throw new Error('Save failed');
+      }
+      setLlmanPathSuccess(true);
+      setTimeout(() => setLlmanPathSuccess(false), 3000);
+      reloadSystem();
+    } catch (err) {
+      setLlmanPathError(t('settings.general.save.error'));
+      console.error('Error saving LLMAN path:', err);
+    } finally {
+      setLlmanPathSaving(false);
+    }
+  };
+
+  const handleImportLlman = async () => {
+    setLlmanImporting(true);
+    setLlmanImportError(null);
+    setLlmanImportResult(null);
+
+    try {
+      const result = await profilesApi.importLlman();
+      setLlmanImportResult(result);
+      reloadSystem();
+      await refetch();
+    } catch (err) {
+      setLlmanImportError(t('settings.agents.llman.importError'));
+      console.error('Error importing LLMAN profiles:', err);
+    } finally {
+      setLlmanImporting(false);
     }
   };
 
@@ -788,6 +854,90 @@ export function AgentSettings() {
               )}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('settings.agents.llman.title')}</CardTitle>
+          <CardDescription>{t('settings.agents.llman.description')}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {llmanPathSuccess && (
+            <Alert variant="success">
+              <AlertDescription className="font-medium">
+                {t('settings.general.save.success')}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {llmanPathError && (
+            <Alert variant="destructive">
+              <AlertDescription>{llmanPathError}</AlertDescription>
+            </Alert>
+          )}
+
+          {llmanImportError && (
+            <Alert variant="destructive">
+              <AlertDescription>{llmanImportError}</AlertDescription>
+            </Alert>
+          )}
+
+          {llmanImportResult && (
+            <Alert variant="success">
+              <AlertDescription className="font-medium">
+                {t('settings.agents.llman.importSuccess', {
+                  imported: llmanImportResult.imported,
+                  updated: llmanImportResult.updated,
+                  skipped: llmanImportResult.skipped,
+                  path: llmanImportResult.path,
+                })}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <div className="space-y-2">
+            <Label htmlFor="llman-path">
+              {t('settings.agents.llman.pathLabel')}
+            </Label>
+            <Input
+              id="llman-path"
+              value={llmanPathDraft}
+              onChange={(event) => setLlmanPathDraft(event.target.value)}
+              placeholder={t('settings.agents.llman.pathPlaceholder')}
+              disabled={llmanPathSaving}
+            />
+            <p className="text-sm text-muted-foreground">
+              {t('settings.agents.llman.pathHelper')}
+            </p>
+            {isDirty && (
+              <p className="text-sm text-muted-foreground">
+                {t('settings.agents.llman.importDirtyHint')}
+              </p>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={handleSaveLlmanPath}
+              disabled={!llmanPathDirty || llmanPathSaving}
+            >
+              {llmanPathSaving && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              {t('common:buttons.save')}
+            </Button>
+            <Button
+              onClick={handleImportLlman}
+              disabled={llmanImporting || isDirty}
+            >
+              {llmanImporting && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              {t('settings.agents.llman.importButton')}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 

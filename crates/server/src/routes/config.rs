@@ -6,15 +6,17 @@ use axum::{
     extract::{Path, Query, State},
     http,
     response::{Json as ResponseJson, Response},
-    routing::{get, put},
+    routing::{get, post, put},
 };
 use deployment::{Deployment, DeploymentError};
 use executors::{
     executors::{
-        AvailabilityInfo, BaseAgentCapability, BaseCodingAgent, StandardCodingAgentExecutor,
+        AvailabilityInfo, BaseAgentCapability, BaseCodingAgent, CodingAgent,
+        StandardCodingAgentExecutor,
     },
+    llman,
     mcp_config::{McpConfig, read_agent_config, write_agent_config},
-    profile::{ExecutorConfigs, ExecutorProfileId},
+    profile::{ExecutorConfigs, ExecutorProfileId, canonical_variant_key},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -36,6 +38,7 @@ pub fn router() -> Router<DeploymentImpl> {
         .route("/sounds/{sound}", get(get_sound))
         .route("/mcp-config", get(get_mcp_servers).post(update_mcp_servers))
         .route("/profiles", get(get_profiles).put(update_profiles))
+        .route("/profiles/import-llman", post(import_llman_profiles))
         .route(
             "/editors/check-availability",
             get(check_editor_availability),
@@ -346,6 +349,14 @@ pub struct ProfilesContent {
     pub path: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, TS)]
+pub struct ImportLlmanProfilesResponse {
+    pub path: String,
+    pub imported: usize,
+    pub updated: usize,
+    pub skipped: usize,
+}
+
 async fn get_profiles(
     State(_deployment): State<DeploymentImpl>,
 ) -> ResponseJson<ApiResponse<ProfilesContent>> {
@@ -399,6 +410,54 @@ async fn update_profiles(
     }
 }
 
+#[derive(Debug, Default)]
+struct LlmanImportSummary {
+    imported: usize,
+    updated: usize,
+    skipped: usize,
+}
+
+async fn import_llman_profiles(
+    State(deployment): State<DeploymentImpl>,
+) -> ResponseJson<ApiResponse<ImportLlmanProfilesResponse>> {
+    let config = deployment.config().read().await;
+    let config_path = llman::resolve_claude_code_config_path(
+        config.llman_claude_code_path.as_deref(),
+    );
+    let Some(config_path) = config_path else {
+        return ResponseJson(ApiResponse::error(
+            "Could not resolve LLMAN config path",
+        ));
+    };
+
+    let groups = match llman::read_claude_code_groups(&config_path).await {
+        Ok(groups) => groups,
+        Err(e) => {
+            return ResponseJson(ApiResponse::error(&format!(
+                "Failed to read LLMAN config: {e}"
+            )));
+        }
+    };
+
+    let mut profiles = ExecutorConfigs::get_cached();
+    let summary = apply_llman_groups_to_profiles(&mut profiles, &groups);
+
+    if let Err(e) = profiles.save_overrides() {
+        return ResponseJson(ApiResponse::error(&format!(
+            "Failed to save executor profiles: {e}"
+        )));
+    }
+
+    ExecutorConfigs::reload();
+
+    ResponseJson(ApiResponse::success(ImportLlmanProfilesResponse {
+        path: config_path.display().to_string(),
+        imported: summary.imported,
+        updated: summary.updated,
+        skipped: summary.skipped,
+    }))
+}
+
 #[derive(Debug, Serialize, Deserialize, TS)]
 pub struct CheckEditorAvailabilityQuery {
     editor_type: EditorType,
@@ -445,4 +504,121 @@ async fn check_agent_availability(
     };
 
     ResponseJson(ApiResponse::success(info))
+}
+
+fn apply_llman_groups_to_profiles(
+    profiles: &mut ExecutorConfigs,
+    groups: &HashMap<String, HashMap<String, String>>,
+) -> LlmanImportSummary {
+    let mut summary = LlmanImportSummary::default();
+    let Some(claude_profile) = profiles.executors.get_mut(&BaseCodingAgent::ClaudeCode) else {
+        return summary;
+    };
+
+    let default_config = claude_profile.get_default().cloned();
+
+    for (group_name, env) in groups {
+        let variant_key = format!("LLMAN_{}", canonical_variant_key(group_name));
+
+        if let Some(existing) = claude_profile.configurations.get_mut(&variant_key) {
+            if let CodingAgent::ClaudeCode(config) = existing {
+                config.cmd.env = Some(env.clone());
+                summary.updated += 1;
+            } else {
+                summary.skipped += 1;
+            }
+            continue;
+        }
+
+        let Some(mut new_config) = default_config.clone() else {
+            summary.skipped += 1;
+            continue;
+        };
+
+        if let CodingAgent::ClaudeCode(config) = &mut new_config {
+            config.cmd.env = Some(env.clone());
+            claude_profile
+                .configurations
+                .insert(variant_key, new_config);
+            summary.imported += 1;
+        } else {
+            summary.skipped += 1;
+        }
+    }
+
+    summary
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn import_updates_existing_and_adds_new_variants() {
+        let mut profiles = ExecutorConfigs::from_defaults();
+        let claude = profiles
+            .executors
+            .get_mut(&BaseCodingAgent::ClaudeCode)
+            .expect("claude profile");
+
+        let mut existing = claude
+            .get_default()
+            .cloned()
+            .expect("default claude config");
+        if let CodingAgent::ClaudeCode(config) = &mut existing {
+            config.model = Some("keep-model".to_string());
+            config.cmd.env = Some(HashMap::from([(
+                "OLD_KEY".to_string(),
+                "old".to_string(),
+            )]));
+        }
+        claude
+            .configurations
+            .insert("LLMAN_MINIMAX".to_string(), existing);
+
+        let groups = HashMap::from([
+            (
+                "minimax".to_string(),
+                HashMap::from([("NEW_KEY".to_string(), "new".to_string())]),
+            ),
+            (
+                "glm-cost".to_string(),
+                HashMap::from([("TOKEN".to_string(), "abc".to_string())]),
+            ),
+        ]);
+
+        let summary = apply_llman_groups_to_profiles(&mut profiles, &groups);
+        assert_eq!(summary.updated, 1);
+        assert_eq!(summary.imported, 1);
+        assert_eq!(summary.skipped, 0);
+
+        let claude = profiles
+            .executors
+            .get(&BaseCodingAgent::ClaudeCode)
+            .expect("claude profile");
+
+        let updated = claude
+            .configurations
+            .get("LLMAN_MINIMAX")
+            .expect("updated variant");
+        if let CodingAgent::ClaudeCode(config) = updated {
+            assert_eq!(config.model.as_deref(), Some("keep-model"));
+            let env = config.cmd.env.as_ref().expect("env map");
+            assert_eq!(env.get("NEW_KEY"), Some(&"new".to_string()));
+            assert!(!env.contains_key("OLD_KEY"));
+        } else {
+            panic!("expected ClaudeCode variant");
+        }
+
+        let added = claude
+            .configurations
+            .get("LLMAN_GLM_COST")
+            .expect("added variant");
+        if let CodingAgent::ClaudeCode(config) = added {
+            let env = config.cmd.env.as_ref().expect("env map");
+            assert_eq!(env.get("TOKEN"), Some(&"abc".to_string()));
+        } else {
+            panic!("expected ClaudeCode variant");
+        }
+    }
 }

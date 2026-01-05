@@ -264,6 +264,17 @@
         "deleteFailed": "Failed to delete configuration. Please try again.",
         "saveFailed": "Failed to save agent configurations. Please try again.",
         "saveConfigFailed": "Failed to save configuration. Please try again."
+      },
+      "llman": {
+        "title": "LLMAN Import",
+        "description": "Import Claude Code env groups from llman into agent profiles.",
+        "pathLabel": "LLMAN Claude Code config path",
+        "pathPlaceholder": "Leave empty to use the default path",
+        "pathHelper": "Default: ~/.config/llman/claude-code.toml (uses the system config dir on other platforms).",
+        "importButton": "Import from LLMAN",
+        "importSuccess": "Imported {{imported}} new, updated {{updated}}, skipped {{skipped}}. Source: {{path}}",
+        "importError": "Failed to import from LLMAN. Please check the path and file format.",
+        "importDirtyHint": "Save or discard profile changes before importing."
       }
     },
     "mcp": {

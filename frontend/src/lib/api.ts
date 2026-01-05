@@ -49,6 +49,7 @@ import {
   BaseCodingAgent,
   RunAgentSetupRequest,
   RunAgentSetupResponse,
+  ImportLlmanProfilesResponse,
   GhCliSetupError,
   RunScriptError,
   OpenEditorResponse,
@@ -849,6 +850,12 @@ export const profilesApi = {
       },
     });
     return handleApiResponse<string>(response);
+  },
+  importLlman: async (): Promise<ImportLlmanProfilesResponse> => {
+    const response = await makeRequest('/api/profiles/import-llman', {
+      method: 'POST',
+    });
+    return handleApiResponse<ImportLlmanProfilesResponse>(response);
   },
 };
 
