@@ -53,12 +53,12 @@ export function useAttemptExecution(attemptId?: string, taskId?: string) {
   }, [executionProcesses, setupProcesses, processDetailQueries]);
 
   // Stop execution function
-  const stopExecution = useCallback(async () => {
+  const stopExecution = useCallback(async (force = false) => {
     if (!attemptId || !isAttemptRunning || isStopping) return;
 
     try {
       setIsStopping(true);
-      await attemptsApi.stop(attemptId);
+      await attemptsApi.stop(attemptId, { force });
     } catch (error) {
       console.error('Failed to stop executions:', error);
       throw error;
@@ -66,6 +66,11 @@ export function useAttemptExecution(attemptId?: string, taskId?: string) {
       setIsStopping(false);
     }
   }, [attemptId, isAttemptRunning, isStopping, setIsStopping]);
+
+  const forceStopExecution = useCallback(
+    () => stopExecution(true),
+    [stopExecution]
+  );
 
   const isLoading =
     streamLoading || processDetailQueries.some((q) => q.isLoading);
@@ -85,6 +90,7 @@ export function useAttemptExecution(attemptId?: string, taskId?: string) {
 
     // Actions
     stopExecution,
+    forceStopExecution,
     isStopping,
   };
 }

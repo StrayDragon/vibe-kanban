@@ -172,6 +172,9 @@
   },
   "followUp": {
     "stop": "停止",
+    "forceStop": "强制停止",
+    "forceStopTitle": "强制停止该运行？",
+    "forceStopMessage": "这将中断正在运行的进程并标记为已停止。仅在普通停止无效时使用。",
     "clearReviewComments": "清除审查评论",
     "resolveConflicts": "解决冲突",
     "send": "发送",

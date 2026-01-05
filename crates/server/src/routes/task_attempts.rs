@@ -1121,11 +1121,21 @@ pub async fn get_task_attempt_children(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct StopTaskAttemptQuery {
+    pub force: Option<bool>,
+}
+
 pub async fn stop_task_attempt_execution(
     Extension(workspace): Extension<Workspace>,
     State(deployment): State<DeploymentImpl>,
+    Query(query): Query<StopTaskAttemptQuery>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
-    deployment.container().try_stop(&workspace, false).await;
+    if query.force.unwrap_or(false) {
+        deployment.container().try_stop_force(&workspace, false).await;
+    } else {
+        deployment.container().try_stop(&workspace, false).await;
+    }
 
     Ok(ResponseJson(ApiResponse::success(())))
 }

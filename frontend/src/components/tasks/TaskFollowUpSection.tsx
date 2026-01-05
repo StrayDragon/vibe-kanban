@@ -3,6 +3,7 @@ import {
   Send,
   StopCircle,
   AlertCircle,
+  AlertTriangle,
   Clock,
   X,
   Paperclip,
@@ -59,6 +60,7 @@ import { useDebouncedCallback } from '@/hooks/useDebouncedCallback';
 import { useQueueStatus } from '@/hooks/useQueueStatus';
 import { imagesApi, attemptsApi } from '@/lib/api';
 import { GitHubCommentsDialog } from '@/components/dialogs/tasks/GitHubCommentsDialog';
+import { ConfirmDialog } from '@/components/dialogs';
 import type { NormalizedComment } from '@/components/ui/wysiwyg/nodes/github-comment-node';
 import type { Session } from 'shared/types';
 
@@ -78,7 +80,13 @@ export function TaskFollowUpSection({
   const workspaceId = session?.workspace_id;
   const sessionId = session?.id;
 
-  const { isAttemptRunning, stopExecution, isStopping, processes } =
+  const {
+    isAttemptRunning,
+    stopExecution,
+    forceStopExecution,
+    isStopping,
+    processes,
+  } = useAttemptExecution(workspaceId, task.id);
     useAttemptExecution(workspaceId, task.id);
 
   const { data: branchStatus, refetch: refetchBranchStatus } =
@@ -105,6 +113,26 @@ export function TaskFollowUpSection({
     clearElements: clearClickedElements,
   } = useClickedElements();
   const { enableScope, disableScope } = useHotkeysContext();
+  const handleForceStop = useCallback(async () => {
+    if (!isAttemptRunning || isStopping) return;
+    const result = await ConfirmDialog.show({
+      title: t('followUp.forceStopTitle', 'Force stop this run?'),
+      message: t(
+        'followUp.forceStopMessage',
+        'This will interrupt the running process and mark it as stopped. Use this if the normal stop action is not working.'
+      ),
+      confirmText: t('followUp.forceStop', 'Force stop'),
+      variant: 'destructive',
+    });
+
+    if (result === 'confirmed') {
+      try {
+        await forceStopExecution();
+      } catch (error) {
+        console.error('Failed to force stop executions:', error);
+      }
+    }
+  }, [forceStopExecution, isAttemptRunning, isStopping, t]);
 
   const reviewMarkdown = useMemo(
     () => generateReviewMarkdown(),
@@ -869,7 +897,7 @@ export function TaskFollowUpSection({
                 </Button>
               )}
               <Button
-                onClick={stopExecution}
+                onClick={() => stopExecution()}
                 disabled={isStopping}
                 size="sm"
                 variant="destructive"
@@ -881,7 +909,16 @@ export function TaskFollowUpSection({
                     <StopCircle className="h-4 w-4 mr-2" />
                     {t('followUp.stop')}
                   </>
-                )}
+                  )}
+              </Button>
+              <Button
+                onClick={handleForceStop}
+                disabled={isStopping}
+                size="sm"
+                variant="destructive"
+              >
+                <AlertTriangle className="h-4 w-4 mr-2" />
+                {t('followUp.forceStop', 'Force stop')}
               </Button>
             </div>
           ) : (

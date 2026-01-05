@@ -10,6 +10,8 @@ use thiserror::Error;
 use ts_rs::TS;
 use uuid::Uuid;
 
+use crate::retry::retry_on_sqlite_busy;
+
 use super::{
     execution_process_repo_state::{CreateExecutionProcessRepoState, ExecutionProcessRepoState},
     project::Project,
@@ -501,16 +503,24 @@ impl ExecutionProcess {
             Some(Utc::now())
         };
 
-        sqlx::query!(
-            r#"UPDATE execution_processes
-               SET status = $1, exit_code = $2, completed_at = $3
-               WHERE id = $4"#,
-            status,
-            exit_code,
-            completed_at,
-            id
-        )
-        .execute(pool)
+        retry_on_sqlite_busy(|| {
+            let status = status.clone();
+            let completed_at = completed_at.clone();
+            async move {
+                sqlx::query!(
+                    r#"UPDATE execution_processes
+                       SET status = $1, exit_code = $2, completed_at = $3
+                       WHERE id = $4"#,
+                    status,
+                    exit_code,
+                    completed_at,
+                    id
+                )
+                .execute(pool)
+                .await?;
+                Ok(())
+            }
+        })
         .await?;
 
         Ok(())

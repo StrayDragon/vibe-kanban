@@ -538,6 +538,41 @@ pub trait ContainerService {
         }
     }
 
+    async fn try_stop_force(&self, workspace: &Workspace, include_dev_server: bool) {
+        // stop execution processes for this workspace's sessions
+        let sessions = match Session::find_by_workspace_id(&self.db().pool, workspace.id).await {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
+        for session in sessions {
+            if let Ok(processes) =
+                ExecutionProcess::find_by_session_id(&self.db().pool, session.id, false).await
+            {
+                for process in processes {
+                    // Skip dev server processes unless explicitly included
+                    if !include_dev_server
+                        && process.run_reason == ExecutionProcessRunReason::DevServer
+                    {
+                        continue;
+                    }
+                    if process.status == ExecutionProcessStatus::Running {
+                        self.stop_execution_force(&process, ExecutionProcessStatus::Killed)
+                            .await
+                            .unwrap_or_else(|e| {
+                                tracing::debug!(
+                                    "Failed to stop execution process {} for workspace {}: {}",
+                                    process.id,
+                                    workspace.id,
+                                    e
+                                );
+                            });
+                    }
+                }
+            }
+        }
+    }
+
     async fn ensure_container_exists(
         &self,
         workspace: &Workspace,
@@ -557,6 +592,14 @@ pub trait ContainerService {
         execution_process: &ExecutionProcess,
         status: ExecutionProcessStatus,
     ) -> Result<(), ContainerError>;
+
+    async fn stop_execution_force(
+        &self,
+        execution_process: &ExecutionProcess,
+        status: ExecutionProcessStatus,
+    ) -> Result<(), ContainerError> {
+        self.stop_execution(execution_process, status).await
+    }
 
     async fn try_commit_changes(&self, ctx: &ExecutionContext) -> Result<bool, ContainerError>;
 

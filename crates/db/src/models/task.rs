@@ -5,6 +5,8 @@ use strum_macros::{Display, EnumString};
 use ts_rs::TS;
 use uuid::Uuid;
 
+use crate::retry::retry_on_sqlite_busy;
+
 use super::{project::Project, workspace::Workspace};
 
 #[derive(
@@ -320,12 +322,19 @@ ORDER BY t.created_at DESC"#,
         id: Uuid,
         status: TaskStatus,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query!(
-            "UPDATE tasks SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
-            id,
-            status
-        )
-        .execute(pool)
+        retry_on_sqlite_busy(|| {
+            let status = status.clone();
+            async move {
+                sqlx::query!(
+                    "UPDATE tasks SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1",
+                    id,
+                    status
+                )
+                .execute(pool)
+                .await?;
+                Ok(())
+            }
+        })
         .await?;
         Ok(())
     }

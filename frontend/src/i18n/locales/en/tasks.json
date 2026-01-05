@@ -159,6 +159,9 @@
   },
   "followUp": {
     "stop": "Stop",
+    "forceStop": "Force stop",
+    "forceStopTitle": "Force stop this run?",
+    "forceStopMessage": "This will interrupt the running process and mark it as stopped. Use this if the normal stop action is not working.",
     "clearReviewComments": "Clear Review Comments",
     "resolveConflicts": "Resolve conflicts",
     "send": "Send",

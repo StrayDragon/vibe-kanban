@@ -437,10 +437,17 @@ export const attemptsApi = {
     return handleApiResponse<Workspace>(response);
   },
 
-  stop: async (attemptId: string): Promise<void> => {
-    const response = await makeRequest(`/api/task-attempts/${attemptId}/stop`, {
-      method: 'POST',
-    });
+  stop: async (
+    attemptId: string,
+    options?: { force?: boolean }
+  ): Promise<void> => {
+    const params = options?.force ? '?force=true' : '';
+    const response = await makeRequest(
+      `/api/task-attempts/${attemptId}/stop${params}`,
+      {
+        method: 'POST',
+      }
+    );
     return handleApiResponse<void>(response);
   },
 

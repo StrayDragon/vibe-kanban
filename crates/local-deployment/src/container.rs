@@ -1193,6 +1193,64 @@ impl ContainerService for LocalContainerService {
         Ok(())
     }
 
+    async fn stop_execution_force(
+        &self,
+        execution_process: &ExecutionProcess,
+        status: ExecutionProcessStatus,
+    ) -> Result<(), ContainerError> {
+        if self
+            .get_child_from_store(&execution_process.id)
+            .await
+            .is_some()
+        {
+            return self.stop_execution(execution_process, status).await;
+        }
+
+        let exit_code = if status == ExecutionProcessStatus::Completed {
+            Some(0)
+        } else {
+            None
+        };
+
+        ExecutionProcess::update_completion(
+            &self.db.pool,
+            execution_process.id,
+            status,
+            exit_code,
+        )
+        .await?;
+
+        let _ = self.take_interrupt_sender(&execution_process.id).await;
+        self.remove_child_from_store(&execution_process.id).await;
+
+        if let Some(msg) = self.msg_stores.write().await.remove(&execution_process.id) {
+            msg.push_finished();
+        }
+
+        if let Ok(ctx) = ExecutionProcess::load_context(&self.db.pool, execution_process.id).await
+            && !matches!(
+                ctx.execution_process.run_reason,
+                ExecutionProcessRunReason::DevServer
+            )
+        {
+            match Task::update_status(&self.db.pool, ctx.task.id, TaskStatus::InReview).await {
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!("Failed to update task status to InReview: {e}");
+                }
+            }
+        }
+
+        tracing::debug!(
+            "Execution process {} force-stopped without a child handle",
+            execution_process.id
+        );
+
+        self.update_after_head_commits(execution_process.id).await;
+
+        Ok(())
+    }
+
     async fn stream_diff(
         &self,
         workspace: &Workspace,
