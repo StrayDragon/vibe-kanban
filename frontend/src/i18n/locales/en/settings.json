@@ -133,6 +133,10 @@
             "invalidChars": "Contains invalid characters.",
             "controlChars": "Contains control characters."
           }
+        },
+        "noVerify": {
+          "label": "Skip git hooks with --no-verify",
+          "helper": "When enabled, Vibe Kanban passes --no-verify to git commit and merge."
         }
       },
       "pullRequests": {

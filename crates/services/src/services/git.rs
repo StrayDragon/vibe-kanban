@@ -120,6 +120,28 @@ pub struct WorktreeResetOutcome {
     pub applied: bool,
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct GitCommitOptions {
+    pub no_verify: bool,
+}
+
+impl GitCommitOptions {
+    pub fn new(no_verify: bool) -> Self {
+        Self { no_verify }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct GitMergeOptions {
+    pub no_verify: bool,
+}
+
+impl GitMergeOptions {
+    pub fn new(no_verify: bool) -> Self {
+        Self { no_verify }
+    }
+}
+
 /// Target for diff generation
 pub enum DiffTarget<'p> {
     /// Work-in-progress branch checked out in this worktree
@@ -271,6 +293,15 @@ impl GitService {
     }
 
     pub fn commit(&self, path: &Path, message: &str) -> Result<bool, GitServiceError> {
+        self.commit_with_options(path, message, GitCommitOptions::default())
+    }
+
+    pub fn commit_with_options(
+        &self,
+        path: &Path,
+        message: &str,
+        options: GitCommitOptions,
+    ) -> Result<bool, GitServiceError> {
         // Use Git CLI to respect sparse-checkout semantics for staging and commit
         let git = GitCli::new();
         let has_changes = git
@@ -285,7 +316,7 @@ impl GitService {
             .map_err(|e| GitServiceError::InvalidRepository(format!("git add failed: {e}")))?;
         // Only ensure identity once we know we're about to commit
         self.ensure_cli_commit_identity(path)?;
-        git.commit(path, message)
+        git.commit_with_options(path, message, options)
             .map_err(|e| GitServiceError::InvalidRepository(format!("git commit failed: {e}")))?;
         Ok(true)
     }
@@ -790,6 +821,25 @@ impl GitService {
         base_branch_name: &str,
         commit_message: &str,
     ) -> Result<String, GitServiceError> {
+        self.merge_changes_with_options(
+            base_worktree_path,
+            task_worktree_path,
+            task_branch_name,
+            base_branch_name,
+            commit_message,
+            GitMergeOptions::default(),
+        )
+    }
+
+    pub fn merge_changes_with_options(
+        &self,
+        base_worktree_path: &Path,
+        task_worktree_path: &Path,
+        task_branch_name: &str,
+        base_branch_name: &str,
+        commit_message: &str,
+        options: GitMergeOptions,
+    ) -> Result<String, GitServiceError> {
         // Open the repositories
         let task_repo = self.open_repo(task_worktree_path)?;
         let base_repo = self.open_repo(base_worktree_path)?;
@@ -812,12 +862,31 @@ impl GitService {
                 let git_cli = GitCli::new();
 
                 // Safety check: base branch has no staged changes
-                if git_cli
+                let mut has_staged = git_cli
                     .has_staged_changes(&base_checkout_path)
                     .map_err(|e| {
                         GitServiceError::InvalidRepository(format!("git diff --cached failed: {e}"))
-                    })?
+                    })?;
+                if has_staged
+                    && let Ok(conflicts) = git_cli.get_conflicted_files(&base_checkout_path)
+                    && !conflicts.is_empty()
                 {
+                    if let Err(err) = git_cli.reset_merge(&base_checkout_path) {
+                        tracing::warn!(
+                            "Failed to reset stale merge state in {}: {}",
+                            base_checkout_path.display(),
+                            err
+                        );
+                    }
+                    has_staged = git_cli
+                        .has_staged_changes(&base_checkout_path)
+                        .map_err(|e| {
+                            GitServiceError::InvalidRepository(format!(
+                                "git diff --cached failed: {e}"
+                            ))
+                        })?;
+                }
+                if has_staged {
                     return Err(GitServiceError::WorktreeDirty(
                         base_branch_name.to_string(),
                         "staged changes present".to_string(),
@@ -827,11 +896,12 @@ impl GitService {
                 // Use CLI merge in base context
                 self.ensure_cli_commit_identity(&base_checkout_path)?;
                 let sha = git_cli
-                    .merge_squash_commit(
+                    .merge_squash_commit_with_options(
                         &base_checkout_path,
                         base_branch_name,
                         task_branch_name,
                         commit_message,
+                        options,
                     )
                     .map_err(|e| {
                         GitServiceError::InvalidRepository(format!("CLI merge failed: {e}"))

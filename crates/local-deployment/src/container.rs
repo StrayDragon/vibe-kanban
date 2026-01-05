@@ -44,7 +44,7 @@ use services::services::{
     config::Config,
     container::{ContainerError, ContainerRef, ContainerService},
     diff_stream::{self, DiffStreamHandle},
-    git::{Commit, GitCli, GitService},
+    git::{Commit, GitCli, GitCommitOptions, GitService},
     image::ImageService,
     notification::NotificationService,
     queued_message::QueuedMessageService,
@@ -302,8 +302,10 @@ impl LocalContainerService {
     }
 
     /// Commit changes to each repo. Logs failures but continues with other repos.
-    fn commit_repos(&self, repos_with_changes: Vec<(Repo, PathBuf)>, message: &str) -> bool {
+    async fn commit_repos(&self, repos_with_changes: Vec<(Repo, PathBuf)>, message: &str) -> bool {
         let mut any_committed = false;
+        let no_verify = self.config.read().await.git_no_verify;
+        let commit_options = GitCommitOptions::new(no_verify);
 
         for (repo, worktree_path) in repos_with_changes {
             tracing::debug!(
@@ -312,7 +314,10 @@ impl LocalContainerService {
                 &worktree_path
             );
 
-            match self.git().commit(&worktree_path, message) {
+            match self
+                .git()
+                .commit_with_options(&worktree_path, message, commit_options)
+            {
                 Ok(true) => {
                     any_committed = true;
                     tracing::info!("Committed changes in repo '{}'", repo.name);
@@ -499,7 +504,6 @@ impl LocalContainerService {
                                 // Fall back to finalization if follow-up fails
                                 if !finalized {
                                     container.finalize_task(&ctx).await;
-                                    finalized = true;
                                 }
                             }
                         } else {
@@ -511,14 +515,10 @@ impl LocalContainerService {
                             );
                             if !finalized {
                                 container.finalize_task(&ctx).await;
-                                finalized = true;
                             }
                         }
-                    } else {
-                        if !finalized {
-                            container.finalize_task(&ctx).await;
-                            finalized = true;
-                        }
+                    } else if !finalized {
+                        container.finalize_task(&ctx).await;
                     }
                 }
 
@@ -1342,7 +1342,7 @@ impl ContainerService for LocalContainerService {
             return Ok(false);
         }
 
-        Ok(self.commit_repos(repos_with_changes, &message))
+        Ok(self.commit_repos(repos_with_changes, &message).await)
     }
 
     /// Copy files from the original project directory to the worktree.

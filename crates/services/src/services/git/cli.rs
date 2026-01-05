@@ -25,7 +25,10 @@ use std::{
 use thiserror::Error;
 use utils::shell::resolve_executable_path_blocking; // TODO: make GitCli async
 
-use crate::services::{filesystem_watcher::ALWAYS_SKIP_DIRS, git::Commit};
+use crate::services::{
+    filesystem_watcher::ALWAYS_SKIP_DIRS,
+    git::{Commit, GitCommitOptions, GitMergeOptions},
+};
 
 #[derive(Debug, Error)]
 pub enum GitCliError {
@@ -339,7 +342,20 @@ impl GitCli {
 
     /// Commit staged changes with the given message.
     pub fn commit(&self, worktree_path: &Path, message: &str) -> Result<(), GitCliError> {
-        self.git(worktree_path, ["commit", "-m", message])?;
+        self.commit_with_options(worktree_path, message, GitCommitOptions::default())
+    }
+
+    pub fn commit_with_options(
+        &self,
+        worktree_path: &Path,
+        message: &str,
+        options: GitCommitOptions,
+    ) -> Result<(), GitCliError> {
+        let mut args: Vec<OsString> = vec!["commit".into(), "-m".into(), message.into()];
+        if options.no_verify {
+            args.push("--no-verify".into());
+        }
+        self.git(worktree_path, args)?;
         Ok(())
     }
     /// Fetch a branch to the given remote using native git authentication.
@@ -583,10 +599,43 @@ impl GitCli {
         from_branch: &str,
         message: &str,
     ) -> Result<String, GitCliError> {
+        self.merge_squash_commit_with_options(
+            repo_path,
+            base_branch,
+            from_branch,
+            message,
+            GitMergeOptions::default(),
+        )
+    }
+
+    pub fn merge_squash_commit_with_options(
+        &self,
+        repo_path: &Path,
+        base_branch: &str,
+        from_branch: &str,
+        message: &str,
+        options: GitMergeOptions,
+    ) -> Result<String, GitCliError> {
         self.git(repo_path, ["checkout", base_branch]).map(|_| ())?;
-        self.git(repo_path, ["merge", "--squash", "--no-commit", from_branch])
-            .map(|_| ())?;
-        self.git(repo_path, ["commit", "-m", message]).map(|_| ())?;
+        let mut merge_args: Vec<OsString> =
+            vec!["merge".into(), "--squash".into(), "--no-commit".into()];
+        if options.no_verify {
+            merge_args.push("--no-verify".into());
+        }
+        merge_args.push(OsString::from(from_branch));
+        if let Err(err) = self.git(repo_path, merge_args) {
+            let _ = self.reset_merge(repo_path);
+            return Err(err);
+        }
+        let mut commit_args: Vec<OsString> =
+            vec!["commit".into(), "-m".into(), OsString::from(message)];
+        if options.no_verify {
+            commit_args.push("--no-verify".into());
+        }
+        if let Err(err) = self.git(repo_path, commit_args) {
+            let _ = self.reset_merge(repo_path);
+            return Err(err);
+        }
         let sha = self
             .git(repo_path, ["rev-parse", "HEAD"])?
             .trim()
@@ -610,6 +659,11 @@ impl GitCli {
             return Ok(());
         }
         self.git(worktree_path, ["merge", "--abort"]).map(|_| ())
+    }
+
+    /// Reset merge state for a worktree (useful after failed squash merges).
+    pub fn reset_merge(&self, worktree_path: &Path) -> Result<(), GitCliError> {
+        self.git(worktree_path, ["reset", "--merge"]).map(|_| ())
     }
 
     pub fn abort_cherry_pick(&self, worktree_path: &Path) -> Result<(), GitCliError> {

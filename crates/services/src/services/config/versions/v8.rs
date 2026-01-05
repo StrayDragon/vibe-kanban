@@ -17,6 +17,10 @@ fn default_pr_auto_description_enabled() -> bool {
     true
 }
 
+fn default_git_no_verify() -> bool {
+    false
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct Config {
     pub config_version: String,
@@ -34,6 +38,8 @@ pub struct Config {
     pub language: UiLanguage,
     #[serde(default = "default_git_branch_prefix")]
     pub git_branch_prefix: String,
+    #[serde(default = "default_git_no_verify")]
+    pub git_no_verify: bool,
     #[serde(default)]
     pub showcases: ShowcaseState,
     #[serde(default = "default_pr_auto_description_enabled")]
@@ -58,6 +64,7 @@ impl Config {
             show_release_notes: old_config.show_release_notes,
             language: old_config.language,
             git_branch_prefix: old_config.git_branch_prefix,
+            git_no_verify: false,
             showcases: old_config.showcases,
             pr_auto_description_enabled: true,
             pr_auto_description_prompt: None,
@@ -107,6 +114,7 @@ impl Default for Config {
             show_release_notes: false,
             language: UiLanguage::default(),
             git_branch_prefix: default_git_branch_prefix(),
+            git_no_verify: default_git_no_verify(),
             showcases: ShowcaseState::default(),
             pr_auto_description_enabled: true,
             pr_auto_description_prompt: None,

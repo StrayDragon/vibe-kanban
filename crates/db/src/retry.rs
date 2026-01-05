@@ -34,10 +34,8 @@ fn is_sqlite_busy(err: &Error) -> bool {
         return false;
     };
 
-    if let Some(code) = db_err.code() {
-        if code == "5" || code == "6" {
-            return true;
-        }
+    if let Some(code) = db_err.code() && (code == "5" || code == "6") {
+        return true;
     }
 
     let message = db_err.message();

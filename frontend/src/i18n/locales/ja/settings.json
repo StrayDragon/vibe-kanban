@@ -133,6 +133,10 @@
             "invalidChars": "無効な文字が含まれています。",
             "controlChars": "制御文字が含まれています。"
           }
+        },
+        "noVerify": {
+          "label": "git フックを --no-verify でスキップ",
+          "helper": "有効にすると、Vibe Kanban は git の commit と merge に --no-verify を付けます。"
         }
       },
       "pullRequests": {

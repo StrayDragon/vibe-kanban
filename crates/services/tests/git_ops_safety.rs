@@ -836,6 +836,78 @@ fn merge_conflict_does_not_move_base_ref() {
 }
 
 #[test]
+fn merge_cleans_stale_squash_state_on_base() {
+    let td = TempDir::new().unwrap();
+    let repo_path = td.path().join("repo");
+    let worktree_path = td.path().join("wt-feature");
+
+    let service = GitService::new();
+    service
+        .initialize_repo_with_main_branch(&repo_path)
+        .expect("init repo");
+
+    let repo = Repository::open(&repo_path).unwrap();
+    configure_user(&repo);
+    checkout_branch(&repo, "main");
+
+    write_file(&repo_path, "conflict.txt", "base\n");
+    commit_all(&repo, "base");
+
+    create_branch_from_head(&repo, "conflict-branch");
+    checkout_branch(&repo, "conflict-branch");
+    write_file(&repo_path, "conflict.txt", "conflict change\n");
+    commit_all(&repo, "conflict change");
+
+    checkout_branch(&repo, "main");
+    write_file(&repo_path, "conflict.txt", "main change\n");
+    commit_all(&repo, "main change");
+
+    create_branch_from_head(&repo, "feature");
+    service
+        .add_worktree(&repo_path, &worktree_path, "feature", false)
+        .expect("create worktree");
+    let wt_repo = Repository::open(&worktree_path).unwrap();
+    write_file(&worktree_path, "feature.txt", "feature\n");
+    commit_all(&wt_repo, "feature change");
+
+    let git_cli = GitCli::new();
+    assert!(
+        git_cli
+            .git(&repo_path, ["merge", "--squash", "--no-commit", "conflict-branch"])
+            .is_err(),
+        "expected squash merge conflict"
+    );
+    let conflicts = git_cli
+        .get_conflicted_files(&repo_path)
+        .expect("conflict scan");
+    assert!(!conflicts.is_empty(), "should have conflicted files");
+
+    let merge_res = service.merge_changes(
+        &repo_path,
+        &worktree_path,
+        "feature",
+        "main",
+        "squash merge",
+    );
+    assert!(merge_res.is_ok(), "merge should recover from stale state");
+
+    let has_staged = git_cli
+        .has_staged_changes(&repo_path)
+        .expect("check staged");
+    assert!(
+        !has_staged,
+        "base repo should not retain staged changes after cleanup"
+    );
+    let conflicts = git_cli
+        .get_conflicted_files(&repo_path)
+        .expect("conflict scan");
+    assert!(
+        conflicts.is_empty(),
+        "base repo should not retain conflicts after cleanup"
+    );
+}
+
+#[test]
 fn merge_delete_vs_modify_conflict_behaves_safely() {
     // main modifies file, feature deletes it -> but now blocked by branch ahead check
     let td = TempDir::new().unwrap();

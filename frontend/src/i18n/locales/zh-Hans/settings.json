@@ -133,6 +133,10 @@
             "invalidChars": "包含无效字符。",
             "controlChars": "包含控制字符。"
           }
+        },
+        "noVerify": {
+          "label": "使用 --no-verify 跳过 git 钩子",
+          "helper": "启用后，Vibe Kanban 会在 git commit 和 merge 时传入 --no-verify。"
         }
       },
       "pullRequests": {

@@ -44,7 +44,7 @@ use git2::BranchType;
 use serde::{Deserialize, Serialize};
 use services::services::{
     container::ContainerService,
-    git::{ConflictOp, GitCliError, GitServiceError},
+    git::{ConflictOp, GitCliError, GitMergeOptions, GitServiceError},
     github::GitHubService,
 };
 use sqlx::Error as SqlxError;
@@ -328,12 +328,14 @@ pub async fn merge_task_attempt(
         commit_message.push_str(description);
     }
 
-    let merge_commit_id = deployment.git().merge_changes(
+    let no_verify = deployment.config().read().await.git_no_verify;
+    let merge_commit_id = deployment.git().merge_changes_with_options(
         &repo.path,
         &worktree_path,
         &workspace.branch,
         &workspace_repo.target_branch,
         &commit_message,
+        GitMergeOptions::new(no_verify),
     )?;
 
     Merge::create_direct(

@@ -505,7 +505,6 @@ impl ExecutionProcess {
 
         retry_on_sqlite_busy(|| {
             let status = status.clone();
-            let completed_at = completed_at.clone();
             async move {
                 sqlx::query!(
                     r#"UPDATE execution_processes

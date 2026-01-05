@@ -461,6 +461,23 @@ export function GeneralSettings() {
               )}
             </p>
           </div>
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="git-no-verify"
+              checked={draft?.git_no_verify ?? false}
+              onCheckedChange={(checked: boolean) =>
+                updateDraft({ git_no_verify: checked })
+              }
+            />
+            <div className="space-y-0.5">
+              <Label htmlFor="git-no-verify" className="cursor-pointer">
+                {t('settings.general.git.noVerify.label')}
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                {t('settings.general.git.noVerify.helper')}
+              </p>
+            </div>
+          </div>
         </CardContent>
       </Card>
 

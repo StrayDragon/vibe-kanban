@@ -133,6 +133,10 @@
             "invalidChars": "유효하지 않은 문자가 포함되어 있습니다.",
             "controlChars": "제어 문자가 포함되어 있습니다."
           }
+        },
+        "noVerify": {
+          "label": "git 훅을 --no-verify로 건너뛰기",
+          "helper": "활성화하면 Vibe Kanban이 git commit 및 merge에 --no-verify를 전달합니다."
         }
       },
       "pullRequests": {
