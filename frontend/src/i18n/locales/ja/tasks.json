@@ -131,6 +131,7 @@
     }
   },
   "attemptHeaderActions": {
+    "task": "タスク",
     "diffs": "Diffs",
     "preview": "Preview",
     "relatedTasks": "Related tasks"
@@ -206,7 +207,9 @@
     "title": "全てのタスク",
     "subtitle": "全プロジェクトを横断",
     "empty": "まだタスクはありません。",
-    "noSearchResults": "検索に一致するタスクはありません。"
+    "noSearchResults": "検索に一致するタスクはありません。",
+    "collapseProject": "プロジェクトを折りたたむ",
+    "expandProject": "プロジェクトを展開"
   },
   "followUp": {
     "clearReviewComments": "Clear Review Comments",

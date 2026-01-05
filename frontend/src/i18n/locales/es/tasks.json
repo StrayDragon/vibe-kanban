@@ -131,6 +131,7 @@
     }
   },
   "attemptHeaderActions": {
+    "task": "Tarea",
     "diffs": "Diffs",
     "preview": "Preview",
     "relatedTasks": "Related tasks"
@@ -206,7 +207,9 @@
     "title": "Todas las tareas",
     "subtitle": "En todos los proyectos",
     "empty": "Aún no hay tareas.",
-    "noSearchResults": "No hay tareas que coincidan con tu búsqueda."
+    "noSearchResults": "No hay tareas que coincidan con tu búsqueda.",
+    "collapseProject": "Contraer proyecto",
+    "expandProject": "Expandir proyecto"
   },
   "followUp": {
     "clearReviewComments": "Clear Review Comments",

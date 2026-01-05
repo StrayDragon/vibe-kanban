@@ -131,6 +131,7 @@
     }
   },
   "attemptHeaderActions": {
+    "task": "작업",
     "diffs": "Diffs",
     "preview": "Preview",
     "relatedTasks": "Related tasks"
@@ -206,7 +207,9 @@
     "title": "모든 작업",
     "subtitle": "모든 프로젝트를 한곳에",
     "empty": "아직 작업이 없습니다.",
-    "noSearchResults": "검색과 일치하는 작업이 없습니다."
+    "noSearchResults": "검색과 일치하는 작업이 없습니다.",
+    "collapseProject": "프로젝트 접기",
+    "expandProject": "프로젝트 펼치기"
   },
   "followUp": {
     "clearReviewComments": "Clear Review Comments",

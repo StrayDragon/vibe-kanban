@@ -9,7 +9,9 @@
     "title": "全部任务",
     "subtitle": "跨项目汇总",
     "empty": "暂无任何任务。",
-    "noSearchResults": "没有任务匹配您的搜索。"
+    "noSearchResults": "没有任务匹配您的搜索。",
+    "collapseProject": "折叠项目",
+    "expandProject": "展开项目"
   },
   "actions": {
     "addTask": "添加任务"
@@ -318,6 +320,7 @@
     }
   },
   "attemptHeaderActions": {
+    "task": "任务",
     "preview": "预览",
     "diffs": "差异",
     "relatedTasks": "相关任务"

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useHotkeysContext } from 'react-hotkeys-hook';
-import { AlertTriangle, Loader2, XCircle } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Loader2, XCircle } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -248,6 +248,9 @@ export function TasksOverview() {
 
   const { query: searchQuery, focusInput } = useSearch();
   const agentLabel = t('attempt.agent');
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
+    () => new Set()
+  );
   const {
     projects,
     projectsById,
@@ -259,6 +262,18 @@ export function TasksOverview() {
     isLoading: tasksLoading,
     error: streamError,
   } = useAllTasks();
+
+  const toggleProjectCollapse = useCallback((projectId: string) => {
+    setCollapsedProjects((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) {
+        next.delete(projectId);
+      } else {
+        next.add(projectId);
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     enableScope(Scope.KANBAN);
@@ -579,6 +594,11 @@ export function TasksOverview() {
             const project = projectsById[projectIdKey];
             const projectTasks = tasksByProject[projectIdKey] ?? [];
             if (projectTasks.length === 0) return null;
+            const isCollapsed = collapsedProjects.has(projectIdKey);
+            const projectName = project?.name ?? 'Unknown Project';
+            const collapseLabel = isCollapsed
+              ? t('overview.expandProject')
+              : t('overview.collapseProject');
 
             const statusCounts = projectTasks.reduce(
               (acc, task) => {
@@ -598,9 +618,29 @@ export function TasksOverview() {
               <section key={projectIdKey} className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-semibold">
-                      {project?.name ?? 'Unknown Project'}
-                    </h2>
+                    <button
+                      type="button"
+                      className="text-muted-foreground transition hover:text-foreground"
+                      aria-label={collapseLabel}
+                      aria-expanded={!isCollapsed}
+                      onClick={() => toggleProjectCollapse(projectIdKey)}
+                    >
+                      <ChevronDown
+                        className={cn(
+                          'h-4 w-4 transition-transform',
+                          isCollapsed && '-rotate-90'
+                        )}
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      className="text-sm font-semibold hover:underline"
+                      onClick={() =>
+                        navigateWithSearch(paths.projectTasks(projectIdKey))
+                      }
+                    >
+                      {projectName}
+                    </button>
                     <span className="text-xs text-muted-foreground">
                       {projectTasks.length} tasks
                     </span>
@@ -619,17 +659,19 @@ export function TasksOverview() {
                   </div>
                 </div>
 
-                <div className="rounded-lg border bg-card divide-y">
-                  {projectTasks.map((task) => (
-                    <TaskListItem
-                      key={task.id}
-                      task={task}
-                      isSelected={selectedTask?.id === task.id}
-                      onSelect={handleViewTaskDetails}
-                      agentLabel={agentLabel}
-                    />
-                  ))}
-                </div>
+                {!isCollapsed && (
+                  <div className="rounded-lg border bg-card divide-y">
+                    {projectTasks.map((task) => (
+                      <TaskListItem
+                        key={task.id}
+                        task={task}
+                        isSelected={selectedTask?.id === task.id}
+                        onSelect={handleViewTaskDetails}
+                        agentLabel={agentLabel}
+                      />
+                    ))}
+                  </div>
+                )}
               </section>
             );
           })}

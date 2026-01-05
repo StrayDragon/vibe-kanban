@@ -9,7 +9,9 @@
     "title": "All Tasks",
     "subtitle": "Across all projects",
     "empty": "No tasks across projects yet.",
-    "noSearchResults": "No tasks match your search."
+    "noSearchResults": "No tasks match your search.",
+    "collapseProject": "Collapse project",
+    "expandProject": "Expand project"
   },
   "actions": {
     "addTask": "Add task"
@@ -318,6 +320,7 @@
     }
   },
   "attemptHeaderActions": {
+    "task": "Task",
     "preview": "Preview",
     "diffs": "Diffs",
     "relatedTasks": "Related tasks"
