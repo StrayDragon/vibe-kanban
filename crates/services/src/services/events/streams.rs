@@ -70,7 +70,7 @@ impl EventService {
                                                     op.value.clone(),
                                                 )
                                                 && project_filter
-                                                    .map_or(true, |id| task.project_id == id)
+                                                    .is_none_or(|id| task.project_id == id)
                                             {
                                                 return Some(Ok(LogMsg::JsonPatch(patch)));
                                             }
@@ -82,7 +82,7 @@ impl EventService {
                                                     op.value.clone(),
                                                 )
                                                 && project_filter
-                                                    .map_or(true, |id| task.project_id == id)
+                                                    .is_none_or(|id| task.project_id == id)
                                             {
                                                 return Some(Ok(LogMsg::JsonPatch(patch)));
                                             }
@@ -104,7 +104,7 @@ impl EventService {
                                     match &event_patch.value.record {
                                         RecordTypes::Task(task) => {
                                             if project_filter
-                                                .map_or(true, |id| task.project_id == id)
+                                                .is_none_or(|id| task.project_id == id)
                                             {
                                                 return Some(Ok(LogMsg::JsonPatch(patch)));
                                             }
@@ -114,7 +114,7 @@ impl EventService {
                                             ..
                                         } => {
                                             if project_filter
-                                                .map_or(true, |id| *deleted_project_id == id)
+                                                .is_none_or(|id| *deleted_project_id == id)
                                             {
                                                 return Some(Ok(LogMsg::JsonPatch(patch)));
                                             }

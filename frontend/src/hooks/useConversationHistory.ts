@@ -94,12 +94,17 @@ export const useConversationHistory = ({
   attempt,
   onEntriesUpdated,
 }: UseConversationHistoryParams): UseConversationHistoryResult => {
-  const { executionProcessesVisible: executionProcessesRaw } =
-    useExecutionProcessesContext();
+  const {
+    executionProcessesVisible: executionProcessesRaw,
+    isLoading: executionProcessesLoading,
+  } = useExecutionProcessesContext();
   const executionProcesses = useRef<ExecutionProcess[]>(executionProcessesRaw);
   const displayedExecutionProcesses = useRef<ExecutionProcessStateStore>({});
   const loadedInitialEntries = useRef(false);
   const streamingProcessIdsRef = useRef<Set<string>>(new Set());
+  const pendingHistoricLoadIdsRef = useRef<Set<string>>(new Set());
+  const knownProcessIdsRef = useRef<Set<string>>(new Set());
+  const hasSeededProcessIdsRef = useRef(false);
   const onEntriesUpdatedRef = useRef<OnEntriesUpdated | null>(null);
 
   const mergeIntoDisplayed = (
@@ -491,17 +496,25 @@ export const useConversationHistory = ({
       ].reverse()) {
         if (executionProcess.status === ExecutionProcessStatus.running)
           continue;
+        if (pendingHistoricLoadIdsRef.current.has(executionProcess.id)) {
+          continue;
+        }
+        pendingHistoricLoadIdsRef.current.add(executionProcess.id);
 
-        const entries =
-          await loadEntriesForHistoricExecutionProcess(executionProcess);
-        const entriesWithKey = entries.map((e, idx) =>
-          patchWithKey(e, executionProcess.id, idx)
-        );
+        try {
+          const entries =
+            await loadEntriesForHistoricExecutionProcess(executionProcess);
+          const entriesWithKey = entries.map((e, idx) =>
+            patchWithKey(e, executionProcess.id, idx)
+          );
 
-        localDisplayedExecutionProcesses[executionProcess.id] = {
-          executionProcess,
-          entries: entriesWithKey,
-        };
+          localDisplayedExecutionProcesses[executionProcess.id] = {
+            executionProcess,
+            entries: entriesWithKey,
+          };
+        } finally {
+          pendingHistoricLoadIdsRef.current.delete(executionProcess.id);
+        }
 
         if (
           flattenEntries(localDisplayedExecutionProcesses).length >
@@ -525,22 +538,28 @@ export const useConversationHistory = ({
         const current = displayedExecutionProcesses.current;
         if (
           current[executionProcess.id] ||
-          executionProcess.status === ExecutionProcessStatus.running
+          executionProcess.status === ExecutionProcessStatus.running ||
+          pendingHistoricLoadIdsRef.current.has(executionProcess.id)
         )
           continue;
 
-        const entries =
-          await loadEntriesForHistoricExecutionProcess(executionProcess);
-        const entriesWithKey = entries.map((e, idx) =>
-          patchWithKey(e, executionProcess.id, idx)
-        );
+        pendingHistoricLoadIdsRef.current.add(executionProcess.id);
+        try {
+          const entries =
+            await loadEntriesForHistoricExecutionProcess(executionProcess);
+          const entriesWithKey = entries.map((e, idx) =>
+            patchWithKey(e, executionProcess.id, idx)
+          );
 
-        mergeIntoDisplayed((state) => {
-          state[executionProcess.id] = {
-            executionProcess,
-            entries: entriesWithKey,
-          };
-        });
+          mergeIntoDisplayed((state) => {
+            state[executionProcess.id] = {
+              executionProcess,
+              entries: entriesWithKey,
+            };
+          });
+        } finally {
+          pendingHistoricLoadIdsRef.current.delete(executionProcess.id);
+        }
 
         if (
           flattenEntries(displayedExecutionProcesses.current).length > batchSize
@@ -658,6 +677,67 @@ export const useConversationHistory = ({
     loadRunningAndEmitWithBackoff,
   ]);
 
+  useEffect(() => {
+    if (executionProcessesLoading) return;
+    if (hasSeededProcessIdsRef.current) return;
+
+    executionProcesses.current.forEach((process) => {
+      knownProcessIdsRef.current.add(process.id);
+    });
+    hasSeededProcessIdsRef.current = true;
+  }, [executionProcessesLoading, idListKey]);
+
+  // Load newly created non-running processes so recent messages appear promptly.
+  useEffect(() => {
+    if (!hasSeededProcessIdsRef.current) return;
+    const currentProcesses = executionProcesses.current;
+    if (!currentProcesses.length) return;
+
+    const newProcesses = currentProcesses.filter(
+      (process) => !knownProcessIdsRef.current.has(process.id)
+    );
+
+    if (newProcesses.length === 0) return;
+
+    newProcesses.forEach((process) => {
+      knownProcessIdsRef.current.add(process.id);
+      ensureProcessVisible(process);
+    });
+    emitEntries(displayedExecutionProcesses.current, 'running', false);
+
+    let cancelled = false;
+    (async () => {
+      for (const process of newProcesses) {
+        if (cancelled) return;
+        if (process.status === ExecutionProcessStatus.running) continue;
+        if (pendingHistoricLoadIdsRef.current.has(process.id)) continue;
+        pendingHistoricLoadIdsRef.current.add(process.id);
+
+        try {
+          const entries =
+            await loadEntriesForHistoricExecutionProcess(process);
+          if (cancelled) return;
+          const entriesWithKey = entries.map((entry, index) =>
+            patchWithKey(entry, process.id, index)
+          );
+          mergeIntoDisplayed((state) => {
+            state[process.id] = {
+              executionProcess: process,
+              entries: entriesWithKey,
+            };
+          });
+          emitEntries(displayedExecutionProcesses.current, 'historic', false);
+        } finally {
+          pendingHistoricLoadIdsRef.current.delete(process.id);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [attempt.id, idListKey, emitEntries, ensureProcessVisible]);
+
   // If an execution process is removed, remove it from the state
   useEffect(() => {
     if (!executionProcessesRaw) return;
@@ -680,6 +760,9 @@ export const useConversationHistory = ({
     displayedExecutionProcesses.current = {};
     loadedInitialEntries.current = false;
     streamingProcessIdsRef.current.clear();
+    pendingHistoricLoadIdsRef.current.clear();
+    knownProcessIdsRef.current.clear();
+    hasSeededProcessIdsRef.current = false;
     emitEntries(displayedExecutionProcesses.current, 'initial', true);
   }, [attempt.id, emitEntries]);
 
