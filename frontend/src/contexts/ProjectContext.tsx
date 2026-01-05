@@ -28,8 +28,8 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
 
   // Extract projectId from current route path
   const projectId = useMemo(() => {
-    const match = location.pathname.match(/^\/projects\/([^/]+)/);
-    return match ? match[1] : undefined;
+    const match = location.pathname.match(/^\/(projects|tasks)\/([^/]+)/);
+    return match ? match[2] : undefined;
   }, [location.pathname]);
 
   const { projectsById, isLoading, error } = useProjects();

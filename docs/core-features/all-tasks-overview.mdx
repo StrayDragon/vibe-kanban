@@ -1,0 +1,80 @@
+---
+title: "All Tasks Overview"
+description: "How to use the cross-project All Tasks page and confirm it matches the project kanban task panel"
+---
+
+The All Tasks page gives you one place to review and manage tasks across all
+projects. It uses the same task detail and attempt panels as the project
+kanban, so the behavior and actions stay consistent.
+
+## Open the page
+
+- Use the main navigation menu and select **All Tasks**.
+- Or go directly to `/tasks`.
+
+## What you can do
+
+- View tasks grouped by project, with per-project status counts.
+- See each task status badge (To Do, In Progress, In Review, Done, Cancelled).
+- Use the global search input to filter tasks by title/description.
+- Click any task to open the right-side panel.
+- Create new tasks from the project kanban only (All Tasks is read-only for task creation).
+
+## Panel behavior (same as project kanban)
+
+The All Tasks detail panel reuses the same components as the project kanban:
+
+- **Task panel**: title, description, attempt list, and create attempt action.
+- **Attempt panel**: logs, follow-up, todo list, diffs, and preview.
+- **Actions**: edit, duplicate, delete, open in editor, view processes, etc.
+
+Routes update the same way, just under `/tasks`:
+
+- Task: `/tasks/:projectId/:taskId`
+- Attempt: `/tasks/:projectId/:taskId/attempts/:attemptId`
+
+If a task has no attempts yet, the sidebar shows a short empty state with a
+**Create new attempt** button. This keeps the workflow focused on the same
+sidebar experience as the project kanban.
+
+## After merging to mainline
+
+When you pull the merged changes locally, run:
+
+```bash
+pnpm i
+```
+
+If you do not have SQLx CLI yet:
+
+```bash
+cargo install sqlx-cli --no-default-features --features sqlite
+```
+
+Refresh the SQLx offline cache:
+
+```bash
+pnpm run prepare-db
+```
+
+Then verify and start the dev server:
+
+```bash
+pnpm run check
+pnpm run dev
+```
+
+If ports are in use, you can override them:
+
+```bash
+FRONTEND_PORT=4001 BACKEND_PORT=4002 pnpm run dev
+```
+
+Finally, open `/tasks` and confirm the panel matches the project kanban view.
+
+## Troubleshooting
+
+- **No tasks listed**: create tasks in any project first, then return to
+  `/tasks`.
+- **WebSocket errors**: restart the dev server and ensure `BACKEND_PORT`
+  matches the Vite proxy target.

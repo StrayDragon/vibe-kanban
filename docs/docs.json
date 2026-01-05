@@ -49,6 +49,7 @@
         "pages": [
           "core-features/creating-projects",
           "core-features/creating-tasks",
+          "core-features/all-tasks-overview",
           "core-features/monitoring-task-execution",
           "core-features/testing-your-application",
           "core-features/reviewing-code-changes",

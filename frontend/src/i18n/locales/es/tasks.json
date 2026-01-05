@@ -202,6 +202,12 @@
     "noSearchResults": "Ninguna tarea coincide con tu búsqueda.",
     "noTasks": "No se encontraron tareas para este proyecto."
   },
+  "overview": {
+    "title": "Todas las tareas",
+    "subtitle": "En todos los proyectos",
+    "empty": "Aún no hay tareas.",
+    "noSearchResults": "No hay tareas que coincidan con tu búsqueda."
+  },
   "followUp": {
     "clearReviewComments": "Clear Review Comments",
     "edit": "Edit",

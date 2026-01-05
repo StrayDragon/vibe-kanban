@@ -37,16 +37,19 @@ use crate::{
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TaskQuery {
-    pub project_id: Uuid,
+    pub project_id: Option<Uuid>,
 }
 
 pub async fn get_tasks(
     State(deployment): State<DeploymentImpl>,
     Query(query): Query<TaskQuery>,
 ) -> Result<ResponseJson<ApiResponse<Vec<TaskWithAttemptStatus>>>, ApiError> {
-    let tasks =
-        Task::find_by_project_id_with_attempt_status(&deployment.db().pool, query.project_id)
-            .await?;
+    let tasks = match query.project_id {
+        Some(project_id) => {
+            Task::find_by_project_id_with_attempt_status(&deployment.db().pool, project_id).await?
+        }
+        None => Task::find_all_with_attempt_status(&deployment.db().pool).await?,
+    };
 
     Ok(ResponseJson(ApiResponse::success(tasks)))
 }
@@ -66,7 +69,7 @@ pub async fn stream_tasks_ws(
 async fn handle_tasks_ws(
     socket: WebSocket,
     deployment: DeploymentImpl,
-    project_id: Uuid,
+    project_id: Option<Uuid>,
 ) -> anyhow::Result<()> {
     // Get the raw stream and convert LogMsg to WebSocket messages
     let mut stream = deployment

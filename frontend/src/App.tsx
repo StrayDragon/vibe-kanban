@@ -4,6 +4,7 @@ import { I18nextProvider } from 'react-i18next';
 import i18n from '@/i18n';
 import { Projects } from '@/pages/Projects';
 import { ProjectTasks } from '@/pages/ProjectTasks';
+import { TasksOverview } from '@/pages/TasksOverview';
 import { FullAttemptLogsPage } from '@/pages/FullAttemptLogs';
 import { NormalLayout } from '@/components/layout/NormalLayout';
 import { usePreviousPath } from '@/hooks/usePreviousPath';
@@ -105,13 +106,22 @@ function AppContent() {
               />
 
               <Route element={<NormalLayout />}>
-                <Route path="/" element={<Projects />} />
-                <Route path="/projects" element={<Projects />} />
-                <Route path="/projects/:projectId" element={<Projects />} />
-                <Route
-                  path="/projects/:projectId/tasks"
-                  element={<ProjectTasks />}
-                />
+              <Route path="/" element={<Projects />} />
+              <Route path="/projects" element={<Projects />} />
+              <Route path="/projects/:projectId" element={<Projects />} />
+              <Route path="/tasks" element={<TasksOverview />} />
+              <Route
+                path="/tasks/:projectId/:taskId"
+                element={<TasksOverview />}
+              />
+              <Route
+                path="/tasks/:projectId/:taskId/attempts/:attemptId"
+                element={<TasksOverview />}
+              />
+              <Route
+                path="/projects/:projectId/tasks"
+                element={<ProjectTasks />}
+              />
                 <Route path="/settings/*" element={<SettingsLayout />}>
                   <Route index element={<Navigate to="general" replace />} />
                   <Route path="general" element={<GeneralSettings />} />

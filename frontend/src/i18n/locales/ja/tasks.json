@@ -202,6 +202,12 @@
     "noSearchResults": "検索条件に一致するタスクがありません。",
     "noTasks": "このプロジェクトにタスクが見つかりません。"
   },
+  "overview": {
+    "title": "全てのタスク",
+    "subtitle": "全プロジェクトを横断",
+    "empty": "まだタスクはありません。",
+    "noSearchResults": "検索に一致するタスクはありません。"
+  },
   "followUp": {
     "clearReviewComments": "Clear Review Comments",
     "edit": "Edit",

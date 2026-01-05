@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {
   FolderOpen,
+  List,
   Settings,
   BookOpen,
   MessageCircleQuestion,
@@ -25,7 +26,10 @@ import { useOpenProjectInEditor } from '@/hooks/useOpenProjectInEditor';
 import { OpenInIdeButton } from '@/components/ide/OpenInIdeButton';
 import { useProjectRepos } from '@/hooks';
 
-const INTERNAL_NAV = [{ label: 'Projects', icon: FolderOpen, to: '/projects' }];
+const INTERNAL_NAV = [
+  { label: 'All Tasks', icon: List, to: '/tasks' },
+  { label: 'Projects', icon: FolderOpen, to: '/projects' },
+];
 
 const EXTERNAL_LINKS = [
   {
@@ -55,9 +59,13 @@ export function Navbar() {
   const { projectId, project } = useProject();
   const { query, setQuery, active, clear, registerInputRef } = useSearch();
   const handleOpenInEditor = useOpenProjectInEditor(project || null);
+  const isOverviewRoute = location.pathname.startsWith('/tasks');
 
   const { data: repos } = useProjectRepos(projectId);
   const isSingleRepoProject = repos?.length === 1;
+  const showOpenInIde = Boolean(projectId && isSingleRepoProject);
+  const showCreateTask = Boolean(projectId && !isOverviewRoute);
+  const showProjectActions = showOpenInIde || showCreateTask;
 
   const setSearchBarRef = useCallback(
     (node: HTMLInputElement | null) => {
@@ -99,24 +107,26 @@ export function Navbar() {
           </div>
 
           <div className="flex flex-1 items-center justify-end gap-1">
-            {projectId ? (
+            {showProjectActions ? (
               <>
                 <div className="flex items-center gap-1">
-                  {isSingleRepoProject && (
+                  {showOpenInIde && (
                     <OpenInIdeButton
                       onClick={handleOpenInIDE}
                       className="h-9 w-9"
                     />
                   )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-9 w-9"
-                    onClick={handleCreateTask}
-                    aria-label="Create new task"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Button>
+                  {showCreateTask && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9"
+                      onClick={handleCreateTask}
+                      aria-label="Create new task"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
                 <NavDivider />
               </>

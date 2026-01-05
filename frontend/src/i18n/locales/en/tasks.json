@@ -5,6 +5,12 @@
     "createFirst": "Create First Task",
     "noSearchResults": "No tasks match your search."
   },
+  "overview": {
+    "title": "All Tasks",
+    "subtitle": "Across all projects",
+    "empty": "No tasks across projects yet.",
+    "noSearchResults": "No tasks match your search."
+  },
   "actions": {
     "addTask": "Add task"
   },

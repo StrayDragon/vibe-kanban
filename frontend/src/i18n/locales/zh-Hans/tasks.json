@@ -5,6 +5,12 @@
     "createFirst": "创建第一个任务",
     "noSearchResults": "没有任务匹配您的搜索。"
   },
+  "overview": {
+    "title": "全部任务",
+    "subtitle": "跨项目汇总",
+    "empty": "暂无任何任务。",
+    "noSearchResults": "没有任务匹配您的搜索。"
+  },
   "actions": {
     "addTask": "添加任务"
   },

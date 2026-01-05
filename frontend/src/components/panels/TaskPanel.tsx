@@ -15,12 +15,24 @@ import { DataTable, type ColumnDef } from '@/components/ui/table';
 
 interface TaskPanelProps {
   task: TaskWithAttemptStatus | null;
+  projectId?: string;
+  buildAttemptPath?: (
+    projectId: string,
+    taskId: string,
+    attemptId: string
+  ) => string;
 }
 
-const TaskPanel = ({ task }: TaskPanelProps) => {
+const TaskPanel = ({
+  task,
+  projectId: projectIdOverride,
+  buildAttemptPath,
+}: TaskPanelProps) => {
   const { t } = useTranslation('tasks');
   const navigate = useNavigateWithSearch();
   const { projectId } = useProject();
+  const resolvedProjectId = projectIdOverride ?? projectId;
+  const attemptPath = buildAttemptPath ?? paths.attempt;
 
   const {
     data: attempts = [],
@@ -115,9 +127,9 @@ const TaskPanel = ({ task }: TaskPanelProps) => {
                 columns={attemptColumns}
                 keyExtractor={(attempt) => attempt.id}
                 onRowClick={(attempt) => {
-                  if (projectId) {
+                  if (resolvedProjectId) {
                     navigate(
-                      paths.attempt(projectId, attempt.task_id, attempt.id)
+                      attemptPath(resolvedProjectId, attempt.task_id, attempt.id)
                     );
                   }
                 }}
@@ -140,8 +152,10 @@ const TaskPanel = ({ task }: TaskPanelProps) => {
                 columns={attemptColumns}
                 keyExtractor={(attempt) => attempt.id}
                 onRowClick={(attempt) => {
-                  if (projectId && task.id) {
-                    navigate(paths.attempt(projectId, task.id, attempt.id));
+                  if (resolvedProjectId && task.id) {
+                    navigate(
+                      attemptPath(resolvedProjectId, task.id, attempt.id)
+                    );
                   }
                 }}
                 emptyState={t('taskPanel.noAttempts')}

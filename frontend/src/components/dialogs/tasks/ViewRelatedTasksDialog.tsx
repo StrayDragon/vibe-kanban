@@ -20,11 +20,18 @@ export interface ViewRelatedTasksDialogProps {
   projectId: string;
   attempt: Workspace | null;
   onNavigateToTask?: (taskId: string) => void;
+  allowCreateSubtask?: boolean;
 }
 
 const ViewRelatedTasksDialogImpl =
   NiceModal.create<ViewRelatedTasksDialogProps>(
-    ({ attemptId, projectId, attempt, onNavigateToTask }) => {
+    ({
+      attemptId,
+      projectId,
+      attempt,
+      onNavigateToTask,
+      allowCreateSubtask,
+    }) => {
       const modal = useModal();
       const { t } = useTranslation('tasks');
       const {
@@ -83,7 +90,7 @@ const ViewRelatedTasksDialogImpl =
       };
 
       const handleCreateSubtask = async () => {
-        if (!projectId || !attempt) return;
+        if (!projectId || !attempt || allowCreateSubtask === false) return;
 
         // Close immediately - user intent is to create a subtask
         modal.hide();
@@ -149,15 +156,17 @@ const ViewRelatedTasksDialogImpl =
                           count: relatedTasks.length,
                         })}
                       </span>
-                      <span>
-                        <Button
-                          variant="icon"
-                          onClick={handleCreateSubtask}
-                          disabled={!projectId || !attempt}
-                        >
-                          <PlusIcon size={16} />
-                        </Button>
-                      </span>
+                      {allowCreateSubtask !== false && (
+                        <span>
+                          <Button
+                            variant="icon"
+                            onClick={handleCreateSubtask}
+                            disabled={!projectId || !attempt}
+                          >
+                            <PlusIcon size={16} />
+                          </Button>
+                        </span>
+                      )}
                     </div>
                   }
                 />

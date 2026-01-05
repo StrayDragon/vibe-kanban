@@ -21,7 +21,7 @@ import { EditBranchNameDialog } from '@/components/dialogs/tasks/EditBranchNameD
 import { useProject } from '@/contexts/ProjectContext';
 import { openTaskForm } from '@/lib/openTaskForm';
 
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 interface ActionsDropdownProps {
   task?: TaskWithAttemptStatus | null;
@@ -33,6 +33,8 @@ export function ActionsDropdown({ task, attempt }: ActionsDropdownProps) {
   const { projectId } = useProject();
   const openInEditor = useOpenInEditor(attempt?.id);
   const navigate = useNavigate();
+  const location = useLocation();
+  const isOverviewRoute = location.pathname.startsWith('/tasks');
 
   const hasAttemptActions = Boolean(attempt);
   const hasTaskActions = Boolean(task);
@@ -81,6 +83,7 @@ export function ActionsDropdown({ task, attempt }: ActionsDropdownProps) {
       attemptId: attempt.id,
       projectId,
       attempt,
+      allowCreateSubtask: !isOverviewRoute,
       onNavigateToTask: (taskId: string) => {
         if (projectId) {
           navigate(`/projects/${projectId}/tasks/${taskId}/attempts/latest`);
@@ -166,12 +169,14 @@ export function ActionsDropdown({ task, attempt }: ActionsDropdownProps) {
               <DropdownMenuItem onClick={handleCreateNewAttempt}>
                 {t('actionsMenu.createNewAttempt')}
               </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!projectId || !attempt}
-                onClick={handleCreateSubtask}
-              >
-                {t('actionsMenu.createSubtask')}
-              </DropdownMenuItem>
+              {!isOverviewRoute && (
+                <DropdownMenuItem
+                  disabled={!projectId || !attempt}
+                  onClick={handleCreateSubtask}
+                >
+                  {t('actionsMenu.createSubtask')}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem
                 disabled={!attempt?.id || !task}
                 onClick={handleGitActions}

@@ -202,6 +202,12 @@
     "noSearchResults": "검색 결과와 일치하는 작업이 없습니다.",
     "noTasks": "이 프로젝트에 대한 작업을 찾을 수 없습니다."
   },
+  "overview": {
+    "title": "모든 작업",
+    "subtitle": "모든 프로젝트를 한곳에",
+    "empty": "아직 작업이 없습니다.",
+    "noSearchResults": "검색과 일치하는 작업이 없습니다."
+  },
   "followUp": {
     "clearReviewComments": "Clear Review Comments",
     "edit": "Edit",

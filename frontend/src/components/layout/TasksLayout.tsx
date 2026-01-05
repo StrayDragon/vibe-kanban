@@ -13,6 +13,7 @@ interface TasksLayoutProps {
   mode: LayoutMode;
   isMobile?: boolean;
   rightHeader?: ReactNode;
+  kanbanLabel?: string;
 }
 
 type SplitSizes = [number, number];
@@ -176,12 +177,14 @@ function DesktopSimple({
   aux,
   mode,
   rightHeader,
+  kanbanLabel,
 }: {
   kanban: ReactNode;
   attempt: ReactNode;
   aux: ReactNode;
   mode: LayoutMode;
   rightHeader?: ReactNode;
+  kanbanLabel?: string;
 }) {
   const [outerSizes] = useState<SplitSizes>(() =>
     loadSizes(STORAGE_KEYS.KANBAN_ATTEMPT, DEFAULT_KANBAN_ATTEMPT)
@@ -211,21 +214,21 @@ function DesktopSimple({
         }
       }}
     >
-      <Panel
-        id="kanban"
-        order={1}
-        defaultSize={outerSizes[0]}
-        minSize={MIN_PANEL_SIZE}
-        collapsible
-        collapsedSize={0}
-        onCollapse={() => setIsKanbanCollapsed(true)}
-        onExpand={() => setIsKanbanCollapsed(false)}
-        className="min-w-0 min-h-0 overflow-hidden"
-        role="region"
-        aria-label="Kanban board"
-      >
-        {kanban}
-      </Panel>
+    <Panel
+      id="kanban"
+      order={1}
+      defaultSize={outerSizes[0]}
+      minSize={MIN_PANEL_SIZE}
+      collapsible
+      collapsedSize={0}
+      onCollapse={() => setIsKanbanCollapsed(true)}
+      onExpand={() => setIsKanbanCollapsed(false)}
+      className="min-w-0 min-h-0 overflow-hidden"
+      role="region"
+      aria-label={kanbanLabel ?? 'Kanban board'}
+    >
+      {kanban}
+    </Panel>
 
       <PanelResizeHandle
         id="handle-kr"
@@ -275,6 +278,7 @@ export function TasksLayout({
   mode,
   isMobile = false,
   rightHeader,
+  kanbanLabel,
 }: TasksLayoutProps) {
   const desktopKey = isPanelOpen ? 'desktop-with-panel' : 'kanban-only';
 
@@ -312,7 +316,7 @@ export function TasksLayout({
       <div
         className="h-full min-h-0 min-w-0 overflow-hidden"
         role="region"
-        aria-label="Kanban board"
+        aria-label={kanbanLabel ?? 'Kanban board'}
       >
         {kanban}
       </div>
@@ -325,6 +329,7 @@ export function TasksLayout({
         aux={aux}
         mode={mode}
         rightHeader={rightHeader}
+        kanbanLabel={kanbanLabel}
       />
     );
   }
