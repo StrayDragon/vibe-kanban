@@ -229,7 +229,11 @@
     "empty": "아직 작업이 없습니다.",
     "noSearchResults": "검색과 일치하는 작업이 없습니다.",
     "collapseProject": "프로젝트 접기",
-    "expandProject": "프로젝트 펼치기"
+    "expandProject": "프로젝트 펼치기",
+    "collapseStatus": "{{status}} 접기",
+    "expandStatus": "{{status}} 펼치기",
+    "foldStatusButton": "상태 접기",
+    "foldStatusLabel": "자동으로 접을 상태"
   },
   "followUp": {
     "clearReviewComments": "Clear Review Comments",

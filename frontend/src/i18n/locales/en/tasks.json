@@ -11,7 +11,11 @@
     "empty": "No tasks across projects yet.",
     "noSearchResults": "No tasks match your search.",
     "collapseProject": "Collapse project",
-    "expandProject": "Expand project"
+    "expandProject": "Expand project",
+    "collapseStatus": "Collapse {{status}}",
+    "expandStatus": "Expand {{status}}",
+    "foldStatusButton": "Fold statuses",
+    "foldStatusLabel": "Auto-fold statuses"
   },
   "actions": {
     "addTask": "Add task"

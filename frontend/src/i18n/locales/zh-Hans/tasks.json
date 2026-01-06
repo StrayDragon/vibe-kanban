@@ -11,7 +11,11 @@
     "empty": "暂无任何任务。",
     "noSearchResults": "没有任务匹配您的搜索。",
     "collapseProject": "折叠项目",
-    "expandProject": "展开项目"
+    "expandProject": "展开项目",
+    "collapseStatus": "折叠{{status}}",
+    "expandStatus": "展开{{status}}",
+    "foldStatusButton": "折叠状态",
+    "foldStatusLabel": "自动折叠状态"
   },
   "actions": {
     "addTask": "添加任务"

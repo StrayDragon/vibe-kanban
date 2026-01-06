@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useHotkeysContext } from 'react-hotkeys-hook';
-import { AlertTriangle, ChevronDown, Loader2, XCircle } from 'lucide-react';
+import {
+  AlertTriangle,
+  ChevronDown,
+  Loader2,
+  SlidersHorizontal,
+  XCircle,
+} from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -10,6 +16,14 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Loader } from '@/components/ui/loader';
 import { NewCard, NewCardHeader } from '@/components/ui/new-card';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -81,6 +95,45 @@ const STATUS_RANK = new Map(
 );
 
 const getStatusRank = (status: TaskStatus) => STATUS_RANK.get(status) ?? 0;
+
+const STATUS_SET = new Set<TaskStatus>(STATUS_ORDER);
+const COLLAPSED_STATUS_STORAGE_KEY = 'tasksOverview.collapsedStatuses';
+const DEFAULT_COLLAPSED_STATUSES: TaskStatus[] = ['cancelled', 'done', 'todo'];
+
+const buildStatusGroupKey = (projectId: string, status: TaskStatus) =>
+  `${projectId}:${status}`;
+
+function loadCollapsedStatuses(): Set<TaskStatus> {
+  try {
+    const stored = localStorage.getItem(COLLAPSED_STATUS_STORAGE_KEY);
+    if (!stored) return new Set(DEFAULT_COLLAPSED_STATUSES);
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return new Set(DEFAULT_COLLAPSED_STATUSES);
+    const next = new Set<TaskStatus>();
+    parsed.forEach((value) => {
+      if (typeof value === 'string' && STATUS_SET.has(value as TaskStatus)) {
+        next.add(value as TaskStatus);
+      }
+    });
+    if (parsed.length > 0 && next.size === 0) {
+      return new Set(DEFAULT_COLLAPSED_STATUSES);
+    }
+    return next;
+  } catch {
+    return new Set(DEFAULT_COLLAPSED_STATUSES);
+  }
+}
+
+function saveCollapsedStatuses(statuses: Set<TaskStatus>): void {
+  try {
+    localStorage.setItem(
+      COLLAPSED_STATUS_STORAGE_KEY,
+      JSON.stringify([...statuses])
+    );
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 function TaskStatusBadge({
   status,
@@ -251,6 +304,12 @@ export function TasksOverview() {
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
     () => new Set()
   );
+  const [collapsedStatuses, setCollapsedStatuses] = useState<Set<TaskStatus>>(
+    () => loadCollapsedStatuses()
+  );
+  const [statusGroupOpenOverrides, setStatusGroupOpenOverrides] = useState<
+    Record<string, boolean>
+  >({});
   const { projects, projectsById, error: projectsError } = useProjects();
   const {
     tasks,
@@ -258,6 +317,11 @@ export function TasksOverview() {
     isLoading: tasksLoading,
     error: streamError,
   } = useAllTasks();
+
+  useEffect(() => {
+    saveCollapsedStatuses(collapsedStatuses);
+    setStatusGroupOpenOverrides({});
+  }, [collapsedStatuses]);
 
   const toggleProjectCollapse = useCallback((projectId: string) => {
     setCollapsedProjects((prev) => {
@@ -283,6 +347,18 @@ export function TasksOverview() {
     () => (taskId ? (tasksById[taskId] ?? null) : null),
     [taskId, tasksById]
   );
+
+  useEffect(() => {
+    if (!selectedTask) return;
+    const key = buildStatusGroupKey(
+      selectedTask.project_id,
+      selectedTask.status
+    );
+    setStatusGroupOpenOverrides((prev) => {
+      if (prev[key]) return prev;
+      return { ...prev, [key]: true };
+    });
+  }, [collapsedStatuses, selectedTask]);
 
   const isPanelOpen = Boolean(taskId && selectedTask);
 
@@ -519,6 +595,29 @@ export function TasksOverview() {
     [cycleView]
   );
 
+  const toggleCollapsedStatus = useCallback((status: TaskStatus) => {
+    setCollapsedStatuses((prev) => {
+      const next = new Set(prev);
+      if (next.has(status)) {
+        next.delete(status);
+      } else {
+        next.add(status);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleStatusGroup = useCallback(
+    (projectId: string, status: TaskStatus) => {
+      const key = buildStatusGroupKey(projectId, status);
+      setStatusGroupOpenOverrides((prev) => {
+        const current = prev[key] ?? !collapsedStatuses.has(status);
+        return { ...prev, [key]: !current };
+      });
+    },
+    [collapsedStatuses]
+  );
+
   const isFollowUpReadyActive = activeScopes.includes(Scope.FOLLOW_UP_READY);
 
   useKeyOpenDetails(
@@ -573,13 +672,51 @@ export function TasksOverview() {
     ) : (
       <div className="h-full w-full overflow-y-auto">
         <div className="max-w-5xl mx-auto px-6 py-6 space-y-6">
-          <div className="space-y-1">
-            <h1 className="text-2xl font-semibold tracking-tight">
-              {t('overview.title')}
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              {t('overview.subtitle')}
-            </p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1">
+              <h1 className="text-2xl font-semibold tracking-tight">
+                {t('overview.title')}
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                {t('overview.subtitle')}
+              </p>
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  aria-label={t('overview.foldStatusLabel')}
+                >
+                  <SlidersHorizontal className="h-4 w-4" />
+                  {t('overview.foldStatusButton')}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>
+                  {t('overview.foldStatusLabel')}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {STATUS_ORDER.map((status) => (
+                  <DropdownMenuCheckboxItem
+                    key={status}
+                    checked={collapsedStatuses.has(status)}
+                    onCheckedChange={(checked) => {
+                      const shouldCollapse = checked === true;
+                      if (
+                        shouldCollapse === collapsedStatuses.has(status)
+                      ) {
+                        return;
+                      }
+                      toggleCollapsedStatus(status);
+                    }}
+                  >
+                    {statusLabels[status]}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
           {orderedProjectIds.map((projectIdKey) => {
@@ -605,6 +742,17 @@ export function TasksOverview() {
                 cancelled: 0,
               } as Record<TaskStatus, number>
             );
+            const tasksByStatus = STATUS_ORDER.reduce(
+              (acc, status) => {
+                acc[status] = [];
+                return acc;
+              },
+              {} as Record<TaskStatus, Task[]>
+            );
+
+            projectTasks.forEach((task) => {
+              tasksByStatus[task.status].push(task);
+            });
 
             return (
               <section key={projectIdKey} className="space-y-3">
@@ -652,16 +800,69 @@ export function TasksOverview() {
                 </div>
 
                 {!isCollapsed && (
-                  <div className="rounded-lg border bg-card divide-y">
-                    {projectTasks.map((task) => (
-                      <TaskListItem
-                        key={task.id}
-                        task={task}
-                        isSelected={selectedTask?.id === task.id}
-                        onSelect={handleViewTaskDetails}
-                        agentLabel={agentLabel}
-                      />
-                    ))}
+                  <div className="space-y-2">
+                    {STATUS_ORDER.map((status) => {
+                      const statusTasks = tasksByStatus[status];
+                      if (statusTasks.length === 0) return null;
+                      const groupKey = buildStatusGroupKey(
+                        projectIdKey,
+                        status
+                      );
+                      const isOpen =
+                        statusGroupOpenOverrides[groupKey] ??
+                        !collapsedStatuses.has(status);
+                      const toggleLabel = isOpen
+                        ? t('overview.collapseStatus', {
+                            status: statusLabels[status],
+                          })
+                        : t('overview.expandStatus', {
+                            status: statusLabels[status],
+                          });
+
+                      return (
+                        <div
+                          key={status}
+                          className="rounded-lg border bg-card"
+                        >
+                          <button
+                            type="button"
+                            className="w-full flex items-center justify-between px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
+                            aria-label={toggleLabel}
+                            aria-expanded={isOpen}
+                            onClick={() =>
+                              toggleStatusGroup(projectIdKey, status)
+                            }
+                          >
+                            <div className="flex items-center gap-2">
+                              <ChevronDown
+                                className={cn(
+                                  'h-4 w-4 transition-transform',
+                                  !isOpen && '-rotate-90'
+                                )}
+                              />
+                              <TaskStatusBadge
+                                status={status}
+                                count={statusTasks.length}
+                                className="text-[9px]"
+                              />
+                            </div>
+                          </button>
+                          {isOpen && (
+                            <div className="divide-y">
+                              {statusTasks.map((task) => (
+                                <TaskListItem
+                                  key={task.id}
+                                  task={task}
+                                  isSelected={selectedTask?.id === task.id}
+                                  onSelect={handleViewTaskDetails}
+                                  agentLabel={agentLabel}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </section>

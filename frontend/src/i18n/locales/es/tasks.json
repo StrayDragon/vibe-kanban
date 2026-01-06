@@ -229,7 +229,11 @@
     "empty": "Aún no hay tareas.",
     "noSearchResults": "No hay tareas que coincidan con tu búsqueda.",
     "collapseProject": "Contraer proyecto",
-    "expandProject": "Expandir proyecto"
+    "expandProject": "Expandir proyecto",
+    "collapseStatus": "Contraer {{status}}",
+    "expandStatus": "Expandir {{status}}",
+    "foldStatusButton": "Plegar estados",
+    "foldStatusLabel": "Estados que se pliegan automáticamente"
   },
   "followUp": {
     "clearReviewComments": "Clear Review Comments",

@@ -229,7 +229,11 @@
     "empty": "まだタスクはありません。",
     "noSearchResults": "検索に一致するタスクはありません。",
     "collapseProject": "プロジェクトを折りたたむ",
-    "expandProject": "プロジェクトを展開"
+    "expandProject": "プロジェクトを展開",
+    "collapseStatus": "{{status}}を折りたたむ",
+    "expandStatus": "{{status}}を展開",
+    "foldStatusButton": "ステータスを折りたたむ",
+    "foldStatusLabel": "自動で折りたたむステータス"
   },
   "followUp": {
     "clearReviewComments": "Clear Review Comments",
