@@ -1018,7 +1018,6 @@ pub trait ContainerService {
             && run_reason != &ExecutionProcessRunReason::DevServer
         {
             Task::update_status(&self.db().pool, task.id, TaskStatus::InProgress).await?;
-
         }
         // Create new execution process record
         // Capture current HEAD per repository as the "before" commit for this execution

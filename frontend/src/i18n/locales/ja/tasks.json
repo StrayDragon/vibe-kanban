@@ -193,6 +193,10 @@
     "filesChanged_one": "{{count}} file changed",
     "filesChanged_other": "{{count}} files changed",
     "noChanges": "No changes have been made yet",
+    "tooLarge": "差分が大きすぎてプレビューできません。",
+    "summaryFailed": "差分サマリーを計算できませんでした。プレビューは一時停止されています。",
+    "tooLargeSummary": "{{files}} ファイル、+{{added}} / -{{deleted}}、{{bytes}}",
+    "forceLoad": "それでも強制読み込み",
     "viewModes": {
       "inline": "Inline view",
       "split": "Split view"

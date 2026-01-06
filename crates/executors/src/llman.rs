@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::{Path, PathBuf}};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use tokio::fs;
 
@@ -20,9 +23,7 @@ pub fn resolve_claude_code_config_path(override_path: Option<&str>) -> Option<Pa
 pub async fn read_claude_code_groups(
     path: &Path,
 ) -> Result<HashMap<String, HashMap<String, String>>, ExecutorError> {
-    let contents = fs::read_to_string(path)
-        .await
-        .map_err(ExecutorError::Io)?;
+    let contents = fs::read_to_string(path).await.map_err(ExecutorError::Io)?;
     parse_claude_code_groups(&contents)
 }
 
@@ -38,9 +39,7 @@ pub fn parse_claude_code_groups(
 
     for (group_name, group_value) in groups_table {
         let Some(group_table) = group_value.as_table() else {
-            tracing::warn!(
-                "LLMAN group '{group_name}' is not a table; skipping"
-            );
+            tracing::warn!("LLMAN group '{group_name}' is not a table; skipping");
             continue;
         };
 
@@ -49,9 +48,7 @@ pub fn parse_claude_code_groups(
             if let Some(value_str) = value.as_str() {
                 env.insert(key.to_string(), value_str.to_string());
             } else {
-                tracing::warn!(
-                    "LLMAN group '{group_name}' key '{key}' is not a string; skipping"
-                );
+                tracing::warn!("LLMAN group '{group_name}' key '{key}' is not a string; skipping");
             }
         }
 
@@ -66,10 +63,10 @@ fn expand_tilde(path: &str) -> PathBuf {
         return dirs::home_dir().unwrap_or_else(|| PathBuf::from(path));
     }
 
-    if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest);
-        }
+    if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\"))
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest);
     }
 
     PathBuf::from(path)
@@ -96,7 +93,10 @@ child = { foo = "bar" }
 
         let groups = parse_claude_code_groups(contents).expect("parse should succeed");
         let minimax = groups.get("minimax").expect("minimax group");
-        assert_eq!(minimax.get("ANTHROPIC_AUTH_TOKEN"), Some(&"token".to_string()));
+        assert_eq!(
+            minimax.get("ANTHROPIC_AUTH_TOKEN"),
+            Some(&"token".to_string())
+        );
         assert_eq!(minimax.get("API_TIMEOUT_MS"), Some(&"3000".to_string()));
         assert!(!minimax.contains_key("MAX_RETRIES"));
 
@@ -109,8 +109,7 @@ child = { foo = "bar" }
 
     #[test]
     fn resolve_path_prefers_override() {
-        let path = resolve_claude_code_config_path(Some("/tmp/llman.toml"))
-            .expect("path");
+        let path = resolve_claude_code_config_path(Some("/tmp/llman.toml")).expect("path");
         assert_eq!(path, PathBuf::from("/tmp/llman.toml"));
     }
 }

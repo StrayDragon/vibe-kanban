@@ -139,6 +139,21 @@
           "helper": "Cuando está habilitado, Vibe Kanban pasa --no-verify en git commit y merge."
         }
       },
+      "diffPreview": {
+        "title": "Vista previa de diferencias",
+        "description": "Controla cuándo se bloquean las diferencias grandes en la vista previa.",
+        "preset": {
+          "label": "Límite de tamaño de vista previa",
+          "placeholder": "Selecciona un límite",
+          "helper": "Las diferencias grandes mostrarán solo el resumen a menos que se fuerce la carga."
+        },
+        "options": {
+          "safe": "Seguro — 200 archivos / 10k líneas / 20MB",
+          "balanced": "Equilibrado — 500 archivos / 25k líneas / 50MB",
+          "relaxed": "Relajado — 1000 archivos / 60k líneas / 150MB",
+          "off": "Desactivado — nunca bloquear la vista previa"
+        }
+      },
       "pullRequests": {
         "title": "Pull Requests",
         "description": "Configura el comportamiento de creación de PR",

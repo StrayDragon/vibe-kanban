@@ -860,7 +860,9 @@ export function AgentSettings() {
       <Card>
         <CardHeader>
           <CardTitle>{t('settings.agents.llman.title')}</CardTitle>
-          <CardDescription>{t('settings.agents.llman.description')}</CardDescription>
+          <CardDescription>
+            {t('settings.agents.llman.description')}
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {llmanPathSuccess && (

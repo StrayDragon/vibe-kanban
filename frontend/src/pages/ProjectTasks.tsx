@@ -367,17 +367,11 @@ export function ProjectTasks() {
     });
 
     return columns;
-  }, [
-    hasSearch,
-    normalizedSearch,
-    tasksByStatus,
-  ]);
+  }, [hasSearch, normalizedSearch, tasksByStatus]);
 
   const hasVisibleTasks = useMemo(
     () =>
-      Object.values(kanbanColumns).some(
-        (items) => items && items.length > 0
-      ),
+      Object.values(kanbanColumns).some((items) => items && items.length > 0),
     [kanbanColumns]
   );
 

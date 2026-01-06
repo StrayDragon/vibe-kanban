@@ -10,8 +10,7 @@ pub fn asset_dir() -> std::path::PathBuf {
         if !override_dir.is_empty() {
             let path = std::path::PathBuf::from(override_dir);
             if !path.exists() {
-                std::fs::create_dir_all(&path)
-                    .expect("Failed to create asset directory");
+                std::fs::create_dir_all(&path).expect("Failed to create asset directory");
             }
             return path;
         }

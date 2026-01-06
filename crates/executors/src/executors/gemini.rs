@@ -9,8 +9,8 @@ use workspace_utils::msg_store::MsgStore;
 
 pub use super::acp::AcpAgentHarness;
 use crate::{
-    auto_retry::AutoRetryConfig,
     approvals::ExecutorApprovalService,
+    auto_retry::AutoRetryConfig,
     command::{CmdOverrides, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
     executors::{

@@ -198,7 +198,6 @@ export function Navbar() {
                       </DropdownMenuItem>
                     );
                   })}
-
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

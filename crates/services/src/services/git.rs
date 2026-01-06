@@ -460,9 +460,7 @@ impl GitService {
             .find_commit(base_commit.as_oid())?
             .tree()
             .map_err(|e| {
-                GitServiceError::InvalidRepository(format!(
-                    "Failed to find base commit tree: {e}"
-                ))
+                GitServiceError::InvalidRepository(format!("Failed to find base commit tree: {e}"))
             })?;
 
         let git = GitCli::new();
@@ -872,15 +870,11 @@ impl GitService {
                 | ChangeType::Unknown(_) => (true, true),
             };
 
-            if include_old {
-                if let Some(size) = Self::blob_size(repo, base_tree, old_path) {
-                    total = total.saturating_add(size);
-                }
+            if include_old && let Some(size) = Self::blob_size(repo, base_tree, old_path) {
+                total = total.saturating_add(size);
             }
-            if include_new {
-                if let Some(size) = Self::file_size(worktree_path, new_path) {
-                    total = total.saturating_add(size);
-                }
+            if include_new && let Some(size) = Self::file_size(worktree_path, new_path) {
+                total = total.saturating_add(size);
             }
         }
 
@@ -894,7 +888,7 @@ impl GitService {
             return None;
         }
         let blob = repo.find_blob(entry.id()).ok()?;
-        Some(blob.size() as usize)
+        Some(blob.size())
     }
 
     fn file_size(worktree_path: &Path, path: &str) -> Option<usize> {
@@ -974,11 +968,14 @@ impl GitService {
                 let git_cli = GitCli::new();
 
                 // Safety check: base branch has no staged changes
-                let mut has_staged = git_cli
-                    .has_staged_changes(&base_checkout_path)
-                    .map_err(|e| {
-                        GitServiceError::InvalidRepository(format!("git diff --cached failed: {e}"))
-                    })?;
+                let mut has_staged =
+                    git_cli
+                        .has_staged_changes(&base_checkout_path)
+                        .map_err(|e| {
+                            GitServiceError::InvalidRepository(format!(
+                                "git diff --cached failed: {e}"
+                            ))
+                        })?;
                 if has_staged
                     && let Ok(conflicts) = git_cli.get_conflicted_files(&base_checkout_path)
                     && !conflicts.is_empty()

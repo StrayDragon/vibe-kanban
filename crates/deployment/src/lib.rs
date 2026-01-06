@@ -140,7 +140,6 @@ pub trait Deployment: Clone + Send + Sync + 'static {
                                 project.name,
                                 repo_path
                             );
-
                         }
                         Err(e) => {
                             tracing::warn!(

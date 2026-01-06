@@ -116,7 +116,6 @@ impl PrMonitorService {
                     pr_merge.pr_info.number, workspace.task_id
                 );
                 Task::update_status(&self.db.pool, workspace.task_id, TaskStatus::Done).await?;
-
             }
         }
 

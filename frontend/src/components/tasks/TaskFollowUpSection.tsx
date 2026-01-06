@@ -87,7 +87,7 @@ export function TaskFollowUpSection({
     isStopping,
     processes,
   } = useAttemptExecution(workspaceId, task.id);
-    useAttemptExecution(workspaceId, task.id);
+  useAttemptExecution(workspaceId, task.id);
 
   const { data: branchStatus, refetch: refetchBranchStatus } =
     useBranchStatus(workspaceId);
@@ -909,7 +909,7 @@ export function TaskFollowUpSection({
                     <StopCircle className="h-4 w-4 mr-2" />
                     {t('followUp.stop')}
                   </>
-                  )}
+                )}
               </Button>
               <Button
                 onClick={handleForceStop}

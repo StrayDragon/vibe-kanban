@@ -10,8 +10,6 @@ use thiserror::Error;
 use ts_rs::TS;
 use uuid::Uuid;
 
-use crate::retry::retry_on_sqlite_busy;
-
 use super::{
     execution_process_repo_state::{CreateExecutionProcessRepoState, ExecutionProcessRepoState},
     project::Project,
@@ -21,6 +19,7 @@ use super::{
     workspace::Workspace,
     workspace_repo::WorkspaceRepo,
 };
+use crate::retry::retry_on_sqlite_busy;
 
 #[derive(Debug, Error)]
 pub enum ExecutionProcessError {

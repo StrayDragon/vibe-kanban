@@ -362,7 +362,6 @@ export const tasksApi = {
     });
     return handleApiResponse<void>(response);
   },
-
 };
 
 // Sessions API

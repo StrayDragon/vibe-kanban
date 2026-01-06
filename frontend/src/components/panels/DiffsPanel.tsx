@@ -204,9 +204,7 @@ function DiffsPanelContent({
   t,
 }: DiffsPanelContentProps) {
   const showHeader = fileCount > 0 || diffs.length > 0;
-  const totalSize = totalBytes
-    ? formatFileSize(BigInt(totalBytes))
-    : '0 B';
+  const totalSize = totalBytes ? formatFileSize(BigInt(totalBytes)) : '0 B';
   const blockedMessage =
     blockedReason === 'summary_failed'
       ? t('diff.summaryFailed')
@@ -282,9 +280,7 @@ function DiffsPanelContent({
         ) : blocked ? (
           <div className="flex items-center justify-center h-full">
             <div className="max-w-md text-center space-y-3">
-              <p className="text-sm text-muted-foreground">
-                {blockedMessage}
-              </p>
+              <p className="text-sm text-muted-foreground">{blockedMessage}</p>
               {fileCount > 0 && (
                 <p className="text-xs text-muted-foreground">{summaryText}</p>
               )}

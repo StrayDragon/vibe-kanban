@@ -74,7 +74,6 @@ fn add_path(repo_path: &Path, path: &str) {
     git.git(repo_path, ["add", path]).unwrap();
 }
 
-
 // Non-conflicting setup used by several tests
 fn setup_repo_with_worktree(root: &TempDir) -> (PathBuf, PathBuf) {
     let repo_path = root.path().join("repo");
@@ -872,7 +871,10 @@ fn merge_cleans_stale_squash_state_on_base() {
     let git_cli = GitCli::new();
     assert!(
         git_cli
-            .git(&repo_path, ["merge", "--squash", "--no-commit", "conflict-branch"])
+            .git(
+                &repo_path,
+                ["merge", "--squash", "--no-commit", "conflict-branch"]
+            )
             .is_err(),
         "expected squash merge conflict"
     );

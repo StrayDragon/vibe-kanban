@@ -129,7 +129,11 @@ const TaskPanel = ({
                 onRowClick={(attempt) => {
                   if (resolvedProjectId) {
                     navigate(
-                      attemptPath(resolvedProjectId, attempt.task_id, attempt.id)
+                      attemptPath(
+                        resolvedProjectId,
+                        attempt.task_id,
+                        attempt.id
+                      )
                     );
                   }
                 }}

@@ -53,19 +53,22 @@ export function useAttemptExecution(attemptId?: string, taskId?: string) {
   }, [executionProcesses, setupProcesses, processDetailQueries]);
 
   // Stop execution function
-  const stopExecution = useCallback(async (force = false) => {
-    if (!attemptId || !isAttemptRunning || isStopping) return;
+  const stopExecution = useCallback(
+    async (force = false) => {
+      if (!attemptId || !isAttemptRunning || isStopping) return;
 
-    try {
-      setIsStopping(true);
-      await attemptsApi.stop(attemptId, { force });
-    } catch (error) {
-      console.error('Failed to stop executions:', error);
-      throw error;
-    } finally {
-      setIsStopping(false);
-    }
-  }, [attemptId, isAttemptRunning, isStopping, setIsStopping]);
+      try {
+        setIsStopping(true);
+        await attemptsApi.stop(attemptId, { force });
+      } catch (error) {
+        console.error('Failed to stop executions:', error);
+        throw error;
+      } finally {
+        setIsStopping(false);
+      }
+    },
+    [attemptId, isAttemptRunning, isStopping, setIsStopping]
+  );
 
   const forceStopExecution = useCallback(
     () => stopExecution(true),

@@ -106,9 +106,7 @@ export const AttemptHeaderActions = ({
           )}
         </div>
       </TooltipProvider>
-      {showModeToggle && (
-        <div className="h-4 w-px bg-border" />
-      )}
+      {showModeToggle && <div className="h-4 w-px bg-border" />}
       <ActionsDropdown task={task} attempt={attempt} />
       <Button variant="icon" aria-label="Close" onClick={onClose}>
         <X size={16} />

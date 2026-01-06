@@ -18,10 +18,7 @@ use services::services::{
     repo::RepoService,
 };
 use tokio::sync::RwLock;
-use utils::{
-    assets::config_path,
-    msg_store::MsgStore,
-};
+use utils::{assets::config_path, msg_store::MsgStore};
 
 use crate::container::LocalContainerService;
 mod command;

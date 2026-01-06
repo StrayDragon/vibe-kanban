@@ -34,7 +34,9 @@ fn is_sqlite_busy(err: &Error) -> bool {
         return false;
     };
 
-    if let Some(code) = db_err.code() && (code == "5" || code == "6") {
+    if let Some(code) = db_err.code()
+        && (code == "5" || code == "6")
+    {
         return true;
     }
 
@@ -44,25 +46,25 @@ fn is_sqlite_busy(err: &Error) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::retry_on_sqlite_busy;
-    use crate::models::{
-        execution_process::{ExecutionProcess, ExecutionProcessStatus},
-        task::{Task, TaskStatus},
-    };
-    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use std::{
         path::PathBuf,
         str::FromStr,
         sync::atomic::{AtomicUsize, Ordering},
         time::Duration,
     };
+
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use tokio::sync::oneshot;
     use uuid::Uuid;
 
-    async fn setup_pool(run_migrations: bool) -> Result<(sqlx::SqlitePool, PathBuf), sqlx::Error>
-    {
-        let db_path =
-            std::env::temp_dir().join(format!("vk-retry-test-{}.db", Uuid::new_v4()));
+    use super::retry_on_sqlite_busy;
+    use crate::models::{
+        execution_process::{ExecutionProcess, ExecutionProcessStatus},
+        task::{Task, TaskStatus},
+    };
+
+    async fn setup_pool(run_migrations: bool) -> Result<(sqlx::SqlitePool, PathBuf), sqlx::Error> {
+        let db_path = std::env::temp_dir().join(format!("vk-retry-test-{}.db", Uuid::new_v4()));
         let db_url = format!("sqlite://{}", db_path.to_string_lossy());
         let options = SqliteConnectOptions::from_str(&db_url)?
             .create_if_missing(true)
@@ -93,9 +95,7 @@ mod tests {
         tx: oneshot::Sender<()>,
     ) -> Result<(), sqlx::Error> {
         let mut conn = pool.acquire().await?;
-        sqlx::query("BEGIN IMMEDIATE;")
-            .execute(&mut *conn)
-            .await?;
+        sqlx::query("BEGIN IMMEDIATE;").execute(&mut *conn).await?;
         sqlx::query(sql).bind(bind_id).execute(&mut *conn).await?;
         let _ = tx.send(());
         tokio::time::sleep(Duration::from_millis(hold_ms)).await;
@@ -150,10 +150,9 @@ mod tests {
 
         lock_task.await.expect("lock task complete");
 
-        let final_value: i64 =
-            sqlx::query_scalar("SELECT v FROM test_lock WHERE id = 1;")
-                .fetch_one(&pool)
-                .await?;
+        let final_value: i64 = sqlx::query_scalar("SELECT v FROM test_lock WHERE id = 1;")
+            .fetch_one(&pool)
+            .await?;
         assert_eq!(final_value, 2);
         assert!(attempts.load(Ordering::SeqCst) > 1);
 
@@ -197,11 +196,10 @@ mod tests {
 
         lock_task.await.expect("lock task")?;
 
-        let status: String =
-            sqlx::query_scalar("SELECT status FROM tasks WHERE id = $1;")
-                .bind(task_id)
-                .fetch_one(&pool)
-                .await?;
+        let status: String = sqlx::query_scalar("SELECT status FROM tasks WHERE id = $1;")
+            .bind(task_id)
+            .fetch_one(&pool)
+            .await?;
         assert_eq!(status, "inreview");
 
         drop(pool);

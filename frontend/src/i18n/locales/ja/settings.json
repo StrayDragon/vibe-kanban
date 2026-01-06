@@ -139,6 +139,21 @@
           "helper": "有効にすると、Vibe Kanban は git の commit と merge に --no-verify を付けます。"
         }
       },
+      "diffPreview": {
+        "title": "差分プレビュー",
+        "description": "大きな差分のプレビューをブロックする条件を制御します。",
+        "preset": {
+          "label": "プレビューサイズ上限",
+          "placeholder": "上限を選択",
+          "helper": "大きな差分は強制読み込みしない限りサマリーのみ表示されます。"
+        },
+        "options": {
+          "safe": "安全 — 200ファイル / 1万行 / 20MB",
+          "balanced": "バランス — 500ファイル / 2.5万行 / 50MB",
+          "relaxed": "緩め — 1000ファイル / 6万行 / 150MB",
+          "off": "オフ — プレビューをブロックしない"
+        }
+      },
       "pullRequests": {
         "title": "プルリクエスト",
         "description": "PR作成の動作を設定",

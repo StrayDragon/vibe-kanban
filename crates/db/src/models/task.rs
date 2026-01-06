@@ -5,9 +5,8 @@ use strum_macros::{Display, EnumString};
 use ts_rs::TS;
 use uuid::Uuid;
 
-use crate::retry::retry_on_sqlite_busy;
-
 use super::{project::Project, workspace::Workspace};
+use crate::retry::retry_on_sqlite_busy;
 
 #[derive(
     Debug, Clone, Type, Serialize, Deserialize, PartialEq, TS, EnumString, Display, Default,

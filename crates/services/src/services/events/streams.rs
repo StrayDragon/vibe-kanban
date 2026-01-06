@@ -103,8 +103,7 @@ impl EventService {
                                     // Handle old EventPatch format for non-task records
                                     match &event_patch.value.record {
                                         RecordTypes::Task(task) => {
-                                            if project_filter
-                                                .is_none_or(|id| task.project_id == id)
+                                            if project_filter.is_none_or(|id| task.project_id == id)
                                             {
                                                 return Some(Ok(LogMsg::JsonPatch(patch)));
                                             }
@@ -122,11 +121,9 @@ impl EventService {
                                         RecordTypes::Workspace(workspace) => {
                                             if let Some(project_filter) = project_filter {
                                                 // Check if this workspace belongs to a task in our project
-                                                if let Ok(Some(task)) = Task::find_by_id(
-                                                    &db_pool,
-                                                    workspace.task_id,
-                                                )
-                                                .await
+                                                if let Ok(Some(task)) =
+                                                    Task::find_by_id(&db_pool, workspace.task_id)
+                                                        .await
                                                     && task.project_id == project_filter
                                                 {
                                                     return Some(Ok(LogMsg::JsonPatch(patch)));
@@ -141,11 +138,9 @@ impl EventService {
                                         } => {
                                             if let Some(project_filter) = project_filter {
                                                 // Check if deleted workspace belonged to a task in our project
-                                                if let Ok(Some(task)) = Task::find_by_id(
-                                                    &db_pool,
-                                                    *deleted_task_id,
-                                                )
-                                                .await
+                                                if let Ok(Some(task)) =
+                                                    Task::find_by_id(&db_pool, *deleted_task_id)
+                                                        .await
                                                     && task.project_id == project_filter
                                                 {
                                                     return Some(Ok(LogMsg::JsonPatch(patch)));

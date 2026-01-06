@@ -524,7 +524,9 @@ export function GeneralSettings() {
             >
               <SelectTrigger id="diff-preview-guard">
                 <SelectValue
-                  placeholder={t('settings.general.diffPreview.preset.placeholder')}
+                  placeholder={t(
+                    'settings.general.diffPreview.preset.placeholder'
+                  )}
                 />
               </SelectTrigger>
               <SelectContent>

@@ -1,10 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { projectsApi } from '@/lib/api';
-import type {
-  CreateProject,
-  UpdateProject,
-  Project,
-} from 'shared/types';
+import type { CreateProject, UpdateProject, Project } from 'shared/types';
 
 interface UseProjectMutationsOptions {
   onCreateSuccess?: (project: Project) => void;

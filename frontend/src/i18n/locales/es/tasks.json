@@ -193,6 +193,10 @@
     "filesChanged_one": "{{count}} file changed",
     "filesChanged_other": "{{count}} files changed",
     "noChanges": "No changes have been made yet",
+    "tooLarge": "El diff es demasiado grande para previsualizarlo.",
+    "summaryFailed": "No se pudo calcular el resumen del diff. La vista previa está en pausa.",
+    "tooLargeSummary": "{{files}} archivos, +{{added}} / -{{deleted}}, {{bytes}}",
+    "forceLoad": "Forzar carga de todos modos",
     "viewModes": {
       "inline": "Inline view",
       "split": "Split view"

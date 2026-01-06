@@ -214,21 +214,21 @@ function DesktopSimple({
         }
       }}
     >
-    <Panel
-      id="kanban"
-      order={1}
-      defaultSize={outerSizes[0]}
-      minSize={MIN_PANEL_SIZE}
-      collapsible
-      collapsedSize={0}
-      onCollapse={() => setIsKanbanCollapsed(true)}
-      onExpand={() => setIsKanbanCollapsed(false)}
-      className="min-w-0 min-h-0 overflow-hidden"
-      role="region"
-      aria-label={kanbanLabel ?? 'Kanban board'}
-    >
-      {kanban}
-    </Panel>
+      <Panel
+        id="kanban"
+        order={1}
+        defaultSize={outerSizes[0]}
+        minSize={MIN_PANEL_SIZE}
+        collapsible
+        collapsedSize={0}
+        onCollapse={() => setIsKanbanCollapsed(true)}
+        onExpand={() => setIsKanbanCollapsed(false)}
+        className="min-w-0 min-h-0 overflow-hidden"
+        role="region"
+        aria-label={kanbanLabel ?? 'Kanban board'}
+      >
+        {kanban}
+      </Panel>
 
       <PanelResizeHandle
         id="handle-kr"

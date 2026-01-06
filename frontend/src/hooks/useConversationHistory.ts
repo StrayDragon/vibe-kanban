@@ -705,8 +705,7 @@ export const useConversationHistory = ({
         pendingHistoricLoadIdsRef.current.add(process.id);
 
         try {
-          const entries =
-            await loadEntriesForHistoricExecutionProcess(process);
+          const entries = await loadEntriesForHistoricExecutionProcess(process);
           if (cancelled) return;
           const entriesWithKey = entries.map((entry, index) =>
             patchWithKey(entry, process.id, index)

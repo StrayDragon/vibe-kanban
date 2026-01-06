@@ -28,25 +28,25 @@ use db::{
 };
 use deployment::DeploymentError;
 use executors::{
-    auto_retry::AutoRetryConfig,
     actions::{
         Executable, ExecutorAction, ExecutorActionType,
         coding_agent_follow_up::CodingAgentFollowUpRequest,
         coding_agent_initial::CodingAgentInitialRequest,
     },
     approvals::{ExecutorApprovalService, NoopExecutorApprovalService},
+    auto_retry::AutoRetryConfig,
     env::ExecutionEnv,
     executors::{BaseCodingAgent, ExecutorExitResult, ExecutorExitSignal, InterruptSender},
     logs::{
         NormalizedEntry, NormalizedEntryType,
         utils::{
-            ConversationPatch, EntryIndexProvider,
-            patch::extract_normalized_entry_from_patch,
+            ConversationPatch, EntryIndexProvider, patch::extract_normalized_entry_from_patch,
         },
     },
     profile::{ExecutorConfigs, ExecutorProfileId},
 };
 use futures::{FutureExt, StreamExt, TryStreamExt, stream::select};
+use serde_json::json;
 use services::services::{
     approvals::{Approvals, executor_approvals::ExecutorApprovalBridge},
     config::Config,
@@ -60,7 +60,6 @@ use services::services::{
 };
 use tokio::{sync::RwLock, task::JoinHandle};
 use tokio_util::io::ReaderStream;
-use serde_json::json;
 use utils::{
     diff::DiffSummary,
     log_msg::LogMsg,
@@ -359,20 +358,20 @@ impl LocalContainerService {
 
         let mut lines = Vec::new();
         for msg in history.iter() {
-            if let LogMsg::JsonPatch(patch) = msg {
-                if let Some((_, entry)) = extract_normalized_entry_from_patch(patch) {
-                    match entry.entry_type {
-                        NormalizedEntryType::ErrorMessage { .. } => {
+            if let LogMsg::JsonPatch(patch) = msg
+                && let Some((_, entry)) = extract_normalized_entry_from_patch(patch)
+            {
+                match entry.entry_type {
+                    NormalizedEntryType::ErrorMessage { .. } => {
+                        lines.push(entry.content);
+                    }
+                    NormalizedEntryType::SystemMessage => {
+                        let lowered = entry.content.to_lowercase();
+                        if lowered.contains("error") || lowered.contains("failed") {
                             lines.push(entry.content);
                         }
-                        NormalizedEntryType::SystemMessage => {
-                            let lowered = entry.content.to_lowercase();
-                            if lowered.contains("error") || lowered.contains("failed") {
-                                lines.push(entry.content);
-                            }
-                        }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
         }
@@ -391,9 +390,8 @@ impl LocalContainerService {
         max_attempts: u32,
         delay_seconds: u32,
     ) {
-        let content = format!(
-            "Auto retry scheduled in {delay_seconds}s (attempt {attempt}/{max_attempts})"
-        );
+        let content =
+            format!("Auto retry scheduled in {delay_seconds}s (attempt {attempt}/{max_attempts})");
         let entry = NormalizedEntry {
             timestamp: None,
             entry_type: NormalizedEntryType::SystemMessage,
@@ -499,9 +497,11 @@ impl LocalContainerService {
         executor_profile_id: ExecutorProfileId,
         prompt: String,
     ) -> Result<ExecutionProcess, ContainerError> {
-        let latest_agent_session_id =
-            ExecutionProcess::find_latest_coding_agent_turn_session_id(&self.db.pool, ctx.session.id)
-                .await?;
+        let latest_agent_session_id = ExecutionProcess::find_latest_coding_agent_turn_session_id(
+            &self.db.pool,
+            ctx.session.id,
+        )
+        .await?;
 
         let project_repos =
             ProjectRepo::find_by_project_id_with_names(&self.db.pool, ctx.project.id).await?;
@@ -570,9 +570,8 @@ impl LocalContainerService {
 
         self.try_stop(&ctx.workspace, false).await;
 
-        let _ =
-            ExecutionProcess::drop_at_and_after(&self.db.pool, session_id, failed_process_id)
-                .await?;
+        let _ = ExecutionProcess::drop_at_and_after(&self.db.pool, session_id, failed_process_id)
+            .await?;
 
         let new_process = self
             .start_auto_retry_follow_up(&ctx, executor_profile_id, prompt)
@@ -866,7 +865,6 @@ impl LocalContainerService {
                         container.finalize_task(&ctx).await;
                     }
                 }
-
             }
 
             // Now that commit/next-action/finalization steps for this process are complete,
@@ -1557,13 +1555,8 @@ impl ContainerService for LocalContainerService {
             None
         };
 
-        ExecutionProcess::update_completion(
-            &self.db.pool,
-            execution_process.id,
-            status,
-            exit_code,
-        )
-        .await?;
+        ExecutionProcess::update_completion(&self.db.pool, execution_process.id, status, exit_code)
+            .await?;
 
         let _ = self.take_interrupt_sender(&execution_process.id).await;
         self.remove_child_from_store(&execution_process.id).await;
@@ -1661,8 +1654,7 @@ impl ContainerService for LocalContainerService {
                 .get_worktree_diff_summary(worktree_path, base_commit, None)
             {
                 Ok(repo_summary) => {
-                    summary.file_count =
-                        summary.file_count.saturating_add(repo_summary.file_count);
+                    summary.file_count = summary.file_count.saturating_add(repo_summary.file_count);
                     summary.added = summary.added.saturating_add(repo_summary.added);
                     summary.deleted = summary.deleted.saturating_add(repo_summary.deleted);
                     summary.total_bytes =

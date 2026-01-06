@@ -193,6 +193,10 @@
     "filesChanged_one": "{{count}} file changed",
     "filesChanged_other": "{{count}} files changed",
     "noChanges": "No changes have been made yet",
+    "tooLarge": "변경 사항이 너무 커서 미리볼 수 없습니다.",
+    "summaryFailed": "차이 요약을 계산할 수 없습니다. 미리보기가 일시 중지되었습니다.",
+    "tooLargeSummary": "{{files}}개 파일, +{{added}} / -{{deleted}}, {{bytes}}",
+    "forceLoad": "그래도 강제로 로드",
     "viewModes": {
       "inline": "Inline view",
       "split": "Split view"

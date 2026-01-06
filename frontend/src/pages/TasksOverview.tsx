@@ -251,11 +251,7 @@ export function TasksOverview() {
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
     () => new Set()
   );
-  const {
-    projects,
-    projectsById,
-    error: projectsError,
-  } = useProjects();
+  const { projects, projectsById, error: projectsError } = useProjects();
   const {
     tasks,
     tasksById,
@@ -425,8 +421,7 @@ export function TasksOverview() {
         const statusDiff = getStatusRank(a.status) - getStatusRank(b.status);
         if (statusDiff !== 0) return statusDiff;
         return (
-          new Date(b.created_at).getTime() -
-          new Date(a.created_at).getTime()
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         );
       });
     });
@@ -439,15 +434,12 @@ export function TasksOverview() {
     const ordered = projects
       .map((project) => project.id)
       .filter((id) => idsWithTasks.has(id));
-    const remaining = [...idsWithTasks].filter(
-      (id) => !ordered.includes(id)
-    );
+    const remaining = [...idsWithTasks].filter((id) => !ordered.includes(id));
     return [...ordered, ...remaining];
   }, [projects, tasksByProject]);
 
   const orderedTasks = useMemo(
-    () =>
-      orderedProjectIds.flatMap((id) => tasksByProject[id] ?? []),
+    () => orderedProjectIds.flatMap((id) => tasksByProject[id] ?? []),
     [orderedProjectIds, tasksByProject]
   );
 
@@ -692,7 +684,7 @@ export function TasksOverview() {
   };
 
   const projectName = selectedTask
-    ? projectsById[selectedTask.project_id]?.name ?? 'Project'
+    ? (projectsById[selectedTask.project_id]?.name ?? 'Project')
     : 'Project';
 
   const rightHeader = selectedTask ? (
@@ -755,10 +747,7 @@ export function TasksOverview() {
             )}
           </BreadcrumbList>
         </Breadcrumb>
-        <TaskStatusBadge
-          status={selectedTask.status}
-          className="shrink-0"
-        />
+        <TaskStatusBadge status={selectedTask.status} className="shrink-0" />
       </div>
     </NewCardHeader>
   ) : null;

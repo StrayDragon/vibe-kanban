@@ -54,9 +54,8 @@ impl AutoRetryConfig {
         }
 
         for pattern in &self.error_patterns {
-            Regex::new(pattern).map_err(|e| {
-                format!("Invalid auto_retry.error_patterns regex '{pattern}': {e}")
-            })?;
+            Regex::new(pattern)
+                .map_err(|e| format!("Invalid auto_retry.error_patterns regex '{pattern}': {e}"))?;
         }
 
         Ok(())

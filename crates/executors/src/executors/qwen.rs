@@ -8,8 +8,8 @@ use ts_rs::TS;
 use workspace_utils::msg_store::MsgStore;
 
 use crate::{
-    auto_retry::AutoRetryConfig,
     approvals::ExecutorApprovalService,
+    auto_retry::AutoRetryConfig,
     command::{CmdOverrides, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
     executors::{

@@ -229,8 +229,7 @@ pub async fn stream_task_attempt_diff_ws(
         force: params.force,
     };
     ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_task_attempt_diff_ws(socket, deployment, workspace, options).await
-        {
+        if let Err(e) = handle_task_attempt_diff_ws(socket, deployment, workspace, options).await {
             tracing::warn!("diff WS closed: {}", e);
         }
     })
@@ -1139,7 +1138,10 @@ pub async fn stop_task_attempt_execution(
     Query(query): Query<StopTaskAttemptQuery>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
     if query.force.unwrap_or(false) {
-        deployment.container().try_stop_force(&workspace, false).await;
+        deployment
+            .container()
+            .try_stop_force(&workspace, false)
+            .await;
     } else {
         deployment.container().try_stop(&workspace, false).await;
     }

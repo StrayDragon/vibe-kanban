@@ -30,8 +30,8 @@ use self::{
     session::SessionHandler,
 };
 use crate::{
-    auto_retry::AutoRetryConfig,
     approvals::ExecutorApprovalService,
+    auto_retry::AutoRetryConfig,
     command::{CmdOverrides, CommandBuilder, CommandParts, apply_overrides},
     env::ExecutionEnv,
     executors::{

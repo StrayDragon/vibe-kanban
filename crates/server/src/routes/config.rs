@@ -421,13 +421,10 @@ async fn import_llman_profiles(
     State(deployment): State<DeploymentImpl>,
 ) -> ResponseJson<ApiResponse<ImportLlmanProfilesResponse>> {
     let config = deployment.config().read().await;
-    let config_path = llman::resolve_claude_code_config_path(
-        config.llman_claude_code_path.as_deref(),
-    );
+    let config_path =
+        llman::resolve_claude_code_config_path(config.llman_claude_code_path.as_deref());
     let Some(config_path) = config_path else {
-        return ResponseJson(ApiResponse::error(
-            "Could not resolve LLMAN config path",
-        ));
+        return ResponseJson(ApiResponse::error("Could not resolve LLMAN config path"));
     };
 
     let groups = match llman::read_claude_code_groups(&config_path).await {
@@ -567,10 +564,7 @@ mod tests {
             .expect("default claude config");
         if let CodingAgent::ClaudeCode(config) = &mut existing {
             config.model = Some("keep-model".to_string());
-            config.cmd.env = Some(HashMap::from([(
-                "OLD_KEY".to_string(),
-                "old".to_string(),
-            )]));
+            config.cmd.env = Some(HashMap::from([("OLD_KEY".to_string(), "old".to_string())]));
         }
         claude
             .configurations
