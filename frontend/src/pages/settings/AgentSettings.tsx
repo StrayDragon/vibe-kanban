@@ -13,6 +13,7 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -35,6 +36,7 @@ import { useUserSystem } from '@/components/ConfigProvider';
 import { profilesApi } from '@/lib/api';
 import { CreateConfigurationDialog } from '@/components/dialogs/settings/CreateConfigurationDialog';
 import { DeleteConfigurationDialog } from '@/components/dialogs/settings/DeleteConfigurationDialog';
+import { SyncLlmanDialog } from '@/components/dialogs/settings/SyncLlmanDialog';
 import { useAgentAvailability } from '@/hooks/useAgentAvailability';
 import { AgentAvailabilityIndicator } from '@/components/AgentAvailabilityIndicator';
 import type {
@@ -165,13 +167,10 @@ export function AgentSettings() {
     }
   };
 
-  const handleSaveLlmanPath = async () => {
-    if (!config) return;
+  const saveLlmanPath = async (nextPath: string | null) => {
+    if (!config) return false;
     setLlmanPathSaving(true);
     setLlmanPathError(null);
-
-    const trimmed = llmanPathDraft.trim();
-    const nextPath = trimmed.length > 0 ? trimmed : null;
 
     try {
       const saved = await updateAndSaveConfig({
@@ -183,20 +182,39 @@ export function AgentSettings() {
       setLlmanPathSuccess(true);
       setTimeout(() => setLlmanPathSuccess(false), 3000);
       reloadSystem();
+      return true;
     } catch (err) {
       setLlmanPathError(t('settings.general.save.error'));
       console.error('Error saving LLMAN path:', err);
+      return false;
     } finally {
       setLlmanPathSaving(false);
     }
   };
 
-  const handleImportLlman = async () => {
+  const handleSaveLlmanPath = async () => {
+    const trimmed = llmanPathDraft.trim();
+    const nextPath = trimmed.length > 0 ? trimmed : null;
+    await saveLlmanPath(nextPath);
+  };
+
+  const handleSyncLlman = async (path: string) => {
+    const trimmed = path.trim();
+    const nextPath = trimmed.length > 0 ? trimmed : null;
+
+    setLlmanPathDraft(trimmed);
     setLlmanImporting(true);
     setLlmanImportError(null);
     setLlmanImportResult(null);
 
     try {
+      if ((config?.llman_claude_code_path ?? null) !== nextPath) {
+        const saved = await saveLlmanPath(nextPath);
+        if (!saved) {
+          return;
+        }
+      }
+
       const result = await profilesApi.importLlman();
       setLlmanImportResult(result);
       reloadSystem();
@@ -237,6 +255,18 @@ export function AgentSettings() {
           result.configName,
           result.cloneFrom
         );
+      }
+    } catch (error) {
+      // User cancelled - do nothing
+    }
+  };
+
+  const openLlmanSyncDialog = async () => {
+    try {
+      const result = await SyncLlmanDialog.show({});
+
+      if (result.action === 'sync') {
+        await handleSyncLlman(result.path);
       }
     } catch (error) {
       // User cancelled - do nothing
@@ -730,6 +760,8 @@ export function AgentSettings() {
                       onValueChange={(value) => {
                         if (value === '__create__') {
                           openCreateDialog();
+                        } else if (value === '__sync_llman__') {
+                          openLlmanSyncDialog();
                         } else {
                           setSelectedConfiguration(value);
                         }
@@ -754,8 +786,15 @@ export function AgentSettings() {
                             {configuration}
                           </SelectItem>
                         ))}
+                        <SelectSeparator />
                         <SelectItem value="__create__">
                           {t('settings.agents.editor.createNew')}
+                        </SelectItem>
+                        <SelectItem
+                          value="__sync_llman__"
+                          disabled={isDirty || llmanImporting}
+                        >
+                          {t('settings.agents.llman.syncOption')}
                         </SelectItem>
                       </SelectContent>
                     </Select>
@@ -929,15 +968,6 @@ export function AgentSettings() {
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               )}
               {t('common:buttons.save')}
-            </Button>
-            <Button
-              onClick={handleImportLlman}
-              disabled={llmanImporting || isDirty}
-            >
-              {llmanImporting && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
-              {t('settings.agents.llman.importButton')}
             </Button>
           </div>
         </CardContent>

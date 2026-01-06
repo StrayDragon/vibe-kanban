@@ -50,6 +50,7 @@ import {
   RunAgentSetupRequest,
   RunAgentSetupResponse,
   ImportLlmanProfilesResponse,
+  ResolveLlmanPathResponse,
   GhCliSetupError,
   RunScriptError,
   OpenEditorResponse,
@@ -855,6 +856,10 @@ export const profilesApi = {
       method: 'POST',
     });
     return handleApiResponse<ImportLlmanProfilesResponse>(response);
+  },
+  resolveLlmanPath: async (): Promise<ResolveLlmanPathResponse> => {
+    const response = await makeRequest('/api/profiles/llman-path');
+    return handleApiResponse<ResolveLlmanPathResponse>(response);
   },
 };
 

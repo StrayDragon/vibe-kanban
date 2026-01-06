@@ -38,6 +38,7 @@ pub fn router() -> Router<DeploymentImpl> {
         .route("/sounds/{sound}", get(get_sound))
         .route("/mcp-config", get(get_mcp_servers).post(update_mcp_servers))
         .route("/profiles", get(get_profiles).put(update_profiles))
+        .route("/profiles/llman-path", get(resolve_llman_path))
         .route("/profiles/import-llman", post(import_llman_profiles))
         .route(
             "/editors/check-availability",
@@ -415,6 +416,23 @@ struct LlmanImportSummary {
     imported: usize,
     updated: usize,
     skipped: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+pub struct ResolveLlmanPathResponse {
+    pub path: Option<String>,
+}
+
+async fn resolve_llman_path(
+    State(deployment): State<DeploymentImpl>,
+) -> ResponseJson<ApiResponse<ResolveLlmanPathResponse>> {
+    let config = deployment.config().read().await;
+    let path =
+        llman::resolve_claude_code_config_path(config.llman_claude_code_path.as_deref());
+
+    ResponseJson(ApiResponse::success(ResolveLlmanPathResponse {
+        path: path.map(|path| path.display().to_string()),
+    }))
 }
 
 async fn import_llman_profiles(

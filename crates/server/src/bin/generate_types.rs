@@ -70,6 +70,7 @@ fn generate_types_content() -> String {
         server::routes::config::CheckEditorAvailabilityResponse::decl(),
         server::routes::config::CheckAgentAvailabilityQuery::decl(),
         server::routes::config::ImportLlmanProfilesResponse::decl(),
+        server::routes::config::ResolveLlmanPathResponse::decl(),
         server::routes::sessions::CreateFollowUpAttempt::decl(),
         server::routes::task_attempts::ChangeTargetBranchRequest::decl(),
         server::routes::task_attempts::ChangeTargetBranchResponse::decl(),
