@@ -16,10 +16,26 @@
     "duplicate": "Duplicate",
     "editBranchName": "ブランチ名を編集",
     "gitActions": "Gitアクション",
+    "removeWorktree": "ワークツリーを削除",
     "openInIde": "Open attempt in IDE",
     "task": "Task",
     "viewProcesses": "View processes",
     "viewRelatedTasks": "View related tasks"
+  },
+  "removeWorktreeDialog": {
+    "title": "ワークツリーを削除",
+    "description": "ディスク上のワークツリー ディレクトリ（例: /var/tmp/vibe-kanban/worktrees）と git worktree のメタデータを削除します。",
+    "warning": "未コミットの変更は失われます。",
+    "attemptLabel": "試行",
+    "selectAttempt": "試行を選択",
+    "confirm": "ワークツリーを削除",
+    "removing": "削除中...",
+    "runningDisabled": "実行中のプロセスを停止してからワークツリーを削除してください。",
+    "runningWarning": "この試行には実行中のプロセスまたは開発サーバーがあります。停止してから削除してください。",
+    "noEligible": "ワークツリーのある試行がありません。",
+    "loadingAttempts": "試行を読み込み中...",
+    "unknownBranch": "不明なブランチ",
+    "error": "ワークツリーの削除に失敗しました"
   },
   "editBranchName": {
     "dialog": {

@@ -1149,6 +1149,40 @@ pub async fn stop_task_attempt_execution(
     Ok(ResponseJson(ApiResponse::success(())))
 }
 
+pub async fn remove_task_attempt_worktree(
+    Extension(workspace): Extension<Workspace>,
+    State(deployment): State<DeploymentImpl>,
+) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
+    let pool = &deployment.db().pool;
+
+    if ExecutionProcess::has_running_non_dev_server_processes_for_workspace(pool, workspace.id)
+        .await?
+    {
+        return Err(ApiError::Conflict(
+            "Attempt has running processes. Stop them before removing the worktree."
+                .to_string(),
+        ));
+    }
+
+    if !ExecutionProcess::find_running_dev_servers_by_workspace(pool, workspace.id)
+        .await?
+        .is_empty()
+    {
+        return Err(ApiError::Conflict(
+            "Attempt has a running dev server. Stop it before removing the worktree."
+                .to_string(),
+        ));
+    }
+
+    if workspace.container_ref.is_none() {
+        return Ok(ResponseJson(ApiResponse::success(())));
+    }
+
+    deployment.container().delete(&workspace).await?;
+
+    Ok(ResponseJson(ApiResponse::success(())))
+}
+
 #[derive(Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(tag = "type", rename_all = "snake_case")]
@@ -1362,6 +1396,7 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         .route("/open-editor", post(open_task_attempt_in_editor))
         .route("/children", get(get_task_attempt_children))
         .route("/stop", post(stop_task_attempt_execution))
+        .route("/remove-worktree", post(remove_task_attempt_worktree))
         .route("/change-target-branch", post(change_target_branch))
         .route("/rename-branch", post(rename_branch))
         .route("/repos", get(get_task_attempt_repos))

@@ -68,6 +68,10 @@ export {
   EditBranchNameDialog,
   type EditBranchNameDialogResult,
 } from './tasks/EditBranchNameDialog';
+export {
+  RemoveWorktreeDialog,
+  type RemoveWorktreeDialogProps,
+} from './tasks/RemoveWorktreeDialog';
 export { CreateAttemptDialog } from './tasks/CreateAttemptDialog';
 
 // Auth dialogs

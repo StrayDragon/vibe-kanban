@@ -16,10 +16,26 @@
     "duplicate": "Duplicate",
     "editBranchName": "Editar nombre de rama",
     "gitActions": "Acciones de Git",
+    "removeWorktree": "Eliminar worktree",
     "openInIde": "Open attempt in IDE",
     "task": "Task",
     "viewProcesses": "View processes",
     "viewRelatedTasks": "View related tasks"
+  },
+  "removeWorktreeDialog": {
+    "title": "Eliminar worktree",
+    "description": "Esto eliminará el directorio del worktree en disco (p. ej., /var/tmp/vibe-kanban/worktrees) y los metadatos de git worktree.",
+    "warning": "Los cambios sin confirmar se perderán.",
+    "attemptLabel": "Intento",
+    "selectAttempt": "Selecciona un intento",
+    "confirm": "Eliminar worktree",
+    "removing": "Eliminando...",
+    "runningDisabled": "Detén los procesos en ejecución antes de eliminar el worktree.",
+    "runningWarning": "Este intento tiene procesos en ejecución o un servidor dev. Deténlos antes de eliminar el worktree.",
+    "noEligible": "No hay intentos con worktree disponibles.",
+    "loadingAttempts": "Cargando intentos...",
+    "unknownBranch": "Rama desconocida",
+    "error": "No se pudo eliminar el worktree"
   },
   "editBranchName": {
     "dialog": {

@@ -16,10 +16,26 @@
     "duplicate": "Duplicate",
     "editBranchName": "브랜치 이름 편집",
     "gitActions": "Git 작업",
+    "removeWorktree": "워크트리 제거",
     "openInIde": "Open attempt in IDE",
     "task": "Task",
     "viewProcesses": "View processes",
     "viewRelatedTasks": "View related tasks"
+  },
+  "removeWorktreeDialog": {
+    "title": "워크트리 제거",
+    "description": "디스크의 워크트리 디렉터리(예: /var/tmp/vibe-kanban/worktrees)와 git worktree 메타데이터를 삭제합니다.",
+    "warning": "커밋되지 않은 변경사항은 사라집니다.",
+    "attemptLabel": "시도",
+    "selectAttempt": "시도 선택",
+    "confirm": "워크트리 제거",
+    "removing": "제거 중...",
+    "runningDisabled": "실행 중인 프로세스를 먼저 중지한 뒤 워크트리를 제거하세요.",
+    "runningWarning": "이 시도에 실행 중인 프로세스나 개발 서버가 있습니다. 중지한 뒤 제거하세요.",
+    "noEligible": "워크트리가 있는 시도가 없습니다.",
+    "loadingAttempts": "시도 불러오는 중...",
+    "unknownBranch": "알 수 없는 브랜치",
+    "error": "워크트리 제거에 실패했습니다"
   },
   "editBranchName": {
     "dialog": {

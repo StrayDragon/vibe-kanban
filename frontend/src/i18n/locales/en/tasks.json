@@ -338,11 +338,27 @@
     "createSubtask": "Create subtask",
     "gitActions": "Git actions",
     "editBranchName": "Edit branch name",
+    "removeWorktree": "Remove worktree",
     "task": "Task",
     "share": "Share",
     "reassign": "Reassign",
     "stopShare": "Stop share",
     "duplicate": "Duplicate"
+  },
+  "removeWorktreeDialog": {
+    "title": "Remove worktree",
+    "description": "This will delete the worktree directory on disk (e.g. /var/tmp/vibe-kanban/worktrees) and remove git worktree metadata.",
+    "warning": "Uncommitted changes will be lost.",
+    "attemptLabel": "Attempt",
+    "selectAttempt": "Select an attempt",
+    "confirm": "Remove worktree",
+    "removing": "Removing...",
+    "runningDisabled": "Stop running processes before removing the worktree.",
+    "runningWarning": "This attempt has running processes or a dev server. Stop them before removing the worktree.",
+    "noEligible": "No attempts with a worktree are available.",
+    "loadingAttempts": "Loading attempts...",
+    "unknownBranch": "Unknown branch",
+    "error": "Failed to remove worktree"
   },
   "editBranchName": {
     "dialog": {

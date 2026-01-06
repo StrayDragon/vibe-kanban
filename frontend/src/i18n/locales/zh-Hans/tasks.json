@@ -338,11 +338,27 @@
     "createSubtask": "创建子任务",
     "gitActions": "Git 操作",
     "editBranchName": "编辑分支名称",
+    "removeWorktree": "移除工作树",
     "task": "任务",
     "share": "共享",
     "reassign": "重新分配",
     "stopShare": "停止共享",
     "duplicate": "复制"
+  },
+  "removeWorktreeDialog": {
+    "title": "移除工作树",
+    "description": "这会删除磁盘上的工作树目录（如 /var/tmp/vibe-kanban/worktrees）并移除 git worktree 元数据。",
+    "warning": "未提交的更改将丢失。",
+    "attemptLabel": "尝试",
+    "selectAttempt": "选择一个尝试",
+    "confirm": "移除工作树",
+    "removing": "正在移除...",
+    "runningDisabled": "请先停止运行中的进程再移除工作树。",
+    "runningWarning": "该尝试有运行中的进程或开发服务器，请先停止后再移除。",
+    "noEligible": "没有可移除工作树的尝试。",
+    "loadingAttempts": "正在加载尝试...",
+    "unknownBranch": "未知分支",
+    "error": "移除工作树失败"
   },
   "editBranchName": {
     "dialog": {

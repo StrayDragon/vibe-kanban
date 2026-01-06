@@ -452,6 +452,16 @@ export const attemptsApi = {
     return handleApiResponse<void>(response);
   },
 
+  removeWorktree: async (attemptId: string): Promise<void> => {
+    const response = await makeRequest(
+      `/api/task-attempts/${attemptId}/remove-worktree`,
+      {
+        method: 'POST',
+      }
+    );
+    return handleApiResponse<void>(response);
+  },
+
   runAgentSetup: async (
     attemptId: string,
     data: RunAgentSetupRequest

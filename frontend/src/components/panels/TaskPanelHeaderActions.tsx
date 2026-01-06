@@ -16,7 +16,7 @@ export const TaskPanelHeaderActions = ({
 }: TaskPanelHeaderActionsProps) => {
   return (
     <>
-      <ActionsDropdown task={task} />
+      <ActionsDropdown task={task} context="task" />
       <Button variant="icon" aria-label="Close" onClick={onClose}>
         <X size={16} />
       </Button>

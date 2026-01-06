@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import {
@@ -18,26 +19,59 @@ import { ViewRelatedTasksDialog } from '@/components/dialogs/tasks/ViewRelatedTa
 import { CreateAttemptDialog } from '@/components/dialogs/tasks/CreateAttemptDialog';
 import { GitActionsDialog } from '@/components/dialogs/tasks/GitActionsDialog';
 import { EditBranchNameDialog } from '@/components/dialogs/tasks/EditBranchNameDialog';
+import { RemoveWorktreeDialog } from '@/components/dialogs/tasks/RemoveWorktreeDialog';
 import { useProject } from '@/contexts/ProjectContext';
 import { openTaskForm } from '@/lib/openTaskForm';
+import { useExecutionProcesses } from '@/hooks/useExecutionProcesses';
+import { useTaskAttempts } from '@/hooks/useTaskAttempts';
 
 import { useLocation, useNavigate } from 'react-router-dom';
 
 interface ActionsDropdownProps {
   task?: TaskWithAttemptStatus | null;
   attempt?: Workspace | null;
+  context?: 'task' | 'attempt' | 'card';
 }
 
-export function ActionsDropdown({ task, attempt }: ActionsDropdownProps) {
+export function ActionsDropdown({
+  task,
+  attempt,
+  context = 'card',
+}: ActionsDropdownProps) {
   const { t } = useTranslation('tasks');
   const { projectId } = useProject();
   const openInEditor = useOpenInEditor(attempt?.id);
   const navigate = useNavigate();
   const location = useLocation();
   const isOverviewRoute = location.pathname.startsWith('/tasks');
+  const enableRemoveWorktree = context === 'task' || context === 'attempt';
+  const attemptIdForStatus =
+    context === 'attempt' && attempt?.id ? attempt.id : undefined;
+  const { executionProcesses, isLoading: isExecutionLoading } =
+    useExecutionProcesses(attemptIdForStatus, {
+      showSoftDeleted: true,
+    });
+  const { data: attempts = [] } = useTaskAttempts(task?.id, {
+    enabled: Boolean(context === 'task' && task?.id),
+    refetchInterval: false,
+  });
 
   const hasAttemptActions = Boolean(attempt);
   const hasTaskActions = Boolean(task);
+  const eligibleAttempts = useMemo(() => {
+    if (context !== 'task' || attempt) return [];
+    return attempts.filter((attemptData) => attemptData.container_ref);
+  }, [attempt, attempts, context]);
+  const hasEligibleAttempt = context === 'attempt'
+    ? Boolean(attempt?.container_ref)
+    : eligibleAttempts.length > 0;
+  const showRemoveWorktree = Boolean(enableRemoveWorktree && hasEligibleAttempt);
+  const showAttemptSection = hasAttemptActions || showRemoveWorktree;
+  const hasRunningProcesses = executionProcesses.some(
+    (process) => process.status === 'running'
+  );
+  const removeWorktreeDisabled =
+    Boolean(attempt) && (isExecutionLoading || hasRunningProcesses);
 
   const handleEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -130,6 +164,12 @@ export function ActionsDropdown({ task, attempt }: ActionsDropdownProps) {
       currentBranchName: attempt.branch,
     });
   };
+
+  const handleRemoveWorktree = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!task) return;
+    RemoveWorktreeDialog.show({ task, attempt });
+  };
   return (
     <>
       <DropdownMenu>
@@ -145,50 +185,68 @@ export function ActionsDropdown({ task, attempt }: ActionsDropdownProps) {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          {hasAttemptActions && (
+          {showAttemptSection && (
             <>
               <DropdownMenuLabel>{t('actionsMenu.attempt')}</DropdownMenuLabel>
-              <DropdownMenuItem
-                disabled={!attempt?.id}
-                onClick={handleOpenInEditor}
-              >
-                {t('actionsMenu.openInIde')}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!attempt?.id}
-                onClick={handleViewProcesses}
-              >
-                {t('actionsMenu.viewProcesses')}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!attempt?.id}
-                onClick={handleViewRelatedTasks}
-              >
-                {t('actionsMenu.viewRelatedTasks')}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleCreateNewAttempt}>
-                {t('actionsMenu.createNewAttempt')}
-              </DropdownMenuItem>
-              {!isOverviewRoute && (
+              {hasAttemptActions && (
+                <>
+                  <DropdownMenuItem
+                    disabled={!attempt?.id}
+                    onClick={handleOpenInEditor}
+                  >
+                    {t('actionsMenu.openInIde')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={!attempt?.id}
+                    onClick={handleViewProcesses}
+                  >
+                    {t('actionsMenu.viewProcesses')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={!attempt?.id}
+                    onClick={handleViewRelatedTasks}
+                  >
+                    {t('actionsMenu.viewRelatedTasks')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleCreateNewAttempt}>
+                    {t('actionsMenu.createNewAttempt')}
+                  </DropdownMenuItem>
+                  {!isOverviewRoute && (
+                    <DropdownMenuItem
+                      disabled={!projectId || !attempt}
+                      onClick={handleCreateSubtask}
+                    >
+                      {t('actionsMenu.createSubtask')}
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem
+                    disabled={!attempt?.id || !task}
+                    onClick={handleGitActions}
+                  >
+                    {t('actionsMenu.gitActions')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={!attempt?.id}
+                    onClick={handleEditBranchName}
+                  >
+                    {t('actionsMenu.editBranchName')}
+                  </DropdownMenuItem>
+                </>
+              )}
+              {showRemoveWorktree && (
                 <DropdownMenuItem
-                  disabled={!projectId || !attempt}
-                  onClick={handleCreateSubtask}
+                  disabled={removeWorktreeDisabled}
+                  onClick={handleRemoveWorktree}
+                  title={
+                    hasRunningProcesses
+                      ? t('removeWorktreeDialog.runningDisabled')
+                      : undefined
+                  }
+                  className="text-destructive"
                 >
-                  {t('actionsMenu.createSubtask')}
+                  {t('actionsMenu.removeWorktree')}
                 </DropdownMenuItem>
               )}
-              <DropdownMenuItem
-                disabled={!attempt?.id || !task}
-                onClick={handleGitActions}
-              >
-                {t('actionsMenu.gitActions')}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={!attempt?.id}
-                onClick={handleEditBranchName}
-              >
-                {t('actionsMenu.editBranchName')}
-              </DropdownMenuItem>
               <DropdownMenuSeparator />
             </>
           )}
