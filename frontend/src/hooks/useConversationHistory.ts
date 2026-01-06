@@ -57,6 +57,7 @@ const makeLoadingPatch = (executionProcessId: string): PatchTypeWithKey => ({
       type: 'loading',
     },
     content: '',
+    metadata: null,
     timestamp: null,
   },
   patchKey: `${executionProcessId}:loading`,
@@ -66,14 +67,8 @@ const makeLoadingPatch = (executionProcessId: string): PatchTypeWithKey => ({
 const nextActionPatch: (
   failed: boolean,
   execution_processes: number,
-  needs_setup: boolean,
-  setup_help_text?: string
-) => PatchTypeWithKey = (
-  failed,
-  execution_processes,
-  needs_setup,
-  setup_help_text
-) => ({
+  needs_setup: boolean
+) => PatchTypeWithKey = (failed, execution_processes, needs_setup) => ({
   type: 'NORMALIZED_ENTRY',
   content: {
     entry_type: {
@@ -81,9 +76,9 @@ const nextActionPatch: (
       failed: failed,
       execution_processes: execution_processes,
       needs_setup: needs_setup,
-      setup_help_text: setup_help_text ?? null,
     },
     content: '',
+    metadata: null,
     timestamp: null,
   },
   patchKey: 'next_action',
@@ -213,7 +208,6 @@ export const useConversationHistory = ({
       let hasRunningProcess = false;
       let lastProcessFailedOrKilled = false;
       let needsSetup = false;
-      let setupHelpText: string | undefined;
 
       // Create user messages + tool calls for setup/cleanup scripts
       const allEntries = Object.values(executionProcessState)
@@ -240,6 +234,7 @@ export const useConversationHistory = ({
                 type: 'user_message',
               },
               content: p.executionProcess.executor_action.typ.prompt,
+              metadata: null,
               timestamp: null,
             };
             const userPatch: PatchType = {
@@ -299,14 +294,10 @@ export const useConversationHistory = ({
               // Check if this failed process has a SetupRequired entry
               const hasSetupRequired = entriesExcludingUser.some((entry) => {
                 if (entry.type !== 'NORMALIZED_ENTRY') return false;
-                if (
+                return (
                   entry.content.entry_type.type === 'error_message' &&
                   entry.content.entry_type.error_type.type === 'setup_required'
-                ) {
-                  setupHelpText = entry.content.content;
-                  return true;
-                }
-                return false;
+                );
               });
 
               if (hasSetupRequired) {
@@ -385,6 +376,7 @@ export const useConversationHistory = ({
                 status: toolStatus,
               },
               content: toolName,
+              metadata: null,
               timestamp: null,
             };
             const toolPatch: PatchType = {
@@ -409,8 +401,7 @@ export const useConversationHistory = ({
           nextActionPatch(
             lastProcessFailedOrKilled,
             Object.keys(executionProcessState).length,
-            needsSetup,
-            setupHelpText
+            needsSetup
           )
         );
       }

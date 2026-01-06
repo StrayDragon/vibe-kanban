@@ -50,7 +50,9 @@ const renderJson = (v: JsonValue) => (
   <pre className="whitespace-pre-wrap">{JSON.stringify(v, null, 2)}</pre>
 );
 
-const isJsonObject = (value: JsonValue | null | undefined) =>
+const isJsonObject = (
+  value: JsonValue | null | undefined
+): value is Record<string, JsonValue> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 
 const getEntryIcon = (entryType: NormalizedEntryType) => {
