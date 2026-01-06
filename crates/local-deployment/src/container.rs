@@ -46,12 +46,11 @@ use executors::{
     },
     profile::{ExecutorConfigs, ExecutorProfileId},
 };
-use futures::{FutureExt, TryStreamExt, stream::select};
-use serde_json::json;
+use futures::{FutureExt, StreamExt, TryStreamExt, stream::select};
 use services::services::{
     approvals::{Approvals, executor_approvals::ExecutorApprovalBridge},
     config::Config,
-    container::{ContainerError, ContainerRef, ContainerService},
+    container::{ContainerError, ContainerRef, ContainerService, DiffStreamOptions},
     diff_stream::{self, DiffStreamHandle},
     git::{Commit, GitCli, GitCommitOptions, GitService, WorktreeResetOptions},
     image::ImageService,
@@ -61,7 +60,9 @@ use services::services::{
 };
 use tokio::{sync::RwLock, task::JoinHandle};
 use tokio_util::io::ReaderStream;
+use serde_json::json;
 use utils::{
+    diff::DiffSummary,
     log_msg::LogMsg,
     msg_store::MsgStore,
     text::{git_branch_id, short_uuid, truncate_to_char_boundary},
@@ -1598,9 +1599,12 @@ impl ContainerService for LocalContainerService {
     async fn stream_diff(
         &self,
         workspace: &Workspace,
-        stats_only: bool,
+        options: DiffStreamOptions,
     ) -> Result<futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>, ContainerError>
     {
+        let stats_only = options.stats_only;
+        let force = options.force;
+        let guard_preset = self.config.read().await.diff_preview_guard.clone();
         let workspace_repos =
             WorkspaceRepo::find_by_workspace_id(&self.db.pool, workspace.id).await?;
         let target_branches: HashMap<_, _> = workspace_repos
@@ -1611,11 +1615,10 @@ impl ContainerService for LocalContainerService {
         let repositories =
             WorkspaceRepo::find_repos_for_workspace(&self.db.pool, workspace.id).await?;
 
-        let mut streams = Vec::new();
-
         let container_ref = self.ensure_container_exists(workspace).await?;
         let workspace_root = PathBuf::from(container_ref);
 
+        let mut repo_inputs = Vec::new();
         for repo in repositories {
             let worktree_path = workspace_root.join(&repo.name);
             let branch = &workspace.branch;
@@ -1643,15 +1646,79 @@ impl ContainerService for LocalContainerService {
                 }
             };
 
+            repo_inputs.push((repo, worktree_path, base_commit));
+        }
+
+        if repo_inputs.is_empty() {
+            return Ok(Box::pin(futures::stream::empty()));
+        }
+
+        let mut summary = DiffSummary::default();
+        let mut summary_failed = false;
+        for (repo, worktree_path, base_commit) in &repo_inputs {
+            match self
+                .git
+                .get_worktree_diff_summary(worktree_path, base_commit, None)
+            {
+                Ok(repo_summary) => {
+                    summary.file_count =
+                        summary.file_count.saturating_add(repo_summary.file_count);
+                    summary.added = summary.added.saturating_add(repo_summary.added);
+                    summary.deleted = summary.deleted.saturating_add(repo_summary.deleted);
+                    summary.total_bytes =
+                        summary.total_bytes.saturating_add(repo_summary.total_bytes);
+                }
+                Err(e) => {
+                    summary_failed = true;
+                    tracing::warn!(
+                        "Failed to compute diff summary for repo {}: {}",
+                        repo.name,
+                        e
+                    );
+                }
+            }
+        }
+
+        let guard_enabled =
+            diff_stream::diff_preview_guard_thresholds(guard_preset.clone()).is_some();
+        let blocked = !force
+            && guard_enabled
+            && (summary_failed || diff_stream::diff_preview_guard_exceeded(&summary, guard_preset));
+        let blocked_reason = if blocked {
+            if summary_failed {
+                Some("summary_failed")
+            } else {
+                Some("threshold_exceeded")
+            }
+        } else {
+            None
+        };
+
+        let summary_patch = {
+            let patch = serde_json::from_value(json!([
+                { "op": "add", "path": "/summary", "value": summary },
+                { "op": "add", "path": "/blocked", "value": blocked },
+                { "op": "add", "path": "/blockedReason", "value": blocked_reason },
+            ]))
+            .expect("diff summary patch");
+            LogMsg::JsonPatch(patch)
+        };
+
+        if stats_only || blocked {
+            let stream = futures::stream::iter(vec![Ok(summary_patch), Ok(LogMsg::Finished)]);
+            return Ok(Box::pin(stream));
+        }
+
+        let mut streams = Vec::new();
+        for (repo, worktree_path, base_commit) in repo_inputs {
             let stream = self
                 .create_live_diff_stream(
                     &worktree_path,
                     &base_commit,
-                    stats_only,
+                    false,
                     Some(repo.name.clone()),
                 )
                 .await?;
-
             streams.push(Box::pin(stream));
         }
 
@@ -1659,8 +1726,9 @@ impl ContainerService for LocalContainerService {
             return Ok(Box::pin(futures::stream::empty()));
         }
 
-        // Merge all streams into one
-        Ok(Box::pin(futures::stream::select_all(streams)))
+        let summary_stream = futures::stream::iter(vec![Ok(summary_patch)]);
+        let merged_stream = futures::stream::select_all(streams);
+        Ok(Box::pin(summary_stream.chain(merged_stream)))
     }
 
     async fn try_commit_changes(&self, ctx: &ExecutionContext) -> Result<bool, ContainerError> {

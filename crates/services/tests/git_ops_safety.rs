@@ -5,7 +5,7 @@ use std::{
 };
 
 use git2::{PushOptions, Repository, build::CheckoutBuilder};
-use services::services::git::{GitCli, GitCliError, GitService};
+use services::services::git::{DiffContentPolicy, DiffTarget, GitCli, GitCliError, GitService};
 use tempfile::TempDir;
 // Avoid direct git CLI usage in tests; exercise GitService instead.
 
@@ -74,7 +74,6 @@ fn add_path(repo_path: &Path, path: &str) {
     git.git(repo_path, ["add", path]).unwrap();
 }
 
-use services::services::git::DiffTarget;
 
 // Non-conflicting setup used by several tests
 fn setup_repo_with_worktree(root: &TempDir) -> (PathBuf, PathBuf) {
@@ -1058,6 +1057,7 @@ fn sparse_checkout_respected_in_worktree_diffs_and_commit() {
                 base_commit: &base_commit,
             },
             None,
+            DiffContentPolicy::Full,
         )
         .unwrap();
     assert!(
@@ -1082,6 +1082,7 @@ fn sparse_checkout_respected_in_worktree_diffs_and_commit() {
                 commit_sha: &head_sha,
             },
             None,
+            DiffContentPolicy::Full,
         )
         .unwrap();
     assert!(
@@ -1127,6 +1128,7 @@ fn worktree_diff_ignores_commits_where_base_branch_is_ahead() {
                 base_commit: &base_commit,
             },
             None,
+            DiffContentPolicy::Full,
         )
         .unwrap();
 
@@ -1233,6 +1235,7 @@ fn merge_rename_vs_modify_conflict_does_not_move_ref() {
                         commit_sha: &after,
                     },
                     None,
+                    DiffContentPolicy::Full,
                 )
                 .unwrap();
             let has_renamed = diffs

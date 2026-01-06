@@ -15,19 +15,61 @@ use thiserror::Error;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_stream::wrappers::ReceiverStream;
 use utils::{
-    diff::{self, Diff},
+    diff::{self, Diff, DiffSummary},
     log_msg::LogMsg,
 };
 
 use crate::services::{
+    config::DiffPreviewGuardPreset,
     filesystem_watcher::{self, FilesystemWatcherError},
-    git::{Commit, DiffTarget, GitService, GitServiceError},
+    git::{Commit, DiffContentPolicy, DiffTarget, GitService, GitServiceError},
 };
 
 /// Maximum cumulative diff bytes to stream before omitting content (200MB)
 pub const MAX_CUMULATIVE_DIFF_BYTES: usize = 200 * 1024 * 1024;
 
 const DIFF_STREAM_CHANNEL_CAPACITY: usize = 1000;
+
+#[derive(Debug, Clone, Copy)]
+pub struct DiffPreviewGuardThresholds {
+    pub max_files: usize,
+    pub max_lines: usize,
+    pub max_bytes: usize,
+}
+
+pub fn diff_preview_guard_thresholds(
+    preset: DiffPreviewGuardPreset,
+) -> Option<DiffPreviewGuardThresholds> {
+    const MB: usize = 1024 * 1024;
+    match preset {
+        DiffPreviewGuardPreset::Safe => Some(DiffPreviewGuardThresholds {
+            max_files: 200,
+            max_lines: 10_000,
+            max_bytes: 20 * MB,
+        }),
+        DiffPreviewGuardPreset::Balanced => Some(DiffPreviewGuardThresholds {
+            max_files: 500,
+            max_lines: 25_000,
+            max_bytes: 50 * MB,
+        }),
+        DiffPreviewGuardPreset::Relaxed => Some(DiffPreviewGuardThresholds {
+            max_files: 1_000,
+            max_lines: 60_000,
+            max_bytes: 150 * MB,
+        }),
+        DiffPreviewGuardPreset::Off => None,
+    }
+}
+
+pub fn diff_preview_guard_exceeded(summary: &DiffSummary, preset: DiffPreviewGuardPreset) -> bool {
+    let Some(thresholds) = diff_preview_guard_thresholds(preset) else {
+        return false;
+    };
+    let total_lines = summary.added.saturating_add(summary.deleted);
+    summary.file_count > thresholds.max_files
+        || total_lines > thresholds.max_lines
+        || summary.total_bytes > thresholds.max_bytes
+}
 
 /// Errors that can occur during diff stream creation and operation
 #[derive(Error, Debug)]
@@ -169,12 +211,18 @@ pub async fn create(
         let path_prefix_clone = path_prefix.clone();
 
         let initial_diffs_result = tokio::task::spawn_blocking(move || {
+            let content_policy = if stats_only {
+                DiffContentPolicy::OmitContents
+            } else {
+                DiffContentPolicy::Full
+            };
             git_for_diff.get_diffs(
                 DiffTarget::Worktree {
                     worktree_path: &worktree_for_diff,
                     base_commit: &base_for_diff,
                 },
                 None,
+                content_policy,
             )
         })
         .await;
@@ -400,12 +448,18 @@ fn process_file_changes(
 ) -> Result<Vec<LogMsg>, DiffStreamError> {
     let path_filter: Vec<&str> = changed_paths.iter().map(|s| s.as_str()).collect();
 
+    let content_policy = if stats_only {
+        DiffContentPolicy::OmitContents
+    } else {
+        DiffContentPolicy::Full
+    };
     let current_diffs = git_service.get_diffs(
         DiffTarget::Worktree {
             worktree_path,
             base_commit,
         },
         Some(&path_filter),
+        content_policy,
     )?;
 
     let mut msgs = Vec::new();
@@ -450,4 +504,92 @@ fn process_file_changes(
     }
 
     Ok(msgs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diff_preview_guard_balanced_thresholds() {
+        let mb = 1024 * 1024;
+        let within = DiffSummary {
+            file_count: 500,
+            added: 12_000,
+            deleted: 13_000,
+            total_bytes: 50 * mb,
+        };
+        assert!(!diff_preview_guard_exceeded(
+            &within,
+            DiffPreviewGuardPreset::Balanced
+        ));
+
+        let too_many_files = DiffSummary {
+            file_count: 501,
+            ..within.clone()
+        };
+        assert!(diff_preview_guard_exceeded(
+            &too_many_files,
+            DiffPreviewGuardPreset::Balanced
+        ));
+
+        let too_many_lines = DiffSummary {
+            file_count: 10,
+            added: 25_001,
+            deleted: 0,
+            total_bytes: 10 * mb,
+        };
+        assert!(diff_preview_guard_exceeded(
+            &too_many_lines,
+            DiffPreviewGuardPreset::Balanced
+        ));
+
+        let too_many_bytes = DiffSummary {
+            file_count: 10,
+            added: 1,
+            deleted: 1,
+            total_bytes: 50 * mb + 1,
+        };
+        assert!(diff_preview_guard_exceeded(
+            &too_many_bytes,
+            DiffPreviewGuardPreset::Balanced
+        ));
+    }
+
+    #[test]
+    fn diff_preview_guard_off_never_blocks() {
+        let summary = DiffSummary {
+            file_count: 10_000,
+            added: 1_000_000,
+            deleted: 1_000_000,
+            total_bytes: 1_000_000_000,
+        };
+        assert!(!diff_preview_guard_exceeded(
+            &summary,
+            DiffPreviewGuardPreset::Off
+        ));
+    }
+
+    #[test]
+    fn apply_stream_omit_policy_stats_only_strips_contents() {
+        let mut diff = Diff {
+            change: diff::DiffChangeKind::Modified,
+            old_path: Some("old.txt".to_string()),
+            new_path: Some("new.txt".to_string()),
+            old_content: Some("line1\n".to_string()),
+            new_content: Some("line1\nline2\n".to_string()),
+            content_omitted: false,
+            additions: None,
+            deletions: None,
+        };
+        let sent_bytes = Arc::new(AtomicUsize::new(0));
+
+        apply_stream_omit_policy(&mut diff, &sent_bytes, true);
+
+        assert!(diff.content_omitted);
+        assert!(diff.old_content.is_none());
+        assert!(diff.new_content.is_none());
+        assert_eq!(diff.additions, Some(1));
+        assert_eq!(diff.deletions, Some(0));
+    }
 }

@@ -139,6 +139,21 @@
           "helper": "启用后，Vibe Kanban 会在 git commit 和 merge 时传入 --no-verify。"
         }
       },
+      "diffPreview": {
+        "title": "差异预览",
+        "description": "控制大体量差异的预览行为。",
+        "preset": {
+          "label": "预览尺寸限制",
+          "placeholder": "选择一个档位",
+          "helper": "超过阈值时仅显示统计，需手动强制加载。"
+        },
+        "options": {
+          "safe": "安全 — 200 个文件 / 1 万行 / 20MB",
+          "balanced": "均衡 — 500 个文件 / 2.5 万行 / 50MB",
+          "relaxed": "宽松 — 1000 个文件 / 6 万行 / 150MB",
+          "off": "关闭 — 永不拦截预览"
+        }
+      },
       "pullRequests": {
         "title": "拉取请求",
         "description": "配置PR创建行为",

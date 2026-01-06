@@ -80,6 +80,12 @@ pub struct StatusDiffOptions {
     pub path_filter: Option<Vec<String>>, // pathspecs to limit diff
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct DiffNumstatSummary {
+    pub additions: usize,
+    pub deletions: usize,
+}
+
 impl GitCli {
     pub fn new() -> Self {
         Self {}
@@ -228,6 +234,68 @@ impl GitCli {
         args = Self::apply_pathspec_filter(args, opts.path_filter.as_ref());
         let out = self.git_with_env(worktree_path, args, &envs)?;
         Ok(Self::parse_name_status(&out))
+    }
+
+    /// Return total line additions/deletions for the worktree diff.
+    pub fn diff_numstat_summary(
+        &self,
+        worktree_path: &Path,
+        base_commit: &Commit,
+        opts: StatusDiffOptions,
+    ) -> Result<DiffNumstatSummary, GitCliError> {
+        // Create a temp index file
+        let tmp_dir = tempfile::TempDir::new()
+            .map_err(|e| GitCliError::CommandFailed(format!("temp dir create failed: {e}")))?;
+        let tmp_index = tmp_dir.path().join("index");
+        let envs = vec![(
+            OsString::from("GIT_INDEX_FILE"),
+            tmp_index.as_os_str().to_os_string(),
+        )];
+
+        // Use a temp index from HEAD to accurately track renames in untracked files
+        let _ = self.git_with_env(worktree_path, ["read-tree", "HEAD"], &envs)?;
+
+        // Stage changed and untracked files explicitly.
+        let status = self.get_worktree_status(worktree_path)?;
+        let mut paths_to_add: Vec<Vec<u8>> = Vec::new();
+        for entry in status.entries {
+            paths_to_add.push(entry.path);
+            if let Some(orig) = entry.orig_path {
+                paths_to_add.push(orig);
+            }
+        }
+        if !paths_to_add.is_empty() {
+            paths_to_add.extend(
+                Self::get_default_pathspec_excludes()
+                    .iter()
+                    .map(|s| s.as_encoded_bytes().to_vec()),
+            );
+            let mut input = Vec::new();
+            for p in paths_to_add {
+                input.extend_from_slice(&p);
+                input.push(0);
+            }
+            let args = vec![
+                OsString::from("add"),
+                OsString::from("-A"),
+                OsString::from("--pathspec-from-file=-"),
+                OsString::from("--pathspec-file-nul"),
+            ];
+            self.git_with_stdin(worktree_path, args, Some(&envs), &input)?;
+        }
+
+        let mut args: Vec<OsString> = vec![
+            "-c".into(),
+            "core.quotepath=false".into(),
+            "diff".into(),
+            "--cached".into(),
+            "--numstat".into(),
+            OsString::from(base_commit.to_string()),
+        ];
+        args = Self::apply_pathspec_filter(args, opts.path_filter.as_ref());
+        let out = self.git_with_env(worktree_path, args, &envs)?;
+
+        Ok(Self::parse_numstat_summary(&out))
     }
 
     /// Return `git status --porcelain` parsed into a structured summary
@@ -475,6 +543,32 @@ impl GitCli {
             }
         }
         out
+    }
+
+    fn parse_numstat_summary(output: &str) -> DiffNumstatSummary {
+        let mut summary = DiffNumstatSummary::default();
+        for line in output.lines() {
+            let line = line.trim_end();
+            if line.is_empty() {
+                continue;
+            }
+            let mut parts = line.split('\t');
+            let add = parts.next().unwrap_or("");
+            let del = parts.next().unwrap_or("");
+
+            let parse_count = |value: &str| -> usize {
+                if value == "-" {
+                    0
+                } else {
+                    value.parse::<usize>().unwrap_or(0)
+                }
+            };
+
+            summary.additions = summary.additions.saturating_add(parse_count(add));
+            summary.deletions = summary.deletions.saturating_add(parse_count(del));
+        }
+
+        summary
     }
 
     /// Return the merge base commit sha of two refs in the given worktree.

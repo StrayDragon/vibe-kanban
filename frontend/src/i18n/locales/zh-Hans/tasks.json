@@ -137,7 +137,11 @@
     "collapseAll": "折叠所有差异",
     "filesChanged_one": "{{count}} 个文件已更改",
     "filesChanged_other": "{{count}} 个文件已更改",
-    "noChanges": "尚未进行任何更改"
+    "noChanges": "尚未进行任何更改",
+    "tooLarge": "改动过多，已暂停预览。",
+    "summaryFailed": "无法获取差异统计，已暂停预览。",
+    "tooLargeSummary": "{{files}} 个文件，+{{added}} / -{{deleted}}，{{bytes}}",
+    "forceLoad": "强制加载"
   },
   "taskPanel": {
     "noTaskSelected": "未选择任务",

@@ -56,6 +56,12 @@ use crate::services::{
 };
 pub type ContainerRef = String;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DiffStreamOptions {
+    pub stats_only: bool,
+    pub force: bool,
+}
+
 #[derive(Debug, Error)]
 pub enum ContainerError {
     #[error(transparent)]
@@ -614,7 +620,7 @@ pub trait ContainerService {
     async fn stream_diff(
         &self,
         workspace: &Workspace,
-        stats_only: bool,
+        options: DiffStreamOptions,
     ) -> Result<futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>, ContainerError>;
 
     /// Fetch the MsgStore for a given execution ID, panicking if missing.

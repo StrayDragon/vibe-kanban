@@ -23,6 +23,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Loader2, Volume2 } from 'lucide-react';
 import {
   DEFAULT_PR_DESCRIPTION_PROMPT,
+  DiffPreviewGuardPreset,
   EditorType,
   SoundFile,
   ThemeMode,
@@ -47,6 +48,24 @@ export function GeneralSettings() {
       defaultValue: 'Browser Default',
     })
   );
+  const diffPreviewOptions = [
+    {
+      value: DiffPreviewGuardPreset.SAFE,
+      label: t('settings.general.diffPreview.options.safe'),
+    },
+    {
+      value: DiffPreviewGuardPreset.BALANCED,
+      label: t('settings.general.diffPreview.options.balanced'),
+    },
+    {
+      value: DiffPreviewGuardPreset.RELAXED,
+      label: t('settings.general.diffPreview.options.relaxed'),
+    },
+    {
+      value: DiffPreviewGuardPreset.OFF,
+      label: t('settings.general.diffPreview.options.off'),
+    },
+  ];
   const {
     config,
     loading,
@@ -477,6 +496,48 @@ export function GeneralSettings() {
                 {t('settings.general.git.noVerify.helper')}
               </p>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('settings.general.diffPreview.title')}</CardTitle>
+          <CardDescription>
+            {t('settings.general.diffPreview.description')}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="diff-preview-guard">
+              {t('settings.general.diffPreview.preset.label')}
+            </Label>
+            <Select
+              value={
+                draft?.diff_preview_guard ?? DiffPreviewGuardPreset.BALANCED
+              }
+              onValueChange={(value) =>
+                updateDraft({
+                  diff_preview_guard: value as DiffPreviewGuardPreset,
+                })
+              }
+            >
+              <SelectTrigger id="diff-preview-guard">
+                <SelectValue
+                  placeholder={t('settings.general.diffPreview.preset.placeholder')}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {diffPreviewOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-sm text-muted-foreground">
+              {t('settings.general.diffPreview.preset.helper')}
+            </p>
           </div>
         </CardContent>
       </Card>

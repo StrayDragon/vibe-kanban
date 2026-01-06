@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import type { Diff, PatchType } from 'shared/types';
+import type { Diff, DiffSummary, PatchType } from 'shared/types';
 import { useJsonPatchWsStream } from './useJsonPatchWsStream';
 
 interface DiffEntries {
@@ -8,14 +8,22 @@ interface DiffEntries {
 
 type DiffStreamEvent = {
   entries: DiffEntries;
+  summary?: DiffSummary;
+  blocked?: boolean;
+  blockedReason?: 'summary_failed' | 'threshold_exceeded' | null;
 };
 
 export interface UseDiffStreamOptions {
   statsOnly?: boolean;
+  force?: boolean;
+  refreshNonce?: number;
 }
 
 interface UseDiffStreamResult {
   diffs: Diff[];
+  summary?: DiffSummary;
+  blocked: boolean;
+  blockedReason?: 'summary_failed' | 'threshold_exceeded' | null;
   error: string | null;
 }
 
@@ -27,13 +35,18 @@ export const useDiffStream = (
   const endpoint = (() => {
     if (!attemptId) return undefined;
     const query = `/api/task-attempts/${attemptId}/diff/ws`;
+    const params = new URLSearchParams();
     if (typeof options?.statsOnly === 'boolean') {
-      const params = new URLSearchParams();
       params.set('stats_only', String(options.statsOnly));
-      return `${query}?${params.toString()}`;
-    } else {
-      return query;
     }
+    if (options?.force) {
+      params.set('force', 'true');
+    }
+    if (typeof options?.refreshNonce === 'number') {
+      params.set('refresh', String(options.refreshNonce));
+    }
+    const paramString = params.toString();
+    return paramString ? `${query}?${paramString}` : query;
   })();
 
   const initialData = useCallback(
@@ -56,5 +69,11 @@ export const useDiffStream = (
       .map((entry) => entry.content);
   }, [data?.entries]);
 
-  return { diffs, error };
+  return {
+    diffs,
+    summary: data?.summary,
+    blocked: data?.blocked ?? false,
+    blockedReason: data?.blockedReason ?? null,
+    error,
+  };
 };

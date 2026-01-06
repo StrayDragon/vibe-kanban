@@ -1,25 +1,41 @@
+import { useEffect, useState } from 'react';
 import { useDiffStream } from '@/hooks/useDiffStream';
-import { useMemo } from 'react';
+import type { DiffSummary } from 'shared/types';
 
 export function useDiffSummary(attemptId: string | null) {
-  const { diffs, error } = useDiffStream(attemptId, true, {
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [lastSummary, setLastSummary] = useState<DiffSummary | null>(null);
+
+  useEffect(() => {
+    setRefreshNonce(0);
+    setLastSummary(null);
+  }, [attemptId]);
+
+  useEffect(() => {
+    if (!attemptId) return;
+    const interval = window.setInterval(() => {
+      setRefreshNonce((prev) => prev + 1);
+    }, 10000);
+    return () => window.clearInterval(interval);
+  }, [attemptId]);
+
+  const { summary, error } = useDiffStream(attemptId, true, {
     statsOnly: true,
+    refreshNonce,
   });
 
-  const { fileCount, added, deleted } = useMemo(() => {
-    if (!attemptId || diffs.length === 0) {
-      return { fileCount: 0, added: 0, deleted: 0 };
+  useEffect(() => {
+    if (summary) {
+      setLastSummary(summary);
     }
+  }, [summary]);
 
-    return diffs.reduce(
-      (acc, d) => {
-        acc.added += d.additions ?? 0;
-        acc.deleted += d.deletions ?? 0;
-        return acc;
-      },
-      { fileCount: diffs.length, added: 0, deleted: 0 }
-    );
-  }, [attemptId, diffs]);
+  const effectiveSummary = summary ?? lastSummary;
 
-  return { fileCount, added, deleted, error };
+  return {
+    fileCount: effectiveSummary?.fileCount ?? 0,
+    added: effectiveSummary?.added ?? 0,
+    deleted: effectiveSummary?.deleted ?? 0,
+    error,
+  };
 }

@@ -6,7 +6,7 @@ use std::{
 
 use git2::{Repository, build::CheckoutBuilder};
 use services::services::{
-    git::{DiffTarget, GitCli, GitService},
+    git::{DiffContentPolicy, DiffTarget, GitCli, GitService},
     github::{GitHubRepoInfo, GitHubServiceError},
 };
 use tempfile::TempDir;
@@ -208,6 +208,7 @@ fn diff_added_binary_file_has_no_content() {
                 base_branch: "main",
             },
             None,
+            DiffContentPolicy::Full,
         )
         .unwrap();
     let bin = diffs
@@ -250,6 +251,7 @@ fn commit_and_is_worktree_clean() {
                 commit_sha: &s.get_head_info(&repo_path).unwrap().oid,
             },
             None,
+            DiffContentPolicy::Full,
         )
         .unwrap();
     assert!(
@@ -351,6 +353,7 @@ fn get_branch_diffs_between_branches() {
                 base_branch: "main",
             },
             None,
+            DiffContentPolicy::Full,
         )
         .unwrap();
     assert!(diffs.iter().any(|d| d.new_path.as_deref() == Some("b.txt")));
@@ -384,6 +387,7 @@ fn worktree_diff_respects_path_filter() {
                 base_commit: &base_commit,
             },
             Some(&["src"]),
+            DiffContentPolicy::Full,
         )
         .unwrap();
     assert!(
@@ -456,6 +460,7 @@ fn worktree_diff_permission_only_change() {
                 base_commit: &base_commit,
             },
             None,
+            DiffContentPolicy::Full,
         )
         .unwrap();
     let d = diffs

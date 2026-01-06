@@ -139,6 +139,21 @@
           "helper": "When enabled, Vibe Kanban passes --no-verify to git commit and merge."
         }
       },
+      "diffPreview": {
+        "title": "Diff Preview",
+        "description": "Control when large diffs are blocked from preview.",
+        "preset": {
+          "label": "Preview size limit",
+          "placeholder": "Select a limit",
+          "helper": "Large diffs will show summary only unless you force load."
+        },
+        "options": {
+          "safe": "Safe — 200 files / 10k lines / 20MB",
+          "balanced": "Balanced — 500 files / 25k lines / 50MB",
+          "relaxed": "Relaxed — 1000 files / 60k lines / 150MB",
+          "off": "Off — never block previews"
+        }
+      },
       "pullRequests": {
         "title": "Pull Requests",
         "description": "Configure PR creation behavior",

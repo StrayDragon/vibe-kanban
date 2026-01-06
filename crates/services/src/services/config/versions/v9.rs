@@ -21,6 +21,21 @@ fn default_git_no_verify() -> bool {
     false
 }
 
+fn default_diff_preview_guard() -> DiffPreviewGuardPreset {
+    DiffPreviewGuardPreset::Balanced
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS, Default)]
+#[ts(use_ts_enum)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DiffPreviewGuardPreset {
+    Safe,
+    #[default]
+    Balanced,
+    Relaxed,
+    Off,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct Config {
     pub config_version: String,
@@ -48,6 +63,8 @@ pub struct Config {
     pub pr_auto_description_prompt: Option<String>,
     #[serde(default)]
     pub llman_claude_code_path: Option<String>,
+    #[serde(default = "default_diff_preview_guard")]
+    pub diff_preview_guard: DiffPreviewGuardPreset,
 }
 
 impl Config {
@@ -71,6 +88,7 @@ impl Config {
             pr_auto_description_enabled: old_config.pr_auto_description_enabled,
             pr_auto_description_prompt: old_config.pr_auto_description_prompt,
             llman_claude_code_path: None,
+            diff_preview_guard: default_diff_preview_guard(),
         }
     }
 
@@ -122,6 +140,7 @@ impl Default for Config {
             pr_auto_description_enabled: true,
             pr_auto_description_prompt: None,
             llman_claude_code_path: None,
+            diff_preview_guard: default_diff_preview_guard(),
         }
     }
 }

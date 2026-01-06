@@ -5,7 +5,6 @@ import { Loader } from '@/components/ui/loader';
 import { Button } from '@/components/ui/button';
 import DiffViewSwitch from '@/components/DiffViewSwitch';
 import DiffCard from '@/components/DiffCard';
-import { useDiffSummary } from '@/hooks/useDiffSummary';
 import { NewCardHeader } from '@/components/ui/new-card';
 import { ChevronsUp, ChevronsDown } from 'lucide-react';
 import {
@@ -14,6 +13,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { formatFileSize } from '@/lib/utils';
 import type { Diff, DiffChangeKind } from 'shared/types';
 import type { Workspace } from 'shared/types';
 import GitOperations, {
@@ -53,12 +53,29 @@ export function DiffsPanel({ selectedAttempt, gitOps }: DiffsPanelProps) {
   const [loadingState, setLoadingState] = useState<
     'loading' | 'loaded' | 'timed-out'
   >('loading');
+  const [forceLoad, setForceLoad] = useState(false);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
   const [processedIds, setProcessedIds] = useState<Set<string>>(new Set());
-  const { diffs, error } = useDiffStream(selectedAttempt?.id ?? null, true);
-  const { fileCount, added, deleted } = useDiffSummary(
-    selectedAttempt?.id ?? null
+  const { diffs, summary, blocked, blockedReason, error } = useDiffStream(
+    selectedAttempt?.id ?? null,
+    true,
+    { force: forceLoad }
   );
+  const fileCount = summary?.fileCount ?? diffs.length;
+  const added = summary?.added ?? 0;
+  const deleted = summary?.deleted ?? 0;
+  const totalBytes = summary?.totalBytes ?? 0;
+
+  useEffect(() => {
+    setForceLoad(false);
+    setLoadingState('loading');
+  }, [selectedAttempt?.id]);
+
+  useEffect(() => {
+    if (forceLoad) {
+      setLoadingState('loading');
+    }
+  }, [forceLoad]);
 
   // If no diffs arrive within 3 seconds, stop showing the spinner
   useEffect(() => {
@@ -67,9 +84,11 @@ export function DiffsPanel({ selectedAttempt, gitOps }: DiffsPanelProps) {
     return () => clearTimeout(timer);
   }, [loadingState]);
 
-  if (diffs.length > 0 && loadingState === 'loading') {
-    setLoadingState('loaded');
-  }
+  useEffect(() => {
+    if (blocked || diffs.length > 0) {
+      setLoadingState((prev) => (prev === 'loaded' ? prev : 'loaded'));
+    }
+  }, [blocked, diffs.length]);
 
   if (diffs.length > 0) {
     const newDiffs = diffs
@@ -131,6 +150,7 @@ export function DiffsPanel({ selectedAttempt, gitOps }: DiffsPanelProps) {
       fileCount={fileCount}
       added={added}
       deleted={deleted}
+      totalBytes={totalBytes}
       collapsedIds={collapsedIds}
       allCollapsed={allCollapsed}
       handleCollapseAll={handleCollapseAll}
@@ -138,6 +158,9 @@ export function DiffsPanel({ selectedAttempt, gitOps }: DiffsPanelProps) {
       selectedAttempt={selectedAttempt}
       gitOps={gitOps}
       loading={loading}
+      blocked={blocked}
+      blockedReason={blockedReason}
+      onForceLoad={() => setForceLoad(true)}
       t={t}
     />
   );
@@ -148,6 +171,7 @@ interface DiffsPanelContentProps {
   fileCount: number;
   added: number;
   deleted: number;
+  totalBytes: number;
   collapsedIds: Set<string>;
   allCollapsed: boolean;
   handleCollapseAll: () => void;
@@ -155,6 +179,9 @@ interface DiffsPanelContentProps {
   selectedAttempt: Workspace | null;
   gitOps?: GitOperationsInputs;
   loading: boolean;
+  blocked: boolean;
+  blockedReason?: 'summary_failed' | 'threshold_exceeded' | null;
+  onForceLoad: () => void;
   t: (key: string, params?: Record<string, unknown>) => string;
 }
 
@@ -163,6 +190,7 @@ function DiffsPanelContent({
   fileCount,
   added,
   deleted,
+  totalBytes,
   collapsedIds,
   allCollapsed,
   handleCollapseAll,
@@ -170,11 +198,29 @@ function DiffsPanelContent({
   selectedAttempt,
   gitOps,
   loading,
+  blocked,
+  blockedReason,
+  onForceLoad,
   t,
 }: DiffsPanelContentProps) {
+  const showHeader = fileCount > 0 || diffs.length > 0;
+  const totalSize = totalBytes
+    ? formatFileSize(BigInt(totalBytes))
+    : '0 B';
+  const blockedMessage =
+    blockedReason === 'summary_failed'
+      ? t('diff.summaryFailed')
+      : t('diff.tooLarge');
+  const summaryText = t('diff.tooLargeSummary', {
+    files: fileCount,
+    added,
+    deleted,
+    bytes: totalSize,
+  });
+
   return (
     <div className="h-full flex flex-col relative">
-      {diffs.length > 0 && (
+      {showHeader && (
         <NewCardHeader
           className="sticky top-0 z-10"
           actions={
@@ -232,6 +278,20 @@ function DiffsPanelContent({
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <Loader />
+          </div>
+        ) : blocked ? (
+          <div className="flex items-center justify-center h-full">
+            <div className="max-w-md text-center space-y-3">
+              <p className="text-sm text-muted-foreground">
+                {blockedMessage}
+              </p>
+              {fileCount > 0 && (
+                <p className="text-xs text-muted-foreground">{summaryText}</p>
+              )}
+              <Button onClick={onForceLoad} variant="secondary">
+                {t('diff.forceLoad')}
+              </Button>
+            </div>
           </div>
         ) : diffs.length === 0 ? (
           <div className="flex items-center justify-center h-full text-sm text-muted-foreground">

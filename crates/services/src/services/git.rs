@@ -8,7 +8,7 @@ use git2::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
-use utils::diff::{Diff, DiffChangeKind, FileDiffDetails, compute_line_change_counts};
+use utils::diff::{Diff, DiffChangeKind, DiffSummary, FileDiffDetails, compute_line_change_counts};
 
 mod cli;
 
@@ -160,6 +160,12 @@ pub enum DiffTarget<'p> {
         repo_path: &'p Path,
         commit_sha: &'p str,
     },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum DiffContentPolicy {
+    Full,
+    OmitContents,
 }
 
 impl Default for GitService {
@@ -326,6 +332,7 @@ impl GitService {
         &self,
         target: DiffTarget,
         path_filter: Option<&[&str]>,
+        content_policy: DiffContentPolicy,
     ) -> Result<Vec<Diff>, GitServiceError> {
         match target {
             DiffTarget::Worktree {
@@ -354,7 +361,7 @@ impl GitService {
                     })?;
                 Ok(entries
                     .into_iter()
-                    .map(|e| Self::status_entry_to_diff(&repo, &base_tree, e))
+                    .map(|e| Self::status_entry_to_diff(&repo, &base_tree, e, content_policy))
                     .collect())
             }
             DiffTarget::Branch {
@@ -392,7 +399,7 @@ impl GitService {
                 let mut find_opts = DiffFindOptions::new();
                 diff.find_similar(Some(&mut find_opts))?;
 
-                self.convert_diff_to_file_diffs(diff, &repo)
+                self.convert_diff_to_file_diffs(diff, &repo, content_policy)
             }
             DiffTarget::Commit {
                 repo_path,
@@ -437,9 +444,46 @@ impl GitService {
                 let mut find_opts = git2::DiffFindOptions::new();
                 diff.find_similar(Some(&mut find_opts))?;
 
-                self.convert_diff_to_file_diffs(diff, &repo)
+                self.convert_diff_to_file_diffs(diff, &repo, content_policy)
             }
         }
+    }
+
+    pub fn get_worktree_diff_summary(
+        &self,
+        worktree_path: &Path,
+        base_commit: &Commit,
+        path_filter: Option<&[&str]>,
+    ) -> Result<DiffSummary, GitServiceError> {
+        let repo = Repository::open(worktree_path)?;
+        let base_tree = repo
+            .find_commit(base_commit.as_oid())?
+            .tree()
+            .map_err(|e| {
+                GitServiceError::InvalidRepository(format!(
+                    "Failed to find base commit tree: {e}"
+                ))
+            })?;
+
+        let git = GitCli::new();
+        let cli_opts = StatusDiffOptions {
+            path_filter: path_filter.map(|fs| fs.iter().map(|s| s.to_string()).collect()),
+        };
+        let entries = git
+            .diff_status(worktree_path, base_commit, cli_opts.clone())
+            .map_err(|e| GitServiceError::InvalidRepository(format!("git diff failed: {e}")))?;
+        let line_summary = git
+            .diff_numstat_summary(worktree_path, base_commit, cli_opts)
+            .map_err(|e| GitServiceError::InvalidRepository(format!("git diff failed: {e}")))?;
+        let total_bytes =
+            Self::compute_entry_total_bytes(&repo, &base_tree, worktree_path, &entries);
+
+        Ok(DiffSummary {
+            file_count: entries.len(),
+            added: line_summary.additions,
+            deleted: line_summary.deletions,
+            total_bytes,
+        })
     }
 
     /// Convert git2::Diff to our Diff structs
@@ -447,8 +491,10 @@ impl GitService {
         &self,
         diff: git2::Diff,
         repo: &Repository,
+        content_policy: DiffContentPolicy,
     ) -> Result<Vec<Diff>, GitServiceError> {
         let mut file_diffs = Vec::new();
+        let omit_contents = matches!(content_policy, DiffContentPolicy::OmitContents);
 
         let mut delta_index: usize = 0;
         diff.foreach(
@@ -459,10 +505,10 @@ impl GitService {
 
                 let status = delta.status();
 
-                // Decide if we should omit content due to size
-                let mut content_omitted = false;
+                // Decide if we should omit content due to size or policy
+                let mut content_omitted = omit_contents;
                 // Check old blob size when applicable
-                if !matches!(status, Delta::Added) {
+                if !content_omitted && !matches!(status, Delta::Added) {
                     let oid = delta.old_file().id();
                     if !oid.is_zero()
                         && let Ok(blob) = repo.find_blob(oid)
@@ -473,7 +519,7 @@ impl GitService {
                     }
                 }
                 // Check new blob size when applicable
-                if !matches!(status, Delta::Deleted) {
+                if !content_omitted && !matches!(status, Delta::Deleted) {
                     let oid = delta.new_file().id();
                     if !oid.is_zero()
                         && let Ok(blob) = repo.find_blob(oid)
@@ -548,9 +594,10 @@ impl GitService {
                     }
                 }
 
-                // Always compute line stats via libgit2 Patch
-                let (additions, deletions) = if let Ok(Some(patch)) =
-                    git2::Patch::from_diff(&diff, delta_index)
+                // Always compute line stats via libgit2 Patch unless we omit contents
+                let (additions, deletions) = if omit_contents {
+                    (None, None)
+                } else if let Ok(Some(patch)) = git2::Patch::from_diff(&diff, delta_index)
                     && let Ok((_ctx, adds, dels)) = patch.line_stats()
                 {
                     (Some(adds), Some(dels))
@@ -674,7 +721,13 @@ impl GitService {
 
     /// Create Diff entries from git_cli::StatusDiffEntry
     /// New Diff format is flattened with change kind, paths, and optional contents.
-    fn status_entry_to_diff(repo: &Repository, base_tree: &git2::Tree, e: StatusDiffEntry) -> Diff {
+    fn status_entry_to_diff(
+        repo: &Repository,
+        base_tree: &git2::Tree,
+        e: StatusDiffEntry,
+        content_policy: DiffContentPolicy,
+    ) -> Diff {
+        let omit_contents = matches!(content_policy, DiffContentPolicy::OmitContents);
         // Map ChangeType to DiffChangeKind
         let mut change = match e.change {
             ChangeType::Added => DiffChangeKind::Added,
@@ -699,10 +752,10 @@ impl GitService {
             ChangeType::Unknown(_) => (e.old_path.clone(), Some(e.path.clone())),
         };
 
-        // Decide if we should omit content by size (either side)
-        let mut content_omitted = false;
+        // Decide if we should omit content by size or policy (either side)
+        let mut content_omitted = omit_contents;
         // Old side (from base tree)
-        if let Some(ref oldp) = old_path_opt {
+        if !content_omitted && let Some(ref oldp) = old_path_opt {
             let rel = std::path::Path::new(oldp);
             if let Ok(entry) = base_tree.get_path(rel)
                 && entry.kind() == Some(git2::ObjectType::Blob)
@@ -714,7 +767,8 @@ impl GitService {
             }
         }
         // New side (from filesystem)
-        if let Some(ref newp) = new_path_opt
+        if !content_omitted
+            && let Some(ref newp) = new_path_opt
             && let Some(workdir) = repo.workdir()
         {
             let abs = workdir.join(newp);
@@ -763,20 +817,24 @@ impl GitService {
         }
 
         // Compute line stats from available content
-        let (additions, deletions) = match (&old_content, &new_content) {
-            (Some(old), Some(new)) => {
-                let (adds, dels) = compute_line_change_counts(old, new);
-                (Some(adds), Some(dels))
+        let (additions, deletions) = if omit_contents {
+            (None, None)
+        } else {
+            match (&old_content, &new_content) {
+                (Some(old), Some(new)) => {
+                    let (adds, dels) = compute_line_change_counts(old, new);
+                    (Some(adds), Some(dels))
+                }
+                (Some(old), None) => {
+                    // File deleted - all lines are deletions
+                    (Some(0), Some(old.lines().count()))
+                }
+                (None, Some(new)) => {
+                    // File added - all lines are additions
+                    (Some(new.lines().count()), Some(0))
+                }
+                (None, None) => (None, None),
             }
-            (Some(old), None) => {
-                // File deleted - all lines are deletions
-                (Some(0), Some(old.lines().count()))
-            }
-            (None, Some(new)) => {
-                // File added - all lines are additions
-                (Some(new.lines().count()), Some(0))
-            }
-            (None, None) => (None, None),
         };
 
         Diff {
@@ -789,6 +847,60 @@ impl GitService {
             additions,
             deletions,
         }
+    }
+
+    fn compute_entry_total_bytes(
+        repo: &Repository,
+        base_tree: &git2::Tree,
+        worktree_path: &Path,
+        entries: &[StatusDiffEntry],
+    ) -> usize {
+        let mut total = 0usize;
+
+        for entry in entries {
+            let old_path = entry.old_path.as_deref().unwrap_or(&entry.path);
+            let new_path = entry.path.as_str();
+
+            let (include_old, include_new) = match entry.change {
+                ChangeType::Added => (false, true),
+                ChangeType::Deleted => (true, false),
+                ChangeType::Modified
+                | ChangeType::Renamed
+                | ChangeType::Copied
+                | ChangeType::TypeChanged
+                | ChangeType::Unmerged
+                | ChangeType::Unknown(_) => (true, true),
+            };
+
+            if include_old {
+                if let Some(size) = Self::blob_size(repo, base_tree, old_path) {
+                    total = total.saturating_add(size);
+                }
+            }
+            if include_new {
+                if let Some(size) = Self::file_size(worktree_path, new_path) {
+                    total = total.saturating_add(size);
+                }
+            }
+        }
+
+        total
+    }
+
+    fn blob_size(repo: &Repository, base_tree: &git2::Tree, path: &str) -> Option<usize> {
+        let rel = Path::new(path);
+        let entry = base_tree.get_path(rel).ok()?;
+        if entry.kind() != Some(git2::ObjectType::Blob) {
+            return None;
+        }
+        let blob = repo.find_blob(entry.id()).ok()?;
+        Some(blob.size() as usize)
+    }
+
+    fn file_size(worktree_path: &Path, path: &str) -> Option<usize> {
+        let abs = worktree_path.join(path);
+        let md = std::fs::metadata(&abs).ok()?;
+        Some(md.len() as usize)
     }
 
     /// Find where a branch is currently checked out

@@ -42,6 +42,15 @@ pub enum DiffChangeKind {
     PermissionChange,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffSummary {
+    pub file_count: usize,
+    pub added: usize,
+    pub deleted: usize,
+    pub total_bytes: usize,
+}
+
 // ==============================
 // Unified diff utility functions
 // ==============================
