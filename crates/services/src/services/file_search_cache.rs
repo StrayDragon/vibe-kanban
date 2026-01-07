@@ -1,6 +1,6 @@
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -13,7 +13,7 @@ use fst::{Map, MapBuilder};
 use ignore::WalkBuilder;
 use moka::future::Cache;
 use notify::{RecommendedWatcher, RecursiveMode};
-use notify_debouncer_full::{DebounceEventResult, new_debouncer};
+use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use thiserror::Error;
@@ -22,6 +22,7 @@ use tracing::{error, info, warn};
 use ts_rs::TS;
 
 use super::{
+    cache_budget::{cache_budgets, should_warn, warn_threshold},
     file_ranker::{FileRanker, FileStats},
     git::GitService,
 };
@@ -84,6 +85,11 @@ pub struct CachedRepo {
     pub build_ts: Instant,
 }
 
+struct RepoWatcher {
+    debouncer: Arc<Mutex<Debouncer<RecommendedWatcher, RecommendedCache>>>,
+    created_at: Instant,
+}
+
 /// Cache miss error
 #[derive(Debug)]
 pub enum CacheError {
@@ -97,18 +103,20 @@ pub struct FileSearchCache {
     git_service: GitService,
     file_ranker: FileRanker,
     build_queue: mpsc::UnboundedSender<PathBuf>,
-    watchers: DashMap<PathBuf, RecommendedWatcher>,
+    watchers: DashMap<PathBuf, RepoWatcher>,
 }
 
 impl FileSearchCache {
     pub fn new() -> Self {
         let (build_sender, build_receiver) = mpsc::unbounded_channel();
 
-        // Create cache with 100MB limit and 1 hour TTL
-        let cache = Cache::builder()
-            .max_capacity(50) // Max 50 repos
-            .time_to_live(Duration::from_secs(3600)) // 1 hour TTL
-            .build();
+        let budgets = cache_budgets();
+        let mut cache_builder =
+            Cache::builder().max_capacity(budgets.file_search_cache_max_repos as u64);
+        if !budgets.file_search_cache_ttl.is_zero() {
+            cache_builder = cache_builder.time_to_live(budgets.file_search_cache_ttl);
+        }
+        let cache = cache_builder.build();
 
         let cache_for_worker = cache.clone();
         let git_service = GitService::new();
@@ -134,6 +142,94 @@ impl FileSearchCache {
             build_queue: build_sender,
             watchers: DashMap::new(),
         }
+    }
+
+    pub fn cache_entry_count(&self) -> u64 {
+        self.cache.entry_count()
+    }
+
+    pub fn watcher_count(&self) -> usize {
+        self.watchers.len()
+    }
+
+    fn warn_if_cache_near_capacity(current: usize) {
+        let budgets = cache_budgets();
+        let max = budgets.file_search_cache_max_repos;
+        if max == 0 {
+            return;
+        }
+
+        let threshold = warn_threshold(max);
+        if current >= threshold && should_warn("file_search_cache") {
+            warn!(
+                "File search cache nearing budget: {current}/{max} entries (warn at {threshold})"
+            );
+        }
+    }
+
+    fn warn_if_watchers_near_capacity(current: usize, max: usize) {
+        if max == 0 {
+            return;
+        }
+
+        let threshold = warn_threshold(max);
+        if current >= threshold && should_warn("file_search_watchers") {
+            warn!(
+                "File search watchers nearing budget: {current}/{max} entries (warn at {threshold})"
+            );
+        }
+    }
+
+    fn is_watcher_expired(created_at: Instant) -> bool {
+        let ttl = cache_budgets().file_search_watcher_ttl;
+        !ttl.is_zero() && created_at.elapsed() > ttl
+    }
+
+    fn prune_watchers(&self) {
+        let budgets = cache_budgets();
+        let max = budgets.file_search_watchers_max;
+
+        let mut expired = Vec::new();
+        if !budgets.file_search_watcher_ttl.is_zero() {
+            for entry in self.watchers.iter() {
+                if Self::is_watcher_expired(entry.value().created_at) {
+                    expired.push(entry.key().clone());
+                }
+            }
+        }
+
+        for key in &expired {
+            self.watchers.remove(key);
+        }
+
+        if !expired.is_empty() && should_warn("file_search_watchers") {
+            warn!(
+                "Removed {} expired file search watchers (ttl={}s)",
+                expired.len(),
+                budgets.file_search_watcher_ttl.as_secs()
+            );
+        }
+
+        let len = self.watchers.len();
+        if len > max {
+            let mut entries: Vec<(PathBuf, Instant)> = self
+                .watchers
+                .iter()
+                .map(|entry| (entry.key().clone(), entry.value().created_at))
+                .collect();
+            entries.sort_by_key(|(_, created_at)| *created_at);
+
+            let to_remove = len - max;
+            for (path, _) in entries.into_iter().take(to_remove) {
+                self.watchers.remove(&path);
+            }
+
+            if should_warn("file_search_watchers") {
+                warn!("Evicted {to_remove} file search watchers to enforce budget {max}");
+            }
+        }
+
+        Self::warn_if_watchers_near_capacity(self.watchers.len(), max);
     }
 
     /// Search files in repository using cache
@@ -444,6 +540,7 @@ impl FileSearchCache {
             match cache_builder.build_repo_cache(&repo_path).await {
                 Ok(cached_repo) => {
                     cache.insert(repo_path.clone(), cached_repo).await;
+                    Self::warn_if_cache_near_capacity(cache.entry_count() as usize);
                     info!("Successfully cached repo: {:?}", repo_path);
                 }
                 Err(e) => {
@@ -457,6 +554,7 @@ impl FileSearchCache {
     pub async fn setup_watcher(&self, repo_path: &Path) -> Result<(), String> {
         let repo_path_buf = repo_path.to_path_buf();
 
+        self.prune_watchers();
         if self.watchers.contains_key(&repo_path_buf) {
             return Ok(()); // Already watching
         }
@@ -495,6 +593,15 @@ impl FileSearchCache {
         debouncer
             .watch(git_dir.join("HEAD"), RecursiveMode::NonRecursive)
             .map_err(|e| format!("Failed to watch HEAD file: {e}"))?;
+
+        self.watchers.insert(
+            repo_path_buf.clone(),
+            RepoWatcher {
+                debouncer: Arc::new(Mutex::new(debouncer)),
+                created_at: Instant::now(),
+            },
+        );
+        self.prune_watchers();
 
         // Spawn task to handle HEAD changes
         tokio::spawn(async move {

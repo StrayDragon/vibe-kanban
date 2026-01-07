@@ -1,4 +1,5 @@
 pub mod approvals;
+pub mod cache_budget;
 pub mod config;
 pub mod container;
 pub mod diff_stream;

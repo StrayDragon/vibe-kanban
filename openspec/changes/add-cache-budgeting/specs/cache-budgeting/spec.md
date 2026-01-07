@@ -1,6 +1,6 @@
 ## ADDED Requirements
 ### Requirement: Configurable cache budgets
-The system SHALL enforce configurable memory budgets for server-side caches and evict entries when limits are exceeded.
+The system SHALL enforce configurable cache budgets (entry count and/or TTL) for server-side caches and evict entries when limits are exceeded.
 
 #### Scenario: Budget enforcement
 - **WHEN** a cache exceeds its configured budget

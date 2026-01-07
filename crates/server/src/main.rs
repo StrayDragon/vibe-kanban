@@ -38,6 +38,7 @@ async fn main() -> Result<(), VibeKanbanError> {
     }
 
     let deployment = DeploymentImpl::new().await?;
+    deployment.log_cache_budgets();
     deployment
         .container()
         .cleanup_orphan_executions()

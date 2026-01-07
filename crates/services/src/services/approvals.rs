@@ -1,6 +1,10 @@
 pub mod executor_approvals;
 
-use std::{collections::HashMap, sync::Arc, time::Duration as StdDuration};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration as StdDuration, Instant},
+};
 
 use dashmap::DashMap;
 use db::models::{
@@ -25,6 +29,8 @@ use utils::{
 };
 use uuid::Uuid;
 
+use crate::services::cache_budget::{cache_budgets, should_warn};
+
 #[derive(Debug)]
 struct PendingApproval {
     entry_index: usize,
@@ -36,6 +42,12 @@ struct PendingApproval {
 
 type ApprovalWaiter = Shared<BoxFuture<'static, ApprovalStatus>>;
 
+#[derive(Debug, Clone)]
+struct CompletedApproval {
+    status: ApprovalStatus,
+    completed_at: Instant,
+}
+
 #[derive(Debug)]
 pub struct ToolContext {
     pub tool_name: String,
@@ -45,7 +57,7 @@ pub struct ToolContext {
 #[derive(Clone)]
 pub struct Approvals {
     pending: Arc<DashMap<String, PendingApproval>>,
-    completed: Arc<DashMap<String, ApprovalStatus>>,
+    completed: Arc<DashMap<String, CompletedApproval>>,
     msg_stores: Arc<RwLock<HashMap<Uuid, Arc<MsgStore>>>>,
 }
 
@@ -74,10 +86,19 @@ impl Approvals {
         }
     }
 
+    pub fn completed_len(&self) -> usize {
+        self.completed.len()
+    }
+
+    fn prune_completed(&self) -> usize {
+        prune_completed_map(&self.completed)
+    }
+
     pub async fn create_with_waiter(
         &self,
         request: ApprovalRequest,
     ) -> Result<(ApprovalRequest, ApprovalWaiter), ApprovalError> {
+        self.prune_completed();
         let (tx, rx) = oneshot::channel();
         let waiter: ApprovalWaiter = rx
             .map(|result| result.unwrap_or(ApprovalStatus::TimedOut))
@@ -140,8 +161,15 @@ impl Approvals {
         id: &str,
         req: ApprovalResponse,
     ) -> Result<(ApprovalStatus, ToolContext), ApprovalError> {
+        self.prune_completed();
         if let Some((_, p)) = self.pending.remove(id) {
-            self.completed.insert(id.to_string(), req.status.clone());
+            self.completed.insert(
+                id.to_string(),
+                CompletedApproval {
+                    status: req.status.clone(),
+                    completed_at: Instant::now(),
+                },
+            );
             let _ = p.response_tx.send(req.status.clone());
 
             if let Some(store) = self.msg_store_by_id(&p.execution_process_id).await {
@@ -182,8 +210,15 @@ impl Approvals {
             }
 
             Ok((req.status, tool_ctx))
-        } else if self.completed.contains_key(id) {
-            Err(ApprovalError::AlreadyCompleted)
+        } else if let Some(entry) = self.completed.get(id) {
+            let expired = is_completed_expired(entry.completed_at);
+            drop(entry);
+            if expired {
+                self.completed.remove(id);
+                Err(ApprovalError::NotFound)
+            } else {
+                Err(ApprovalError::AlreadyCompleted)
+            }
         } else {
             Err(ApprovalError::NotFound)
         }
@@ -215,7 +250,14 @@ impl Approvals {
             };
 
             let is_timeout = matches!(&status, ApprovalStatus::TimedOut);
-            completed.insert(id.clone(), status.clone());
+            completed.insert(
+                id.clone(),
+                CompletedApproval {
+                    status: status.clone(),
+                    completed_at: Instant::now(),
+                },
+            );
+            prune_completed_map(&completed);
 
             if is_timeout && let Some((_, pending_approval)) = pending.remove(&id) {
                 if pending_approval.response_tx.send(status.clone()).is_err() {
@@ -308,9 +350,45 @@ fn find_matching_tool_use(
     None
 }
 
+fn is_completed_expired(completed_at: Instant) -> bool {
+    let ttl = cache_budgets().approvals_completed_ttl;
+    !ttl.is_zero() && completed_at.elapsed() > ttl
+}
+
+fn prune_completed_map(completed: &DashMap<String, CompletedApproval>) -> usize {
+    let ttl = cache_budgets().approvals_completed_ttl;
+    if ttl.is_zero() {
+        return 0;
+    }
+
+    let mut expired = Vec::new();
+    for entry in completed.iter() {
+        if is_completed_expired(entry.value().completed_at) {
+            expired.push(entry.key().clone());
+        }
+    }
+
+    for key in &expired {
+        completed.remove(key);
+    }
+
+    if !expired.is_empty() && should_warn("approvals_completed") {
+        tracing::warn!(
+            "Removed {} expired approval completions (ttl={}s)",
+            expired.len(),
+            ttl.as_secs()
+        );
+    }
+
+    expired.len()
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
     use executors::logs::{ActionType, NormalizedEntry, NormalizedEntryType, ToolStatus};
     use utils::msg_store::MsgStore;
@@ -397,5 +475,35 @@ mod tests {
             find_matching_tool_use(store.clone(), "wrong-id").is_none(),
             "Should not match different tool ids"
         );
+    }
+
+    #[test]
+    fn prune_completed_removes_expired_entries() {
+        let approvals = Approvals::new(Arc::new(RwLock::new(HashMap::new())));
+        let ttl = cache_budgets().approvals_completed_ttl;
+        if ttl.is_zero() {
+            return;
+        }
+        let expired_at = Instant::now() - ttl - Duration::from_secs(1);
+
+        approvals.completed.insert(
+            "expired".to_string(),
+            CompletedApproval {
+                status: ApprovalStatus::Approved,
+                completed_at: expired_at,
+            },
+        );
+        approvals.completed.insert(
+            "fresh".to_string(),
+            CompletedApproval {
+                status: ApprovalStatus::Approved,
+                completed_at: Instant::now(),
+            },
+        );
+
+        let removed = approvals.prune_completed();
+        assert_eq!(removed, 1);
+        assert!(!approvals.completed.contains_key("expired"));
+        assert!(approvals.completed.contains_key("fresh"));
     }
 }

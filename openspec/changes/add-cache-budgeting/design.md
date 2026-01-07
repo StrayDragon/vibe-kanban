@@ -1,13 +1,14 @@
 ## Context
 Several server-side caches retain data in memory to improve UX and performance. Examples include:
 - Event stream history stored in an in-memory MsgStore.
-- File search cache (Moka) with a static 100MB cap.
+- File search cache (Moka) with a static repo-count cap + TTL.
 - File history/statistics cache (DashMap) without a clear size bound.
 These caches can grow or remain hot in long-running sessions, leading to high memory use.
 
 ## Current Cache Inventory (as of this change)
 - Event stream history: `crates/services/src/services/events.rs` + `crates/utils/src/msg_store.rs`
   - Uses MsgStore with fixed byte limit; history is cloned per stream subscriber.
+  - Budgeting deferred to update-log-history-streaming.
 - File search cache: `crates/services/src/services/file_search_cache.rs`
   - Moka cache with `max_capacity(50)` (repo count, not bytes) + 1h TTL.
   - Each entry holds FST index + full file list; memory can be large per repo.
@@ -39,39 +40,37 @@ These caches can grow or remain hot in long-running sessions, leading to high me
   - Keep behavior compatible with existing callers.
 - Non-Goals:
   - Redesigning the log streaming pipeline (handled in update-log-history-streaming).
+  - Event stream MsgStore budgeting (handled in update-log-history-streaming).
   - Introducing external cache services.
   - UI changes.
 
 ## Decisions
 - Decision: Cache budgets via configuration
-  - Provide environment/config values for each major cache budget.
+  - Provide environment/config values for each major cache budget (entry count + TTL).
   - Defaults are conservative and documented.
 - Decision: Eviction policies
-  - Use LRU/TTL where available (Moka) and implement bounded structures for custom caches.
-  - For DashMap-based caches, migrate to a bounded strategy or add periodic pruning.
+  - Use entry-count caps and TTL where available (Moka) and implement bounded structures for custom caches.
+  - For DashMap-based caches, add TTL metadata and prune on access or periodic sweeps.
 - Decision: Observability
   - Log cache budgets and current size at startup.
-  - Emit warnings when caches exceed thresholds or prune aggressively.
+  - Emit sampled warnings when caches exceed thresholds or prune aggressively.
 
 ## Proposed Default Budgets (initial)
 These are starting defaults intended to be safe under moderate load; they should be tuned per deployment.
-- Event stream MsgStore:
-  - `EVENTS_MSGSTORE_MAX_BYTES=2mb`
-  - `EVENTS_MSGSTORE_MAX_ENTRIES=2000`
 - File search cache (Moka):
-  - `FILE_SEARCH_CACHE_MAX_BYTES=128mb` (use weighted size; fall back to entry count if needed)
-  - `FILE_SEARCH_CACHE_MAX_REPOS=25` (fallback if byte weigher is unavailable)
-  - `FILE_SEARCH_CACHE_TTL_SECS=3600`
-  - `FILE_SEARCH_WATCHERS_MAX=25` and `FILE_SEARCH_WATCHER_TTL_SECS=21600`
+  - `VK_FILE_SEARCH_CACHE_MAX_REPOS=25`
+  - `VK_FILE_SEARCH_CACHE_TTL_SECS=3600`
+  - `VK_FILE_SEARCH_WATCHERS_MAX=25` and `VK_FILE_SEARCH_WATCHER_TTL_SECS=21600`
 - File history stats cache (DashMap):
-  - `FILE_STATS_CACHE_MAX_REPOS=25`
-  - `FILE_STATS_CACHE_TTL_SECS=3600`
+  - `VK_FILE_STATS_CACHE_MAX_REPOS=25`
+  - `VK_FILE_STATS_CACHE_TTL_SECS=3600`
 - Approvals cache:
-  - `APPROVALS_COMPLETED_TTL_SECS=86400`
+  - `VK_APPROVALS_COMPLETED_TTL_SECS=86400`
 - Queued follow-up messages:
-  - `QUEUED_MESSAGES_TTL_SECS=86400`
+  - `VK_QUEUED_MESSAGES_TTL_SECS=86400`
 - Warning thresholds:
-  - `CACHE_WARN_AT_RATIO=0.9` (log warnings at 90% of budget)
+  - `VK_CACHE_WARN_AT_RATIO=0.9` (log warnings at 90% of entry budget)
+  - `VK_CACHE_WARN_SAMPLE_SECS=300` (rate-limit warnings)
 
 ## Risks / Trade-offs
 - More configuration increases operational complexity.
@@ -85,10 +84,9 @@ These are starting defaults intended to be safe under moderate load; they should
 
 ## Suggested Worktree Split (implementation planning)
 - Worktree A: config/env wiring + startup budget logging + warning thresholds.
-- Worktree B: file_search_cache weighting/TTL + watcher pruning.
+- Worktree B: file_search_cache entry-count + TTL + watcher pruning.
 - Worktree C: file_stats_cache bounds (TTL/LRU) + pruning job.
 - Worktree D: approvals/completed TTL cleanup + queued message TTL.
-- Worktree E: event stream MsgStore budgets + stream history reduction.
 
 ## Open Questions
 - Validate default budgets in production-like workloads.

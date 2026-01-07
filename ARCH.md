@@ -196,6 +196,25 @@ graph TB
 - 带 TTL 的 LRU 缓存
 - 活动项目的预热策略
 
+#### Cache Budgeting（缓存预算）
+后端缓存预算通过环境变量控制（条目数 + TTL，单位秒）。服务启动时会记录当前预算与缓存大小，并在接近预算时采样警告。
+
+常用环境变量（默认值）：
+- `VK_FILE_SEARCH_CACHE_MAX_REPOS=25`
+- `VK_FILE_SEARCH_CACHE_TTL_SECS=3600`
+- `VK_FILE_SEARCH_WATCHERS_MAX=25`
+- `VK_FILE_SEARCH_WATCHER_TTL_SECS=21600`
+- `VK_FILE_STATS_CACHE_MAX_REPOS=25`
+- `VK_FILE_STATS_CACHE_TTL_SECS=3600`
+- `VK_APPROVALS_COMPLETED_TTL_SECS=86400`
+- `VK_QUEUED_MESSAGES_TTL_SECS=86400`
+- `VK_CACHE_WARN_AT_RATIO=0.9`
+- `VK_CACHE_WARN_SAMPLE_SECS=300`
+
+备注：
+- TTL 设置为 `0` 时禁用过期清理（仅保留条目上限约束）。
+- 条目上限为 `0` 时会被提升到最小值 `1` 以避免缓存被完全禁用。
+
 #### Config Service (`config/`)
 用户设置管理：
 - 版本化配置 schema（启动时迁移）

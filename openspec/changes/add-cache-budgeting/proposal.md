@@ -4,11 +4,11 @@
 Server memory can grow due to long-lived in-process caches (event stream history, file search cache, repo history cache, and other runtime caches). These caches are either unbounded or have static limits today, which makes memory usage unpredictable under heavy workloads.
 
 ## What Changes
-- Define configurable budgets for server caches and enforce eviction policies.
+- Define configurable budgets (entry count + TTL) for server caches and enforce eviction policies.
 - Add startup logging that summarizes cache budgets and current sizes.
 - Add warning logs when caches exceed configured thresholds.
 - Document cache tuning defaults and how to adjust them.
-- Coordinate with update-log-history-streaming for execution log history budgets to avoid duplication.
+- Defer event stream MsgStore budgeting to update-log-history-streaming to avoid duplication.
 
 ## Impact
 - Affected specs: cache-budgeting

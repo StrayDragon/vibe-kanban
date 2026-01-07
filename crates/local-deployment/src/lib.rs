@@ -6,9 +6,11 @@ use deployment::{Deployment, DeploymentError};
 use executors::profile::ExecutorConfigs;
 use services::services::{
     approvals::Approvals,
+    cache_budget::cache_budgets,
     config::{Config, load_config_from_file, save_config_to_file},
     container::ContainerService,
     events::EventService,
+    file_ranker::file_stats_cache_len,
     file_search_cache::FileSearchCache,
     filesystem::FilesystemService,
     git::GitService,
@@ -182,5 +184,56 @@ impl Deployment for LocalDeployment {
 
     fn queued_message_service(&self) -> &QueuedMessageService {
         &self.queued_message_service
+    }
+}
+
+impl LocalDeployment {
+    pub fn log_cache_budgets(&self) {
+        let budgets = cache_budgets();
+        let file_search_entries = self.file_search_cache.cache_entry_count();
+        let file_search_watchers = self.file_search_cache.watcher_count();
+        let file_stats_entries = file_stats_cache_len();
+        let approvals_completed = self.approvals.completed_len();
+        let queued_messages = self.queued_message_service.queue_len();
+
+        tracing::info!(
+            cache = "file_search_cache",
+            max_entries = budgets.file_search_cache_max_repos,
+            ttl_secs = budgets.file_search_cache_ttl.as_secs(),
+            current_entries = file_search_entries,
+            "Cache budget"
+        );
+        tracing::info!(
+            cache = "file_search_watchers",
+            max_entries = budgets.file_search_watchers_max,
+            ttl_secs = budgets.file_search_watcher_ttl.as_secs(),
+            current_entries = file_search_watchers,
+            "Cache budget"
+        );
+        tracing::info!(
+            cache = "file_stats_cache",
+            max_entries = budgets.file_stats_cache_max_repos,
+            ttl_secs = budgets.file_stats_cache_ttl.as_secs(),
+            current_entries = file_stats_entries,
+            "Cache budget"
+        );
+        tracing::info!(
+            cache = "approvals_completed",
+            ttl_secs = budgets.approvals_completed_ttl.as_secs(),
+            current_entries = approvals_completed,
+            "Cache budget"
+        );
+        tracing::info!(
+            cache = "queued_messages",
+            ttl_secs = budgets.queued_messages_ttl.as_secs(),
+            current_entries = queued_messages,
+            "Cache budget"
+        );
+        tracing::info!(
+            cache = "cache_warnings",
+            warn_at_ratio = budgets.cache_warn_at_ratio,
+            sample_secs = budgets.cache_warn_sample.as_secs(),
+            "Cache warning thresholds"
+        );
     }
 }

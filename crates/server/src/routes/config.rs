@@ -427,8 +427,7 @@ async fn resolve_llman_path(
     State(deployment): State<DeploymentImpl>,
 ) -> ResponseJson<ApiResponse<ResolveLlmanPathResponse>> {
     let config = deployment.config().read().await;
-    let path =
-        llman::resolve_claude_code_config_path(config.llman_claude_code_path.as_deref());
+    let path = llman::resolve_claude_code_config_path(config.llman_claude_code_path.as_deref());
 
     ResponseJson(ApiResponse::success(ResolveLlmanPathResponse {
         path: path.map(|path| path.display().to_string()),

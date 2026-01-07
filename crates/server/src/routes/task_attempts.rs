@@ -1159,8 +1159,7 @@ pub async fn remove_task_attempt_worktree(
         .await?
     {
         return Err(ApiError::Conflict(
-            "Attempt has running processes. Stop them before removing the worktree."
-                .to_string(),
+            "Attempt has running processes. Stop them before removing the worktree.".to_string(),
         ));
     }
 
@@ -1169,8 +1168,7 @@ pub async fn remove_task_attempt_worktree(
         .is_empty()
     {
         return Err(ApiError::Conflict(
-            "Attempt has a running dev server. Stop it before removing the worktree."
-                .to_string(),
+            "Attempt has a running dev server. Stop it before removing the worktree.".to_string(),
         ));
     }
 
