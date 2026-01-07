@@ -1,0 +1,2 @@
+# Shared pnpm store to avoid per-worktree dependency copies.
+store-dir=/var/tmp/vibe-kanban/cache/pnpm-store

@@ -211,12 +211,18 @@ impl Approvals {
 
             Ok((req.status, tool_ctx))
         } else if let Some(entry) = self.completed.get(id) {
-            let expired = is_completed_expired(entry.completed_at);
+            let status = entry.status.clone();
+            let completed_at = entry.completed_at;
             drop(entry);
-            if expired {
+            if is_completed_expired(completed_at) {
                 self.completed.remove(id);
                 Err(ApprovalError::NotFound)
             } else {
+                tracing::debug!(
+                    "Approval '{}' already completed with status {:?}",
+                    id,
+                    status
+                );
                 Err(ApprovalError::AlreadyCompleted)
             }
         } else {

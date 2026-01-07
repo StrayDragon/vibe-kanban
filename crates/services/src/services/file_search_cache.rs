@@ -86,6 +86,8 @@ pub struct CachedRepo {
 }
 
 struct RepoWatcher {
+    // Keep the debouncer alive while the watcher is registered.
+    #[allow(dead_code)]
     debouncer: Arc<Mutex<Debouncer<RecommendedWatcher, RecommendedCache>>>,
     created_at: Instant,
 }
