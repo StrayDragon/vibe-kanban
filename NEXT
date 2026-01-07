@@ -1,1 +1,0 @@
-如果你想彻底删掉 DB 里的 shared_task_id / remote_project_id 字段，我可以再补迁移与模型精简。

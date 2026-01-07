@@ -1,11 +1,7 @@
 {
   "vibe_kanban": {
-    "command": "npx",
-    "args": [
-      "-y",
-      "vibe-kanban@latest",
-      "--mcp"
-    ]
+    "command": "mcp_task_server",
+    "args": []
   },
   "context7": {
     "type": "http",
@@ -41,4 +37,3 @@
     }
   }
 }
-

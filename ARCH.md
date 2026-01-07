@@ -167,11 +167,6 @@ graph TB
 - 批准工作流集成
 - PR 创建和分支管理
 
-**关键流程**：
-```
-[MermaidChart:./docs/mmd/container-execution-flow.mmd]
-```
-
 #### GitService (`git.rs`)
 `git2` 的包装器，提供高级 git 操作：
 - 分支创建、切换、重命名
@@ -525,7 +520,7 @@ flowchart TD
 - `~/.vibe-kanban/config.json` 中的配置
 - `~/.vibe-kanban/worktrees/` 中的 Git worktrees
 - `~/.vibe-kanban/assets/` 中的资产
-- 用于轻松安装的 NPX 包
+- 本地构建的单个二进制文件
 
 ### 远程部署
 在具有 SSH 访问权限的远程服务器上运行：
@@ -823,7 +818,7 @@ Vibe Kanban 的架构优先考虑：
 该系统旨在：
 - 易于扩展新的编码代理
 - 安全地并行运行多个代理
-- 简单部署（NPX 包、单个二进制文件）
+- 简单部署（单个二进制文件）
 - 愉快的开发体验（强类型、热重载）
 
 如有问题或贡献，请参考 `CONTRIBUTING.md` 并针对重大更改打开 GitHub Discussion。
