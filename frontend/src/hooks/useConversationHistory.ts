@@ -668,6 +668,16 @@ export const useConversationHistory = ({
     loadRunningAndEmitWithBackoff,
   ]);
 
+  // Emit updates when process statuses change, even if no new log patches arrive.
+  useEffect(() => {
+    if (!loadedInitialEntries.current) return;
+    const hasRunningProcess = executionProcesses.current.some(
+      (process) => process.status === ExecutionProcessStatus.running
+    );
+    const addType: AddEntryType = hasRunningProcess ? 'running' : 'historic';
+    emitEntries(displayedExecutionProcesses.current, addType, false);
+  }, [attempt.id, idStatusKey, emitEntries]);
+
   useEffect(() => {
     if (executionProcessesLoading) return;
     if (hasSeededProcessIdsRef.current) return;
