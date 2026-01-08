@@ -20,6 +20,9 @@ export function streamLogEntries(
   const wsUrl = url.replace(/^http/, 'ws');
   const ws = new WebSocket(wsUrl);
   let connected = false;
+  let closedByClient = false;
+  let finished = false;
+  let sawError = false;
 
   ws.addEventListener('open', () => {
     connected = true;
@@ -37,6 +40,7 @@ export function streamLogEntries(
           opts.onReplace?.(payload.entry_index, payload.entry);
           break;
         case 'finished':
+          finished = true;
           opts.onFinished?.();
           break;
         default:
@@ -49,15 +53,20 @@ export function streamLogEntries(
 
   ws.addEventListener('error', (err) => {
     connected = false;
+    sawError = true;
     opts.onError?.(err);
   });
 
   ws.addEventListener('close', () => {
     connected = false;
+    if (!finished && !closedByClient && !sawError) {
+      opts.onError?.(new Error('Log stream closed unexpectedly'));
+    }
   });
 
   return {
     close() {
+      closedByClient = true;
       ws.close();
     },
     isConnected() {
