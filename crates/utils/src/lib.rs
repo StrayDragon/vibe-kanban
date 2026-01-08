@@ -9,6 +9,7 @@ pub mod diff;
 pub mod git;
 pub mod jwt;
 pub mod log_msg;
+pub mod log_entries;
 pub mod msg_store;
 pub mod path;
 pub mod port_file;

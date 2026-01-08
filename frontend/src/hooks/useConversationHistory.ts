@@ -1,17 +1,20 @@
 // useConversationHistory.ts
 import {
+  ApiResponse,
   CommandExitStatus,
   ExecutionProcess,
   ExecutionProcessStatus,
   ExecutorAction,
+  IndexedLogEntry,
+  LogHistoryPage,
   NormalizedEntry,
   PatchType,
   ToolStatus,
   Workspace,
 } from 'shared/types';
 import { useExecutionProcessesContext } from '@/contexts/ExecutionProcessesContext';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { streamJsonPatchEntries } from '@/utils/streamJsonPatchEntries';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { streamLogEntries } from '@/utils/streamLogEntries';
 
 export type PatchTypeWithKey = PatchType & {
   patchKey: string;
@@ -36,6 +39,8 @@ type ExecutionProcessStaticInfo = {
 type ExecutionProcessState = {
   executionProcess: ExecutionProcessStaticInfo;
   entries: PatchTypeWithKey[];
+  cursor: bigint | null;
+  hasMore: boolean;
 };
 
 type ExecutionProcessStateStore = Record<string, ExecutionProcessState>;
@@ -45,10 +50,15 @@ interface UseConversationHistoryParams {
   onEntriesUpdated: OnEntriesUpdated;
 }
 
-interface UseConversationHistoryResult {}
+interface UseConversationHistoryResult {
+  loadOlderHistory: () => Promise<void>;
+  hasMoreHistory: boolean;
+  loadingOlder: boolean;
+}
 
-const MIN_INITIAL_ENTRIES = 10;
-const REMAINING_BATCH_SIZE = 50;
+const CONVERSATION_PAGE_SIZE = 20;
+const CONVERSATION_CACHE_LIMIT = 200;
+const MIN_INITIAL_ENTRIES = 20;
 
 const makeLoadingPatch = (executionProcessId: string): PatchTypeWithKey => ({
   type: 'NORMALIZED_ENTRY',
@@ -85,6 +95,82 @@ const nextActionPatch: (
   executionProcessId: '',
 });
 
+const isScriptProcess = (executionProcess: ExecutionProcess) =>
+  executionProcess.executor_action.typ.type === 'ScriptRequest';
+
+const patchWithKey = (
+  patch: PatchType,
+  executionProcessId: string,
+  index: bigint | number | 'user'
+): PatchTypeWithKey => {
+  return {
+    ...patch,
+    patchKey: `${executionProcessId}:${index}`,
+    executionProcessId,
+  };
+};
+
+const mapIndexedEntries = (
+  entries: IndexedLogEntry[],
+  executionProcessId: string
+): PatchTypeWithKey[] =>
+  entries.map((entry) =>
+    patchWithKey(entry.entry, executionProcessId, entry.entry_index)
+  );
+
+const applyEntryLimit = (entries: PatchTypeWithKey[]): PatchTypeWithKey[] => {
+  if (entries.length <= CONVERSATION_CACHE_LIMIT) {
+    return entries;
+  }
+  return entries.slice(entries.length - CONVERSATION_CACHE_LIMIT);
+};
+
+const entryIndexForSort = (entry: PatchTypeWithKey): number => {
+  const parts = entry.patchKey.split(':');
+  const index = Number(parts[1]);
+  return Number.isFinite(index) ? index : -1;
+};
+
+const sortEntriesByIndex = (entries: PatchTypeWithKey[]) =>
+  entries.sort((a, b) => entryIndexForSort(a) - entryIndexForSort(b));
+
+const mergeHistoryEntries = (
+  existing: PatchTypeWithKey[],
+  incoming: PatchTypeWithKey[],
+  prepend: boolean
+): PatchTypeWithKey[] => {
+  const existingKeys = new Set(existing.map((entry) => entry.patchKey));
+  const filtered = incoming.filter((entry) => !existingKeys.has(entry.patchKey));
+  const merged = prepend ? [...filtered, ...existing] : [...existing, ...filtered];
+  return applyEntryLimit(merged);
+};
+
+const fetchLogHistoryPage = async (
+  executionProcess: ExecutionProcess,
+  cursor: bigint | null
+): Promise<LogHistoryPage> => {
+  const endpoint = isScriptProcess(executionProcess)
+    ? 'raw-logs/v2'
+    : 'normalized-logs/v2';
+  const params = new URLSearchParams();
+  params.set('limit', String(CONVERSATION_PAGE_SIZE));
+  if (cursor !== null) {
+    params.set('cursor', String(cursor));
+  }
+
+  const res = await fetch(
+    `/api/execution-processes/${executionProcess.id}/${endpoint}?${params.toString()}`
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to load logs for ${executionProcess.id}`);
+  }
+  const body = (await res.json()) as ApiResponse<LogHistoryPage>;
+  if (!body.data) {
+    throw new Error(`No log history returned for ${executionProcess.id}`);
+  }
+  return body.data;
+};
+
 export const useConversationHistory = ({
   attempt,
   onEntriesUpdated,
@@ -101,6 +187,8 @@ export const useConversationHistory = ({
   const knownProcessIdsRef = useRef<Set<string>>(new Set());
   const hasSeededProcessIdsRef = useRef(false);
   const onEntriesUpdatedRef = useRef<OnEntriesUpdated | null>(null);
+  const [hasMoreHistory, setHasMoreHistory] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
 
   const mergeIntoDisplayed = (
     mutator: (state: ExecutionProcessStateStore) => void
@@ -108,6 +196,14 @@ export const useConversationHistory = ({
     const state = displayedExecutionProcesses.current;
     mutator(state);
   };
+
+  const refreshHasMoreHistory = useCallback(() => {
+    const hasMore = Object.values(displayedExecutionProcesses.current).some(
+      (process) => process.hasMore
+    );
+    setHasMoreHistory(hasMore);
+  }, []);
+
   useEffect(() => {
     onEntriesUpdatedRef.current = onEntriesUpdated;
   }, [onEntriesUpdated]);
@@ -121,54 +217,6 @@ export const useConversationHistory = ({
         ep.run_reason === 'codingagent'
     );
   }, [executionProcessesRaw]);
-
-  const loadEntriesForHistoricExecutionProcess = (
-    executionProcess: ExecutionProcess
-  ) => {
-    let url = '';
-    if (executionProcess.executor_action.typ.type === 'ScriptRequest') {
-      url = `/api/execution-processes/${executionProcess.id}/raw-logs/ws`;
-    } else {
-      url = `/api/execution-processes/${executionProcess.id}/normalized-logs/ws`;
-    }
-
-    return new Promise<PatchType[]>((resolve) => {
-      const controller = streamJsonPatchEntries<PatchType>(url, {
-        onFinished: (allEntries) => {
-          controller.close();
-          resolve(allEntries);
-        },
-        onError: (err) => {
-          console.warn!(
-            `Error loading entries for historic execution process ${executionProcess.id}`,
-            err
-          );
-          controller.close();
-          resolve([]);
-        },
-      });
-    });
-  };
-
-  const getLiveExecutionProcess = (
-    executionProcessId: string
-  ): ExecutionProcess | undefined => {
-    return executionProcesses?.current.find(
-      (executionProcess) => executionProcess.id === executionProcessId
-    );
-  };
-
-  const patchWithKey = (
-    patch: PatchType,
-    executionProcessId: string,
-    index: number | 'user'
-  ) => {
-    return {
-      ...patch,
-      patchKey: `${executionProcessId}:${index}`,
-      executionProcessId,
-    };
-  };
 
   const flattenEntries = (
     executionProcessState: ExecutionProcessStateStore
@@ -186,7 +234,9 @@ export const useConversationHistory = ({
           new Date(
             a.executionProcess.created_at as unknown as string
           ).getTime() -
-          new Date(b.executionProcess.created_at as unknown as string).getTime()
+          new Date(
+            b.executionProcess.created_at as unknown as string
+          ).getTime()
       )
       .flatMap((p) => p.entries);
   };
@@ -419,151 +469,35 @@ export const useConversationHistory = ({
     ) => {
       const entries = flattenEntriesForEmit(executionProcessState);
       onEntriesUpdatedRef.current?.(entries, addEntryType, loading);
+      refreshHasMoreHistory();
     },
-    [flattenEntriesForEmit]
+    [flattenEntriesForEmit, refreshHasMoreHistory]
   );
 
-  // This emits its own events as they are streamed
-  const loadRunningAndEmit = useCallback(
-    (executionProcess: ExecutionProcess): Promise<void> => {
-      return new Promise((resolve, reject) => {
-        let url = '';
-        if (executionProcess.executor_action.typ.type === 'ScriptRequest') {
-          url = `/api/execution-processes/${executionProcess.id}/raw-logs/ws`;
-        } else {
-          url = `/api/execution-processes/${executionProcess.id}/normalized-logs/ws`;
-        }
-        const controller = streamJsonPatchEntries<PatchType>(url, {
-          onEntries(entries) {
-            const patchesWithKey = entries.map((entry, index) =>
-              patchWithKey(entry, executionProcess.id, index)
-            );
-            mergeIntoDisplayed((state) => {
-              state[executionProcess.id] = {
-                executionProcess,
-                entries: patchesWithKey,
-              };
-            });
-            emitEntries(displayedExecutionProcesses.current, 'running', false);
-          },
-          onFinished: () => {
-            emitEntries(displayedExecutionProcesses.current, 'running', false);
-            controller.close();
-            resolve();
-          },
-          onError: () => {
-            controller.close();
-            reject();
-          },
-        });
-      });
-    },
-    [emitEntries]
-  );
+  const getLiveExecutionProcess = (
+    executionProcessId: string
+  ): ExecutionProcess | undefined => {
+    return executionProcesses?.current.find(
+      (executionProcess) => executionProcess.id === executionProcessId
+    );
+  };
 
-  // Sometimes it can take a few seconds for the stream to start, wrap the loadRunningAndEmit method
-  const loadRunningAndEmitWithBackoff = useCallback(
-    async (executionProcess: ExecutionProcess) => {
-      for (let i = 0; i < 20; i++) {
-        try {
-          await loadRunningAndEmit(executionProcess);
-          break;
-        } catch (_) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
-        }
-      }
-    },
-    [loadRunningAndEmit]
-  );
-
-  const loadInitialEntries =
-    useCallback(async (): Promise<ExecutionProcessStateStore> => {
-      const localDisplayedExecutionProcesses: ExecutionProcessStateStore = {};
-
-      if (!executionProcesses?.current) return localDisplayedExecutionProcesses;
-
-      for (const executionProcess of [
-        ...executionProcesses.current,
-      ].reverse()) {
-        if (executionProcess.status === ExecutionProcessStatus.running)
-          continue;
-        if (pendingHistoricLoadIdsRef.current.has(executionProcess.id)) {
-          continue;
-        }
-        pendingHistoricLoadIdsRef.current.add(executionProcess.id);
-
-        try {
-          const entries =
-            await loadEntriesForHistoricExecutionProcess(executionProcess);
-          const entriesWithKey = entries.map((e, idx) =>
-            patchWithKey(e, executionProcess.id, idx)
-          );
-
-          localDisplayedExecutionProcesses[executionProcess.id] = {
-            executionProcess,
-            entries: entriesWithKey,
-          };
-        } finally {
-          pendingHistoricLoadIdsRef.current.delete(executionProcess.id);
-        }
-
-        if (
-          flattenEntries(localDisplayedExecutionProcesses).length >
-          MIN_INITIAL_ENTRIES
-        ) {
-          break;
-        }
-      }
-
-      return localDisplayedExecutionProcesses;
-    }, [executionProcesses]);
-
-  const loadRemainingEntriesInBatches = useCallback(
-    async (batchSize: number): Promise<boolean> => {
-      if (!executionProcesses?.current) return false;
-
-      let anyUpdated = false;
-      for (const executionProcess of [
-        ...executionProcesses.current,
-      ].reverse()) {
-        const current = displayedExecutionProcesses.current;
-        if (
-          current[executionProcess.id] ||
-          executionProcess.status === ExecutionProcessStatus.running ||
-          pendingHistoricLoadIdsRef.current.has(executionProcess.id)
-        )
-          continue;
-
-        pendingHistoricLoadIdsRef.current.add(executionProcess.id);
-        try {
-          const entries =
-            await loadEntriesForHistoricExecutionProcess(executionProcess);
-          const entriesWithKey = entries.map((e, idx) =>
-            patchWithKey(e, executionProcess.id, idx)
-          );
-
-          mergeIntoDisplayed((state) => {
-            state[executionProcess.id] = {
-              executionProcess,
-              entries: entriesWithKey,
-            };
-          });
-        } finally {
-          pendingHistoricLoadIdsRef.current.delete(executionProcess.id);
-        }
-
-        if (
-          flattenEntries(displayedExecutionProcesses.current).length > batchSize
-        ) {
-          anyUpdated = true;
-          break;
-        }
-        anyUpdated = true;
-      }
-      return anyUpdated;
-    },
-    [executionProcesses]
-  );
+const loadEntriesForHistoricExecutionProcess = async (
+  executionProcess: ExecutionProcess,
+  cursor: bigint | null
+): Promise<{ page: LogHistoryPage | null; entriesWithKey: PatchTypeWithKey[] }> => {
+    try {
+      const page = await fetchLogHistoryPage(executionProcess, cursor);
+      const entriesWithKey = mapIndexedEntries(page.entries, executionProcess.id);
+      return { page, entriesWithKey };
+    } catch (err) {
+      console.warn(
+        `Error loading entries for execution process ${executionProcess.id}`,
+        err
+      );
+      return { page: null, entriesWithKey: [] };
+    }
+  };
 
   const ensureProcessVisible = useCallback((p: ExecutionProcess) => {
     mergeIntoDisplayed((state) => {
@@ -576,10 +510,228 @@ export const useConversationHistory = ({
             executor_action: p.executor_action,
           },
           entries: [],
+          cursor: null,
+          hasMore: false,
         };
       }
     });
   }, []);
+
+  const updateProcessHistory = useCallback(
+    (
+      executionProcess: ExecutionProcess,
+      entriesWithKey: PatchTypeWithKey[],
+      page: LogHistoryPage | null,
+      prepend: boolean
+    ) => {
+      mergeIntoDisplayed((state) => {
+        const existing = state[executionProcess.id] ?? {
+          executionProcess: {
+            id: executionProcess.id,
+            created_at: executionProcess.created_at,
+            updated_at: executionProcess.updated_at,
+            executor_action: executionProcess.executor_action,
+          },
+          entries: [],
+          cursor: null,
+          hasMore: false,
+        };
+
+        const mergedEntries = mergeHistoryEntries(
+          existing.entries,
+          entriesWithKey,
+          prepend
+        );
+
+        state[executionProcess.id] = {
+          executionProcess: existing.executionProcess,
+          entries: mergedEntries,
+          cursor: page?.next_cursor ?? existing.cursor,
+          hasMore: page?.has_more ?? existing.hasMore,
+        };
+      });
+    },
+    []
+  );
+
+  const attachLiveStream = useCallback(
+    async (executionProcess: ExecutionProcess) => {
+      return new Promise<void>((resolve, reject) => {
+        const endpoint = isScriptProcess(executionProcess)
+          ? 'raw-logs/v2/ws'
+          : 'normalized-logs/v2/ws';
+
+        const controller = streamLogEntries(
+          `/api/execution-processes/${executionProcess.id}/${endpoint}`,
+          {
+            onAppend: (entryIndex, entry) => {
+              const patch = patchWithKey(
+                entry,
+                executionProcess.id,
+                entryIndex
+              );
+              mergeIntoDisplayed((state) => {
+                const current = state[executionProcess.id];
+                if (!current) {
+                  return;
+                }
+                const existingIndex = current.entries.findIndex(
+                  (e) => e.patchKey === patch.patchKey
+                );
+                if (existingIndex >= 0) {
+                  current.entries[existingIndex] = patch;
+                } else {
+                  current.entries.push(patch);
+                }
+                current.entries = sortEntriesByIndex(current.entries);
+                current.entries = applyEntryLimit(current.entries);
+              });
+              emitEntries(displayedExecutionProcesses.current, 'running', false);
+            },
+            onReplace: (entryIndex, entry) => {
+              const patch = patchWithKey(
+                entry,
+                executionProcess.id,
+                entryIndex
+              );
+              mergeIntoDisplayed((state) => {
+                const current = state[executionProcess.id];
+                if (!current) {
+                  return;
+                }
+                const existingIndex = current.entries.findIndex(
+                  (e) => e.patchKey === patch.patchKey
+                );
+                if (existingIndex >= 0) {
+                  current.entries[existingIndex] = patch;
+                } else {
+                  current.entries.push(patch);
+                }
+                current.entries = sortEntriesByIndex(current.entries);
+                current.entries = applyEntryLimit(current.entries);
+              });
+              emitEntries(displayedExecutionProcesses.current, 'running', false);
+            },
+            onFinished: () => {
+              emitEntries(displayedExecutionProcesses.current, 'running', false);
+              controller.close();
+              resolve();
+            },
+            onError: () => {
+              controller.close();
+              reject();
+            },
+          }
+        );
+      });
+    },
+    [emitEntries]
+  );
+
+  const loadRunningAndEmitWithBackoff = useCallback(
+    async (executionProcess: ExecutionProcess) => {
+      for (let i = 0; i < 20; i++) {
+        try {
+          await attachLiveStream(executionProcess);
+          break;
+        } catch (_) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+    },
+    [attachLiveStream]
+  );
+
+  const loadInitialEntries = useCallback(async () => {
+    const localDisplayedExecutionProcesses: ExecutionProcessStateStore = {};
+
+    if (!executionProcesses?.current) return localDisplayedExecutionProcesses;
+
+    for (const executionProcess of [...executionProcesses.current].reverse()) {
+      if (executionProcess.status === ExecutionProcessStatus.running) {
+        continue;
+      }
+      if (pendingHistoricLoadIdsRef.current.has(executionProcess.id)) {
+        continue;
+      }
+      pendingHistoricLoadIdsRef.current.add(executionProcess.id);
+
+      try {
+        const { page, entriesWithKey } =
+          await loadEntriesForHistoricExecutionProcess(
+            executionProcess,
+            null
+          );
+        localDisplayedExecutionProcesses[executionProcess.id] = {
+          executionProcess: {
+            id: executionProcess.id,
+            created_at: executionProcess.created_at,
+            updated_at: executionProcess.updated_at,
+            executor_action: executionProcess.executor_action,
+          },
+          entries: entriesWithKey,
+          cursor: page?.next_cursor ?? null,
+          hasMore: page?.has_more ?? false,
+        };
+      } finally {
+        pendingHistoricLoadIdsRef.current.delete(executionProcess.id);
+      }
+
+      if (flattenEntries(localDisplayedExecutionProcesses).length > MIN_INITIAL_ENTRIES) {
+        break;
+      }
+    }
+
+    return localDisplayedExecutionProcesses;
+  }, [executionProcesses]);
+
+  const loadOlderHistory = useCallback(async () => {
+    if (loadingOlder) return;
+    if (!executionProcesses?.current) return;
+
+    setLoadingOlder(true);
+    const processesByAge = [...executionProcesses.current].sort(
+      (a, b) =>
+        new Date(a.created_at as unknown as string).getTime() -
+        new Date(b.created_at as unknown as string).getTime()
+    );
+
+    let addedEntries = 0;
+
+    for (const process of processesByAge) {
+      const current = displayedExecutionProcesses.current[process.id];
+      if (!current?.hasMore || pendingHistoricLoadIdsRef.current.has(process.id)) {
+        continue;
+      }
+
+      pendingHistoricLoadIdsRef.current.add(process.id);
+      try {
+        const { page, entriesWithKey } =
+          await loadEntriesForHistoricExecutionProcess(
+            process,
+            current.cursor
+          );
+        if (page) {
+          updateProcessHistory(process, entriesWithKey, page, true);
+          addedEntries += entriesWithKey.length;
+        }
+      } finally {
+        pendingHistoricLoadIdsRef.current.delete(process.id);
+      }
+
+      if (addedEntries >= CONVERSATION_PAGE_SIZE) {
+        break;
+      }
+    }
+
+    emitEntries(displayedExecutionProcesses.current, 'historic', false);
+    setLoadingOlder(false);
+  }, [
+    executionProcesses,
+    emitEntries,
+    loadingOlder,
+    updateProcessHistory,
+  ]);
 
   const idListKey = useMemo(
     () => executionProcessesRaw?.map((p) => p.id).join(','),
@@ -595,14 +747,12 @@ export const useConversationHistory = ({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // Waiting for execution processes to load
       if (
         executionProcesses?.current.length === 0 ||
         loadedInitialEntries.current
       )
         return;
 
-      // Initial entries
       const allInitialEntries = await loadInitialEntries();
       if (cancelled) return;
       mergeIntoDisplayed((state) => {
@@ -610,27 +760,11 @@ export const useConversationHistory = ({
       });
       emitEntries(displayedExecutionProcesses.current, 'initial', false);
       loadedInitialEntries.current = true;
-
-      // Then load the remaining in batches
-      while (
-        !cancelled &&
-        (await loadRemainingEntriesInBatches(REMAINING_BATCH_SIZE))
-      ) {
-        if (cancelled) return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      emitEntries(displayedExecutionProcesses.current, 'historic', false);
     })();
     return () => {
       cancelled = true;
     };
-  }, [
-    attempt.id,
-    idListKey,
-    loadInitialEntries,
-    loadRemainingEntriesInBatches,
-    emitEntries,
-  ]); // include idListKey so new processes trigger reload
+  }, [attempt.id, idListKey, loadInitialEntries, emitEntries]);
 
   useEffect(() => {
     const activeProcesses = getActiveAgentProcesses();
@@ -643,11 +777,7 @@ export const useConversationHistory = ({
             ? 'running'
             : 'initial';
         ensureProcessVisible(activeProcess);
-        emitEntries(
-          displayedExecutionProcesses.current,
-          runningOrInitial,
-          false
-        );
+        emitEntries(displayedExecutionProcesses.current, runningOrInitial, false);
       }
 
       if (
@@ -668,7 +798,7 @@ export const useConversationHistory = ({
     loadRunningAndEmitWithBackoff,
   ]);
 
-  // Emit updates when process statuses change, even if no new log patches arrive.
+  // Emit updates when process statuses change, even if no new log entries arrive.
   useEffect(() => {
     if (!loadedInitialEntries.current) return;
     const hasRunningProcess = executionProcesses.current.some(
@@ -715,17 +845,10 @@ export const useConversationHistory = ({
         pendingHistoricLoadIdsRef.current.add(process.id);
 
         try {
-          const entries = await loadEntriesForHistoricExecutionProcess(process);
+          const { page, entriesWithKey } =
+            await loadEntriesForHistoricExecutionProcess(process, null);
           if (cancelled) return;
-          const entriesWithKey = entries.map((entry, index) =>
-            patchWithKey(entry, process.id, index)
-          );
-          mergeIntoDisplayed((state) => {
-            state[process.id] = {
-              executionProcess: process,
-              entries: entriesWithKey,
-            };
-          });
+          updateProcessHistory(process, entriesWithKey, page, false);
           emitEntries(displayedExecutionProcesses.current, 'historic', false);
         } finally {
           pendingHistoricLoadIdsRef.current.delete(process.id);
@@ -736,7 +859,7 @@ export const useConversationHistory = ({
     return () => {
       cancelled = true;
     };
-  }, [attempt.id, idListKey, emitEntries, ensureProcessVisible]);
+  }, [attempt.id, idListKey, emitEntries, ensureProcessVisible, updateProcessHistory]);
 
   // If an execution process is removed, remove it from the state
   useEffect(() => {
@@ -766,5 +889,5 @@ export const useConversationHistory = ({
     emitEntries(displayedExecutionProcesses.current, 'initial', true);
   }, [attempt.id, emitEntries]);
 
-  return {};
+  return { loadOlderHistory, hasMoreHistory, loadingOlder };
 };

@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) as \"count!: i64\",\n                      MIN(entry_index) as \"min_index: i64\",\n                      MAX(entry_index) as \"max_index: i64\"\n               FROM execution_process_log_entries\n               WHERE execution_id = $1 AND channel = $2",
+  "describe": {
+    "columns": [
+      {
+        "name": "count!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "min_index: i64",
+        "ordinal": 1,
+        "type_info": "Null"
+      },
+      {
+        "name": "max_index: i64",
+        "ordinal": 2,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "98bce909e77a6c8136dd12d5c2d6eff08b07c8f1efb8ef8f0c15a455ca117084"
+}

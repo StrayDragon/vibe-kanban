@@ -1,5 +1,6 @@
 // vite.config.ts
-import { defineConfig, Plugin } from "vite";
+import { defineConfig } from "vitest/config";
+import { Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import fs from "fs";
@@ -77,4 +78,8 @@ export default defineConfig({
     exclude: ["wa-sqlite"],
   },
   build: { sourcemap: true },
+  test: {
+    environment: "jsdom",
+    setupFiles: "./src/test/setup.ts",
+  },
 });

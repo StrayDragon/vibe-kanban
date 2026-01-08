@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT entry_index, entry_json\n                   FROM execution_process_log_entries\n                   WHERE execution_id = $1\n                     AND channel = $2\n                   ORDER BY entry_index DESC\n                   LIMIT $3",
+  "describe": {
+    "columns": [
+      {
+        "name": "entry_index",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "entry_json",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "928e740ce5a018bcddce7bb08c0ac6e5da9dbaa63935b9384cfb2739504f1515"
+}

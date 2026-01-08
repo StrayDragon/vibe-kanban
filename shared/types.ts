@@ -168,6 +168,12 @@ export type ImageResponse = { id: string, file_path: string, original_name: stri
 
 export type ImageMetadata = { exists: boolean, file_name: string | null, path: string | null, size_bytes: bigint | null, format: string | null, proxy_url: string | null, };
 
+export type IndexedLogEntry = { entry_index: bigint, entry: PatchType, };
+
+export type LogHistoryPage = { entries: Array<IndexedLogEntry>, next_cursor: bigint | null, has_more: boolean, };
+
+export type LogStreamEvent = { "type": "append", entry_index: bigint, entry: PatchType, } | { "type": "replace", entry_index: bigint, entry: PatchType, } | { "type": "finished" };
+
 export type CreateTaskAttemptBody = { task_id: string, executor_profile_id: ExecutorProfileId, repos: Array<WorkspaceRepoInput>, };
 
 export type WorkspaceRepoInput = { repo_id: string, target_branch: string, };

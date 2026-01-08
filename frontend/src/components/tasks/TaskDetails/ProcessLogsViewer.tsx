@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Loader2 } from 'lucide-react';
 import { useLogStream } from '@/hooks/useLogStream';
 import RawLogText from '@/components/common/RawLogText';
 import type { PatchType } from 'shared/types';
@@ -14,9 +14,17 @@ interface ProcessLogsViewerProps {
 export function ProcessLogsViewerContent({
   logs,
   error,
+  truncated = false,
+  hasMoreHistory = false,
+  loadingOlder = false,
+  onLoadOlder,
 }: {
   logs: LogEntry[];
   error: string | null;
+  truncated?: boolean;
+  hasMoreHistory?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void;
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const didInitScroll = useRef(false);
@@ -68,6 +76,21 @@ export function ProcessLogsViewerContent({
 
   return (
     <div className="h-full">
+      {truncated && (
+        <div className="flex items-center justify-between gap-2 px-4 py-2 text-xs text-muted-foreground border-b">
+          <span>History truncated</span>
+          {hasMoreHistory && onLoadOlder && (
+            <button
+              onClick={onLoadOlder}
+              disabled={loadingOlder}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            >
+              {loadingOlder && <Loader2 className="h-3 w-3 animate-spin" />}
+              Load more
+            </button>
+          )}
+        </div>
+      )}
       {logs.length === 0 && !error ? (
         <div className="p-4 text-center text-muted-foreground text-sm">
           No logs available
@@ -99,6 +122,22 @@ export function ProcessLogsViewerContent({
 export default function ProcessLogsViewer({
   processId,
 }: ProcessLogsViewerProps) {
-  const { logs, error } = useLogStream(processId);
-  return <ProcessLogsViewerContent logs={logs} error={error} />;
+  const {
+    logs,
+    error,
+    hasMoreHistory,
+    loadingOlder,
+    truncated,
+    loadOlder,
+  } = useLogStream(processId);
+  return (
+    <ProcessLogsViewerContent
+      logs={logs}
+      error={error}
+      truncated={truncated}
+      hasMoreHistory={hasMoreHistory}
+      loadingOlder={loadingOlder}
+      onLoadOlder={loadOlder}
+    />
+  );
 }

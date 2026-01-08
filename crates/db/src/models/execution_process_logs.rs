@@ -13,7 +13,27 @@ pub struct ExecutionProcessLogs {
     pub inserted_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct ExecutionProcessLogSummary {
+    pub execution_id: Uuid,
+    pub total_bytes: i64,
+}
+
 impl ExecutionProcessLogs {
+    pub async fn list_execution_ids_with_bytes(
+        pool: &SqlitePool,
+    ) -> Result<Vec<ExecutionProcessLogSummary>, sqlx::Error> {
+        sqlx::query_as!(
+            ExecutionProcessLogSummary,
+            r#"SELECT execution_id as "execution_id!: Uuid",
+                      SUM(byte_size) as "total_bytes!: i64"
+               FROM execution_process_logs
+               GROUP BY execution_id
+               ORDER BY MIN(inserted_at) ASC"#
+        )
+        .fetch_all(pool)
+        .await
+    }
     /// Find logs by execution process ID
     pub async fn find_by_execution_id(
         pool: &SqlitePool,

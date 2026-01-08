@@ -81,6 +81,9 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     useState<DataWithScrollModifier<PatchTypeWithKey> | null>(null);
   const [loading, setLoading] = useState(true);
   const { setEntries, reset } = useEntries();
+  const messageListRef = useRef<VirtuosoMessageListMethods | null>(null);
+  const pendingScrollIndexRef = useRef<number | null>(null);
+  const prevLengthRef = useRef<number>(0);
 
   useEffect(() => {
     setLoading(true);
@@ -99,6 +102,17 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
       scrollModifier = AutoScrollToBottom;
     }
 
+    if (addType === 'historic') {
+      const prevLen = prevLengthRef.current;
+      const nextLen = newEntries.length;
+      const addedCount = Math.max(0, nextLen - prevLen);
+      if (addedCount > 0) {
+        pendingScrollIndexRef.current = addedCount;
+      }
+    }
+
+    prevLengthRef.current = newEntries.length;
+
     setChannelData({ data: newEntries, scrollModifier });
     setEntries(newEntries);
 
@@ -107,9 +121,22 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     }
   };
 
-  useConversationHistory({ attempt, onEntriesUpdated });
+  const { loadOlderHistory, hasMoreHistory, loadingOlder } =
+    useConversationHistory({ attempt, onEntriesUpdated });
 
-  const messageListRef = useRef<VirtuosoMessageListMethods | null>(null);
+  useEffect(() => {
+    if (pendingScrollIndexRef.current === null) return;
+    const index = pendingScrollIndexRef.current;
+    pendingScrollIndexRef.current = null;
+
+    requestAnimationFrame(() => {
+      messageListRef.current?.scrollToItem({
+        index,
+        align: 'start',
+      });
+    });
+  }, [channelData]);
+
   const messageListContext = useMemo(
     () => ({ attempt, task }),
     [attempt, task]
@@ -117,6 +144,18 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
 
   return (
     <ApprovalFormProvider>
+      {hasMoreHistory && !loading && (
+        <div className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground">
+          <button
+            onClick={loadOlderHistory}
+            disabled={loadingOlder}
+            className="flex items-center gap-1 px-2 py-1 rounded border border-border hover:text-foreground disabled:opacity-50"
+          >
+            {loadingOlder && <Loader2 className="h-3 w-3 animate-spin" />}
+            Load earlier history
+          </button>
+        </div>
+      )}
       <VirtuosoMessageListLicense
         licenseKey={import.meta.env.VITE_PUBLIC_REACT_VIRTUOSO_LICENSE_KEY}
       >

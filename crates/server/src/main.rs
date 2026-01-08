@@ -54,6 +54,11 @@ async fn main() -> Result<(), VibeKanbanError> {
         .backfill_repo_names()
         .await
         .map_err(DeploymentError::from)?;
+    deployment
+        .container()
+        .backfill_log_entries_startup()
+        .await
+        .map_err(DeploymentError::from)?;
     deployment.spawn_pr_monitor_service().await;
     // Pre-warm file search cache for most active projects
     let deployment_for_cache = deployment.clone();

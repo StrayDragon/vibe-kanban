@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 as \"one!: i64\"\n               FROM execution_process_log_entries\n               WHERE execution_id = $1 AND channel = $2\n               LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "one!: i64",
+        "ordinal": 0,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "f34a850dabe6a290500cfb59cdfac1b129f4b9ce325ba713b3a30d84068b01a3"
+}

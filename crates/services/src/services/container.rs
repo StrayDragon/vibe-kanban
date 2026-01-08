@@ -1,11 +1,13 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
     sync::Arc,
+    time::Instant,
 };
 
 use anyhow::{Error as AnyhowError, anyhow};
 use async_trait::async_trait;
+use dashmap::DashSet;
 use db::{
     DBService,
     models::{
@@ -14,6 +16,7 @@ use db::{
             CreateExecutionProcess, ExecutionContext, ExecutionProcess, ExecutionProcessRunReason,
             ExecutionProcessStatus,
         },
+        execution_process_log_entries::{ExecutionProcessLogEntry, LogEntryRow},
         execution_process_logs::ExecutionProcessLogs,
         execution_process_repo_state::{
             CreateExecutionProcessRepoState, ExecutionProcessRepoState,
@@ -38,12 +41,14 @@ use executors::{
     profile::{ExecutorConfigs, ExecutorProfileId},
 };
 use futures::{StreamExt, future};
+use once_cell::sync::Lazy;
 use sqlx::Error as SqlxError;
 use thiserror::Error;
 use tokio::{sync::RwLock, task::JoinHandle};
 use utils::{
+    log_entries::LogEntryChannel,
     log_msg::LogMsg,
-    msg_store::MsgStore,
+    msg_store::{LogEntryEvent, LogEntrySnapshot, MsgStore},
     text::{git_branch_id, short_uuid},
 };
 use uuid::Uuid;
@@ -56,10 +61,18 @@ use crate::services::{
 };
 pub type ContainerRef = String;
 
+static LOG_ENTRY_BACKFILL_COMPLETE: Lazy<DashSet<String>> = Lazy::new(DashSet::new);
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DiffStreamOptions {
     pub stats_only: bool,
     pub force: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct LogHistoryPageData {
+    pub entries: Vec<LogEntrySnapshot>,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Error)]
@@ -401,6 +414,271 @@ pub trait ContainerService {
         }
 
         Ok(())
+    }
+
+    /// Backfill execution log entries at startup (blocking, console logs only).
+    async fn backfill_log_entries_startup(&self) -> Result<(), ContainerError> {
+        const LOG_EVERY_PROCESSES: usize = 25;
+        const LOG_EVERY_BYTES: i64 = 100 * 1024 * 1024;
+
+        let summaries =
+            ExecutionProcessLogs::list_execution_ids_with_bytes(&self.db().pool).await?;
+        if summaries.is_empty() {
+            return Ok(());
+        }
+
+        let total_bytes: i64 = summaries.iter().map(|s| s.total_bytes).sum();
+        tracing::info!(
+            "log-history backfill starting: processes={}, total_bytes={}, mode=startup",
+            summaries.len(),
+            total_bytes
+        );
+
+        let start = Instant::now();
+        let mut processed = 0usize;
+        let mut entries = 0usize;
+        let mut bytes = 0i64;
+        let mut next_bytes_report = LOG_EVERY_BYTES;
+
+        for summary in summaries {
+            processed += 1;
+            bytes = bytes.saturating_add(summary.total_bytes);
+
+            match self
+                .backfill_log_entries_for_execution(summary.execution_id)
+                .await
+            {
+                Ok(count) => entries = entries.saturating_add(count),
+                Err(err) => {
+                    tracing::warn!(
+                        "log-history backfill error: execution_id={}, error={}",
+                        summary.execution_id,
+                        err
+                    );
+                }
+            }
+
+            if processed % LOG_EVERY_PROCESSES == 0 || bytes >= next_bytes_report {
+                tracing::info!(
+                    "log-history backfill progress: processed={}, entries={}, bytes={}, elapsed_ms={}",
+                    processed,
+                    entries,
+                    bytes,
+                    start.elapsed().as_millis()
+                );
+                while bytes >= next_bytes_report {
+                    next_bytes_report = next_bytes_report.saturating_add(LOG_EVERY_BYTES);
+                }
+            }
+        }
+
+        tracing::info!(
+            "log-history backfill complete: processes={}, entries={}, bytes={}, elapsed_ms={}",
+            processed,
+            entries,
+            bytes,
+            start.elapsed().as_millis()
+        );
+
+        Ok(())
+    }
+
+    async fn backfill_log_entries_for_execution(
+        &self,
+        execution_id: Uuid,
+    ) -> Result<usize, ContainerError> {
+        let mut total = 0usize;
+        total = total.saturating_add(
+            self.backfill_log_entries_if_incomplete(execution_id, LogEntryChannel::Raw)
+                .await?,
+        );
+        total = total.saturating_add(
+            self.backfill_log_entries_if_incomplete(execution_id, LogEntryChannel::Normalized)
+                .await?,
+        );
+        Ok(total)
+    }
+
+    async fn backfill_log_entries_if_incomplete(
+        &self,
+        execution_id: Uuid,
+        channel: LogEntryChannel,
+    ) -> Result<usize, ContainerError> {
+        let cache_key = format!("{execution_id}:{channel}");
+        if LOG_ENTRY_BACKFILL_COMPLETE.contains(&cache_key) {
+            return Ok(0);
+        }
+
+        let existing = ExecutionProcessLogEntry::stats(&self.db().pool, execution_id, channel)
+            .await?;
+
+        let entries = match channel {
+            LogEntryChannel::Raw => self.collect_raw_entries_from_jsonl(execution_id).await?,
+            LogEntryChannel::Normalized => {
+                self.collect_normalized_entries_from_jsonl(execution_id).await?
+            }
+        };
+
+        let Some((expected_count, expected_min, expected_max)) = entry_stats(&entries) else {
+            LOG_ENTRY_BACKFILL_COMPLETE.insert(cache_key);
+            return Ok(0);
+        };
+
+        let needs_backfill = match existing {
+            None => true,
+            Some(stats) => {
+                stats.count != expected_count
+                    || stats.min_index != expected_min
+                    || stats.max_index != expected_max
+            }
+        };
+
+        if !needs_backfill {
+            LOG_ENTRY_BACKFILL_COMPLETE.insert(cache_key);
+            return Ok(0);
+        }
+
+        ExecutionProcessLogEntry::upsert_entries(
+            &self.db().pool,
+            execution_id,
+            channel,
+            &entries,
+        )
+        .await?;
+
+        LOG_ENTRY_BACKFILL_COMPLETE.insert(cache_key);
+        Ok(entries.len())
+    }
+
+    async fn collect_raw_entries_from_jsonl(
+        &self,
+        execution_id: Uuid,
+    ) -> Result<Vec<LogEntryRow>, ContainerError> {
+        let log_records =
+            ExecutionProcessLogs::find_by_execution_id(&self.db().pool, execution_id).await?;
+        if log_records.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let messages = ExecutionProcessLogs::parse_logs(&log_records)
+            .map_err(|e| ContainerError::Other(anyhow!("Failed to parse logs: {e}")))?;
+
+        let mut entries: Vec<LogEntryRow> = Vec::new();
+        let mut index: i64 = 0;
+
+        for msg in messages {
+            match msg {
+                LogMsg::Stdout(content) => {
+                    let entry_json = serde_json::to_string(&serde_json::json!({
+                        "type": "STDOUT",
+                        "content": content
+                    }))
+                    .map_err(|e| ContainerError::Other(anyhow!("Failed to encode entry: {e}")))?;
+                    entries.push(LogEntryRow {
+                        entry_index: index,
+                        entry_json,
+                    });
+                    index += 1;
+                }
+                LogMsg::Stderr(content) => {
+                    let entry_json = serde_json::to_string(&serde_json::json!({
+                        "type": "STDERR",
+                        "content": content
+                    }))
+                    .map_err(|e| ContainerError::Other(anyhow!("Failed to encode entry: {e}")))?;
+                    entries.push(LogEntryRow {
+                        entry_index: index,
+                        entry_json,
+                    });
+                    index += 1;
+                }
+                _ => {}
+            }
+        }
+
+        Ok(entries)
+    }
+
+    async fn backfill_raw_entries_from_jsonl(
+        &self,
+        execution_id: Uuid,
+    ) -> Result<usize, ContainerError> {
+        let entries = self.collect_raw_entries_from_jsonl(execution_id).await?;
+        if entries.is_empty() {
+            return Ok(0);
+        }
+
+        ExecutionProcessLogEntry::upsert_entries(
+            &self.db().pool,
+            execution_id,
+            LogEntryChannel::Raw,
+            &entries,
+        )
+        .await?;
+
+        Ok(entries.len())
+    }
+
+    async fn collect_normalized_entries_from_jsonl(
+        &self,
+        execution_id: Uuid,
+    ) -> Result<Vec<LogEntryRow>, ContainerError> {
+        let log_records =
+            ExecutionProcessLogs::find_by_execution_id(&self.db().pool, execution_id).await?;
+        if log_records.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let messages = ExecutionProcessLogs::parse_logs(&log_records)
+            .map_err(|e| ContainerError::Other(anyhow!("Failed to parse logs: {e}")))?;
+
+        let mut entries: Vec<LogEntryRow> = Vec::new();
+        for msg in &messages {
+            if let LogMsg::JsonPatch(patch) = msg {
+                entries.extend(extract_normalized_patch_entries(patch));
+            }
+        }
+
+        if entries.is_empty() {
+            if let Some(mut stream) = self.stream_normalized_logs(&execution_id).await {
+                while let Some(item) = stream.next().await {
+                    match item {
+                        Ok(LogMsg::JsonPatch(patch)) => {
+                            entries.extend(extract_normalized_patch_entries(&patch));
+                        }
+                        Ok(LogMsg::Finished) => break,
+                        Ok(_) => {}
+                        Err(e) => {
+                            return Err(ContainerError::Other(anyhow!(
+                                "Normalized log stream error: {e}"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(dedupe_entries_by_index(entries))
+    }
+
+    async fn backfill_normalized_entries_from_jsonl(
+        &self,
+        execution_id: Uuid,
+    ) -> Result<usize, ContainerError> {
+        let entries = self.collect_normalized_entries_from_jsonl(execution_id).await?;
+        if entries.is_empty() {
+            return Ok(0);
+        }
+
+        ExecutionProcessLogEntry::upsert_entries(
+            &self.db().pool,
+            execution_id,
+            LogEntryChannel::Normalized,
+            &entries,
+        )
+        .await?;
+
+        Ok(entries.len())
     }
 
     fn cleanup_actions_for_repos(&self, repos: &[ProjectRepoWithName]) -> Option<ExecutorAction> {
@@ -826,6 +1104,111 @@ pub trait ContainerService {
         }
     }
 
+    async fn stream_raw_log_entries(
+        &self,
+        id: &Uuid,
+    ) -> Option<futures::stream::BoxStream<'static, Result<LogEntryEvent, std::io::Error>>>
+    {
+        self.get_msg_store_by_id(id)
+            .await
+            .map(|store| store.raw_history_plus_stream())
+    }
+
+    async fn stream_normalized_log_entries(
+        &self,
+        id: &Uuid,
+    ) -> Option<futures::stream::BoxStream<'static, Result<LogEntryEvent, std::io::Error>>>
+    {
+        self.get_msg_store_by_id(id)
+            .await
+            .map(|store| store.normalized_history_plus_stream())
+    }
+
+    async fn log_history_page(
+        &self,
+        execution_process: &ExecutionProcess,
+        channel: LogEntryChannel,
+        limit: usize,
+        cursor: Option<i64>,
+    ) -> Result<LogHistoryPageData, ContainerError> {
+        if execution_process.status == ExecutionProcessStatus::Running {
+            if let Some(store) = self.get_msg_store_by_id(&execution_process.id).await {
+                let cursor = cursor.and_then(|c| usize::try_from(c).ok());
+                let (entries, has_more) = match channel {
+                    LogEntryChannel::Raw => store.raw_history_page(limit, cursor),
+                    LogEntryChannel::Normalized => store.normalized_history_page(limit, cursor),
+                };
+                return Ok(LogHistoryPageData { entries, has_more });
+            }
+        }
+
+        if execution_process.status != ExecutionProcessStatus::Running {
+            self.backfill_log_entries_if_incomplete(execution_process.id, channel)
+                .await?;
+        }
+
+        if ExecutionProcessLogEntry::has_any(&self.db().pool, execution_process.id, channel).await?
+        {
+            let mut rows = ExecutionProcessLogEntry::fetch_page(
+                &self.db().pool,
+                execution_process.id,
+                channel,
+                limit,
+                cursor,
+            )
+            .await?;
+
+            rows.reverse();
+
+            let entries = rows
+                .into_iter()
+                .filter_map(|row| match serde_json::from_str::<serde_json::Value>(&row.entry_json) {
+                    Ok(entry_json) => Some(LogEntrySnapshot {
+                        entry_index: row.entry_index as usize,
+                        entry_json,
+                    }),
+                    Err(err) => {
+                        tracing::warn!(
+                            "Failed to parse log entry {} for {}: {}",
+                            row.entry_index,
+                            execution_process.id,
+                            err
+                        );
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let has_more = if let Some(first) = entries.first() {
+                ExecutionProcessLogEntry::has_older(
+                    &self.db().pool,
+                    execution_process.id,
+                    channel,
+                    first.entry_index as i64,
+                )
+                .await?
+            } else {
+                false
+            };
+
+            return Ok(LogHistoryPageData { entries, has_more });
+        }
+
+        if let Some(store) = self.get_msg_store_by_id(&execution_process.id).await {
+            let cursor = cursor.and_then(|c| usize::try_from(c).ok());
+            let (entries, has_more) = match channel {
+                LogEntryChannel::Raw => store.raw_history_page(limit, cursor),
+                LogEntryChannel::Normalized => store.normalized_history_page(limit, cursor),
+            };
+            return Ok(LogHistoryPageData { entries, has_more });
+        }
+
+        Ok(LogHistoryPageData {
+            entries: Vec::new(),
+            has_more: false,
+        })
+    }
+
     fn spawn_stream_raw_logs_to_db(&self, execution_id: &Uuid) -> JoinHandle<()> {
         let execution_id = *execution_id;
         let msg_stores = self.msg_stores().clone();
@@ -894,6 +1277,126 @@ pub trait ContainerService {
                             break;
                         }
                         LogMsg::JsonPatch(_) => continue,
+                    }
+                }
+            }
+        })
+    }
+
+    fn spawn_stream_raw_entries_to_db(&self, execution_id: &Uuid) -> JoinHandle<()> {
+        let execution_id = *execution_id;
+        let msg_stores = self.msg_stores().clone();
+        let db = self.db().clone();
+
+        tokio::spawn(async move {
+            let store = {
+                let map = msg_stores.read().await;
+                map.get(&execution_id).cloned()
+            };
+
+            let Some(store) = store else {
+                return;
+            };
+
+            let mut stream = store.raw_history_plus_stream();
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(LogEntryEvent::Append { entry_index, entry })
+                    | Ok(LogEntryEvent::Replace { entry_index, entry }) => {
+                        let entry_json = match serde_json::to_string(&entry) {
+                            Ok(json) => json,
+                            Err(err) => {
+                                tracing::warn!(
+                                    "Failed to encode raw log entry {} for {}: {}",
+                                    entry_index,
+                                    execution_id,
+                                    err
+                                );
+                                continue;
+                            }
+                        };
+
+                        if let Err(err) = ExecutionProcessLogEntry::upsert_entry(
+                            &db.pool,
+                            execution_id,
+                            LogEntryChannel::Raw,
+                            entry_index as i64,
+                            &entry_json,
+                        )
+                        .await
+                        {
+                            tracing::error!(
+                                "Failed to persist raw log entry {} for {}: {}",
+                                entry_index,
+                                execution_id,
+                                err
+                            );
+                        }
+                    }
+                    Ok(LogEntryEvent::Finished) => break,
+                    Err(err) => {
+                        tracing::error!("raw entry stream error: {}", err);
+                        break;
+                    }
+                }
+            }
+        })
+    }
+
+    fn spawn_stream_normalized_entries_to_db(&self, execution_id: &Uuid) -> JoinHandle<()> {
+        let execution_id = *execution_id;
+        let msg_stores = self.msg_stores().clone();
+        let db = self.db().clone();
+
+        tokio::spawn(async move {
+            let store = {
+                let map = msg_stores.read().await;
+                map.get(&execution_id).cloned()
+            };
+
+            let Some(store) = store else {
+                return;
+            };
+
+            let mut stream = store.normalized_history_plus_stream();
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(LogEntryEvent::Append { entry_index, entry })
+                    | Ok(LogEntryEvent::Replace { entry_index, entry }) => {
+                        let entry_json = match serde_json::to_string(&entry) {
+                            Ok(json) => json,
+                            Err(err) => {
+                                tracing::warn!(
+                                    "Failed to encode normalized log entry {} for {}: {}",
+                                    entry_index,
+                                    execution_id,
+                                    err
+                                );
+                                continue;
+                            }
+                        };
+
+                        if let Err(err) = ExecutionProcessLogEntry::upsert_entry(
+                            &db.pool,
+                            execution_id,
+                            LogEntryChannel::Normalized,
+                            entry_index as i64,
+                            &entry_json,
+                        )
+                        .await
+                        {
+                            tracing::error!(
+                                "Failed to persist normalized log entry {} for {}: {}",
+                                entry_index,
+                                execution_id,
+                                err
+                            );
+                        }
+                    }
+                    Ok(LogEntryEvent::Finished) => break,
+                    Err(err) => {
+                        tracing::error!("normalized entry stream error: {}", err);
+                        break;
                     }
                 }
             }
@@ -1167,6 +1670,8 @@ pub trait ContainerService {
         }
 
         self.spawn_stream_raw_logs_to_db(&execution_process.id);
+        self.spawn_stream_raw_entries_to_db(&execution_process.id);
+        self.spawn_stream_normalized_entries_to_db(&execution_process.id);
         Ok(execution_process)
     }
 
@@ -1202,4 +1707,62 @@ pub trait ContainerService {
         tracing::debug!("Started next action: {:?}", next_action);
         Ok(())
     }
+}
+
+fn extract_normalized_patch_entries(patch: &json_patch::Patch) -> Vec<LogEntryRow> {
+    patch
+        .iter()
+        .filter_map(|op| match op {
+            json_patch::PatchOperation::Add(add) => {
+                normalized_entry_from_patch(&add.path, &add.value)
+            }
+            json_patch::PatchOperation::Replace(replace) => {
+                normalized_entry_from_patch(&replace.path, &replace.value)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn normalized_entry_from_patch(path: &str, value: &serde_json::Value) -> Option<LogEntryRow> {
+    let index = path.strip_prefix("/entries/")?.parse::<i64>().ok()?;
+    let entry_type = value.get("type")?.as_str()?;
+    if entry_type != "NORMALIZED_ENTRY" {
+        return None;
+    }
+
+    let entry_json = serde_json::to_string(value).ok()?;
+    Some(LogEntryRow {
+        entry_index: index,
+        entry_json,
+    })
+}
+
+fn dedupe_entries_by_index(entries: Vec<LogEntryRow>) -> Vec<LogEntryRow> {
+    let mut map: BTreeMap<i64, String> = BTreeMap::new();
+    for entry in entries {
+        map.insert(entry.entry_index, entry.entry_json);
+    }
+
+    map.into_iter()
+        .map(|(entry_index, entry_json)| LogEntryRow {
+            entry_index,
+            entry_json,
+        })
+        .collect()
+}
+
+fn entry_stats(entries: &[LogEntryRow]) -> Option<(i64, i64, i64)> {
+    if entries.is_empty() {
+        return None;
+    }
+
+    let mut min_index = entries[0].entry_index;
+    let mut max_index = entries[0].entry_index;
+    for entry in entries.iter().skip(1) {
+        min_index = min_index.min(entry.entry_index);
+        max_index = max_index.max(entry.entry_index);
+    }
+
+    Some((entries.len() as i64, min_index, max_index))
 }
