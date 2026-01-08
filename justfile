@@ -21,7 +21,10 @@ frontend-build:
 backend-build: # db-prepare
     cargo build -p server --release
 
-build: frontend-build backend-build
+mcp-build:
+    cargo build -p server --release --bin mcp_task_server
+
+build: frontend-build backend-build mcp-build
 
 run host="0.0.0.0" port="3001": frontend-build backend-build
     HOST={{host}} PORT={{port}} {{target_dir}}/release/server
