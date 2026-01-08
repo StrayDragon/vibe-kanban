@@ -281,19 +281,14 @@
         "saveConfigFailed": "設定の保存に失敗しました。もう一度お試しください。"
       },
       "llman": {
-        "title": "LLMAN Import",
-        "description": "Import Claude Code env groups from llman into agent profiles.",
         "pathLabel": "LLMAN Claude Code config path",
         "pathPlaceholder": "Leave empty to use the default path",
         "pathHelper": "Default: ~/.config/llman/claude-code.toml (uses the system config dir on other platforms).",
-        "importButton": "Import from LLMAN",
         "syncOption": "Sync from LLMAN",
         "syncTitle": "Sync from LLMAN",
         "syncDescription": "Import Claude Code env groups and sync agent profiles.",
         "syncButton": "Sync",
-        "importSuccess": "Imported {{imported}} new, updated {{updated}}, skipped {{skipped}}. Source: {{path}}",
-        "importError": "Failed to import from LLMAN. Please check the path and file format.",
-        "importDirtyHint": "Save or discard profile changes before importing."
+        "importError": "Failed to import from LLMAN. Please check the path and file format."
       }
     },
     "mcp": {

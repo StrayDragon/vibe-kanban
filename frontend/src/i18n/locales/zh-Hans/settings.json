@@ -281,19 +281,14 @@
         "saveConfigFailed": "保存配置失败。请重试。"
       },
       "llman": {
-        "title": "LLMAN 导入",
-        "description": "从 llman 导入 Claude Code 环境组到代理配置。",
         "pathLabel": "LLMAN Claude Code 配置路径",
         "pathPlaceholder": "留空使用默认路径",
         "pathHelper": "默认：~/.config/llman/claude-code.toml（其他平台使用系统配置目录）。",
-        "importButton": "从 LLMAN 导入",
         "syncOption": "从 LLMAN 同步",
         "syncTitle": "从 LLMAN 同步",
         "syncDescription": "从 llman 导入 Claude Code 环境组并同步到代理配置。",
         "syncButton": "同步",
-        "importSuccess": "已导入 {{imported}} 个新配置，更新 {{updated}} 个，跳过 {{skipped}} 个。来源：{{path}}",
-        "importError": "从 LLMAN 导入失败，请检查路径和文件格式。",
-        "importDirtyHint": "导入前请先保存或丢弃配置更改。"
+        "importError": "从 LLMAN 导入失败，请检查路径和文件格式。"
       }
     },
     "mcp": {
