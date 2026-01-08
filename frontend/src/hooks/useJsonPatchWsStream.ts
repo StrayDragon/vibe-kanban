@@ -15,6 +15,11 @@ interface UseJsonPatchStreamOptions<T> {
    * Filter/deduplicate patches before applying them
    */
   deduplicatePatches?: (patches: Operation[]) => Operation[];
+  /**
+   * Whether to reconnect if the socket closes cleanly without a finished message.
+   * Defaults to true to keep long-lived streams healthy across idle timeouts.
+   */
+  reconnectOnCleanClose?: boolean;
 }
 
 interface UseJsonPatchStreamResult<T> {
@@ -44,9 +49,9 @@ export const useJsonPatchWsStream = <T extends object>(
 
   const injectInitialEntry = options?.injectInitialEntry;
   const deduplicatePatches = options?.deduplicatePatches;
+  const reconnectOnCleanClose = options?.reconnectOnCleanClose ?? true;
 
   function scheduleReconnect() {
-    if (retryTimerRef.current) return; // already scheduled
     // Exponential backoff with cap: 1s, 2s, 4s, 8s (max), then stay at 8s
     const attempt = retryAttemptsRef.current;
     const delay = Math.min(8000, 1000 * Math.pow(2, attempt));
@@ -54,6 +59,12 @@ export const useJsonPatchWsStream = <T extends object>(
       retryTimerRef.current = null;
       setRetryNonce((n) => n + 1);
     }, delay);
+  }
+
+  function requestReconnect() {
+    if (retryTimerRef.current) return; // already scheduled
+    retryAttemptsRef.current += 1;
+    scheduleReconnect();
   }
 
   useEffect(() => {
@@ -141,6 +152,8 @@ export const useJsonPatchWsStream = <T extends object>(
         } catch (err) {
           console.error('Failed to process WebSocket message:', err);
           setError('Failed to process stream update');
+          // Force a resync on parse/patch errors.
+          ws.close(1011, 'stream error');
         }
       };
 
@@ -152,14 +165,12 @@ export const useJsonPatchWsStream = <T extends object>(
         setIsConnected(false);
         wsRef.current = null;
 
-        // Do not reconnect if we received a finished message or clean close
-        if (finishedRef.current || (evt?.code === 1000 && evt?.wasClean)) {
+        const isCleanClose = evt?.code === 1000 && evt?.wasClean;
+        if (finishedRef.current || (isCleanClose && !reconnectOnCleanClose)) {
           return;
         }
 
-        // Otherwise, reconnect on unexpected/error closures
-        retryAttemptsRef.current += 1;
-        scheduleReconnect();
+        requestReconnect();
       };
 
       wsRef.current = ws;
@@ -193,6 +204,7 @@ export const useJsonPatchWsStream = <T extends object>(
     initialData,
     injectInitialEntry,
     deduplicatePatches,
+    reconnectOnCleanClose,
     retryNonce,
   ]);
 
