@@ -1,2 +1,5 @@
 packages:
-  - 'frontend'
+  - frontend
+
+ignoredBuiltDependencies:
+  - esbuild
