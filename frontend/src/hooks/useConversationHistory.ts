@@ -58,6 +58,7 @@ interface UseConversationHistoryResult {
 
 const CONVERSATION_PAGE_SIZE = 20;
 const CONVERSATION_CACHE_LIMIT = 200;
+const CONVERSATION_CACHE_LIMIT_MAX = 2000;
 const MIN_INITIAL_ENTRIES = 20;
 
 const makeLoadingPatch = (executionProcessId: string): PatchTypeWithKey => ({
@@ -118,11 +119,14 @@ const mapIndexedEntries = (
     patchWithKey(entry.entry, executionProcessId, entry.entry_index)
   );
 
-const applyEntryLimit = (entries: PatchTypeWithKey[]): PatchTypeWithKey[] => {
-  if (entries.length <= CONVERSATION_CACHE_LIMIT) {
+const applyEntryLimit = (
+  entries: PatchTypeWithKey[],
+  limit: number
+): PatchTypeWithKey[] => {
+  if (entries.length <= limit) {
     return entries;
   }
-  return entries.slice(entries.length - CONVERSATION_CACHE_LIMIT);
+  return entries.slice(entries.length - limit);
 };
 
 const entryIndexForSort = (entry: PatchTypeWithKey): number => {
@@ -137,12 +141,13 @@ const sortEntriesByIndex = (entries: PatchTypeWithKey[]) =>
 const mergeHistoryEntries = (
   existing: PatchTypeWithKey[],
   incoming: PatchTypeWithKey[],
-  prepend: boolean
+  prepend: boolean,
+  limit: number
 ): PatchTypeWithKey[] => {
   const existingKeys = new Set(existing.map((entry) => entry.patchKey));
   const filtered = incoming.filter((entry) => !existingKeys.has(entry.patchKey));
   const merged = prepend ? [...filtered, ...existing] : [...existing, ...filtered];
-  return applyEntryLimit(merged);
+  return applyEntryLimit(merged, limit);
 };
 
 const fetchLogHistoryPage = async (
@@ -184,6 +189,7 @@ export const useConversationHistory = ({
   const loadedInitialEntries = useRef(false);
   const streamingProcessIdsRef = useRef<Set<string>>(new Set());
   const pendingHistoricLoadIdsRef = useRef<Set<string>>(new Set());
+  const entryLimitRef = useRef(CONVERSATION_CACHE_LIMIT);
   const knownProcessIdsRef = useRef<Set<string>>(new Set());
   const hasSeededProcessIdsRef = useRef(false);
   const onEntriesUpdatedRef = useRef<OnEntriesUpdated | null>(null);
@@ -198,10 +204,15 @@ export const useConversationHistory = ({
   };
 
   const refreshHasMoreHistory = useCallback(() => {
-    const hasMore = Object.values(displayedExecutionProcesses.current).some(
-      (process) => process.hasMore
+    const displayed = displayedExecutionProcesses.current;
+    const hasMore = Object.values(displayed).some((process) => process.hasMore);
+    const displayedIds = new Set(Object.keys(displayed));
+    const hasHiddenProcesses = executionProcesses.current.some(
+      (process) =>
+        !displayedIds.has(process.id) &&
+        process.status !== ExecutionProcessStatus.running
     );
-    setHasMoreHistory(hasMore);
+    setHasMoreHistory(hasMore || hasHiddenProcesses);
   }, []);
 
   useEffect(() => {
@@ -540,7 +551,8 @@ const loadEntriesForHistoricExecutionProcess = async (
         const mergedEntries = mergeHistoryEntries(
           existing.entries,
           entriesWithKey,
-          prepend
+          prepend,
+          entryLimitRef.current
         );
 
         state[executionProcess.id] = {
@@ -584,7 +596,10 @@ const loadEntriesForHistoricExecutionProcess = async (
                   current.entries.push(patch);
                 }
                 current.entries = sortEntriesByIndex(current.entries);
-                current.entries = applyEntryLimit(current.entries);
+                current.entries = applyEntryLimit(
+                  current.entries,
+                  entryLimitRef.current
+                );
               });
               emitEntries(displayedExecutionProcesses.current, 'running', false);
             },
@@ -608,7 +623,10 @@ const loadEntriesForHistoricExecutionProcess = async (
                   current.entries.push(patch);
                 }
                 current.entries = sortEntriesByIndex(current.entries);
-                current.entries = applyEntryLimit(current.entries);
+                current.entries = applyEntryLimit(
+                  current.entries,
+                  entryLimitRef.current
+                );
               });
               emitEntries(displayedExecutionProcesses.current, 'running', false);
             },
@@ -699,24 +717,53 @@ const loadEntriesForHistoricExecutionProcess = async (
     let addedEntries = 0;
 
     for (const process of processesByAge) {
-      const current = displayedExecutionProcesses.current[process.id];
-      if (!current?.hasMore || pendingHistoricLoadIdsRef.current.has(process.id)) {
+      if (process.status === ExecutionProcessStatus.running) {
+        continue;
+      }
+      if (pendingHistoricLoadIdsRef.current.has(process.id)) {
         continue;
       }
 
-      pendingHistoricLoadIdsRef.current.add(process.id);
-      try {
-        const { page, entriesWithKey } =
-          await loadEntriesForHistoricExecutionProcess(
-            process,
-            current.cursor
-          );
-        if (page) {
-          updateProcessHistory(process, entriesWithKey, page, true);
-          addedEntries += entriesWithKey.length;
+      const current = displayedExecutionProcesses.current[process.id];
+      if (!current) {
+        pendingHistoricLoadIdsRef.current.add(process.id);
+        try {
+          const { page, entriesWithKey } =
+            await loadEntriesForHistoricExecutionProcess(process, null);
+          if (page) {
+            if (entriesWithKey.length > 0) {
+              entryLimitRef.current = Math.min(
+                entryLimitRef.current + entriesWithKey.length,
+                CONVERSATION_CACHE_LIMIT_MAX
+              );
+            }
+            updateProcessHistory(process, entriesWithKey, page, true);
+            addedEntries += entriesWithKey.length;
+          }
+        } finally {
+          pendingHistoricLoadIdsRef.current.delete(process.id);
         }
-      } finally {
-        pendingHistoricLoadIdsRef.current.delete(process.id);
+      } else if (current.hasMore) {
+        pendingHistoricLoadIdsRef.current.add(process.id);
+        try {
+          const { page, entriesWithKey } =
+            await loadEntriesForHistoricExecutionProcess(
+              process,
+              current.cursor
+            );
+          if (page) {
+            if (entriesWithKey.length > 0) {
+              entryLimitRef.current = Math.min(
+                entryLimitRef.current + entriesWithKey.length,
+                CONVERSATION_CACHE_LIMIT_MAX
+              );
+            }
+            updateProcessHistory(process, entriesWithKey, page, true);
+            addedEntries += entriesWithKey.length;
+          }
+        } finally {
+          pendingHistoricLoadIdsRef.current.delete(process.id);
+        }
       }
 
       if (addedEntries >= CONVERSATION_PAGE_SIZE) {
@@ -884,6 +931,7 @@ const loadEntriesForHistoricExecutionProcess = async (
     loadedInitialEntries.current = false;
     streamingProcessIdsRef.current.clear();
     pendingHistoricLoadIdsRef.current.clear();
+    entryLimitRef.current = CONVERSATION_CACHE_LIMIT;
     knownProcessIdsRef.current.clear();
     hasSeededProcessIdsRef.current = false;
     emitEntries(displayedExecutionProcesses.current, 'initial', true);

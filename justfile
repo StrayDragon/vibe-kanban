@@ -1,6 +1,8 @@
 set dotenv-load := true
 set shell := ["bash", "-uc"]
 
+target_dir := `cargo metadata --format-version=1 --no-deps | node -e 'const fs = require("fs"); const data = fs.readFileSync(0, "utf8"); process.stdout.write(JSON.parse(data).target_directory);'`
+
 default:
     @just -l
 
@@ -22,7 +24,7 @@ backend-build: # db-prepare
 build: frontend-build backend-build
 
 run host="0.0.0.0" port="3001": frontend-build backend-build
-    HOST={{host}} PORT={{port}} /var/tmp/vibe-kanban/cache/cargo-target/release/server
+    HOST={{host}} PORT={{port}} {{target_dir}}/release/server
 
 dev: db-prepare
     pnpm run dev

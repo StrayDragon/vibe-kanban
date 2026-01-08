@@ -1,6 +1,7 @@
 import {
   DataWithScrollModifier,
   ScrollModifier,
+  ScrollModifierOption,
   VirtuosoMessageList,
   VirtuosoMessageListLicense,
   VirtuosoMessageListMethods,
@@ -82,12 +83,12 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
   const [loading, setLoading] = useState(true);
   const { setEntries, reset } = useEntries();
   const messageListRef = useRef<VirtuosoMessageListMethods | null>(null);
-  const pendingScrollIndexRef = useRef<number | null>(null);
   const prevLengthRef = useRef<number>(0);
 
   useEffect(() => {
     setLoading(true);
     setChannelData(null);
+    prevLengthRef.current = 0;
     reset();
   }, [attempt.id, reset]);
 
@@ -96,18 +97,18 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     addType: AddEntryType,
     newLoading: boolean
   ) => {
-    let scrollModifier: ScrollModifier = InitialDataScrollModifier;
+    let scrollModifier: ScrollModifier | undefined;
 
-    if (addType === 'running' && !loading) {
+    if (loading || addType === 'initial') {
+      scrollModifier = InitialDataScrollModifier;
+    } else if (addType === 'running') {
       scrollModifier = AutoScrollToBottom;
-    }
-
-    if (addType === 'historic') {
+    } else if (addType === 'historic') {
       const prevLen = prevLengthRef.current;
       const nextLen = newEntries.length;
       const addedCount = Math.max(0, nextLen - prevLen);
       if (addedCount > 0) {
-        pendingScrollIndexRef.current = addedCount;
+        scrollModifier = ScrollModifierOption.prepend;
       }
     }
 
@@ -123,19 +124,6 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
 
   const { loadOlderHistory, hasMoreHistory, loadingOlder } =
     useConversationHistory({ attempt, onEntriesUpdated });
-
-  useEffect(() => {
-    if (pendingScrollIndexRef.current === null) return;
-    const index = pendingScrollIndexRef.current;
-    pendingScrollIndexRef.current = null;
-
-    requestAnimationFrame(() => {
-      messageListRef.current?.scrollToItem({
-        index,
-        align: 'start',
-      });
-    });
-  }, [channelData]);
 
   const messageListContext = useMemo(
     () => ({ attempt, task }),
