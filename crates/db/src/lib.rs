@@ -17,6 +17,31 @@ pub struct DBService {
     pub pool: Pool<Sqlite>,
 }
 
+// TEMP: remove after update-log-history-streaming migration is guaranteed in all releases.
+async fn warn_if_missing_log_entries_table(pool: &Pool<Sqlite>) {
+    let table_exists = sqlx::query_scalar::<_, i64>(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_process_log_entries'",
+    )
+    .fetch_optional(pool)
+    .await;
+
+    match table_exists {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            tracing::warn!(
+                "Missing execution_process_log_entries table; log history v2 endpoints will be unavailable. \
+                 Run migrations or deploy a build that includes the update-log-history-streaming migration."
+            );
+        }
+        Err(err) => {
+            tracing::warn!(
+                "Failed to verify execution_process_log_entries table: {}",
+                err
+            );
+        }
+    }
+}
+
 impl DBService {
     pub async fn new() -> Result<DBService, Error> {
         let database_url = format!(
@@ -30,6 +55,7 @@ impl DBService {
             .busy_timeout(Duration::from_secs(30));
         let pool = SqlitePool::connect_with(options).await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
+        warn_if_missing_log_entries_table(&pool).await;
         Ok(DBService { pool })
     }
 
@@ -83,6 +109,7 @@ impl DBService {
         };
 
         sqlx::migrate!("./migrations").run(&pool).await?;
+        warn_if_missing_log_entries_table(&pool).await;
         Ok(pool)
     }
 }
