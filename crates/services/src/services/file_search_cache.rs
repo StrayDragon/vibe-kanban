@@ -314,12 +314,13 @@ impl FileSearchCache {
             .await
             .map_err(|e| format!("Failed to warm cache: {e}"))?;
 
-        // Setup watchers for active projects
-        for repo_path in &repo_paths {
-            if let Err(e) = self.setup_watcher(repo_path).await {
-                warn!("Failed to setup watcher for {:?}: {}", repo_path, e);
-            }
-        }
+        // NOTE: Temporarily disabled; HEAD-change refresh is too frequent/noisy.
+        // Re-enable when refresh is limited to specific scenarios.
+        // for repo_path in &repo_paths {
+        //     if let Err(e) = self.setup_watcher(repo_path).await {
+        //         warn!("Failed to setup watcher for {:?}: {}", repo_path, e);
+        //     }
+        // }
 
         info!("File search cache warming completed");
         Ok(())
