@@ -280,3 +280,191 @@ pub trait JsonRpcCallbacks: Send + Sync {
 
     async fn on_non_json(&self, _raw: &str) -> Result<(), ExecutorError>;
 }
+
+#[cfg(test)]
+#[cfg(unix)]
+mod tests {
+    use std::{process::Stdio, sync::Arc};
+
+    use tokio::{
+        process::Command,
+        sync::{Mutex, oneshot},
+        time::{Duration, timeout},
+    };
+
+    use super::*;
+
+    #[derive(Default)]
+    struct CallbackState {
+        non_json: Vec<String>,
+        notifications: Vec<String>,
+    }
+
+    #[derive(Clone)]
+    struct RecordingCallbacks {
+        state: Arc<Mutex<CallbackState>>,
+        stop_method: Option<String>,
+    }
+
+    impl RecordingCallbacks {
+        fn new(stop_method: Option<&str>) -> (Self, Arc<Mutex<CallbackState>>) {
+            let state = Arc::new(Mutex::new(CallbackState::default()));
+            (
+                Self {
+                    state: state.clone(),
+                    stop_method: stop_method.map(str::to_string),
+                },
+                state,
+            )
+        }
+    }
+
+    #[async_trait]
+    impl JsonRpcCallbacks for RecordingCallbacks {
+        async fn on_request(
+            &self,
+            _peer: &JsonRpcPeer,
+            _raw: &str,
+            _request: JSONRPCRequest,
+        ) -> Result<(), ExecutorError> {
+            Ok(())
+        }
+
+        async fn on_response(
+            &self,
+            _peer: &JsonRpcPeer,
+            _raw: &str,
+            _response: &JSONRPCResponse,
+        ) -> Result<(), ExecutorError> {
+            Ok(())
+        }
+
+        async fn on_error(
+            &self,
+            _peer: &JsonRpcPeer,
+            _raw: &str,
+            _error: &JSONRPCError,
+        ) -> Result<(), ExecutorError> {
+            Ok(())
+        }
+
+        async fn on_notification(
+            &self,
+            _peer: &JsonRpcPeer,
+            _raw: &str,
+            notification: JSONRPCNotification,
+        ) -> Result<bool, ExecutorError> {
+            let method = notification.method.clone();
+            let stop = self.stop_method.as_deref() == Some(method.as_str());
+            self.state.lock().await.notifications.push(method);
+            Ok(stop)
+        }
+
+        async fn on_non_json(&self, raw: &str) -> Result<(), ExecutorError> {
+            self.state.lock().await.non_json.push(raw.to_string());
+            Ok(())
+        }
+    }
+
+    async fn run_script(
+        script: &str,
+        callbacks: Arc<dyn JsonRpcCallbacks>,
+    ) -> ExecutorExitResult {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn fake server");
+        let stdout = child.stdout.take().expect("stdout");
+        let stdin = child.stdin.take().expect("stdin");
+        let (exit_tx, exit_rx) = oneshot::channel();
+
+        let _peer = JsonRpcPeer::spawn(stdin, stdout, callbacks, ExitSignalSender::new(exit_tx));
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
+
+        timeout(Duration::from_secs(2), exit_rx)
+            .await
+            .expect("exit timeout")
+            .expect("exit result")
+    }
+
+    #[tokio::test]
+    async fn jsonrpc_peer_reports_non_json_and_continues() {
+        let (callbacks, state) = RecordingCallbacks::new(None);
+        let script = r#"printf '%s\n' 'not json' '{"jsonrpc":"2.0","method":"codex/event/unknown","params":{}}'"#;
+        let exit = run_script(script, Arc::new(callbacks)).await;
+
+        assert!(matches!(exit, ExecutorExitResult::Success));
+
+        let state = state.lock().await;
+        assert_eq!(state.non_json, vec!["not json"]);
+        assert_eq!(state.notifications, vec!["codex/event/unknown"]);
+    }
+
+    #[tokio::test]
+    async fn jsonrpc_peer_continues_after_unknown_notification() {
+        let (callbacks, state) = RecordingCallbacks::new(Some("stop"));
+        let script = r#"printf '%s\n' '{"jsonrpc":"2.0","method":"codex/event/unknown","params":{}}' '{"jsonrpc":"2.0","method":"stop","params":{}}' '{"jsonrpc":"2.0","method":"codex/event/after","params":{}}'"#;
+        run_script(script, Arc::new(callbacks)).await;
+
+        let state = state.lock().await;
+        assert!(state.non_json.is_empty());
+        assert_eq!(state.notifications, vec!["codex/event/unknown", "stop"]);
+    }
+}
+
+#[cfg(test)]
+mod await_response_tests {
+    use super::*;
+    use codex_app_server_protocol::JSONRPCErrorError;
+    use tokio::sync::oneshot;
+
+    #[tokio::test]
+    async fn await_response_returns_error_for_error_response() {
+        let (sender, receiver) = oneshot::channel();
+        let error = JSONRPCError {
+            id: RequestId::Integer(1),
+            error: JSONRPCErrorError {
+                code: -1,
+                data: None,
+                message: "nope".to_string(),
+            },
+        };
+        sender.send(PendingResponse::Error(error)).expect("send");
+
+        let err = await_response::<serde_json::Value>(receiver, "ping")
+            .await
+            .expect_err("error response");
+        assert!(err.to_string().contains("ping request failed: nope"));
+    }
+
+    #[tokio::test]
+    async fn await_response_returns_error_on_shutdown() {
+        let (sender, receiver) = oneshot::channel();
+        sender
+            .send(PendingResponse::Shutdown)
+            .expect("send shutdown");
+
+        let err = await_response::<serde_json::Value>(receiver, "ping")
+            .await
+            .expect_err("shutdown");
+        assert!(err
+            .to_string()
+            .contains("server was shutdown while waiting for ping response"));
+    }
+
+    #[tokio::test]
+    async fn await_response_returns_error_when_channel_dropped() {
+        let (sender, receiver) = oneshot::channel::<PendingResponse>();
+        drop(sender);
+
+        let err = await_response::<serde_json::Value>(receiver, "ping")
+            .await
+            .expect_err("dropped");
+        assert!(err.to_string().contains("ping request was dropped"));
+    }
+}

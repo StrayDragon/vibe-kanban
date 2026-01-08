@@ -1204,3 +1204,939 @@ impl ToNormalizedEntryOpt for Approval {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+
+    use codex_app_server_protocol::{
+        JSONRPCNotification, JSONRPCResponse, NewConversationResponse, RequestId,
+    };
+    use codex_mcp_types::{CallToolResult, ContentBlock, ImageContent, TextContent};
+    use codex_protocol::{
+        ConversationId,
+        plan_tool::{PlanItemArg, StepStatus, UpdatePlanArgs},
+        protocol::{ExecCommandSource, FileChange as CodexProtoFileChange},
+    };
+    use serde_json::json;
+    use tokio::time::{sleep, Instant};
+    use workspace_utils::{approvals::ApprovalStatus, log_msg::LogMsg};
+
+    use super::*;
+    use crate::logs::{
+        ActionType, CommandExitStatus, FileChange, NormalizedEntry, NormalizedEntryError,
+        NormalizedEntryType, ToolResultValueType, ToolStatus,
+    };
+
+    fn push_json_line(msg_store: &Arc<MsgStore>, line: String) {
+        msg_store.push_stdout(format!("{line}\n"));
+    }
+
+    fn push_codex_event(msg_store: &Arc<MsgStore>, msg: EventMsg) {
+        let params = json!({ "msg": msg });
+        let notification = JSONRPCNotification {
+            method: "codex/event".to_string(),
+            params: Some(params),
+        };
+        let line = serde_json::to_string(&notification).expect("notification");
+        push_json_line(msg_store, line);
+    }
+
+    fn normalized_entries(msg_store: &MsgStore) -> Vec<NormalizedEntry> {
+        let (entries, _) = msg_store.normalized_history_page(usize::MAX, None);
+        entries
+            .into_iter()
+            .filter_map(|snapshot| snapshot.entry_json.get("content").cloned())
+            .filter_map(|value| serde_json::from_value(value).ok())
+            .collect()
+    }
+
+    async fn wait_for_entry<F>(msg_store: &MsgStore, predicate: F) -> NormalizedEntry
+    where
+        F: Fn(&NormalizedEntry) -> bool,
+    {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some(entry) = normalized_entries(msg_store)
+                .into_iter()
+                .find(|entry| predicate(entry))
+            {
+                return entry;
+            }
+            if Instant::now() >= deadline {
+                panic!("timed out waiting for normalized entry");
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    #[test]
+    fn build_command_output_returns_none_for_empty_sections() {
+        assert_eq!(build_command_output(None, None), None);
+        assert_eq!(build_command_output(Some(" \n"), Some("\n\t")), None);
+    }
+
+    #[test]
+    fn build_command_output_formats_stdout_and_stderr() {
+        let output =
+            build_command_output(Some("ok\n"), Some("warn\n")).expect("expected output");
+        assert_eq!(output, "stdout:\nok\n\nstderr:\nwarn");
+    }
+
+    #[test]
+    fn approval_display_tool_name_maps_known_names() {
+        let approval = Approval::approval_response(
+            "call-1".to_string(),
+            "codex.exec_command".to_string(),
+            ApprovalStatus::Pending,
+        );
+        assert_eq!(approval.display_tool_name(), "Exec Command");
+
+        let approval = Approval::approval_response(
+            "call-2".to_string(),
+            "codex.apply_patch".to_string(),
+            ApprovalStatus::Pending,
+        );
+        assert_eq!(approval.display_tool_name(), "Edit");
+
+        let approval = Approval::approval_response(
+            "call-3".to_string(),
+            "custom".to_string(),
+            ApprovalStatus::Pending,
+        );
+        assert_eq!(approval.display_tool_name(), "custom");
+    }
+
+    #[test]
+    fn approval_denied_emits_user_feedback() {
+        let approval = Approval::approval_response(
+            "call-4".to_string(),
+            "codex.exec_command".to_string(),
+            ApprovalStatus::Denied {
+                reason: Some(" no ".to_string()),
+            },
+        );
+
+        let entry = approval
+            .to_normalized_entry_opt()
+            .expect("expected entry");
+        match entry.entry_type {
+            NormalizedEntryType::UserFeedback { denied_tool } => {
+                assert_eq!(denied_tool, "Exec Command");
+            }
+            _ => panic!("expected user feedback entry"),
+        }
+        assert_eq!(entry.content, "no");
+    }
+
+    #[test]
+    fn approval_timeout_emits_error_message() {
+        let approval = Approval::approval_response(
+            "call-5".to_string(),
+            "custom".to_string(),
+            ApprovalStatus::TimedOut,
+        );
+
+        let entry = approval
+            .to_normalized_entry_opt()
+            .expect("expected entry");
+        match entry.entry_type {
+            NormalizedEntryType::ErrorMessage { error_type } => {
+                assert_eq!(error_type, NormalizedEntryError::Other);
+            }
+            _ => panic!("expected error entry"),
+        }
+        assert_eq!(entry.content, "Approval timed out for tool custom");
+    }
+
+    #[test]
+    fn normalize_file_changes_adds_write_and_delete() {
+        let mut changes = HashMap::new();
+        changes.insert(
+            PathBuf::from("/repo/new.txt"),
+            CodexProtoFileChange::Add {
+                content: "hello".to_string(),
+            },
+        );
+        changes.insert(
+            PathBuf::from("/repo/old.txt"),
+            CodexProtoFileChange::Delete {
+                content: "old".to_string(),
+            },
+        );
+
+        let results = normalize_file_changes("/repo", &changes);
+        let mut by_path = HashMap::new();
+        for (path, edits) in results {
+            by_path.insert(path, edits);
+        }
+
+        let add_changes = by_path.get("new.txt").expect("add entry");
+        match &add_changes[0] {
+            FileChange::Write { content } => assert_eq!(content, "hello"),
+            _ => panic!("expected write change"),
+        }
+
+        let delete_changes = by_path.get("old.txt").expect("delete entry");
+        match &delete_changes[0] {
+            FileChange::Delete => {}
+            _ => panic!("expected delete change"),
+        }
+    }
+
+    #[test]
+    fn normalize_file_changes_handles_rename_and_edit() {
+        let mut changes = HashMap::new();
+        changes.insert(
+            PathBuf::from("/repo/old.txt"),
+            CodexProtoFileChange::Update {
+                unified_diff: "@@ -1,1 +1,1 @@\n-old\n+new\n".to_string(),
+                move_path: Some(PathBuf::from("/repo/new.txt")),
+            },
+        );
+
+        let results = normalize_file_changes("/repo", &changes);
+        assert_eq!(results.len(), 1);
+        let (path, edits) = &results[0];
+        assert_eq!(path, "old.txt");
+        assert_eq!(edits.len(), 2);
+
+        match &edits[0] {
+            FileChange::Rename { new_path } => assert_eq!(new_path, "new.txt"),
+            _ => panic!("expected rename change"),
+        }
+
+        match &edits[1] {
+            FileChange::Edit {
+                unified_diff,
+                has_line_numbers,
+            } => {
+                assert!(unified_diff.contains("--- a/old.txt"));
+                assert!(unified_diff.contains("+++ b/old.txt"));
+                assert!(*has_line_numbers);
+            }
+            _ => panic!("expected edit change"),
+        }
+    }
+
+    #[test]
+    fn log_state_appends_assistant_messages() {
+        let mut state = LogState::new(EntryIndexProvider::test_new());
+
+        let (entry, first_index, first_new) =
+            state.assistant_message_append("Hello".to_string());
+        assert!(matches!(
+            entry.entry_type,
+            NormalizedEntryType::AssistantMessage
+        ));
+        assert!(first_new);
+
+        let (entry, second_index, second_new) =
+            state.assistant_message_append(" world".to_string());
+        assert_eq!(first_index, second_index);
+        assert!(!second_new);
+        assert_eq!(entry.content, "Hello world");
+    }
+
+    #[tokio::test]
+    async fn normalize_logs_exec_command_lifecycle() {
+        let msg_store = Arc::new(MsgStore::new());
+        normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
+                call_id: "cmd-1".to_string(),
+                process_id: None,
+                turn_id: "turn-1".to_string(),
+                command: vec!["echo".to_string(), "hello".to_string()],
+                cwd: PathBuf::from("/repo"),
+                parsed_cmd: Vec::new(),
+                source: ExecCommandSource::default(),
+                interaction_input: None,
+            }),
+        );
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::ExecCommandOutputDelta(ExecCommandOutputDeltaEvent {
+                call_id: "cmd-1".to_string(),
+                stream: ExecOutputStream::Stdout,
+                chunk: b"hi\n".to_vec(),
+            }),
+        );
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::ExecCommandEnd(ExecCommandEndEvent {
+                call_id: "cmd-1".to_string(),
+                process_id: None,
+                turn_id: "turn-1".to_string(),
+                command: vec!["echo".to_string(), "hello".to_string()],
+                cwd: PathBuf::from("/repo"),
+                parsed_cmd: Vec::new(),
+                source: ExecCommandSource::default(),
+                interaction_input: None,
+                stdout: "raw".to_string(),
+                stderr: String::new(),
+                aggregated_output: String::new(),
+                exit_code: 0,
+                duration: Duration::from_secs(1),
+                formatted_output: "formatted output".to_string(),
+            }),
+        );
+
+        let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
+            NormalizedEntryType::ToolUse {
+                action_type: ActionType::CommandRun { command, .. },
+                status,
+                ..
+            } => command == "echo hello" && matches!(status, ToolStatus::Success),
+            _ => false,
+        })
+        .await;
+
+        match entry.entry_type {
+            NormalizedEntryType::ToolUse {
+                action_type: ActionType::CommandRun { command, result },
+                status,
+                ..
+            } => {
+                assert_eq!(entry.content, "echo hello");
+                assert_eq!(command, "echo hello");
+                assert!(matches!(status, ToolStatus::Success));
+                let result = result.expect("command result");
+                assert_eq!(result.output, Some("formatted output".to_string()));
+                match result.exit_status {
+                    Some(CommandExitStatus::ExitCode { code }) => assert_eq!(code, 0),
+                    other => panic!("unexpected exit status: {other:?}"),
+                }
+            }
+            _ => panic!("expected command tool entry"),
+        }
+
+        msg_store.push_finished();
+    }
+
+    #[tokio::test]
+    async fn normalize_logs_exec_command_failure_marks_failed() {
+        let msg_store = Arc::new(MsgStore::new());
+        normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
+                call_id: "cmd-fail".to_string(),
+                process_id: None,
+                turn_id: "turn-1".to_string(),
+                command: vec!["false".to_string()],
+                cwd: PathBuf::from("/repo"),
+                parsed_cmd: Vec::new(),
+                source: ExecCommandSource::default(),
+                interaction_input: None,
+            }),
+        );
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::ExecCommandEnd(ExecCommandEndEvent {
+                call_id: "cmd-fail".to_string(),
+                process_id: None,
+                turn_id: "turn-1".to_string(),
+                command: vec!["false".to_string()],
+                cwd: PathBuf::from("/repo"),
+                parsed_cmd: Vec::new(),
+                source: ExecCommandSource::default(),
+                interaction_input: None,
+                stdout: String::new(),
+                stderr: "nope".to_string(),
+                aggregated_output: String::new(),
+                exit_code: 2,
+                duration: Duration::from_secs(1),
+                formatted_output: "failed".to_string(),
+            }),
+        );
+
+        let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
+            NormalizedEntryType::ToolUse {
+                action_type: ActionType::CommandRun { command, .. },
+                status,
+                ..
+            } => command == "false" && matches!(status, ToolStatus::Failed),
+            _ => false,
+        })
+        .await;
+
+        match entry.entry_type {
+            NormalizedEntryType::ToolUse {
+                action_type: ActionType::CommandRun { result, .. },
+                status,
+                ..
+            } => {
+                assert!(matches!(status, ToolStatus::Failed));
+                let result = result.expect("command result");
+                match result.exit_status {
+                    Some(CommandExitStatus::ExitCode { code }) => assert_eq!(code, 2),
+                    other => panic!("unexpected exit status: {other:?}"),
+                }
+            }
+            _ => panic!("expected command tool entry"),
+        }
+
+        msg_store.push_finished();
+    }
+
+    #[tokio::test]
+    async fn normalize_logs_patch_apply_flow() {
+        let msg_store = Arc::new(MsgStore::new());
+        normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
+
+        let mut changes = HashMap::new();
+        changes.insert(
+            PathBuf::from("/repo/file.txt"),
+            CodexProtoFileChange::Update {
+                unified_diff: "@@ -1,1 +1,1 @@\n-old\n+new\n".to_string(),
+                move_path: None,
+            },
+        );
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent {
+                call_id: "patch-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                changes: changes.clone(),
+                reason: None,
+                grant_root: None,
+            }),
+        );
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
+                call_id: "patch-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                auto_approved: false,
+                changes: changes.clone(),
+            }),
+        );
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::PatchApplyEnd(PatchApplyEndEvent {
+                call_id: "patch-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                stdout: String::new(),
+                stderr: String::new(),
+                success: true,
+                changes: HashMap::new(),
+            }),
+        );
+
+        let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
+            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
+                tool_name == "edit" && matches!(status, ToolStatus::Success)
+            }
+            _ => false,
+        })
+        .await;
+
+        match entry.entry_type {
+            NormalizedEntryType::ToolUse {
+                action_type: ActionType::FileEdit { path, changes },
+                status,
+                ..
+            } => {
+                assert_eq!(path, "file.txt");
+                assert!(matches!(status, ToolStatus::Success));
+                assert_eq!(changes.len(), 1);
+                match &changes[0] {
+                    FileChange::Edit {
+                        unified_diff,
+                        has_line_numbers,
+                    } => {
+                        assert!(unified_diff.contains("--- a/file.txt"));
+                        assert!(unified_diff.contains("+++ b/file.txt"));
+                        assert!(*has_line_numbers);
+                    }
+                    _ => panic!("expected edit change"),
+                }
+            }
+            _ => panic!("expected patch tool entry"),
+        }
+
+        msg_store.push_finished();
+    }
+
+    #[tokio::test]
+    async fn normalize_logs_patch_apply_failure_marks_failed() {
+        let msg_store = Arc::new(MsgStore::new());
+        normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
+
+        let mut changes = HashMap::new();
+        changes.insert(
+            PathBuf::from("/repo/bad.txt"),
+            CodexProtoFileChange::Update {
+                unified_diff: "@@ -1,1 +1,1 @@\n-old\n+new\n".to_string(),
+                move_path: None,
+            },
+        );
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
+                call_id: "patch-fail".to_string(),
+                turn_id: "turn-1".to_string(),
+                auto_approved: true,
+                changes,
+            }),
+        );
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::PatchApplyEnd(PatchApplyEndEvent {
+                call_id: "patch-fail".to_string(),
+                turn_id: "turn-1".to_string(),
+                stdout: String::new(),
+                stderr: "bad diff".to_string(),
+                success: false,
+                changes: HashMap::new(),
+            }),
+        );
+
+        let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
+            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
+                tool_name == "edit" && matches!(status, ToolStatus::Failed)
+            }
+            _ => false,
+        })
+        .await;
+
+        assert!(matches!(
+            entry.entry_type,
+            NormalizedEntryType::ToolUse {
+                status: ToolStatus::Failed,
+                ..
+            }
+        ));
+
+        msg_store.push_finished();
+    }
+
+    #[tokio::test]
+    async fn normalize_logs_mcp_tool_markdown_result() {
+        let msg_store = Arc::new(MsgStore::new());
+        normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
+
+        let invocation = McpInvocation {
+            server: "context7".to_string(),
+            tool: "search".to_string(),
+            arguments: Some(json!({"q": "rust"})),
+        };
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::McpToolCallBegin(McpToolCallBeginEvent {
+                call_id: "mcp-1".to_string(),
+                invocation: invocation.clone(),
+            }),
+        );
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::McpToolCallEnd(McpToolCallEndEvent {
+                call_id: "mcp-1".to_string(),
+                invocation: invocation.clone(),
+                duration: Duration::from_secs(1),
+                result: Ok(CallToolResult {
+                    content: vec![ContentBlock::TextContent(TextContent {
+                        annotations: None,
+                        text: "hello".to_string(),
+                        r#type: "text".to_string(),
+                    })],
+                    is_error: None,
+                    structured_content: None,
+                }),
+            }),
+        );
+
+        let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
+            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
+                tool_name == "mcp:context7:search" && matches!(status, ToolStatus::Success)
+            }
+            _ => false,
+        })
+        .await;
+
+        match entry.entry_type {
+            NormalizedEntryType::ToolUse {
+                tool_name,
+                action_type:
+                    ActionType::Tool {
+                        tool_name: action_tool,
+                        arguments,
+                        result,
+                    },
+                status,
+            } => {
+                assert_eq!(tool_name, "mcp:context7:search");
+                assert_eq!(action_tool, "mcp:context7:search");
+                assert_eq!(arguments, Some(json!({"q": "rust"})));
+                assert!(matches!(status, ToolStatus::Success));
+                let result = result.expect("tool result");
+                assert!(matches!(result.r#type, ToolResultValueType::Markdown));
+                assert_eq!(result.value, json!("hello"));
+            }
+            _ => panic!("expected mcp tool entry"),
+        }
+
+        msg_store.push_finished();
+    }
+
+    #[tokio::test]
+    async fn normalize_logs_mcp_tool_error_result_marks_failed() {
+        let msg_store = Arc::new(MsgStore::new());
+        normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
+
+        let invocation = McpInvocation {
+            server: "context7".to_string(),
+            tool: "search".to_string(),
+            arguments: None,
+        };
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::McpToolCallBegin(McpToolCallBeginEvent {
+                call_id: "mcp-fail".to_string(),
+                invocation: invocation.clone(),
+            }),
+        );
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::McpToolCallEnd(McpToolCallEndEvent {
+                call_id: "mcp-fail".to_string(),
+                invocation: invocation.clone(),
+                duration: Duration::from_secs(1),
+                result: Err("boom".to_string()),
+            }),
+        );
+
+        let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
+            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
+                tool_name == "mcp:context7:search" && matches!(status, ToolStatus::Failed)
+            }
+            _ => false,
+        })
+        .await;
+
+        match entry.entry_type {
+            NormalizedEntryType::ToolUse {
+                action_type: ActionType::Tool { result, .. },
+                status,
+                ..
+            } => {
+                assert!(matches!(status, ToolStatus::Failed));
+                let result = result.expect("tool result");
+                assert!(matches!(result.r#type, ToolResultValueType::Markdown));
+                assert_eq!(result.value, json!("boom"));
+            }
+            _ => panic!("expected mcp tool entry"),
+        }
+
+        msg_store.push_finished();
+    }
+
+    #[tokio::test]
+    async fn normalize_logs_mcp_tool_is_error_marks_failed() {
+        let msg_store = Arc::new(MsgStore::new());
+        normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
+
+        let invocation = McpInvocation {
+            server: "context7".to_string(),
+            tool: "search".to_string(),
+            arguments: None,
+        };
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::McpToolCallBegin(McpToolCallBeginEvent {
+                call_id: "mcp-is-error".to_string(),
+                invocation: invocation.clone(),
+            }),
+        );
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::McpToolCallEnd(McpToolCallEndEvent {
+                call_id: "mcp-is-error".to_string(),
+                invocation: invocation.clone(),
+                duration: Duration::from_secs(1),
+                result: Ok(CallToolResult {
+                    content: vec![ContentBlock::TextContent(TextContent {
+                        annotations: None,
+                        text: "bad result".to_string(),
+                        r#type: "text".to_string(),
+                    })],
+                    is_error: Some(true),
+                    structured_content: None,
+                }),
+            }),
+        );
+
+        let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
+            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
+                tool_name == "mcp:context7:search" && matches!(status, ToolStatus::Failed)
+            }
+            _ => false,
+        })
+        .await;
+
+        match entry.entry_type {
+            NormalizedEntryType::ToolUse {
+                action_type: ActionType::Tool { result, .. },
+                status,
+                ..
+            } => {
+                assert!(matches!(status, ToolStatus::Failed));
+                let result = result.expect("tool result");
+                assert!(matches!(result.r#type, ToolResultValueType::Markdown));
+                assert_eq!(result.value, json!("bad result"));
+            }
+            _ => panic!("expected mcp tool entry"),
+        }
+
+        msg_store.push_finished();
+    }
+
+    #[tokio::test]
+    async fn normalize_logs_mcp_tool_json_result() {
+        let msg_store = Arc::new(MsgStore::new());
+        normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
+
+        let invocation = McpInvocation {
+            server: "playwright".to_string(),
+            tool: "screenshot".to_string(),
+            arguments: None,
+        };
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::McpToolCallBegin(McpToolCallBeginEvent {
+                call_id: "mcp-2".to_string(),
+                invocation: invocation.clone(),
+            }),
+        );
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::McpToolCallEnd(McpToolCallEndEvent {
+                call_id: "mcp-2".to_string(),
+                invocation: invocation.clone(),
+                duration: Duration::from_secs(1),
+                result: Ok(CallToolResult {
+                    content: vec![ContentBlock::ImageContent(ImageContent {
+                        annotations: None,
+                        data: "ZGF0YQ==".to_string(),
+                        mime_type: "image/png".to_string(),
+                        r#type: "image".to_string(),
+                    })],
+                    is_error: Some(false),
+                    structured_content: Some(json!({"path": "out.png"})),
+                }),
+            }),
+        );
+
+        let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
+            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
+                tool_name == "mcp:playwright:screenshot" && matches!(status, ToolStatus::Success)
+            }
+            _ => false,
+        })
+        .await;
+
+        match entry.entry_type {
+            NormalizedEntryType::ToolUse {
+                action_type: ActionType::Tool { result, .. },
+                status,
+                ..
+            } => {
+                assert!(matches!(status, ToolStatus::Success));
+                let result = result.expect("tool result");
+                assert!(matches!(result.r#type, ToolResultValueType::Json));
+                assert_eq!(result.value, json!({"path": "out.png"}));
+            }
+            _ => panic!("expected mcp tool entry"),
+        }
+
+        msg_store.push_finished();
+    }
+
+    #[tokio::test]
+    async fn normalize_logs_web_search_updates_query() {
+        let msg_store = Arc::new(MsgStore::new());
+        normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::WebSearchBegin(WebSearchBeginEvent {
+                call_id: "web-1".to_string(),
+            }),
+        );
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::WebSearchEnd(WebSearchEndEvent {
+                call_id: "web-1".to_string(),
+                query: "rust lang".to_string(),
+            }),
+        );
+
+        let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
+            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
+                tool_name == "web_search" && matches!(status, ToolStatus::Success)
+            }
+            _ => false,
+        })
+        .await;
+
+        match entry.entry_type {
+            NormalizedEntryType::ToolUse {
+                action_type: ActionType::WebFetch { url },
+                status,
+                ..
+            } => {
+                assert_eq!(url, "rust lang");
+                assert!(matches!(status, ToolStatus::Success));
+                assert_eq!(entry.content, "rust lang");
+            }
+            _ => panic!("expected web search entry"),
+        }
+
+        msg_store.push_finished();
+    }
+
+    #[tokio::test]
+    async fn normalize_logs_view_image_makes_relative_path() {
+        let msg_store = Arc::new(MsgStore::new());
+        normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::ViewImageToolCall(ViewImageToolCallEvent {
+                call_id: "img-1".to_string(),
+                path: PathBuf::from("/repo/images/pic.png"),
+            }),
+        );
+
+        let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
+            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
+                tool_name == "view_image" && matches!(status, ToolStatus::Success)
+            }
+            _ => false,
+        })
+        .await;
+
+        match entry.entry_type {
+            NormalizedEntryType::ToolUse {
+                action_type: ActionType::FileRead { path },
+                status,
+                ..
+            } => {
+                assert_eq!(path, "images/pic.png");
+                assert!(matches!(status, ToolStatus::Success));
+                assert_eq!(entry.content, "images/pic.png");
+            }
+            _ => panic!("expected view image entry"),
+        }
+
+        msg_store.push_finished();
+    }
+
+    #[tokio::test]
+    async fn normalize_logs_plan_update_builds_todos() {
+        let msg_store = Arc::new(MsgStore::new());
+        normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::PlanUpdate(UpdatePlanArgs {
+                explanation: None,
+                plan: vec![
+                    PlanItemArg {
+                        step: "First".to_string(),
+                        status: StepStatus::Pending,
+                    },
+                    PlanItemArg {
+                        step: "Second".to_string(),
+                        status: StepStatus::Completed,
+                    },
+                ],
+            }),
+        );
+
+        let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
+            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
+                tool_name == "plan" && matches!(status, ToolStatus::Success)
+            }
+            _ => false,
+        })
+        .await;
+
+        match entry.entry_type {
+            NormalizedEntryType::ToolUse {
+                action_type: ActionType::TodoManagement { todos, operation },
+                status,
+                ..
+            } => {
+                assert!(matches!(status, ToolStatus::Success));
+                assert_eq!(operation, "update");
+                assert_eq!(todos.len(), 2);
+                assert_eq!(todos[0].content, "First");
+                assert_eq!(todos[0].status, "pending");
+                assert_eq!(todos[1].content, "Second");
+                assert_eq!(todos[1].status, "completed");
+                assert_eq!(entry.content, "Plan updated (2 steps)");
+            }
+            _ => panic!("expected plan entry"),
+        }
+
+        msg_store.push_finished();
+    }
+
+    #[tokio::test]
+    async fn normalize_logs_handles_new_conversation_response() {
+        let msg_store = Arc::new(MsgStore::new());
+        normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
+
+        let session_id = "123e4567-e89b-12d3-a456-426614174000";
+        let response = JSONRPCResponse {
+            id: RequestId::String("1".to_string()),
+            result: serde_json::to_value(NewConversationResponse {
+                conversation_id: ConversationId::new(),
+                model: "gpt-4.1".to_string(),
+                reasoning_effort: Some(ReasoningEffort::High),
+                rollout_path: PathBuf::from(format!(
+                    "/tmp/rollout-2024-01-01T00-00-00-{session_id}.jsonl"
+                )),
+            })
+            .expect("response"),
+        };
+
+        push_json_line(&msg_store, serde_json::to_string(&response).expect("response line"));
+
+        let entry = wait_for_entry(&msg_store, |entry| {
+            matches!(entry.entry_type, NormalizedEntryType::SystemMessage)
+                && entry.content.contains("model: gpt-4.1")
+        })
+        .await;
+
+        assert!(entry.content.contains("model: gpt-4.1"));
+        assert!(msg_store
+            .get_history()
+            .iter()
+            .any(|msg| matches!(msg, LogMsg::SessionId(id) if id == session_id)));
+
+        msg_store.push_finished();
+    }
+}

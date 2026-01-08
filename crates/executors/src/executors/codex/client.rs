@@ -510,3 +510,190 @@ impl LogWriter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[cfg(unix)]
+mod tests {
+    use std::{process::Stdio, sync::Arc};
+
+    use async_trait::async_trait;
+    use tokio::{
+        process::Command,
+        sync::{Mutex, oneshot},
+        time::{Duration, timeout},
+    };
+
+    use super::*;
+    use super::super::jsonrpc::ExitSignalSender;
+
+    #[derive(Default)]
+    struct ResponseState {
+        responses: Vec<JSONRPCResponse>,
+    }
+
+    #[derive(Clone)]
+    struct RecordingCallbacks {
+        state: Arc<Mutex<ResponseState>>,
+    }
+
+    #[async_trait]
+    impl JsonRpcCallbacks for RecordingCallbacks {
+        async fn on_request(
+            &self,
+            _peer: &JsonRpcPeer,
+            _raw: &str,
+            _request: JSONRPCRequest,
+        ) -> Result<(), ExecutorError> {
+            Ok(())
+        }
+
+        async fn on_response(
+            &self,
+            _peer: &JsonRpcPeer,
+            _raw: &str,
+            response: &JSONRPCResponse,
+        ) -> Result<(), ExecutorError> {
+            self.state.lock().await.responses.push(response.clone());
+            Ok(())
+        }
+
+        async fn on_error(
+            &self,
+            _peer: &JsonRpcPeer,
+            _raw: &str,
+            _error: &JSONRPCError,
+        ) -> Result<(), ExecutorError> {
+            Ok(())
+        }
+
+        async fn on_notification(
+            &self,
+            _peer: &JsonRpcPeer,
+            _raw: &str,
+            _notification: JSONRPCNotification,
+        ) -> Result<bool, ExecutorError> {
+            Ok(false)
+        }
+
+        async fn on_non_json(&self, _raw: &str) -> Result<(), ExecutorError> {
+            Ok(())
+        }
+    }
+
+    async fn spawn_peer(state: Arc<Mutex<ResponseState>>) -> JsonRpcPeer {
+        let callbacks = Arc::new(RecordingCallbacks { state });
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("cat")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn cat");
+        let stdout = child.stdout.take().expect("stdout");
+        let stdin = child.stdin.take().expect("stdin");
+        let (exit_tx, _exit_rx) = oneshot::channel();
+
+        let peer = JsonRpcPeer::spawn(stdin, stdout, callbacks, ExitSignalSender::new(exit_tx));
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
+
+        peer
+    }
+
+    async fn wait_for_response(state: Arc<Mutex<ResponseState>>) -> JSONRPCResponse {
+        timeout(Duration::from_secs(1), async move {
+            loop {
+                if let Some(response) = state.lock().await.responses.first().cloned() {
+                    return response;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("response timeout")
+    }
+
+    #[tokio::test]
+    async fn on_request_unknown_method_sends_null_result() {
+        let state = Arc::new(Mutex::new(ResponseState::default()));
+        let peer = spawn_peer(state.clone()).await;
+        let client = AppServerClient::new(LogWriter::new(tokio::io::sink()), None, true);
+
+        let request = JSONRPCRequest {
+            id: RequestId::Integer(1),
+            method: "unknown.method".to_string(),
+            params: None,
+        };
+
+        client
+            .on_request(&peer, "raw", request)
+            .await
+            .expect("on_request");
+
+        let response = wait_for_response(state).await;
+        assert_eq!(response.id, RequestId::Integer(1));
+        assert_eq!(response.result, Value::Null);
+    }
+
+    #[tokio::test]
+    async fn on_notification_turn_aborted_flushes_pending_feedback() {
+        let state = Arc::new(Mutex::new(ResponseState::default()));
+        let peer = spawn_peer(state).await;
+        let client = AppServerClient::new(LogWriter::new(tokio::io::sink()), None, false);
+
+        client.enqueue_feedback("feedback".to_string()).await;
+        assert_eq!(client.pending_feedback.lock().await.len(), 1);
+
+        let notification = JSONRPCNotification {
+            method: "codex/event/turn_aborted".to_string(),
+            params: None,
+        };
+
+        let finished = client
+            .on_notification(&peer, "raw", notification)
+            .await
+            .expect("notification");
+
+        assert!(!finished);
+        assert!(client.pending_feedback.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn on_notification_task_complete_returns_true() {
+        let state = Arc::new(Mutex::new(ResponseState::default()));
+        let peer = spawn_peer(state).await;
+        let client = AppServerClient::new(LogWriter::new(tokio::io::sink()), None, false);
+
+        let notification = JSONRPCNotification {
+            method: "codex/event/task_complete".to_string(),
+            params: None,
+        };
+
+        let finished = client
+            .on_notification(&peer, "raw", notification)
+            .await
+            .expect("notification");
+
+        assert!(finished);
+    }
+
+    #[tokio::test]
+    async fn on_notification_non_codex_event_returns_false() {
+        let state = Arc::new(Mutex::new(ResponseState::default()));
+        let peer = spawn_peer(state).await;
+        let client = AppServerClient::new(LogWriter::new(tokio::io::sink()), None, false);
+
+        let notification = JSONRPCNotification {
+            method: "other/event".to_string(),
+            params: None,
+        };
+
+        let finished = client
+            .on_notification(&peer, "raw", notification)
+            .await
+            .expect("notification");
+
+        assert!(!finished);
+    }
+}

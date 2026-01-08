@@ -242,3 +242,153 @@ impl SessionHandler {
         format!("rollout-{ts}-{new_id}.jsonl")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs::{self, File},
+        io::{BufRead, BufReader, Write},
+        path::PathBuf,
+        sync::{Mutex, OnceLock},
+    };
+
+    use serde_json::{Value, json};
+
+    use super::*;
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            // Safe because tests serialize env mutations with ENV_LOCK.
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.take() {
+                // Safe because tests serialize env mutations with ENV_LOCK.
+                unsafe {
+                    std::env::set_var(self.key, value);
+                }
+            } else {
+                // Safe because tests serialize env mutations with ENV_LOCK.
+                unsafe {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn extract_session_id_from_rollout_path_parses_uuid() {
+        let id = "123e4567-e89b-12d3-a456-426614174000";
+        let path = PathBuf::from(format!(
+            "/tmp/rollout-2024-01-02T03-04-05-{id}.jsonl"
+        ));
+
+        let extracted = SessionHandler::extract_session_id_from_rollout_path(path)
+            .expect("extract session id");
+        assert_eq!(extracted, id);
+    }
+
+    #[test]
+    fn extract_session_id_from_rollout_path_rejects_invalid_filename() {
+        let path = PathBuf::from("/tmp/rollout-2024-01-02T03-04-05-not-a-uuid.jsonl");
+
+        let err = SessionHandler::extract_session_id_from_rollout_path(path)
+            .expect_err("invalid filename");
+        assert!(matches!(err, SessionError::Format(_)));
+    }
+
+    #[test]
+    fn replace_session_id_requires_object() {
+        let mut meta = json!("not-an-object");
+        let err = SessionHandler::replace_session_id(&mut meta, "new-id")
+            .expect_err("replace should fail");
+        assert!(matches!(err, SessionError::Format(_)));
+    }
+
+    #[test]
+    fn replace_session_id_requires_payload_object() {
+        let mut meta = json!({ "payload": "not-an-object" });
+        let err = SessionHandler::replace_session_id(&mut meta, "new-id")
+            .expect_err("replace should fail");
+        assert!(matches!(err, SessionError::Format(_)));
+    }
+
+    #[test]
+    fn replace_session_id_inserts_source_when_missing() {
+        let mut meta = json!({ "payload": { "id": "old-id" } });
+        SessionHandler::replace_session_id(&mut meta, "new-id").expect("replace");
+
+        let payload = meta
+            .get("payload")
+            .and_then(|value| value.as_object())
+            .expect("payload object");
+        assert_eq!(payload.get("id").and_then(|v| v.as_str()), Some("new-id"));
+        assert!(payload.contains_key("source"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fork_rollout_file_copies_lines_and_changes_id() {
+        let _lock = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let temp_root = std::env::temp_dir()
+            .join(format!("codex-session-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&temp_root).expect("create temp root");
+        let _home_guard = EnvGuard::set("HOME", temp_root.to_str().expect("home path"));
+
+        let sessions_dir = temp_root
+            .join(".codex")
+            .join("sessions")
+            .join("2024")
+            .join("01")
+            .join("02");
+        fs::create_dir_all(&sessions_dir).expect("create sessions dir");
+
+        let old_id = uuid::Uuid::new_v4().to_string();
+        let rollout_path =
+            sessions_dir.join(format!("rollout-2024-01-02T03-04-05-{old_id}.jsonl"));
+        let mut file = File::create(&rollout_path).expect("create rollout");
+        writeln!(file, "{{\"payload\":{{\"id\":\"{old_id}\"}}}}").expect("write header");
+        writeln!(file, "line two").expect("write line");
+
+        let (new_path, new_id) =
+            SessionHandler::fork_rollout_file(&old_id).expect("fork");
+
+        assert_ne!(new_id, old_id);
+        assert!(new_path.exists());
+
+        let file = File::open(&new_path).expect("open new rollout");
+        let mut reader = BufReader::new(file);
+        let mut header = String::new();
+        reader.read_line(&mut header).expect("read header");
+
+        let meta: Value = serde_json::from_str(header.trim()).expect("parse header");
+        let payload = meta
+            .get("payload")
+            .and_then(|value| value.as_object())
+            .expect("payload object");
+        assert_eq!(
+            payload.get("id").and_then(|v| v.as_str()),
+            Some(new_id.as_str())
+        );
+        assert!(payload.contains_key("source"));
+
+        let lines: Vec<String> = reader.lines().collect::<Result<_, _>>().expect("lines");
+        assert_eq!(lines, vec!["line two".to_string()]);
+
+        fs::remove_dir_all(&temp_root).expect("cleanup temp dir");
+    }
+}

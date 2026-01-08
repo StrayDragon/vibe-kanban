@@ -160,3 +160,61 @@ pub fn apply_overrides(builder: CommandBuilder, overrides: &CmdOverrides) -> Com
         builder
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_initial_includes_params() {
+        let builder = CommandBuilder::new("echo").extend_params(["hello", "world"]);
+        let parts = builder.build_initial().expect("command parts");
+        assert_eq!(parts.program, "echo");
+        assert_eq!(parts.args, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn build_follow_up_appends_additional_args() {
+        let builder = CommandBuilder::new("cmd").extend_params(["--base"]);
+        let parts = builder
+            .build_follow_up(&["--extra".to_string()])
+            .expect("command parts");
+        assert_eq!(parts.program, "cmd");
+        assert_eq!(parts.args, vec!["--base", "--extra"]);
+    }
+
+    #[test]
+    fn apply_overrides_replaces_base_and_extends_params() {
+        let builder = CommandBuilder::new("old").extend_params(["--a"]);
+        let overrides = CmdOverrides {
+            base_command_override: Some("new".to_string()),
+            additional_params: Some(vec!["--b".to_string()]),
+            env: None,
+        };
+
+        let builder = apply_overrides(builder, &overrides);
+        let parts = builder.build_initial().expect("command parts");
+        assert_eq!(parts.program, "new");
+        assert_eq!(parts.args, vec!["--a", "--b"]);
+    }
+
+    #[tokio::test]
+    async fn command_parts_missing_executable_returns_error() {
+        let parts = CommandParts::new("__vk_missing_exec__".to_string(), vec![]);
+        let err = parts.into_resolved().await.expect_err("missing exec");
+        match err {
+            ExecutorError::ExecutableNotFound { program } => {
+                assert_eq!(program, "__vk_missing_exec__");
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn invalid_base_command_is_rejected() {
+        let builder = CommandBuilder::new("echo \"unterminated");
+        let err = builder.build_initial().expect_err("invalid base");
+        assert!(matches!(err, CommandBuildError::InvalidBase(_)));
+    }
+}

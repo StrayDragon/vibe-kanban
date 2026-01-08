@@ -175,3 +175,113 @@ pub fn replace_normalized_entry(
 ) {
     upsert_normalized_entry(msg_store, index, normalized_entry, false);
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::logs::{NormalizedEntry, NormalizedEntryType, utils::EntryIndexProvider};
+
+    #[test]
+    fn escape_json_pointer_segment_escapes_tilde_and_slash() {
+        assert_eq!(escape_json_pointer_segment("a/b~c"), "a~1b~0c");
+    }
+
+    #[test]
+    fn extract_normalized_entry_from_patch_reads_entry() {
+        let entry = NormalizedEntry {
+            timestamp: None,
+            entry_type: NormalizedEntryType::UserMessage,
+            content: "hello".to_string(),
+            metadata: None,
+        };
+        let value = serde_json::to_value(PatchType::NormalizedEntry(entry.clone()))
+            .expect("value");
+        let patch: Patch = serde_json::from_value(json!([{
+            "op": "add",
+            "path": "/entries/2",
+            "value": value,
+        }]))
+        .expect("patch");
+
+        let (index, extracted) =
+            extract_normalized_entry_from_patch(&patch).expect("normalized entry");
+        assert_eq!(index, 2);
+        assert_eq!(extracted.content, "hello");
+        assert!(matches!(
+            extracted.entry_type,
+            NormalizedEntryType::UserMessage
+        ));
+    }
+
+    #[test]
+    fn add_and_replace_normalized_entries_update_store() {
+        let store = Arc::new(MsgStore::new());
+        let index_provider = EntryIndexProvider::test_new();
+
+        let first = NormalizedEntry {
+            timestamp: None,
+            entry_type: NormalizedEntryType::UserMessage,
+            content: "first".to_string(),
+            metadata: None,
+        };
+        let index = add_normalized_entry(&store, &index_provider, first);
+        let (entries, _) = store.normalized_history_page(10, None);
+        let stored: NormalizedEntry =
+            serde_json::from_value(entries[0].entry_json["content"].clone()).expect("entry");
+        assert_eq!(stored.content, "first");
+
+        let second = NormalizedEntry {
+            timestamp: None,
+            entry_type: NormalizedEntryType::AssistantMessage,
+            content: "second".to_string(),
+            metadata: None,
+        };
+        replace_normalized_entry(&store, index, second);
+        let (entries, _) = store.normalized_history_page(10, None);
+        let stored: NormalizedEntry =
+            serde_json::from_value(entries[0].entry_json["content"].clone()).expect("entry");
+        assert_eq!(stored.content, "second");
+        assert!(matches!(
+            stored.entry_type,
+            NormalizedEntryType::AssistantMessage
+        ));
+    }
+
+    #[test]
+    fn extract_normalized_entry_from_patch_returns_none_for_invalid_path() {
+        let entry = NormalizedEntry {
+            timestamp: None,
+            entry_type: NormalizedEntryType::UserMessage,
+            content: "hello".to_string(),
+            metadata: None,
+        };
+        let value = serde_json::to_value(PatchType::NormalizedEntry(entry)).expect("value");
+        let patch: Patch = serde_json::from_value(json!([{
+            "op": "add",
+            "path": "/entries/not-a-number",
+            "value": value,
+        }]))
+        .expect("patch");
+
+        assert!(extract_normalized_entry_from_patch(&patch).is_none());
+    }
+
+    #[test]
+    fn extract_normalized_entry_from_patch_returns_none_for_malformed_entry() {
+        let patch: Patch = serde_json::from_value(json!([{
+            "op": "add",
+            "path": "/entries/1",
+            "value": {
+                "type": "NORMALIZED_ENTRY",
+                "content": "bad",
+            },
+        }]))
+        .expect("patch");
+
+        assert!(extract_normalized_entry_from_patch(&patch).is_none());
+    }
+}
