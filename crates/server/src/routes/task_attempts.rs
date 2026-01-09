@@ -566,11 +566,25 @@ pub async fn get_task_attempt_branch_status(
         .map(|wr| (wr.repo_id, wr.target_branch.clone()))
         .collect();
 
-    let container_ref = deployment
-        .container()
-        .ensure_container_exists(&workspace)
-        .await?;
-    let workspace_dir = PathBuf::from(&container_ref);
+    let workspace_dir = match workspace
+        .container_ref
+        .as_ref()
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+    {
+        Some(path) => path,
+        None => match deployment.container().ensure_container_exists(&workspace).await {
+            Ok(container_ref) => PathBuf::from(container_ref),
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to ensure workspace container for branch status {}: {}",
+                    workspace.id,
+                    err
+                );
+                return Ok(ResponseJson(ApiResponse::success(Vec::new())));
+            }
+        },
+    };
 
     let mut results = Vec::with_capacity(repositories.len());
 
@@ -617,27 +631,53 @@ pub async fn get_task_attempt_branch_status(
 
         let has_uncommitted_changes = uncommitted_count.map(|c| c > 0);
 
-        let target_branch_type = deployment
+        let target_branch_type = match deployment
             .git()
-            .find_branch_type(&repo.path, &target_branch)?;
+            .find_branch_type(&repo.path, &target_branch)
+        {
+            Ok(branch_type) => Some(branch_type),
+            Err(err) => {
+                tracing::debug!(
+                    "Failed to detect branch type for repo {}: {}",
+                    repo.name,
+                    err
+                );
+                None
+            }
+        };
 
         let (commits_ahead, commits_behind) = match target_branch_type {
-            BranchType::Local => {
-                let (a, b) = deployment.git().get_branch_status(
-                    &repo.path,
-                    &workspace.branch,
-                    &target_branch,
-                )?;
-                (Some(a), Some(b))
-            }
-            BranchType::Remote => {
-                let (ahead, behind) = deployment.git().get_remote_branch_status(
-                    &repo.path,
-                    &workspace.branch,
-                    Some(&target_branch),
-                )?;
-                (Some(ahead), Some(behind))
-            }
+            Some(BranchType::Local) => match deployment.git().get_branch_status(
+                &repo.path,
+                &workspace.branch,
+                &target_branch,
+            ) {
+                Ok((a, b)) => (Some(a), Some(b)),
+                Err(err) => {
+                    tracing::debug!(
+                        "Failed to get local branch status for repo {}: {}",
+                        repo.name,
+                        err
+                    );
+                    (None, None)
+                }
+            },
+            Some(BranchType::Remote) => match deployment.git().get_remote_branch_status(
+                &repo.path,
+                &workspace.branch,
+                Some(&target_branch),
+            ) {
+                Ok((ahead, behind)) => (Some(ahead), Some(behind)),
+                Err(err) => {
+                    tracing::debug!(
+                        "Failed to get remote branch status for repo {}: {}",
+                        repo.name,
+                        err
+                    );
+                    (None, None)
+                }
+            },
+            None => (None, None),
         };
 
         let (remote_ahead, remote_behind) = if let Some(Merge::Pr(PrMerge {

@@ -1608,11 +1608,44 @@ impl ContainerService for LocalContainerService {
         let repositories =
             WorkspaceRepo::find_repos_for_workspace(&self.db.pool, workspace.id).await?;
 
-        let container_ref = self.ensure_container_exists(workspace).await?;
-        let workspace_root = PathBuf::from(container_ref);
+        let build_summary_stream =
+            |summary: DiffSummary, blocked: bool, blocked_reason: Option<&str>| {
+                let patch = serde_json::from_value(json!([
+                    { "op": "add", "path": "/summary", "value": summary },
+                    { "op": "add", "path": "/blocked", "value": blocked },
+                    { "op": "add", "path": "/blockedReason", "value": blocked_reason },
+                ]))
+                .expect("diff summary patch");
+                futures::stream::iter(vec![Ok(LogMsg::JsonPatch(patch)), Ok(LogMsg::Finished)])
+            };
+
+        let workspace_root = match workspace
+            .container_ref
+            .as_ref()
+            .map(PathBuf::from)
+            .filter(|path| path.exists())
+        {
+            Some(path) => path,
+            None => match self.ensure_container_exists(workspace).await {
+                Ok(container_ref) => PathBuf::from(container_ref),
+                Err(err) => {
+                    tracing::warn!(
+                        "Failed to ensure workspace container for diff stream {}: {}",
+                        workspace.id,
+                        err
+                    );
+                    let stream =
+                        build_summary_stream(DiffSummary::default(), true, Some("summary_failed"));
+                    return Ok(Box::pin(stream));
+                }
+            },
+        };
 
         let mut repo_inputs = Vec::new();
+        let mut skipped_repos = 0usize;
+        let mut total_repos = 0usize;
         for repo in repositories {
+            total_repos += 1;
             let worktree_path = workspace_root.join(&repo.name);
             let branch = &workspace.branch;
 
@@ -1621,6 +1654,7 @@ impl ContainerService for LocalContainerService {
                     "Skipping diff stream for repo {}: no target branch configured",
                     repo.name
                 );
+                skipped_repos += 1;
                 continue;
             };
 
@@ -1635,6 +1669,7 @@ impl ContainerService for LocalContainerService {
                         repo.name,
                         e
                     );
+                    skipped_repos += 1;
                     continue;
                 }
             };
@@ -1643,7 +1678,15 @@ impl ContainerService for LocalContainerService {
         }
 
         if repo_inputs.is_empty() {
-            return Ok(Box::pin(futures::stream::empty()));
+            let blocked_reason =
+                if total_repos > 0 && skipped_repos == total_repos {
+                    Some("summary_failed")
+                } else {
+                    None
+                };
+            let blocked = blocked_reason.is_some();
+            let stream = build_summary_stream(DiffSummary::default(), blocked, blocked_reason);
+            return Ok(Box::pin(stream));
         }
 
         let mut summary = DiffSummary::default();

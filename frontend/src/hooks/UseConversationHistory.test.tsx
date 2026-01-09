@@ -74,34 +74,24 @@ describe('useConversationHistory', () => {
       },
     };
 
-    const pageOne: LogHistoryPage = {
-      entries: [
-        { entry_index: 3n, entry: normalizedEntry },
-        { entry_index: 4n, entry: normalizedEntry },
-      ],
-      next_cursor: 3n,
-      has_more: true,
-    };
+    const pages: LogHistoryPage[] = Array.from({ length: 11 }, (_, pageIndex) => {
+      const start = 201 - pageIndex * 20;
+      const entries = Array.from({ length: 20 }, (_, i) => ({
+        entry_index: BigInt(start + i),
+        entry: normalizedEntry,
+      }));
+      const next_cursor = BigInt(start);
+      const has_more = pageIndex < 10;
+      return { entries, next_cursor, has_more };
+    });
 
-    const pageTwo: LogHistoryPage = {
-      entries: [
-        { entry_index: 1n, entry: normalizedEntry },
-        { entry_index: 2n, entry: normalizedEntry },
-      ],
-      next_cursor: 1n,
-      has_more: false,
-    };
-
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
+    const fetchMock = vi.fn();
+    pages.forEach((page) => {
+      fetchMock.mockResolvedValueOnce({
         ok: true,
-        json: async () => makeApiResponse(pageOne),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => makeApiResponse(pageTwo),
+        json: async () => makeApiResponse(page),
       });
+    });
 
     globalThis.fetch = fetchMock as typeof fetch;
 
@@ -141,14 +131,12 @@ describe('useConversationHistory', () => {
       expect(latestEntries.length).toBeGreaterThan(initialEntries.length);
     });
 
-    expect(fetchMock.mock.calls[1][0]).toContain('cursor=3');
+    expect(fetchMock.mock.calls[10][0]).toContain('cursor=21');
   });
 
   it('loads older processes when history is paged', async () => {
     const now = new Date().toISOString();
-    const oldest = '2024-01-01T00:00:00.000Z';
-    const middle = '2024-01-02T00:00:00.000Z';
-    const newest = '2024-01-03T00:00:00.000Z';
+    const baseDate = new Date('2024-01-01T00:00:00.000Z');
 
     const makeProcess = (id: string, createdAt: string): ExecutionProcess => ({
       id,
@@ -194,30 +182,18 @@ describe('useConversationHistory', () => {
       has_more: false,
     });
 
-    const oldestProcess = makeProcess('process-0', oldest);
-    const middleProcess = makeProcess('process-1', middle);
-    const newestProcess = makeProcess('process-2', newest);
+    const processes = Array.from({ length: 12 }, (_, index) => {
+      const date = new Date(baseDate);
+      date.setDate(baseDate.getDate() + index);
+      return makeProcess(`process-${index}`, date.toISOString());
+    });
 
-    mockExecutionContext.executionProcessesVisible = [
-      oldestProcess,
-      middleProcess,
-      newestProcess,
-    ];
+    mockExecutionContext.executionProcessesVisible = processes;
 
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => makeApiResponse(makePage()),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => makeApiResponse(makePage()),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => makeApiResponse(makePage()),
-      });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => makeApiResponse(makePage()),
+    });
 
     globalThis.fetch = fetchMock as typeof fetch;
 
@@ -258,6 +234,8 @@ describe('useConversationHistory', () => {
       expect(latestEntries.length).toBeGreaterThan(beforeEntries);
     });
 
-    expect(fetchMock.mock.calls[2][0]).toContain(oldestProcess.id);
+    expect(
+      fetchMock.mock.calls[fetchMock.mock.calls.length - 1]?.[0]
+    ).toContain(processes[2].id);
   });
 });
