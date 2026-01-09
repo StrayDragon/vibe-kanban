@@ -42,25 +42,28 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
     []
   );
 
-  const fetchHistoryPage = async (cursorValue: bigint | null) => {
-    const params = new URLSearchParams();
-    params.set('limit', String(RAW_HISTORY_PAGE_SIZE));
-    if (cursorValue !== null) {
-      params.set('cursor', String(cursorValue));
-    }
+  const fetchHistoryPage = useCallback(
+    async (cursorValue: bigint | null) => {
+      const params = new URLSearchParams();
+      params.set('limit', String(RAW_HISTORY_PAGE_SIZE));
+      if (cursorValue !== null) {
+        params.set('cursor', String(cursorValue));
+      }
 
-    const res = await fetch(
-      `/api/execution-processes/${processId}/raw-logs/v2?${params.toString()}`
-    );
-    if (!res.ok) {
-      throw new Error('Failed to load log history');
-    }
-    const body = (await res.json()) as ApiResponse<LogHistoryPage>;
-    if (!body.data) {
-      throw new Error('No log history returned');
-    }
-    return body.data;
-  };
+      const res = await fetch(
+        `/api/execution-processes/${processId}/raw-logs/v2?${params.toString()}`
+      );
+      if (!res.ok) {
+        throw new Error('Failed to load log history');
+      }
+      const body = (await res.json()) as ApiResponse<LogHistoryPage>;
+      if (!body.data) {
+        throw new Error('No log history returned');
+      }
+      return body.data;
+    },
+    [processId]
+  );
 
   const updateTruncated = useCallback(() => {
     const truncatedNow = hasMoreHistoryRef.current || droppedLinesRef.current;
@@ -137,7 +140,7 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
       return controller;
     };
 
-    let controller = openStream();
+    const controller = openStream();
 
     loadInitialHistory().finally(() => updateTruncated());
 
@@ -145,7 +148,7 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
       cancelled = true;
       controller?.close();
     };
-  }, [processId, updateLogsWithLimit, updateTruncated]);
+  }, [processId, updateLogsWithLimit, updateTruncated, fetchHistoryPage]);
 
   const loadOlder = useCallback(async () => {
     if (loadingOlder || !hasMoreHistory) {
@@ -178,7 +181,14 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
       setLoadingOlder(false);
       updateTruncated();
     }
-  }, [cursor, hasMoreHistory, loadingOlder, updateLogsWithLimit, updateTruncated]);
+  }, [
+    cursor,
+    hasMoreHistory,
+    loadingOlder,
+    updateLogsWithLimit,
+    updateTruncated,
+    fetchHistoryPage,
+  ]);
 
   return { logs, error, hasMoreHistory, loadingOlder, truncated, loadOlder };
 };

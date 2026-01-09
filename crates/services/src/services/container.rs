@@ -458,7 +458,7 @@ pub trait ContainerService {
                 }
             }
 
-            if processed % LOG_EVERY_PROCESSES == 0 || bytes >= next_bytes_report {
+            if processed.is_multiple_of(LOG_EVERY_PROCESSES) || bytes >= next_bytes_report {
                 tracing::info!(
                     "log-history backfill progress: processed={}, entries={}, bytes={}, elapsed_ms={}",
                     processed,
@@ -635,20 +635,20 @@ pub trait ContainerService {
             }
         }
 
-        if entries.is_empty() {
-            if let Some(mut stream) = self.stream_normalized_logs(&execution_id).await {
-                while let Some(item) = stream.next().await {
-                    match item {
-                        Ok(LogMsg::JsonPatch(patch)) => {
-                            entries.extend(extract_normalized_patch_entries(&patch));
-                        }
-                        Ok(LogMsg::Finished) => break,
-                        Ok(_) => {}
-                        Err(e) => {
-                            return Err(ContainerError::Other(anyhow!(
-                                "Normalized log stream error: {e}"
-                            )));
-                        }
+        if entries.is_empty()
+            && let Some(mut stream) = self.stream_normalized_logs(&execution_id).await
+        {
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(LogMsg::JsonPatch(patch)) => {
+                        entries.extend(extract_normalized_patch_entries(&patch));
+                    }
+                    Ok(LogMsg::Finished) => break,
+                    Ok(_) => {}
+                    Err(e) => {
+                        return Err(ContainerError::Other(anyhow!(
+                            "Normalized log stream error: {e}"
+                        )));
                     }
                 }
             }
@@ -1127,15 +1127,15 @@ pub trait ContainerService {
         limit: usize,
         cursor: Option<i64>,
     ) -> Result<LogHistoryPageData, ContainerError> {
-        if execution_process.status == ExecutionProcessStatus::Running {
-            if let Some(store) = self.get_msg_store_by_id(&execution_process.id).await {
-                let cursor = cursor.and_then(|c| usize::try_from(c).ok());
-                let (entries, has_more) = match channel {
-                    LogEntryChannel::Raw => store.raw_history_page(limit, cursor),
-                    LogEntryChannel::Normalized => store.normalized_history_page(limit, cursor),
-                };
-                return Ok(LogHistoryPageData { entries, has_more });
-            }
+        if execution_process.status == ExecutionProcessStatus::Running
+            && let Some(store) = self.get_msg_store_by_id(&execution_process.id).await
+        {
+            let cursor = cursor.and_then(|c| usize::try_from(c).ok());
+            let (entries, has_more) = match channel {
+                LogEntryChannel::Raw => store.raw_history_page(limit, cursor),
+                LogEntryChannel::Normalized => store.normalized_history_page(limit, cursor),
+            };
+            return Ok(LogHistoryPageData { entries, has_more });
         }
 
         if execution_process.status != ExecutionProcessStatus::Running {

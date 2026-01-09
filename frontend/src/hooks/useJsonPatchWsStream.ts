@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { applyPatch } from 'rfc6902';
 import type { Operation } from 'rfc6902';
 
@@ -54,7 +54,7 @@ export const useJsonPatchWsStream = <T extends object>(
   const deduplicatePatches = options?.deduplicatePatches;
   const reconnectOnCleanClose = options?.reconnectOnCleanClose ?? true;
 
-  function scheduleReconnect() {
+  const scheduleReconnect = useCallback(() => {
     // Exponential backoff with cap: 1s, 2s, 4s, 8s (max), then stay at 8s
     const attempt = retryAttemptsRef.current;
     const delay = Math.min(8000, 1000 * Math.pow(2, attempt));
@@ -62,13 +62,13 @@ export const useJsonPatchWsStream = <T extends object>(
       retryTimerRef.current = null;
       setRetryNonce((n) => n + 1);
     }, delay);
-  }
+  }, [setRetryNonce]);
 
-  function requestReconnect() {
+  const requestReconnect = useCallback(() => {
     if (retryTimerRef.current) return; // already scheduled
     retryAttemptsRef.current += 1;
     scheduleReconnect();
-  }
+  }, [scheduleReconnect]);
 
   useEffect(() => {
     if (!enabled || !endpoint) {
@@ -208,6 +208,7 @@ export const useJsonPatchWsStream = <T extends object>(
     injectInitialEntry,
     deduplicatePatches,
     reconnectOnCleanClose,
+    requestReconnect,
     retryNonce,
   ]);
 

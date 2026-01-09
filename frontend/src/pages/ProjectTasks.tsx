@@ -18,6 +18,7 @@ import { useTaskAttempts } from '@/hooks/useTaskAttempts';
 import { useTaskAttemptWithSession } from '@/hooks/useTaskAttempt';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useBranchStatus, useAttemptExecution } from '@/hooks';
+import { useLayoutMode } from '@/hooks/useLayoutMode';
 import { paths } from '@/lib/paths';
 import { ExecutionProcessesProvider } from '@/contexts/ExecutionProcessesContext';
 import { ClickedElementsProvider } from '@/contexts/ClickedElementsProvider';
@@ -261,33 +262,7 @@ export function ProjectTasks() {
 
   const { data: branchStatus } = useBranchStatus(attempt?.id);
 
-  const rawMode = searchParams.get('view') as LayoutMode;
-  const mode: LayoutMode =
-    rawMode === 'preview' || rawMode === 'diffs' ? rawMode : null;
-
-  // TODO: Remove this redirect after v0.1.0 (legacy URL support for bookmarked links)
-  // Migrates old `view=logs` to `view=diffs`
-  useEffect(() => {
-    const view = searchParams.get('view');
-    if (view === 'logs') {
-      const params = new URLSearchParams(searchParams);
-      params.set('view', 'diffs');
-      setSearchParams(params, { replace: true });
-    }
-  }, [searchParams, setSearchParams]);
-
-  const setMode = useCallback(
-    (newMode: LayoutMode) => {
-      const params = new URLSearchParams(searchParams);
-      if (newMode === null) {
-        params.delete('view');
-      } else {
-        params.set('view', newMode);
-      }
-      setSearchParams(params, { replace: true });
-    },
-    [searchParams, setSearchParams]
-  );
+  const { mode, setMode } = useLayoutMode(searchParams, setSearchParams);
 
   const handleCreateNewTask = useCallback(() => {
     handleCreateTask();

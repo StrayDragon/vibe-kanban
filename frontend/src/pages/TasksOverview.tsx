@@ -53,6 +53,7 @@ import {
   useBranchStatus,
   useNavigateWithSearch,
 } from '@/hooks';
+import { useLayoutMode } from '@/hooks/useLayoutMode';
 import {
   GitOperationsProvider,
   useGitOperationsError,
@@ -416,34 +417,8 @@ export function TasksOverview() {
   const { data: attempt } = useTaskAttemptWithSession(effectiveAttemptId);
   const { data: branchStatus } = useBranchStatus(attempt?.id);
 
-  const rawMode = searchParams.get('view') as LayoutMode;
-  const mode: LayoutMode =
-    rawMode === 'preview' || rawMode === 'diffs' ? rawMode : null;
+  const { mode, setMode } = useLayoutMode(searchParams, setSearchParams);
   const activeMode: LayoutMode = showNoAttemptsPanel ? null : mode;
-
-  // TODO: Remove this redirect after v0.1.0 (legacy URL support for bookmarked links)
-  // Migrates old `view=logs` to `view=diffs`
-  useEffect(() => {
-    const view = searchParams.get('view');
-    if (view === 'logs') {
-      const params = new URLSearchParams(searchParams);
-      params.set('view', 'diffs');
-      setSearchParams(params, { replace: true });
-    }
-  }, [searchParams, setSearchParams]);
-
-  const setMode = useCallback(
-    (newMode: LayoutMode) => {
-      const params = new URLSearchParams(searchParams);
-      if (newMode === null) {
-        params.delete('view');
-      } else {
-        params.set('view', newMode);
-      }
-      setSearchParams(params, { replace: true });
-    },
-    [searchParams, setSearchParams]
-  );
 
   const handleClosePanel = useCallback(() => {
     navigate(paths.overview(), { replace: true });

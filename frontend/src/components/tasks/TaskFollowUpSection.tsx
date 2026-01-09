@@ -24,9 +24,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { useQuery } from '@tanstack/react-query';
 //
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { ScratchType, type TaskWithAttemptStatus } from 'shared/types';
+import {
+  ScratchType,
+  type ProjectRepo,
+  type TaskWithAttemptStatus,
+} from 'shared/types';
 import { useBranchStatus } from '@/hooks';
 import { useAttemptRepo } from '@/hooks/useAttemptRepo';
 import { useAttemptExecution } from '@/hooks/useAttemptExecution';
@@ -46,6 +51,7 @@ import { FollowUpConflictSection } from '@/components/tasks/follow-up/FollowUpCo
 import { ClickedElementsBanner } from '@/components/tasks/ClickedElementsBanner';
 import WYSIWYGEditor from '@/components/ui/wysiwyg';
 import { useRetryUi } from '@/contexts/RetryUiContext';
+import { useFollowUpEditor } from '@/hooks/useFollowUpEditor';
 import { useFollowUpSend } from '@/hooks/useFollowUpSend';
 import { useVariant } from '@/hooks/useVariant';
 import type {
@@ -58,7 +64,7 @@ import { useTranslation } from 'react-i18next';
 import { useScratch } from '@/hooks/useScratch';
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback';
 import { useQueueStatus } from '@/hooks/useQueueStatus';
-import { imagesApi, attemptsApi } from '@/lib/api';
+import { attemptsApi, projectsApi } from '@/lib/api';
 import { GitHubCommentsDialog } from '@/components/dialogs/tasks/GitHubCommentsDialog';
 import { ConfirmDialog } from '@/components/dialogs';
 import type { NormalizedComment } from '@/components/ui/wysiwyg/nodes/github-comment-node';
@@ -87,7 +93,6 @@ export function TaskFollowUpSection({
     isStopping,
     processes,
   } = useAttemptExecution(workspaceId, task.id);
-  useAttemptExecution(workspaceId, task.id);
 
   const { data: branchStatus, refetch: refetchBranchStatus } =
     useBranchStatus(workspaceId);
@@ -96,6 +101,28 @@ export function TaskFollowUpSection({
   const getSelectedRepoId = useCallback(() => {
     return selectedRepoId ?? repos[0]?.id;
   }, [selectedRepoId, repos]);
+
+  const repoIds = useMemo(() => repos.map((repo) => repo.id), [repos]);
+  const { data: projectRepoScripts = [] } = useQuery<ProjectRepo[]>({
+    queryKey: ['projectRepoScripts', projectId, repoIds],
+    queryFn: async () => {
+      if (!projectId) return [];
+      return Promise.all(
+        repoIds.map((repoId) => projectsApi.getRepository(projectId, repoId))
+      );
+    },
+    enabled: !!projectId && repoIds.length > 0,
+  });
+
+  const hasSetupScript = useMemo(
+    () => projectRepoScripts.some((repo) => repo.setup_script?.trim()),
+    [projectRepoScripts]
+  );
+  const hasCleanupScript = useMemo(
+    () => projectRepoScripts.some((repo) => repo.cleanup_script?.trim()),
+    [projectRepoScripts]
+  );
+  const hasAnyScript = hasSetupScript || hasCleanupScript;
 
   const repoWithConflicts = useMemo(
     () =>
@@ -172,9 +199,6 @@ export function TaskFollowUpSection({
   // Track whether the follow-up textarea is focused
   const [isTextareaFocused, setIsTextareaFocused] = useState(false);
 
-  // Local message state for immediate UI feedback (before debounced save)
-  const [localMessage, setLocalMessage] = useState('');
-
   // Variant selection - derive default from latest process
   const latestProfileId = useMemo<ExecutorProfileId | null>(() => {
     if (!processes?.length) return null;
@@ -219,26 +243,13 @@ export function TaskFollowUpSection({
       scratchVariant: scratchData?.variant,
     });
 
-  // Ref to track current variant for use in message save callback
-  const variantRef = useRef<string | null>(selectedVariant);
-  useEffect(() => {
-    variantRef.current = selectedVariant;
-  }, [selectedVariant]);
-
-  // Refs to stabilize callbacks - avoid re-creating callbacks when these values change
-  const scratchRef = useRef(scratch);
-  useEffect(() => {
-    scratchRef.current = scratch;
-  }, [scratch]);
-
   // Save scratch helper (used for both message and variant changes)
-  // Uses scratchRef to avoid callback invalidation when scratch updates
   const saveToScratch = useCallback(
     async (message: string, variant: string | null) => {
       if (!workspaceId) return;
       // Don't create empty scratch entries - only save if there's actual content,
       // a variant is selected, or scratch already exists (to allow clearing a draft)
-      if (!message.trim() && !variant && !scratchRef.current) return;
+      if (!message.trim() && !variant && !scratch) return;
       try {
         await updateScratch({
           payload: {
@@ -250,35 +261,18 @@ export function TaskFollowUpSection({
         console.error('Failed to save follow-up draft', e);
       }
     },
-    [workspaceId, updateScratch]
+    [workspaceId, updateScratch, scratch]
   );
 
-  // Wrapper to update variant and save to scratch immediately
-  const setSelectedVariant = useCallback(
-    (variant: string | null) => {
-      setVariantFromHook(variant);
-      // Save immediately when user changes variant
-      saveToScratch(localMessage, variant);
-    },
-    [setVariantFromHook, saveToScratch, localMessage]
-  );
-
-  // Debounced save for message changes (uses current variant from ref)
+  // Debounced save for message changes
   const { debounced: setFollowUpMessage, cancel: cancelDebouncedSave } =
     useDebouncedCallback(
       useCallback(
-        (value: string) => saveToScratch(value, variantRef.current),
-        [saveToScratch]
+        (value: string) => saveToScratch(value, selectedVariant),
+        [saveToScratch, selectedVariant]
       ),
       500
     );
-
-  // Sync local message from scratch when it loads (but not while user is typing)
-  useEffect(() => {
-    if (isScratchLoading) return;
-    if (isTextareaFocused) return; // Don't overwrite while user is typing
-    setLocalMessage(scratchData?.message ?? '');
-  }, [isScratchLoading, scratchData?.message, isTextareaFocused]);
 
   // During retry, follow-up box is greyed/disabled (not hidden)
   // Use RetryUi context so optimistic retry immediately disables this box
@@ -294,6 +288,38 @@ export function TaskFollowUpSection({
     cancelQueue,
     refresh: refreshQueueStatus,
   } = useQueueStatus(sessionId);
+
+  const {
+    localMessage,
+    setLocalMessage,
+    displayMessage,
+    updateMessage,
+    appendToMessage,
+    handlePasteFiles,
+  } = useFollowUpEditor({
+    workspaceId,
+    isQueued,
+    queuedMessage,
+    cancelQueue,
+    setFollowUpMessage,
+  });
+
+  // Wrapper to update variant and save to scratch immediately
+  const setSelectedVariant = useCallback(
+    (variant: string | null) => {
+      setVariantFromHook(variant);
+      // Save immediately when user changes variant
+      saveToScratch(localMessage, variant);
+    },
+    [setVariantFromHook, saveToScratch, localMessage]
+  );
+
+  // Sync local message from scratch when it loads (but not while user is typing)
+  useEffect(() => {
+    if (isScratchLoading) return;
+    if (isTextareaFocused) return; // Don't overwrite while user is typing
+    setLocalMessage(scratchData?.message ?? '');
+  }, [isScratchLoading, scratchData?.message, isTextareaFocused, setLocalMessage]);
 
   // Track previous process count to detect new processes
   const prevProcessCountRef = useRef(processes.length);
@@ -324,11 +350,8 @@ export function TaskFollowUpSection({
     processes.length,
     refreshQueueStatus,
     scratchData?.message,
+    setLocalMessage,
   ]);
-
-  // When queued, display the queued message content so user can edit it
-  const displayMessage =
-    isQueued && queuedMessage ? queuedMessage.data.message : localMessage;
 
   // Check if there's a pending approval - users shouldn't be able to type during approvals
   const { entries } = useEntries();
@@ -400,25 +423,23 @@ export function TaskFollowUpSection({
   ]);
   const isEditable = !isRetryActive && !hasPendingApproval;
 
-  const hasAnyScript = true;
-
   const handleRunSetupScript = useCallback(async () => {
-    if (!workspaceId || isAttemptRunning) return;
+    if (!workspaceId || isAttemptRunning || !hasSetupScript) return;
     try {
       await attemptsApi.runSetupScript(workspaceId);
     } catch (error) {
       console.error('Failed to run setup script:', error);
     }
-  }, [workspaceId, isAttemptRunning]);
+  }, [workspaceId, isAttemptRunning, hasSetupScript]);
 
   const handleRunCleanupScript = useCallback(async () => {
-    if (!workspaceId || isAttemptRunning) return;
+    if (!workspaceId || isAttemptRunning || !hasCleanupScript) return;
     try {
       await attemptsApi.runCleanupScript(workspaceId);
     } catch (error) {
       console.error('Failed to run cleanup script:', error);
     }
-  }, [workspaceId, isAttemptRunning]);
+  }, [workspaceId, isAttemptRunning, hasCleanupScript]);
 
   // Handler to queue the current message for execution after agent finishes
   const handleQueueMessage = useCallback(async () => {
@@ -470,71 +491,6 @@ export function TaskFollowUpSection({
       }
     },
     [isAttemptRunning, isQueued, handleQueueMessage, onSendFollowUp]
-  );
-
-  // Ref to access setFollowUpMessage without adding it as a dependency
-  const setFollowUpMessageRef = useRef(setFollowUpMessage);
-  useEffect(() => {
-    setFollowUpMessageRef.current = setFollowUpMessage;
-  }, [setFollowUpMessage]);
-
-  // Ref for followUpError to use in stable onChange handler
-  const followUpErrorRef = useRef(followUpError);
-  useEffect(() => {
-    followUpErrorRef.current = followUpError;
-  }, [followUpError]);
-
-  // Refs for queue state to use in stable onChange handler
-  const isQueuedRef = useRef(isQueued);
-  useEffect(() => {
-    isQueuedRef.current = isQueued;
-  }, [isQueued]);
-
-  const cancelQueueRef = useRef(cancelQueue);
-  useEffect(() => {
-    cancelQueueRef.current = cancelQueue;
-  }, [cancelQueue]);
-
-  const queuedMessageRef = useRef(queuedMessage);
-  useEffect(() => {
-    queuedMessageRef.current = queuedMessage;
-  }, [queuedMessage]);
-
-  // Handle image paste - upload to container and insert markdown
-  const handlePasteFiles = useCallback(
-    async (files: File[]) => {
-      if (!workspaceId) return;
-
-      for (const file of files) {
-        try {
-          const response = await imagesApi.uploadForAttempt(workspaceId, file);
-          // Append markdown image to current message
-          const imageMarkdown = `![${response.original_name}](${response.file_path})`;
-
-          // If queued, cancel queue and use queued message as base (same as editor change behavior)
-          if (isQueuedRef.current && queuedMessageRef.current) {
-            cancelQueueRef.current();
-            const base = queuedMessageRef.current.data.message;
-            const newMessage = base
-              ? `${base}\n\n${imageMarkdown}`
-              : imageMarkdown;
-            setLocalMessage(newMessage);
-            setFollowUpMessageRef.current(newMessage);
-          } else {
-            setLocalMessage((prev) => {
-              const newMessage = prev
-                ? `${prev}\n\n${imageMarkdown}`
-                : imageMarkdown;
-              setFollowUpMessageRef.current(newMessage); // Debounced save to scratch
-              return newMessage;
-            });
-          }
-        } catch (error) {
-          console.error('Failed to upload image:', error);
-        }
-      }
-    },
-    [workspaceId]
   );
 
   // Attachment button - file input ref and handlers
@@ -590,36 +546,17 @@ export function TaskFollowUpSection({
       });
 
       const markdown = markdownBlocks.join('\n\n');
-
-      // Same pattern as image paste
-      if (isQueuedRef.current && queuedMessageRef.current) {
-        cancelQueueRef.current();
-        const base = queuedMessageRef.current.data.message;
-        const newMessage = base ? `${base}\n\n${markdown}` : markdown;
-        setLocalMessage(newMessage);
-        setFollowUpMessageRef.current(newMessage);
-      } else {
-        setLocalMessage((prev) => {
-          const newMessage = prev ? `${prev}\n\n${markdown}` : markdown;
-          setFollowUpMessageRef.current(newMessage);
-          return newMessage;
-        });
-      }
+      appendToMessage(markdown);
     }
-  }, [workspaceId, getSelectedRepoId]);
+  }, [workspaceId, getSelectedRepoId, appendToMessage]);
 
   // Stable onChange handler for WYSIWYGEditor
   const handleEditorChange = useCallback(
     (value: string) => {
-      // Auto-cancel queue when user starts editing
-      if (isQueuedRef.current) {
-        cancelQueueRef.current();
-      }
-      setLocalMessage(value); // Immediate update for UI responsiveness
-      setFollowUpMessageRef.current(value); // Debounced save to scratch
-      if (followUpErrorRef.current) setFollowUpError(null);
+      updateMessage(value);
+      if (followUpError) setFollowUpError(null);
     },
-    [setFollowUpError]
+    [updateMessage, followUpError, setFollowUpError]
   );
 
   // Memoize placeholder to avoid re-renders
@@ -845,10 +782,22 @@ export function TaskFollowUpSection({
                 </Tooltip>
               </TooltipProvider>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={handleRunSetupScript}>
+                <DropdownMenuItem
+                  onClick={handleRunSetupScript}
+                  disabled={!hasSetupScript}
+                  title={
+                    hasSetupScript ? undefined : t('followUp.noSetupScript')
+                  }
+                >
                   {t('followUp.runSetupScript')}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleRunCleanupScript}>
+                <DropdownMenuItem
+                  onClick={handleRunCleanupScript}
+                  disabled={!hasCleanupScript}
+                  title={
+                    hasCleanupScript ? undefined : t('followUp.noCleanupScript')
+                  }
+                >
                   {t('followUp.runCleanupScript')}
                 </DropdownMenuItem>
               </DropdownMenuContent>

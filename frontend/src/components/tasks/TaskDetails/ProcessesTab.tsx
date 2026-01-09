@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Play,
@@ -38,6 +38,7 @@ function ProcessesTab({ attemptId }: ProcessesTabProps) {
     Record<string, ExecutionProcess>
   >({});
   const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const selectedProcess = selectedProcessId
     ? localProcessDetails[selectedProcessId] ||
@@ -58,17 +59,28 @@ function ProcessesTab({ attemptId }: ProcessesTabProps) {
     setLoadingProcessId(null);
   }, [attemptId]);
 
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const handleCopyLogs = useCallback(async () => {
     if (logs.length === 0) return;
 
-    const text = logs.map((entry) => entry.content).join('\n');
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.warn('Copy to clipboard failed:', err);
-    }
+      const text = logs.map((entry) => entry.content).join('\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        setCopied(true);
+        if (copyTimeoutRef.current) {
+          clearTimeout(copyTimeoutRef.current);
+        }
+        copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
+      } catch (err) {
+        console.warn('Copy to clipboard failed:', err);
+      }
   }, [logs]);
 
   const getStatusIcon = (status: ExecutionProcessStatus) => {
