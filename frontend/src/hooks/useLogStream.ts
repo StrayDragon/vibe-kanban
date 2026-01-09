@@ -1,8 +1,13 @@
-import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import type { ApiResponse, LogHistoryPage, PatchType } from 'shared/types';
 import { streamLogEntries } from '@/utils/streamLogEntries';
 
 type LogEntry = Extract<PatchType, { type: 'STDOUT' } | { type: 'STDERR' }>;
+
+type IndexedRawEntry = {
+  entry_index: bigint | number;
+  entry: LogEntry;
+};
 
 interface UseLogStreamResult {
   logs: LogEntry[];
@@ -16,9 +21,16 @@ interface UseLogStreamResult {
 const RAW_HISTORY_PAGE_SIZE = 200;
 const RAW_BUFFER_LIMIT = 2000;
 const RAW_BUFFER_LIMIT_MAX = 10000;
+const MAX_RECONNECT_DELAY_MS = 8000;
 
 const isRawEntry = (entry: PatchType): entry is LogEntry =>
   entry.type === 'STDOUT' || entry.type === 'STDERR';
+
+const normalizeIndex = (index: bigint | number) =>
+  typeof index === 'bigint' ? index : BigInt(index);
+
+const compareIndices = (a: bigint, b: bigint) =>
+  a < b ? -1 : a > b ? 1 : 0;
 
 export const useLogStream = (processId: string): UseLogStreamResult => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -27,20 +39,30 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
   const [hasMoreHistory, setHasMoreHistory] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [truncated, setTruncated] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
+
   const hasMoreHistoryRef = useRef(hasMoreHistory);
   const bufferLimitRef = useRef<number>(RAW_BUFFER_LIMIT);
   const droppedLinesRef = useRef<boolean>(false);
+  const entriesRef = useRef<Map<string, LogEntry>>(new Map());
+  const entryOrderRef = useRef<bigint[]>([]);
+  const controllerRef = useRef<ReturnType<typeof streamLogEntries> | null>(null);
+  const retryTimerRef = useRef<number | null>(null);
+  const retryAttemptsRef = useRef<number>(0);
+  const refreshInFlightRef = useRef(false);
+  const refreshedCycleRef = useRef(0);
+  const finishedRef = useRef(false);
+  const streamCycleRef = useRef(0);
 
-  const updateLogsWithLimit = useMemo(
-    () => (nextLogs: LogEntry[], limit: number) => {
-      if (nextLogs.length <= limit) {
-        return nextLogs;
-      }
-      droppedLinesRef.current = true;
-      return nextLogs.slice(nextLogs.length - limit);
-    },
-    []
-  );
+  const updateTruncated = useCallback(() => {
+    const truncatedNow = hasMoreHistoryRef.current || droppedLinesRef.current;
+    setTruncated(truncatedNow);
+  }, []);
+
+  useEffect(() => {
+    hasMoreHistoryRef.current = hasMoreHistory;
+    updateTruncated();
+  }, [hasMoreHistory, updateTruncated]);
 
   const fetchHistoryPage = useCallback(
     async (cursorValue: bigint | null) => {
@@ -65,15 +87,99 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
     [processId]
   );
 
-  const updateTruncated = useCallback(() => {
-    const truncatedNow = hasMoreHistoryRef.current || droppedLinesRef.current;
-    setTruncated(truncatedNow);
+  const mergeCursor = useCallback((current: bigint | null, next: bigint | null) => {
+    if (current === null) return next;
+    if (next === null) return current;
+    return current < next ? current : next;
   }, []);
 
-  useEffect(() => {
-    hasMoreHistoryRef.current = hasMoreHistory;
+  const rebuildLogs = useCallback(() => {
+    const ordered = entryOrderRef.current;
+    if (ordered.length > bufferLimitRef.current) {
+      droppedLinesRef.current = true;
+      const trimmed = ordered.slice(ordered.length - bufferLimitRef.current);
+      const keep = new Set(trimmed.map((index) => index.toString()));
+      for (const key of entriesRef.current.keys()) {
+        if (!keep.has(key)) {
+          entriesRef.current.delete(key);
+        }
+      }
+      entryOrderRef.current = trimmed;
+    }
+
+    const nextLogs = entryOrderRef.current
+      .map((index) => entriesRef.current.get(index.toString()))
+      .filter(Boolean) as LogEntry[];
+
+    setLogs(nextLogs);
     updateTruncated();
-  }, [hasMoreHistory, updateTruncated]);
+  }, [updateTruncated]);
+
+  const upsertEntries = useCallback(
+    (entries: IndexedRawEntry[]) => {
+      let added = false;
+      for (const entry of entries) {
+        const normalizedIndex = normalizeIndex(entry.entry_index);
+        const key = normalizedIndex.toString();
+        if (!entriesRef.current.has(key)) {
+          entryOrderRef.current.push(normalizedIndex);
+          added = true;
+        }
+        entriesRef.current.set(key, entry.entry);
+      }
+
+      if (added) {
+        entryOrderRef.current.sort(compareIndices);
+      }
+
+      rebuildLogs();
+    },
+    [rebuildLogs]
+  );
+
+  const applyHistoryPage = useCallback(
+    (page: LogHistoryPage, mode: 'tail' | 'older') => {
+      const incoming = page.entries
+        .filter((entry) => isRawEntry(entry.entry))
+        .map((entry) => ({
+          entry_index: entry.entry_index,
+          entry: entry.entry as LogEntry,
+        }));
+
+      if (incoming.length) {
+        upsertEntries(incoming);
+      } else {
+        rebuildLogs();
+      }
+
+      const nextCursor =
+        page.next_cursor === null
+          ? null
+          : normalizeIndex(page.next_cursor as bigint | number);
+
+      if (mode === 'older') {
+        setCursor(nextCursor);
+        setHasMoreHistory(page.has_more);
+      } else {
+        setCursor((prev) => mergeCursor(prev, nextCursor));
+        setHasMoreHistory((prev) => prev || page.has_more);
+      }
+    },
+    [mergeCursor, rebuildLogs, upsertEntries]
+  );
+
+  const scheduleReconnect = useCallback(() => {
+    if (retryTimerRef.current) return;
+    retryAttemptsRef.current += 1;
+    const delay = Math.min(
+      MAX_RECONNECT_DELAY_MS,
+      1000 * Math.pow(2, retryAttemptsRef.current - 1)
+    );
+    retryTimerRef.current = window.setTimeout(() => {
+      retryTimerRef.current = null;
+      setRetryNonce((prev) => prev + 1);
+    }, delay);
+  }, []);
 
   useEffect(() => {
     if (!processId) {
@@ -88,67 +194,111 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
     setTruncated(false);
     droppedLinesRef.current = false;
     bufferLimitRef.current = RAW_BUFFER_LIMIT;
+    entriesRef.current = new Map();
+    entryOrderRef.current = [];
+    retryAttemptsRef.current = 0;
+    finishedRef.current = false;
 
-    let cancelled = false;
+    if (retryTimerRef.current) {
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
 
-    const loadInitialHistory = async () => {
+    setRetryNonce(0);
+  }, [processId]);
+
+  useEffect(() => {
+    if (!processId) {
+      return;
+    }
+
+    streamCycleRef.current += 1;
+    const cycle = streamCycleRef.current;
+    finishedRef.current = false;
+
+    const refreshLatestHistory = async () => {
+      if (refreshInFlightRef.current) return;
+      if (refreshedCycleRef.current === cycle) return;
+      refreshInFlightRef.current = true;
       try {
         const page = await fetchHistoryPage(null);
-        if (cancelled) return;
-
-        const entries = page.entries
-          .map((entry) => entry.entry)
-          .filter(isRawEntry);
-
-        const limited = updateLogsWithLimit(entries, bufferLimitRef.current);
-        setLogs(limited);
-        setCursor(page.next_cursor ?? null);
-        setHasMoreHistory(page.has_more);
+        if (streamCycleRef.current !== cycle) return;
+        applyHistoryPage(page, 'tail');
+        refreshedCycleRef.current = cycle;
       } catch (err) {
-        if (!cancelled) {
+        if (streamCycleRef.current === cycle) {
           setError('Failed to load log history');
+        }
+      } finally {
+        refreshInFlightRef.current = false;
+        if (streamCycleRef.current === cycle) {
+          updateTruncated();
         }
       }
     };
 
     const openStream = () => {
+      controllerRef.current?.close();
+
       const controller = streamLogEntries(
         `/api/execution-processes/${processId}/raw-logs/v2/ws`,
         {
-          onAppend: (_, entry) => {
-            if (!isRawEntry(entry)) return;
-            setLogs((prev) =>
-              updateLogsWithLimit([...prev, entry], bufferLimitRef.current)
-            );
-            setTruncated(hasMoreHistoryRef.current || droppedLinesRef.current);
+          onOpen: () => {
+            if (streamCycleRef.current !== cycle) return;
+            setError(null);
+            retryAttemptsRef.current = 0;
+            if (retryTimerRef.current) {
+              window.clearTimeout(retryTimerRef.current);
+              retryTimerRef.current = null;
+            }
+            refreshLatestHistory();
           },
-          onReplace: (_, entry) => {
+          onAppend: (entryIndex, entry) => {
             if (!isRawEntry(entry)) return;
-            setLogs((prev) =>
-              updateLogsWithLimit([...prev, entry], bufferLimitRef.current)
-            );
-            setTruncated(hasMoreHistoryRef.current || droppedLinesRef.current);
+            upsertEntries([{ entry_index: entryIndex, entry }]);
+          },
+          onReplace: (entryIndex, entry) => {
+            if (!isRawEntry(entry)) return;
+            upsertEntries([{ entry_index: entryIndex, entry }]);
           },
           onFinished: () => {
+            finishedRef.current = true;
             controller.close();
           },
           onError: () => {
+            if (streamCycleRef.current !== cycle || finishedRef.current) return;
             setError('Connection failed');
+            scheduleReconnect();
           },
         }
       );
-      return controller;
+
+      controllerRef.current = controller;
     };
 
-    const controller = openStream();
-
-    loadInitialHistory().finally(() => updateTruncated());
+    openStream();
+    refreshLatestHistory();
 
     return () => {
-      cancelled = true;
-      controller?.close();
+      if (controllerRef.current) {
+        controllerRef.current.close();
+        controllerRef.current = null;
+      }
+      if (retryTimerRef.current) {
+        window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+      refreshInFlightRef.current = false;
     };
-  }, [processId, updateLogsWithLimit, updateTruncated, fetchHistoryPage]);
+  }, [
+    applyHistoryPage,
+    fetchHistoryPage,
+    processId,
+    retryNonce,
+    scheduleReconnect,
+    updateTruncated,
+    upsertEntries,
+  ]);
 
   const loadOlder = useCallback(async () => {
     if (loadingOlder || !hasMoreHistory) {
@@ -165,16 +315,7 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
       }
 
       const page = await fetchHistoryPage(cursor);
-      const entries = page.entries
-        .map((entry) => entry.entry)
-        .filter(isRawEntry);
-
-      setLogs((prev) => {
-        const merged = [...entries, ...prev];
-        return updateLogsWithLimit(merged, bufferLimitRef.current);
-      });
-      setCursor(page.next_cursor ?? null);
-      setHasMoreHistory(page.has_more);
+      applyHistoryPage(page, 'older');
     } catch (err) {
       setError('Failed to load more history');
     } finally {
@@ -182,12 +323,12 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
       updateTruncated();
     }
   }, [
+    applyHistoryPage,
     cursor,
+    fetchHistoryPage,
     hasMoreHistory,
     loadingOlder,
-    updateLogsWithLimit,
     updateTruncated,
-    fetchHistoryPage,
   ]);
 
   return { logs, error, hasMoreHistory, loadingOlder, truncated, loadOlder };

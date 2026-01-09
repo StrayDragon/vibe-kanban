@@ -1,4 +1,6 @@
 import { useCallback, useMemo } from 'react';
+import type { Operation } from 'rfc6902';
+import { normalizeIdMapPatches } from './jsonPatchUtils';
 import { useJsonPatchWsStream } from './useJsonPatchWsStream';
 import type { Project } from 'shared/types';
 
@@ -19,10 +21,17 @@ export function useProjects(): UseProjectsResult {
 
   const initialData = useCallback((): ProjectsState => ({ projects: {} }), []);
 
+  const deduplicatePatches = useCallback(
+    (patches: Operation[], current: ProjectsState | undefined) =>
+      normalizeIdMapPatches(patches, current?.projects, '/projects/'),
+    []
+  );
+
   const { data, isConnected, error } = useJsonPatchWsStream<ProjectsState>(
     endpoint,
     true,
-    initialData
+    initialData,
+    { deduplicatePatches }
   );
 
   const projectsById = useMemo(() => data?.projects ?? {}, [data]);

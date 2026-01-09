@@ -13,6 +13,9 @@ interface StreamController {
   isConnected(): boolean;
 }
 
+const normalizeEntryIndex = (value: bigint | number) =>
+  typeof value === 'bigint' ? value : BigInt(value);
+
 export function streamLogEntries(
   url: string,
   opts: StreamOptions = {}
@@ -34,10 +37,16 @@ export function streamLogEntries(
       const payload = JSON.parse(event.data) as LogStreamEvent;
       switch (payload.type) {
         case 'append':
-          opts.onAppend?.(payload.entry_index, payload.entry);
+          opts.onAppend?.(
+            normalizeEntryIndex(payload.entry_index),
+            payload.entry
+          );
           break;
         case 'replace':
-          opts.onReplace?.(payload.entry_index, payload.entry);
+          opts.onReplace?.(
+            normalizeEntryIndex(payload.entry_index),
+            payload.entry
+          );
           break;
         case 'finished':
           finished = true;

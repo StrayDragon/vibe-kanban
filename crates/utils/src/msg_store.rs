@@ -8,7 +8,7 @@ use futures::{StreamExt, TryStreamExt, future};
 use json_patch::{Patch, PatchOperation};
 use serde_json::Value;
 use tokio::{sync::broadcast, task::JoinHandle};
-use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 
 use crate::{log_msg::LogMsg, stream_lines::LinesStreamExt};
 
@@ -299,8 +299,12 @@ impl MsgStore {
                 Ok::<_, std::io::Error>(LogEntryEvent::Finished)
             })))
         } else {
-            let live = BroadcastStream::new(self.raw_sender.subscribe())
-                .filter_map(|res| async move { res.ok().map(Ok::<_, std::io::Error>) });
+            let live = BroadcastStream::new(self.raw_sender.subscribe()).map(|res| match res {
+                Ok(event) => Ok::<_, std::io::Error>(event),
+                Err(BroadcastStreamRecvError::Lagged(skipped)) => Err(std::io::Error::other(
+                    format!("raw log stream lagged by {skipped} messages"),
+                )),
+            });
             Box::pin(hist.chain(live))
         }
     }
@@ -323,8 +327,15 @@ impl MsgStore {
                 Ok::<_, std::io::Error>(LogEntryEvent::Finished)
             })))
         } else {
-            let live = BroadcastStream::new(self.normalized_sender.subscribe())
-                .filter_map(|res| async move { res.ok().map(Ok::<_, std::io::Error>) });
+            let live =
+                BroadcastStream::new(self.normalized_sender.subscribe()).map(|res| match res {
+                    Ok(event) => Ok::<_, std::io::Error>(event),
+                    Err(BroadcastStreamRecvError::Lagged(skipped)) => Err(
+                        std::io::Error::other(format!(
+                            "normalized log stream lagged by {skipped} messages"
+                        )),
+                    ),
+                });
             Box::pin(hist.chain(live))
         }
     }

@@ -133,11 +133,9 @@ impl FakeAgent {
             return builder.build_initial();
         }
 
-        if let Ok(value) = env::var(FAKE_AGENT_PATH_ENV) {
-            if !value.trim().is_empty() {
-                let builder = apply_overrides(CommandBuilder::new(value), &self.cmd);
-                return builder.build_initial();
-            }
+        if let Ok(value) = env::var(FAKE_AGENT_PATH_ENV) && !value.trim().is_empty() {
+            let builder = apply_overrides(CommandBuilder::new(value), &self.cmd);
+            return builder.build_initial();
         }
 
         let program = resolve_fake_agent_program();
@@ -425,15 +423,15 @@ fn load_script_steps(
     let mut write_step = None;
     if config.write_fake_files {
         for step in &steps {
-            if let FakeAgentStep::Emit(line) = step {
-                if let Some(path) = extract_fake_patch_path(line, cwd) {
-                    let content = format!(
-                        "fake agent wrote {}\n",
-                        path.file_name().and_then(|n| n.to_str()).unwrap_or("file")
-                    );
-                    write_step = Some(FakeAgentStep::WriteFile { path, content });
-                    break;
-                }
+            if let FakeAgentStep::Emit(line) = step
+                && let Some(path) = extract_fake_patch_path(line, cwd)
+            {
+                let content = format!(
+                    "fake agent wrote {}\n",
+                    path.file_name().and_then(|n| n.to_str()).unwrap_or("file")
+                );
+                write_step = Some(FakeAgentStep::WriteFile { path, content });
+                break;
             }
         }
     }

@@ -150,6 +150,15 @@ const mergeHistoryEntries = (
   return applyEntryLimit(merged, limit);
 };
 
+const mergeCursorForRefresh = (
+  current: bigint | null,
+  next: bigint | null
+): bigint | null => {
+  if (next === null) return current;
+  if (current === null) return next;
+  return current < next ? current : next;
+};
+
 const fetchLogHistoryPage = async (
   executionProcess: ExecutionProcess,
   cursor: bigint | null
@@ -566,6 +575,56 @@ const loadEntriesForHistoricExecutionProcess = async (
     []
   );
 
+  const mergeLatestHistory = useCallback(
+    (
+      executionProcess: ExecutionProcess,
+      entriesWithKey: PatchTypeWithKey[],
+      page: LogHistoryPage
+    ) => {
+      mergeIntoDisplayed((state) => {
+        const existing = state[executionProcess.id] ?? {
+          executionProcess: {
+            id: executionProcess.id,
+            created_at: executionProcess.created_at,
+            updated_at: executionProcess.updated_at,
+            executor_action: executionProcess.executor_action,
+          },
+          entries: [],
+          cursor: null,
+          hasMore: false,
+        };
+
+        const mergedEntries = mergeHistoryEntries(
+          existing.entries,
+          entriesWithKey,
+          false,
+          entryLimitRef.current
+        );
+
+        state[executionProcess.id] = {
+          executionProcess: existing.executionProcess,
+          entries: mergedEntries,
+          cursor: mergeCursorForRefresh(existing.cursor, page.next_cursor ?? null),
+          hasMore: existing.hasMore || page.has_more,
+        };
+      });
+    },
+    []
+  );
+
+  const refreshRunningHistory = useCallback(
+    async (executionProcess: ExecutionProcess) => {
+      const { page, entriesWithKey } =
+        await loadEntriesForHistoricExecutionProcess(executionProcess, null);
+      if (!page) {
+        return;
+      }
+      mergeLatestHistory(executionProcess, entriesWithKey, page);
+      emitEntries(displayedExecutionProcesses.current, 'running', false);
+    },
+    [emitEntries, mergeLatestHistory]
+  );
+
   const attachLiveStream = useCallback(
     async (executionProcess: ExecutionProcess) => {
       return new Promise<void>((resolve, reject) => {
@@ -576,6 +635,9 @@ const loadEntriesForHistoricExecutionProcess = async (
         const controller = streamLogEntries(
           `/api/execution-processes/${executionProcess.id}/${endpoint}`,
           {
+            onOpen: () => {
+              refreshRunningHistory(executionProcess).catch(() => null);
+            },
             onAppend: (entryIndex, entry) => {
               const patch = patchWithKey(
                 entry,
@@ -643,7 +705,7 @@ const loadEntriesForHistoricExecutionProcess = async (
         );
       });
     },
-    [emitEntries]
+    [emitEntries, refreshRunningHistory]
   );
 
   const loadRunningAndEmitWithBackoff = useCallback(
