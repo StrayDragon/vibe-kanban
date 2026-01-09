@@ -57,7 +57,7 @@ interface UseConversationHistoryResult {
 }
 
 const CONVERSATION_PAGE_SIZE = 20;
-const CONVERSATION_CACHE_LIMIT = 200;
+const CONVERSATION_CACHE_LIMIT = 20;
 const CONVERSATION_CACHE_LIMIT_MAX = 2000;
 
 const makeLoadingPatch = (executionProcessId: string): PatchTypeWithKey => ({
@@ -110,13 +110,29 @@ const patchWithKey = (
   };
 };
 
+const isUserMessagePatch = (patch: PatchType) =>
+  patch.type === 'NORMALIZED_ENTRY' &&
+  patch.content.entry_type.type === 'user_message';
+
+const isUserMessageWithKey = (patch: PatchTypeWithKey) =>
+  patch.type === 'NORMALIZED_ENTRY' &&
+  patch.content.entry_type.type === 'user_message';
+
+const countEntriesForLimit = (entries: PatchTypeWithKey[]) =>
+  entries.reduce(
+    (count, entry) => count + (isUserMessageWithKey(entry) ? 0 : 1),
+    0
+  );
+
 const mapIndexedEntries = (
   entries: IndexedLogEntry[],
   executionProcessId: string
 ): PatchTypeWithKey[] =>
-  entries.map((entry) =>
-    patchWithKey(entry.entry, executionProcessId, entry.entry_index)
-  );
+  entries
+    .filter((entry) => !isUserMessagePatch(entry.entry))
+    .map((entry) =>
+      patchWithKey(entry.entry, executionProcessId, entry.entry_index)
+    );
 
 const entryIndexForSort = (entry: PatchTypeWithKey): number => {
   const parts = entry.patchKey.split(':');
@@ -500,7 +516,7 @@ export const useConversationHistory = ({
   const trimOldestProcessesToLimit = useCallback(
     (executionProcessState: ExecutionProcessStateStore) => {
       let entries = flattenEntriesForEmit(executionProcessState);
-      if (entries.length <= entryLimitRef.current) return;
+      if (countEntriesForLimit(entries) <= entryLimitRef.current) return;
       if (Object.keys(executionProcessState).length <= 1) return;
 
       const statusById = new Map(
@@ -530,7 +546,7 @@ export const useConversationHistory = ({
         if (Object.keys(executionProcessState).length <= 1) break;
         delete executionProcessState[process.executionProcess.id];
         entries = flattenEntriesForEmit(executionProcessState);
-        if (entries.length <= entryLimitRef.current) break;
+        if (countEntriesForLimit(entries) <= entryLimitRef.current) break;
       }
     },
     [flattenEntriesForEmit]
@@ -711,6 +727,7 @@ export const useConversationHistory = ({
               refreshRunningHistory(executionProcess).catch(() => null);
             },
             onAppend: (entryIndex, entry) => {
+              if (isUserMessagePatch(entry)) return;
               const patch = patchWithKey(
                 entry,
                 executionProcess.id,
@@ -742,6 +759,7 @@ export const useConversationHistory = ({
               emitEntries(displayedExecutionProcesses.current, 'running', false);
             },
             onReplace: (entryIndex, entry) => {
+              if (isUserMessagePatch(entry)) return;
               const patch = patchWithKey(
                 entry,
                 executionProcess.id,
@@ -860,8 +878,9 @@ export const useConversationHistory = ({
           };
 
           if (
-            flattenEntriesForEmit(localDisplayedExecutionProcesses).length >=
-            entryLimitRef.current
+            countEntriesForLimit(
+              flattenEntriesForEmit(localDisplayedExecutionProcesses)
+            ) >= entryLimitRef.current
           ) {
             break;
           }
@@ -871,8 +890,9 @@ export const useConversationHistory = ({
       }
 
       if (
-        flattenEntriesForEmit(localDisplayedExecutionProcesses).length >=
-        entryLimitRef.current
+        countEntriesForLimit(
+          flattenEntriesForEmit(localDisplayedExecutionProcesses)
+        ) >= entryLimitRef.current
       ) {
         break;
       }
@@ -933,9 +953,7 @@ export const useConversationHistory = ({
       const { page, entriesWithKey } =
         await loadEntriesForHistoricExecutionProcess(targetProcess, targetCursor);
       if (page) {
-        const targetState =
-          displayedExecutionProcesses.current[targetProcess.id];
-        const addedLimit = entriesWithKey.length + (targetState ? 0 : 1);
+        const addedLimit = entriesWithKey.length;
         if (addedLimit > 0) {
           entryLimitRef.current = Math.min(
             entryLimitRef.current + addedLimit,
