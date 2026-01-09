@@ -1219,7 +1219,7 @@ mod tests {
         protocol::{ExecCommandSource, FileChange as CodexProtoFileChange},
     };
     use serde_json::json;
-    use tokio::time::{sleep, Instant};
+    use tokio::time::{Instant, sleep};
     use workspace_utils::{approvals::ApprovalStatus, log_msg::LogMsg};
 
     use super::*;
@@ -1278,8 +1278,7 @@ mod tests {
 
     #[test]
     fn build_command_output_formats_stdout_and_stderr() {
-        let output =
-            build_command_output(Some("ok\n"), Some("warn\n")).expect("expected output");
+        let output = build_command_output(Some("ok\n"), Some("warn\n")).expect("expected output");
         assert_eq!(output, "stdout:\nok\n\nstderr:\nwarn");
     }
 
@@ -1317,9 +1316,7 @@ mod tests {
             },
         );
 
-        let entry = approval
-            .to_normalized_entry_opt()
-            .expect("expected entry");
+        let entry = approval.to_normalized_entry_opt().expect("expected entry");
         match entry.entry_type {
             NormalizedEntryType::UserFeedback { denied_tool } => {
                 assert_eq!(denied_tool, "Exec Command");
@@ -1337,9 +1334,7 @@ mod tests {
             ApprovalStatus::TimedOut,
         );
 
-        let entry = approval
-            .to_normalized_entry_opt()
-            .expect("expected entry");
+        let entry = approval.to_normalized_entry_opt().expect("expected entry");
         match entry.entry_type {
             NormalizedEntryType::ErrorMessage { error_type } => {
                 assert_eq!(error_type, NormalizedEntryError::Other);
@@ -1423,8 +1418,7 @@ mod tests {
     fn log_state_appends_assistant_messages() {
         let mut state = LogState::new(EntryIndexProvider::test_new());
 
-        let (entry, first_index, first_new) =
-            state.assistant_message_append("Hello".to_string());
+        let (entry, first_index, first_new) = state.assistant_message_append("Hello".to_string());
         assert!(matches!(
             entry.entry_type,
             NormalizedEntryType::AssistantMessage
@@ -1634,9 +1628,9 @@ mod tests {
         );
 
         let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
-            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
-                tool_name == "edit" && matches!(status, ToolStatus::Success)
-            }
+            NormalizedEntryType::ToolUse {
+                tool_name, status, ..
+            } => tool_name == "edit" && matches!(status, ToolStatus::Success),
             _ => false,
         })
         .await;
@@ -1705,9 +1699,9 @@ mod tests {
         );
 
         let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
-            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
-                tool_name == "edit" && matches!(status, ToolStatus::Failed)
-            }
+            NormalizedEntryType::ToolUse {
+                tool_name, status, ..
+            } => tool_name == "edit" && matches!(status, ToolStatus::Failed),
             _ => false,
         })
         .await;
@@ -1761,9 +1755,9 @@ mod tests {
         );
 
         let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
-            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
-                tool_name == "mcp:context7:search" && matches!(status, ToolStatus::Success)
-            }
+            NormalizedEntryType::ToolUse {
+                tool_name, status, ..
+            } => tool_name == "mcp:context7:search" && matches!(status, ToolStatus::Success),
             _ => false,
         })
         .await;
@@ -1823,9 +1817,9 @@ mod tests {
         );
 
         let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
-            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
-                tool_name == "mcp:context7:search" && matches!(status, ToolStatus::Failed)
-            }
+            NormalizedEntryType::ToolUse {
+                tool_name, status, ..
+            } => tool_name == "mcp:context7:search" && matches!(status, ToolStatus::Failed),
             _ => false,
         })
         .await;
@@ -1885,9 +1879,9 @@ mod tests {
         );
 
         let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
-            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
-                tool_name == "mcp:context7:search" && matches!(status, ToolStatus::Failed)
-            }
+            NormalizedEntryType::ToolUse {
+                tool_name, status, ..
+            } => tool_name == "mcp:context7:search" && matches!(status, ToolStatus::Failed),
             _ => false,
         })
         .await;
@@ -1948,9 +1942,9 @@ mod tests {
         );
 
         let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
-            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
-                tool_name == "mcp:playwright:screenshot" && matches!(status, ToolStatus::Success)
-            }
+            NormalizedEntryType::ToolUse {
+                tool_name, status, ..
+            } => tool_name == "mcp:playwright:screenshot" && matches!(status, ToolStatus::Success),
             _ => false,
         })
         .await;
@@ -1993,9 +1987,9 @@ mod tests {
         );
 
         let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
-            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
-                tool_name == "web_search" && matches!(status, ToolStatus::Success)
-            }
+            NormalizedEntryType::ToolUse {
+                tool_name, status, ..
+            } => tool_name == "web_search" && matches!(status, ToolStatus::Success),
             _ => false,
         })
         .await;
@@ -2030,9 +2024,9 @@ mod tests {
         );
 
         let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
-            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
-                tool_name == "view_image" && matches!(status, ToolStatus::Success)
-            }
+            NormalizedEntryType::ToolUse {
+                tool_name, status, ..
+            } => tool_name == "view_image" && matches!(status, ToolStatus::Success),
             _ => false,
         })
         .await;
@@ -2076,9 +2070,9 @@ mod tests {
         );
 
         let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
-            NormalizedEntryType::ToolUse { tool_name, status, .. } => {
-                tool_name == "plan" && matches!(status, ToolStatus::Success)
-            }
+            NormalizedEntryType::ToolUse {
+                tool_name, status, ..
+            } => tool_name == "plan" && matches!(status, ToolStatus::Success),
             _ => false,
         })
         .await;
@@ -2123,7 +2117,10 @@ mod tests {
             .expect("response"),
         };
 
-        push_json_line(&msg_store, serde_json::to_string(&response).expect("response line"));
+        push_json_line(
+            &msg_store,
+            serde_json::to_string(&response).expect("response line"),
+        );
 
         let entry = wait_for_entry(&msg_store, |entry| {
             matches!(entry.entry_type, NormalizedEntryType::SystemMessage)
@@ -2132,10 +2129,12 @@ mod tests {
         .await;
 
         assert!(entry.content.contains("model: gpt-4.1"));
-        assert!(msg_store
-            .get_history()
-            .iter()
-            .any(|msg| matches!(msg, LogMsg::SessionId(id) if id == session_id)));
+        assert!(
+            msg_store
+                .get_history()
+                .iter()
+                .any(|msg| matches!(msg, LogMsg::SessionId(id) if id == session_id))
+        );
 
         msg_store.push_finished();
     }

@@ -238,6 +238,7 @@ mod tests {
         script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
     };
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use utils::log_entries::LogEntryChannel;
     use uuid::Uuid;
 
     use super::{ExecutionProcessLogEntry, LogEntryRow};
@@ -248,11 +249,9 @@ mod tests {
         task::CreateTask,
         workspace::CreateWorkspace,
     };
-    use utils::log_entries::LogEntryChannel;
 
     async fn setup_pool() -> Result<(sqlx::SqlitePool, PathBuf), sqlx::Error> {
-        let db_path =
-            std::env::temp_dir().join(format!("vk-log-entry-test-{}.db", Uuid::new_v4()));
+        let db_path = std::env::temp_dir().join(format!("vk-log-entry-test-{}.db", Uuid::new_v4()));
         let db_url = format!("sqlite://{}", db_path.to_string_lossy());
         let options = SqliteConnectOptions::from_str(&db_url)?
             .create_if_missing(true)
@@ -328,8 +327,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_page_with_cursor_returns_older_entries(
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn fetch_page_with_cursor_returns_older_entries() -> Result<(), Box<dyn std::error::Error>>
+    {
         let (pool, db_path) = setup_pool().await?;
         let execution_id = create_execution_process(&pool).await?;
 
@@ -345,11 +344,19 @@ mod tests {
             .await?;
         }
 
-        let first_page =
-            ExecutionProcessLogEntry::fetch_page(&pool, execution_id, LogEntryChannel::Raw, 2, None)
-                .await?;
+        let first_page = ExecutionProcessLogEntry::fetch_page(
+            &pool,
+            execution_id,
+            LogEntryChannel::Raw,
+            2,
+            None,
+        )
+        .await?;
         assert_eq!(
-            first_page.iter().map(|row| row.entry_index).collect::<Vec<_>>(),
+            first_page
+                .iter()
+                .map(|row| row.entry_index)
+                .collect::<Vec<_>>(),
             vec![4, 3]
         );
 

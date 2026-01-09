@@ -293,12 +293,10 @@ mod tests {
     #[test]
     fn extract_session_id_from_rollout_path_parses_uuid() {
         let id = "123e4567-e89b-12d3-a456-426614174000";
-        let path = PathBuf::from(format!(
-            "/tmp/rollout-2024-01-02T03-04-05-{id}.jsonl"
-        ));
+        let path = PathBuf::from(format!("/tmp/rollout-2024-01-02T03-04-05-{id}.jsonl"));
 
-        let extracted = SessionHandler::extract_session_id_from_rollout_path(path)
-            .expect("extract session id");
+        let extracted =
+            SessionHandler::extract_session_id_from_rollout_path(path).expect("extract session id");
         assert_eq!(extracted, id);
     }
 
@@ -344,8 +342,8 @@ mod tests {
     #[test]
     fn fork_rollout_file_copies_lines_and_changes_id() {
         let _lock = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
-        let temp_root = std::env::temp_dir()
-            .join(format!("codex-session-test-{}", uuid::Uuid::new_v4()));
+        let temp_root =
+            std::env::temp_dir().join(format!("codex-session-test-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&temp_root).expect("create temp root");
         let _home_guard = EnvGuard::set("HOME", temp_root.to_str().expect("home path"));
 
@@ -358,14 +356,12 @@ mod tests {
         fs::create_dir_all(&sessions_dir).expect("create sessions dir");
 
         let old_id = uuid::Uuid::new_v4().to_string();
-        let rollout_path =
-            sessions_dir.join(format!("rollout-2024-01-02T03-04-05-{old_id}.jsonl"));
+        let rollout_path = sessions_dir.join(format!("rollout-2024-01-02T03-04-05-{old_id}.jsonl"));
         let mut file = File::create(&rollout_path).expect("create rollout");
         writeln!(file, "{{\"payload\":{{\"id\":\"{old_id}\"}}}}").expect("write header");
         writeln!(file, "line two").expect("write line");
 
-        let (new_path, new_id) =
-            SessionHandler::fork_rollout_file(&old_id).expect("fork");
+        let (new_path, new_id) = SessionHandler::fork_rollout_file(&old_id).expect("fork");
 
         assert_ne!(new_id, old_id);
         assert!(new_path.exists());

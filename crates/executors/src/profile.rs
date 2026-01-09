@@ -426,6 +426,9 @@ impl ExecutorConfigs {
         let mut agents_with_info: Vec<(BaseCodingAgent, AvailabilityInfo)> = Vec::new();
 
         for &base_agent in self.executors.keys() {
+            if base_agent == BaseCodingAgent::FakeAgent {
+                continue;
+            }
             let profile_id = ExecutorProfileId::new(base_agent);
             if let Some(coding_agent) = self.get_coding_agent(&profile_id) {
                 let info = coding_agent.get_availability_info();

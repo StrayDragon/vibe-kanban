@@ -38,7 +38,7 @@ COPY . .
 # Build application
 RUN npm run generate-types
 RUN cd frontend && pnpm run build
-RUN cargo build --release --bin server
+RUN cargo build --release --bin server --bin fake-agent
 
 # Runtime stage
 FROM alpine:latest AS runtime
@@ -56,6 +56,7 @@ RUN addgroup -g 1001 -S appgroup && \
 
 # Copy binary from builder
 COPY --from=builder /app/target/release/server /usr/local/bin/server
+COPY --from=builder /app/target/release/fake-agent /usr/local/bin/fake-agent
 
 # Create repos directory and set permissions
 RUN mkdir -p /repos && \

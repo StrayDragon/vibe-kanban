@@ -523,8 +523,7 @@ mod tests {
         time::{Duration, timeout},
     };
 
-    use super::*;
-    use super::super::jsonrpc::ExitSignalSender;
+    use super::{super::jsonrpc::ExitSignalSender, *};
 
     #[derive(Default)]
     struct ResponseState {

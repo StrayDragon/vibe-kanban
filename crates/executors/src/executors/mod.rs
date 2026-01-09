@@ -20,7 +20,7 @@ use crate::{
     env::ExecutionEnv,
     executors::{
         amp::Amp, claude::ClaudeCode, codex::Codex, copilot::Copilot, cursor::CursorAgent,
-        droid::Droid, gemini::Gemini, opencode::Opencode, qwen::QwenCode,
+        droid::Droid, fake_agent::FakeAgent, gemini::Gemini, opencode::Opencode, qwen::QwenCode,
     },
     mcp_config::McpConfig,
 };
@@ -32,6 +32,7 @@ pub mod codex;
 pub mod copilot;
 pub mod cursor;
 pub mod droid;
+pub mod fake_agent;
 pub mod gemini;
 pub mod opencode;
 pub mod qwen;
@@ -93,6 +94,7 @@ pub enum CodingAgent {
     Amp,
     Gemini,
     Codex,
+    FakeAgent,
     Opencode,
     #[serde(alias = "CURSOR")]
     #[strum_discriminants(serde(alias = "CURSOR"))]
@@ -110,6 +112,7 @@ impl CodingAgent {
             Self::Amp(cfg) => &cfg.auto_retry,
             Self::Gemini(cfg) => &cfg.auto_retry,
             Self::Codex(cfg) => &cfg.auto_retry,
+            Self::FakeAgent(cfg) => &cfg.auto_retry,
             Self::Opencode(cfg) => &cfg.auto_retry,
             Self::CursorAgent(cfg) => &cfg.auto_retry,
             Self::QwenCode(cfg) => &cfg.auto_retry,
@@ -179,6 +182,7 @@ impl CodingAgent {
             | Self::Gemini(_)
             | Self::QwenCode(_)
             | Self::Droid(_)
+            | Self::FakeAgent(_)
             | Self::Opencode(_) => vec![BaseAgentCapability::SessionFork],
             Self::Codex(_) => vec![
                 BaseAgentCapability::SessionFork,

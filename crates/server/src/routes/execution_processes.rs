@@ -11,21 +11,17 @@ use axum::{
     response::{IntoResponse, Json as ResponseJson},
     routing::{get, post},
 };
-use deployment::Deployment;
 use db::models::{
     execution_process::{ExecutionProcess, ExecutionProcessError, ExecutionProcessStatus},
     execution_process_repo_state::ExecutionProcessRepoState,
 };
+use deployment::Deployment;
 use executors::logs::utils::patch::PatchType;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use services::services::container::ContainerService;
 use ts_rs::TS;
-use utils::{
-    log_entries::LogEntryChannel,
-    msg_store::LogEntryEvent,
-    response::ApiResponse,
-};
+use utils::{log_entries::LogEntryChannel, msg_store::LogEntryEvent, response::ApiResponse};
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError, middleware::load_execution_process_middleware};
@@ -119,13 +115,8 @@ pub async fn get_raw_logs_v2(
     State(deployment): State<DeploymentImpl>,
     Query(query): Query<LogHistoryQuery>,
 ) -> Result<ResponseJson<ApiResponse<LogHistoryPage>>, ApiError> {
-    let page = build_log_history_page(
-        &deployment,
-        &execution_process,
-        LogEntryChannel::Raw,
-        query,
-    )
-    .await?;
+    let page = build_log_history_page(&deployment, &execution_process, LogEntryChannel::Raw, query)
+        .await?;
     Ok(ResponseJson(ApiResponse::success(page)))
 }
 
@@ -168,21 +159,23 @@ async fn build_log_history_page(
     let entries = page
         .entries
         .into_iter()
-        .filter_map(|entry| match serde_json::from_value::<PatchType>(entry.entry_json) {
-            Ok(payload) => Some(IndexedLogEntry {
-                entry_index: entry.entry_index as i64,
-                entry: payload,
-            }),
-            Err(err) => {
-                tracing::warn!(
-                    "Failed to decode log entry {} for {}: {}",
-                    entry.entry_index,
-                    execution_process.id,
-                    err
-                );
-                None
-            }
-        })
+        .filter_map(
+            |entry| match serde_json::from_value::<PatchType>(entry.entry_json) {
+                Ok(payload) => Some(IndexedLogEntry {
+                    entry_index: entry.entry_index as i64,
+                    entry: payload,
+                }),
+                Err(err) => {
+                    tracing::warn!(
+                        "Failed to decode log entry {} for {}: {}",
+                        entry.entry_index,
+                        execution_process.id,
+                        err
+                    );
+                    None
+                }
+            },
+        )
         .collect::<Vec<_>>();
 
     let next_cursor = entries.first().map(|entry| entry.entry_index);
@@ -237,9 +230,9 @@ pub async fn stream_normalized_logs_v2_ws(
 async fn handle_log_entries_ws(
     socket: WebSocket,
     stream: impl futures_util::Stream<Item = Result<LogEntryEvent, std::io::Error>>
-        + Unpin
-        + Send
-        + 'static,
+    + Unpin
+    + Send
+    + 'static,
 ) -> anyhow::Result<()> {
     let mut stream = stream;
 
@@ -276,20 +269,22 @@ struct EncodedLogMessage {
 fn log_entry_event_to_message(event: LogEntryEvent) -> Option<EncodedLogMessage> {
     let payload = match event {
         LogEntryEvent::Append { entry_index, entry } => {
-            let entry = serde_json::from_value(entry).map_err(|err| {
-                tracing::warn!("Failed to decode append entry: {}", err);
-            })
-            .ok()?;
+            let entry = serde_json::from_value(entry)
+                .map_err(|err| {
+                    tracing::warn!("Failed to decode append entry: {}", err);
+                })
+                .ok()?;
             LogStreamEvent::Append {
                 entry_index: entry_index as i64,
                 entry,
             }
         }
         LogEntryEvent::Replace { entry_index, entry } => {
-            let entry = serde_json::from_value(entry).map_err(|err| {
-                tracing::warn!("Failed to decode replace entry: {}", err);
-            })
-            .ok()?;
+            let entry = serde_json::from_value(entry)
+                .map_err(|err| {
+                    tracing::warn!("Failed to decode replace entry: {}", err);
+                })
+                .ok()?;
             LogStreamEvent::Replace {
                 entry_index: entry_index as i64,
                 entry,

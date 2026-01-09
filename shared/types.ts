@@ -299,9 +299,9 @@ working_dir: string | null, };
 
 export type ScriptRequestLanguage = "Bash";
 
-export enum BaseCodingAgent { CLAUDE_CODE = "CLAUDE_CODE", AMP = "AMP", GEMINI = "GEMINI", CODEX = "CODEX", OPENCODE = "OPENCODE", CURSOR_AGENT = "CURSOR_AGENT", QWEN_CODE = "QWEN_CODE", COPILOT = "COPILOT", DROID = "DROID" }
+export enum BaseCodingAgent { CLAUDE_CODE = "CLAUDE_CODE", AMP = "AMP", GEMINI = "GEMINI", CODEX = "CODEX", FAKE_AGENT = "FAKE_AGENT", OPENCODE = "OPENCODE", CURSOR_AGENT = "CURSOR_AGENT", QWEN_CODE = "QWEN_CODE", COPILOT = "COPILOT", DROID = "DROID" }
 
-export type CodingAgent = { "CLAUDE_CODE": ClaudeCode } | { "AMP": Amp } | { "GEMINI": Gemini } | { "CODEX": Codex } | { "OPENCODE": Opencode } | { "CURSOR_AGENT": CursorAgent } | { "QWEN_CODE": QwenCode } | { "COPILOT": Copilot } | { "DROID": Droid };
+export type CodingAgent = { "CLAUDE_CODE": ClaudeCode } | { "AMP": Amp } | { "GEMINI": Gemini } | { "CODEX": Codex } | { "FAKE_AGENT": FakeAgent } | { "OPENCODE": Opencode } | { "CURSOR_AGENT": CursorAgent } | { "QWEN_CODE": QwenCode } | { "COPILOT": Copilot } | { "DROID": Droid };
 
 export type AvailabilityInfo = { "type": "LOGIN_DETECTED", last_auth_timestamp: bigint, } | { "type": "INSTALLATION_FOUND" } | { "type": "NOT_FOUND" };
 
@@ -325,7 +325,7 @@ executor: BaseCodingAgent,
  */
 variant: string | null, };
 
-export type ExecutorConfig = { [key in string]?: { "CLAUDE_CODE": ClaudeCode } | { "AMP": Amp } | { "GEMINI": Gemini } | { "CODEX": Codex } | { "OPENCODE": Opencode } | { "CURSOR_AGENT": CursorAgent } | { "QWEN_CODE": QwenCode } | { "COPILOT": Copilot } | { "DROID": Droid } };
+export type ExecutorConfig = { [key in string]?: { "CLAUDE_CODE": ClaudeCode } | { "AMP": Amp } | { "GEMINI": Gemini } | { "CODEX": Codex } | { "FAKE_AGENT": FakeAgent } | { "OPENCODE": Opencode } | { "CURSOR_AGENT": CursorAgent } | { "QWEN_CODE": QwenCode } | { "COPILOT": Copilot } | { "DROID": Droid } };
 
 export type ExecutorConfigs = { executors: { [key in BaseCodingAgent]?: ExecutorConfig }, };
 
@@ -348,6 +348,10 @@ export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export type ReasoningSummary = "auto" | "concise" | "detailed" | "none";
 
 export type ReasoningSummaryFormat = "none" | "experimental";
+
+export type FakeAgent = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, seed?: bigint | null, cadence_ms: bigint, message_chunk_min: number, message_chunk_max: number, tool_events: FakeToolEvents, write_fake_files: boolean, include_reasoning: boolean, scenario_path?: string | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
+
+export type FakeToolEvents = { exec_command: boolean, apply_patch: boolean, mcp: boolean, web_search: boolean, approvals: boolean, errors: boolean, };
 
 export type CursorAgent = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, force?: boolean | null, model?: string | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
 

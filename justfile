@@ -20,6 +20,7 @@ frontend-build:
 
 backend-build: # db-prepare
     cargo build -p server --release
+    cargo build -p executors --release --bin fake-agent
 
 mcp-build:
     cargo build -p server --release --bin mcp_task_server

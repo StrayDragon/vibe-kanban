@@ -1,5 +1,7 @@
 import { useCallback, useMemo } from 'react';
+import type { Operation } from 'rfc6902';
 import { useJsonPatchWsStream } from './useJsonPatchWsStream';
+import { normalizeIdMapPatches } from './jsonPatchUtils';
 import type { TaskStatus, TaskWithAttemptStatus } from 'shared/types';
 
 type TasksState = {
@@ -24,11 +26,17 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
   const endpoint = `/api/tasks/stream/ws?project_id=${encodeURIComponent(projectId)}`;
 
   const initialData = useCallback((): TasksState => ({ tasks: {} }), []);
+  const deduplicatePatches = useCallback(
+    (patches: Operation[], current: TasksState | undefined) =>
+      normalizeIdMapPatches(patches, current?.tasks, '/tasks/'),
+    []
+  );
 
   const { data, isConnected, error } = useJsonPatchWsStream(
     endpoint,
     !!projectId,
-    initialData
+    initialData,
+    { deduplicatePatches }
   );
 
   const localTasksById = useMemo(() => data?.tasks ?? {}, [data?.tasks]);

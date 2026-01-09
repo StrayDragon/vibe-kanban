@@ -366,10 +366,7 @@ mod tests {
         }
     }
 
-    async fn run_script(
-        script: &str,
-        callbacks: Arc<dyn JsonRpcCallbacks>,
-    ) -> ExecutorExitResult {
+    async fn run_script(script: &str, callbacks: Arc<dyn JsonRpcCallbacks>) -> ExecutorExitResult {
         let mut child = Command::new("sh")
             .arg("-c")
             .arg(script)
@@ -419,9 +416,10 @@ mod tests {
 
 #[cfg(test)]
 mod await_response_tests {
-    use super::*;
     use codex_app_server_protocol::JSONRPCErrorError;
     use tokio::sync::oneshot;
+
+    use super::*;
 
     #[tokio::test]
     async fn await_response_returns_error_for_error_response() {
@@ -452,9 +450,10 @@ mod await_response_tests {
         let err = await_response::<serde_json::Value>(receiver, "ping")
             .await
             .expect_err("shutdown");
-        assert!(err
-            .to_string()
-            .contains("server was shutdown while waiting for ping response"));
+        assert!(
+            err.to_string()
+                .contains("server was shutdown while waiting for ping response")
+        );
     }
 
     #[tokio::test]

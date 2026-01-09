@@ -94,6 +94,11 @@
         }
       }
     },
+    "FAKE_AGENT": {
+      "DEFAULT": {
+        "FAKE_AGENT": {}
+      }
+    },
     "OPENCODE": {
       "DEFAULT": {
         "OPENCODE": {

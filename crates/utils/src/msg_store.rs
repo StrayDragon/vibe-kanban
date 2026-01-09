@@ -287,14 +287,12 @@ impl MsgStore {
         let finished = self.inner.read().unwrap().finished;
         let history = self.raw_history_page(usize::MAX, None).0;
 
-        let hist = futures::stream::iter(
-            history
-                .into_iter()
-                .map(|entry| Ok::<_, std::io::Error>(LogEntryEvent::Append {
-                    entry_index: entry.entry_index,
-                    entry: entry.entry_json,
-                })),
-        );
+        let hist = futures::stream::iter(history.into_iter().map(|entry| {
+            Ok::<_, std::io::Error>(LogEntryEvent::Append {
+                entry_index: entry.entry_index,
+                entry: entry.entry_json,
+            })
+        }));
 
         if finished {
             Box::pin(hist.chain(futures::stream::once(async {
@@ -313,14 +311,12 @@ impl MsgStore {
         let finished = self.inner.read().unwrap().finished;
         let history = self.normalized_history_page(usize::MAX, None).0;
 
-        let hist = futures::stream::iter(
-            history
-                .into_iter()
-                .map(|entry| Ok::<_, std::io::Error>(LogEntryEvent::Append {
-                    entry_index: entry.entry_index,
-                    entry: entry.entry_json,
-                })),
-        );
+        let hist = futures::stream::iter(history.into_iter().map(|entry| {
+            Ok::<_, std::io::Error>(LogEntryEvent::Append {
+                entry_index: entry.entry_index,
+                entry: entry.entry_json,
+            })
+        }));
 
         if finished {
             Box::pin(hist.chain(futures::stream::once(async {
@@ -495,8 +491,7 @@ impl Inner {
     fn trim_raw_entries(&mut self) {
         let limits = log_history_config();
 
-        while self.raw_entries.len() > limits.max_entries
-            || self.raw_total_bytes > limits.max_bytes
+        while self.raw_entries.len() > limits.max_entries || self.raw_total_bytes > limits.max_bytes
         {
             if let Some(front) = self.raw_entries.pop_front() {
                 self.raw_total_bytes = self.raw_total_bytes.saturating_sub(front.bytes);
@@ -515,9 +510,8 @@ impl Inner {
         {
             if let Some((&key, _)) = self.normalized_entries.iter().next() {
                 if let Some(removed) = self.normalized_entries.remove(&key) {
-                    self.normalized_total_bytes = self
-                        .normalized_total_bytes
-                        .saturating_sub(removed.bytes);
+                    self.normalized_total_bytes =
+                        self.normalized_total_bytes.saturating_sub(removed.bytes);
                     self.normalized_evicted = true;
                 }
             } else {
@@ -545,12 +539,10 @@ fn extract_normalized_updates(patch: &Patch) -> Vec<NormalizedUpdate> {
         .iter()
         .filter_map(|op| match op {
             PatchOperation::Add(add) => {
-                normalize_patch_entry(&add.path, &add.value).map(|entry_json| {
-                    NormalizedUpdate {
-                        entry_index: entry_json.entry_index,
-                        entry_json: entry_json.entry_json,
-                        op: UpdateOp::Append,
-                    }
+                normalize_patch_entry(&add.path, &add.value).map(|entry_json| NormalizedUpdate {
+                    entry_index: entry_json.entry_index,
+                    entry_json: entry_json.entry_json,
+                    op: UpdateOp::Append,
                 })
             }
             PatchOperation::Replace(replace) => {

@@ -146,6 +146,8 @@ fn generate_types_content() -> String {
         executors::executors::codex::ReasoningEffort::decl(),
         executors::executors::codex::ReasoningSummary::decl(),
         executors::executors::codex::ReasoningSummaryFormat::decl(),
+        executors::executors::fake_agent::FakeAgent::decl(),
+        executors::executors::fake_agent::FakeToolEvents::decl(),
         executors::executors::cursor::CursorAgent::decl(),
         executors::executors::copilot::Copilot::decl(),
         executors::executors::opencode::Opencode::decl(),
@@ -234,6 +236,10 @@ fn generate_schemas() -> Result<HashMap<&'static str, String>, serde_json::Error
         (
             "codex",
             generate_json_schema::<executors::executors::codex::Codex>()?,
+        ),
+        (
+            "fake_agent",
+            generate_json_schema::<executors::executors::fake_agent::FakeAgent>()?,
         ),
         (
             "cursor_agent",

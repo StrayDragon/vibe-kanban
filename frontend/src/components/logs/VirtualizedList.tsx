@@ -89,6 +89,14 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     offset: number;
   } | null>(null);
 
+  const isNearBottom = useCallback(() => {
+    const scroller = messageListRef.current?.scrollerElement();
+    if (!scroller) return true;
+    const remaining =
+      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    return remaining <= 48;
+  }, []);
+
   const captureHistoricAnchor = useCallback(() => {
     const scroller = messageListRef.current?.scrollerElement();
     if (!scroller || entries.length === 0) return;
@@ -139,6 +147,10 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     addType: AddEntryType,
     newLoading: boolean
   ) => {
+    const wasNearBottom = isNearBottom();
+    const prevLen = prevLengthRef.current;
+    const nextLen = newEntries.length;
+    const appended = nextLen > prevLen;
     let scrollModifier: ScrollModifier | undefined;
 
     if (loading || addType === 'initial') {
@@ -165,13 +177,20 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
       }
 
       if (!scrollModifier) {
-        const prevLen = prevLengthRef.current;
-        const nextLen = newEntries.length;
         const addedCount = Math.max(0, nextLen - prevLen);
         if (addedCount > 0) {
           scrollModifier = ScrollModifierOption.prepend;
         }
       }
+    }
+
+    if (
+      !scrollModifier &&
+      wasNearBottom &&
+      appended &&
+      !pendingHistoricAnchorRef.current
+    ) {
+      scrollModifier = AutoScrollToBottom;
     }
 
     prevLengthRef.current = newEntries.length;

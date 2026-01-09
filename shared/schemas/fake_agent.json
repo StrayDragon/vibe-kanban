@@ -1,0 +1,160 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "append_prompt": {
+      "title": "Append Prompt",
+      "description": "Extra text appended to the prompt",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "textarea",
+      "default": null
+    },
+    "auto_retry": {
+      "title": "Auto Retry",
+      "description": "Configure automatic retry behavior for recoverable errors.",
+      "type": "object",
+      "properties": {
+        "error_patterns": {
+          "title": "Recoverable Error Patterns",
+          "description": "Regex patterns matched against error output to trigger auto-retry.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "delay_seconds": {
+          "title": "Retry Delay (seconds)",
+          "description": "Seconds to wait before retrying after a matched error.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "max_attempts": {
+          "title": "Max Retry Attempts",
+          "description": "Maximum number of auto-retry attempts for a failed run.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        }
+      },
+      "default": {
+        "error_patterns": [],
+        "delay_seconds": 15,
+        "max_attempts": 3
+      }
+    },
+    "seed": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "cadence_ms": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0,
+      "default": 120
+    },
+    "message_chunk_min": {
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0,
+      "default": 4
+    },
+    "message_chunk_max": {
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0,
+      "default": 14
+    },
+    "tool_events": {
+      "type": "object",
+      "properties": {
+        "exec_command": {
+          "type": "boolean",
+          "default": true
+        },
+        "apply_patch": {
+          "type": "boolean",
+          "default": true
+        },
+        "mcp": {
+          "type": "boolean",
+          "default": true
+        },
+        "web_search": {
+          "type": "boolean",
+          "default": true
+        },
+        "approvals": {
+          "type": "boolean",
+          "default": true
+        },
+        "errors": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "default": {
+        "exec_command": true,
+        "apply_patch": true,
+        "mcp": true,
+        "web_search": true,
+        "approvals": true,
+        "errors": true
+      }
+    },
+    "write_fake_files": {
+      "type": "boolean",
+      "default": true
+    },
+    "include_reasoning": {
+      "type": "boolean",
+      "default": true
+    },
+    "scenario_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "base_command_override": {
+      "title": "Base Command Override",
+      "description": "Override the base command with a custom command",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "additional_params": {
+      "title": "Additional Parameters",
+      "description": "Additional parameters to append to the base command",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "env": {
+      "title": "Environment Variables",
+      "description": "Environment variables to set when running the executor",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "type": "object"
+}

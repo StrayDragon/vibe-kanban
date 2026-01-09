@@ -509,13 +509,14 @@ pub trait ContainerService {
             return Ok(0);
         }
 
-        let existing = ExecutionProcessLogEntry::stats(&self.db().pool, execution_id, channel)
-            .await?;
+        let existing =
+            ExecutionProcessLogEntry::stats(&self.db().pool, execution_id, channel).await?;
 
         let entries = match channel {
             LogEntryChannel::Raw => self.collect_raw_entries_from_jsonl(execution_id).await?,
             LogEntryChannel::Normalized => {
-                self.collect_normalized_entries_from_jsonl(execution_id).await?
+                self.collect_normalized_entries_from_jsonl(execution_id)
+                    .await?
             }
         };
 
@@ -538,13 +539,8 @@ pub trait ContainerService {
             return Ok(0);
         }
 
-        ExecutionProcessLogEntry::upsert_entries(
-            &self.db().pool,
-            execution_id,
-            channel,
-            &entries,
-        )
-        .await?;
+        ExecutionProcessLogEntry::upsert_entries(&self.db().pool, execution_id, channel, &entries)
+            .await?;
 
         LOG_ENTRY_BACKFILL_COMPLETE.insert(cache_key);
         Ok(entries.len())
@@ -665,7 +661,9 @@ pub trait ContainerService {
         &self,
         execution_id: Uuid,
     ) -> Result<usize, ContainerError> {
-        let entries = self.collect_normalized_entries_from_jsonl(execution_id).await?;
+        let entries = self
+            .collect_normalized_entries_from_jsonl(execution_id)
+            .await?;
         if entries.is_empty() {
             return Ok(0);
         }
@@ -1107,8 +1105,7 @@ pub trait ContainerService {
     async fn stream_raw_log_entries(
         &self,
         id: &Uuid,
-    ) -> Option<futures::stream::BoxStream<'static, Result<LogEntryEvent, std::io::Error>>>
-    {
+    ) -> Option<futures::stream::BoxStream<'static, Result<LogEntryEvent, std::io::Error>>> {
         self.get_msg_store_by_id(id)
             .await
             .map(|store| store.raw_history_plus_stream())
@@ -1117,8 +1114,7 @@ pub trait ContainerService {
     async fn stream_normalized_log_entries(
         &self,
         id: &Uuid,
-    ) -> Option<futures::stream::BoxStream<'static, Result<LogEntryEvent, std::io::Error>>>
-    {
+    ) -> Option<futures::stream::BoxStream<'static, Result<LogEntryEvent, std::io::Error>>> {
         self.get_msg_store_by_id(id)
             .await
             .map(|store| store.normalized_history_plus_stream())
@@ -1162,19 +1158,21 @@ pub trait ContainerService {
 
             let entries = rows
                 .into_iter()
-                .filter_map(|row| match serde_json::from_str::<serde_json::Value>(&row.entry_json) {
-                    Ok(entry_json) => Some(LogEntrySnapshot {
-                        entry_index: row.entry_index as usize,
-                        entry_json,
-                    }),
-                    Err(err) => {
-                        tracing::warn!(
-                            "Failed to parse log entry {} for {}: {}",
-                            row.entry_index,
-                            execution_process.id,
-                            err
-                        );
-                        None
+                .filter_map(|row| {
+                    match serde_json::from_str::<serde_json::Value>(&row.entry_json) {
+                        Ok(entry_json) => Some(LogEntrySnapshot {
+                            entry_index: row.entry_index as usize,
+                            entry_json,
+                        }),
+                        Err(err) => {
+                            tracing::warn!(
+                                "Failed to parse log entry {} for {}: {}",
+                                row.entry_index,
+                                execution_process.id,
+                                err
+                            );
+                            None
+                        }
                     }
                 })
                 .collect::<Vec<_>>();

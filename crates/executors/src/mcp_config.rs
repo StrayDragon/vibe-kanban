@@ -293,7 +293,10 @@ impl CodingAgent {
         use Adapter::*;
 
         let adapter = match self {
-            CodingAgent::ClaudeCode(_) | CodingAgent::Amp(_) | CodingAgent::Droid(_) => Passthrough,
+            CodingAgent::ClaudeCode(_)
+            | CodingAgent::Amp(_)
+            | CodingAgent::Droid(_)
+            | CodingAgent::FakeAgent(_) => Passthrough,
             CodingAgent::QwenCode(_) | CodingAgent::Gemini(_) => Gemini,
             CodingAgent::CursorAgent(_) => Cursor,
             CodingAgent::Codex(_) => Codex,
@@ -308,9 +311,10 @@ impl CodingAgent {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::{json, Map};
+    use serde_json::{Map, json};
     use uuid::Uuid;
+
+    use super::*;
 
     fn canonical_config() -> Value {
         json!({
@@ -458,7 +462,9 @@ mod tests {
     #[tokio::test]
     async fn read_agent_config_empty_toml_returns_empty_object() {
         let config_path = temp_file_path("empty.toml");
-        tokio::fs::write(&config_path, "").await.expect("write file");
+        tokio::fs::write(&config_path, "")
+            .await
+            .expect("write file");
         let mcp_config = McpConfig::new(vec![], json!({}), json!({}), true);
 
         let loaded = read_agent_config(&config_path, &mcp_config)

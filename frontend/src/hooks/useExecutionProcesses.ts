@@ -1,5 +1,7 @@
 import { useCallback } from 'react';
+import type { Operation } from 'rfc6902';
 import { useJsonPatchWsStream } from './useJsonPatchWsStream';
+import { normalizeIdMapPatches } from './jsonPatchUtils';
 import type { ExecutionProcess } from 'shared/types';
 
 type ExecutionProcessState = {
@@ -39,12 +41,22 @@ export const useExecutionProcesses = (
     (): ExecutionProcessState => ({ execution_processes: {} }),
     []
   );
+  const deduplicatePatches = useCallback(
+    (patches: Operation[], current: ExecutionProcessState | undefined) =>
+      normalizeIdMapPatches(
+        patches,
+        current?.execution_processes,
+        '/execution_processes/'
+      ),
+    []
+  );
 
   const { data, isConnected, error } =
     useJsonPatchWsStream<ExecutionProcessState>(
       endpoint,
       !!taskAttemptId,
-      initialData
+      initialData,
+      { deduplicatePatches }
     );
 
   const executionProcessesById = data?.execution_processes ?? {};

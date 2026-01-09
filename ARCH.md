@@ -258,12 +258,21 @@ fn default_mcp_config_path(&self) -> Option<PathBuf>
 - `qwen/`：QwenCode
 - `copilot/`：GitHub Copilot CLI
 - `droid/`：Droid agent
+- `fake_agent/`：Fake agent（可复现模拟器）
 
 每个代理目录包含：
 - 客户端协议实现
 - 会话管理
 - 日志解析/规范化
 - MCP（模型上下文协议）配置
+
+#### Fake Agent 本地复现
+- 构建二进制：`cargo build -p executors --bin fake-agent`
+- 使用临时 dev 资产/数据库：`VIBE_ASSET_DIR=$(mktemp -d)` 后执行 `pnpm run dev`
+- Settings -> Task Execution 选择 `FAKE_AGENT`（或在 `profiles.json` 中设置）
+- 如需指定路径/命令：设置 `VIBE_FAKE_AGENT_PATH`
+- 脚本场景：在配置里设置 `scenario_path` 指向 JSONL
+- apply_patch 模拟会写入工作区下 `__fake_agent__<suffix>/` 以触发 diff
 
 #### Actions (`actions/`)
 **ExecutorAction** 枚举表示代理可以执行的离散操作：

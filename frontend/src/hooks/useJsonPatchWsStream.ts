@@ -14,7 +14,10 @@ interface UseJsonPatchStreamOptions<T> {
   /**
    * Filter/deduplicate patches before applying them
    */
-  deduplicatePatches?: (patches: Operation[]) => Operation[];
+  deduplicatePatches?: (
+    patches: Operation[],
+    current: T | undefined
+  ) => Operation[];
   /**
    * Whether to reconnect if the socket closes cleanly without a finished message.
    * Defaults to true to keep long-lived streams healthy across idle timeouts.
@@ -125,7 +128,7 @@ export const useJsonPatchWsStream = <T extends object>(
           if ('JsonPatch' in msg) {
             const patches: Operation[] = msg.JsonPatch;
             const filtered = deduplicatePatches
-              ? deduplicatePatches(patches)
+              ? deduplicatePatches(patches, dataRef.current)
               : patches;
 
             const current = dataRef.current;

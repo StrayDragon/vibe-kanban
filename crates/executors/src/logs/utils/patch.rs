@@ -198,8 +198,7 @@ mod tests {
             content: "hello".to_string(),
             metadata: None,
         };
-        let value = serde_json::to_value(PatchType::NormalizedEntry(entry.clone()))
-            .expect("value");
+        let value = serde_json::to_value(PatchType::NormalizedEntry(entry.clone())).expect("value");
         let patch: Patch = serde_json::from_value(json!([{
             "op": "add",
             "path": "/entries/2",
