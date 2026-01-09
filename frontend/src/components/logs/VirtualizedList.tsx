@@ -7,7 +7,7 @@ import {
   VirtuosoMessageListMethods,
   VirtuosoMessageListProps,
 } from '@virtuoso.dev/message-list';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import DisplayConversationEntry from '../NormalizedConversation/DisplayConversationEntry';
 import { useEntries } from '@/contexts/EntriesContext';
@@ -81,14 +81,56 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
   const [channelData, setChannelData] =
     useState<DataWithScrollModifier<PatchTypeWithKey> | null>(null);
   const [loading, setLoading] = useState(true);
-  const { setEntries, reset } = useEntries();
+  const { entries, setEntries, reset } = useEntries();
   const messageListRef = useRef<VirtuosoMessageListMethods | null>(null);
   const prevLengthRef = useRef<number>(0);
+  const pendingHistoricAnchorRef = useRef<{
+    key: string;
+    offset: number;
+  } | null>(null);
+
+  const captureHistoricAnchor = useCallback(() => {
+    const scroller = messageListRef.current?.scrollerElement();
+    if (!scroller || entries.length === 0) return;
+
+    const scrollerRect = scroller.getBoundingClientRect();
+    const items = Array.from(
+      scroller.querySelectorAll<HTMLElement>('[data-index]')
+    );
+
+    if (items.length === 0) return;
+
+    const visibleItems = items
+      .map((el) => ({ el, rect: el.getBoundingClientRect() }))
+      .filter(
+        ({ rect }) =>
+          rect.bottom > scrollerRect.top && rect.top < scrollerRect.bottom
+      )
+      .sort((a, b) => a.rect.top - b.rect.top);
+
+    const anchorItem = visibleItems[0] ?? {
+      el: items[0],
+      rect: items[0].getBoundingClientRect(),
+    };
+
+    const indexAttr = anchorItem.el.getAttribute('data-index');
+    const index = indexAttr ? Number(indexAttr) : Number.NaN;
+    if (!Number.isFinite(index)) return;
+
+    const entry = entries[index];
+    if (!entry) return;
+
+    pendingHistoricAnchorRef.current = {
+      key: entry.patchKey,
+      offset: anchorItem.rect.top - scrollerRect.top,
+    };
+  }, [entries]);
 
   useEffect(() => {
     setLoading(true);
     setChannelData(null);
     prevLengthRef.current = 0;
+    pendingHistoricAnchorRef.current = null;
     reset();
   }, [attempt.id, reset]);
 
@@ -104,11 +146,31 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     } else if (addType === 'running') {
       scrollModifier = AutoScrollToBottom;
     } else if (addType === 'historic') {
-      const prevLen = prevLengthRef.current;
-      const nextLen = newEntries.length;
-      const addedCount = Math.max(0, nextLen - prevLen);
-      if (addedCount > 0) {
-        scrollModifier = ScrollModifierOption.prepend;
+      const anchor = pendingHistoricAnchorRef.current;
+      if (anchor) {
+        pendingHistoricAnchorRef.current = null;
+        const anchorIndex = newEntries.findIndex(
+          (entry) => entry.patchKey === anchor.key
+        );
+        if (anchorIndex >= 0) {
+          scrollModifier = {
+            type: 'item-location',
+            location: {
+              index: anchorIndex,
+              align: 'start',
+              offset: anchor.offset,
+            },
+          };
+        }
+      }
+
+      if (!scrollModifier) {
+        const prevLen = prevLengthRef.current;
+        const nextLen = newEntries.length;
+        const addedCount = Math.max(0, nextLen - prevLen);
+        if (addedCount > 0) {
+          scrollModifier = ScrollModifierOption.prepend;
+        }
       }
     }
 
@@ -125,6 +187,12 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
   const { loadOlderHistory, hasMoreHistory, loadingOlder } =
     useConversationHistory({ attempt, onEntriesUpdated });
 
+  const handleLoadOlderHistory = useCallback(() => {
+    if (loadingOlder) return;
+    captureHistoricAnchor();
+    void loadOlderHistory();
+  }, [captureHistoricAnchor, loadOlderHistory, loadingOlder]);
+
   const messageListContext = useMemo(
     () => ({ attempt, task }),
     [attempt, task]
@@ -135,7 +203,7 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
       {hasMoreHistory && !loading && (
         <div className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground">
           <button
-            onClick={loadOlderHistory}
+            onClick={handleLoadOlderHistory}
             disabled={loadingOlder}
             className="flex items-center gap-1 px-2 py-1 rounded border border-border hover:text-foreground disabled:opacity-50"
           >
@@ -152,6 +220,7 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
           className="flex-1"
           data={channelData}
           initialLocation={INITIAL_TOP_ITEM}
+          shortSizeAlign="bottom"
           context={messageListContext}
           computeItemKey={computeItemKey}
           ItemContent={ItemContent}
