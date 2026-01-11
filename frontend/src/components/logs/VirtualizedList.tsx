@@ -88,6 +88,10 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     key: string;
     offset: number;
   } | null>(null);
+  const pendingResizeAnchorRef = useRef<{
+    key: string;
+    offset: number;
+  } | null>(null);
 
   const isNearBottom = useCallback(() => {
     const scroller = messageListRef.current?.scrollerElement();
@@ -97,7 +101,9 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     return remaining <= 48;
   }, []);
 
-  const captureHistoricAnchor = useCallback(() => {
+  const captureAnchor = useCallback((targetRef: {
+    current: { key: string; offset: number } | null;
+  }) => {
     const scroller = messageListRef.current?.scrollerElement();
     if (!scroller || entries.length === 0) return;
 
@@ -128,11 +134,19 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     const entry = entries[index];
     if (!entry) return;
 
-    pendingHistoricAnchorRef.current = {
+    targetRef.current = {
       key: entry.patchKey,
       offset: anchorItem.rect.top - scrollerRect.top,
     };
   }, [entries]);
+
+  const captureHistoricAnchor = useCallback(() => {
+    captureAnchor(pendingHistoricAnchorRef);
+  }, [captureAnchor]);
+
+  const captureResizeAnchor = useCallback(() => {
+    captureAnchor(pendingResizeAnchorRef);
+  }, [captureAnchor]);
 
   useEffect(() => {
     setLoading(true);
@@ -148,10 +162,23 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     newLoading: boolean
   ) => {
     const wasNearBottom = isNearBottom();
+    const prevEntriesByKey = new Map(
+      entries.map((entry) => [entry.patchKey, entry])
+    );
+    const hasContentChanges = newEntries.some((entry) => {
+      const prevEntry = prevEntriesByKey.get(entry.patchKey);
+      return prevEntry && prevEntry !== entry;
+    });
     const prevLen = prevLengthRef.current;
     const nextLen = newEntries.length;
     const appended = nextLen > prevLen;
     let scrollModifier: ScrollModifier | undefined;
+    const shouldPurgeItemSizes =
+      addType === 'running' && hasContentChanges && !loading;
+
+    if (shouldPurgeItemSizes && !wasNearBottom) {
+      captureResizeAnchor();
+    }
 
     if (loading || addType === 'initial') {
       scrollModifier = InitialDataScrollModifier;
@@ -180,6 +207,35 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
         const addedCount = Math.max(0, nextLen - prevLen);
         if (addedCount > 0) {
           scrollModifier = ScrollModifierOption.prepend;
+        }
+      }
+    }
+
+    if (shouldPurgeItemSizes) {
+      if (wasNearBottom) {
+        scrollModifier = {
+          type: 'item-location',
+          location: INITIAL_TOP_ITEM,
+          purgeItemSizes: true,
+        };
+      } else {
+        const anchor = pendingResizeAnchorRef.current;
+        if (anchor) {
+          pendingResizeAnchorRef.current = null;
+          const anchorIndex = newEntries.findIndex(
+            (entry) => entry.patchKey === anchor.key
+          );
+          if (anchorIndex >= 0) {
+            scrollModifier = {
+              type: 'item-location',
+              location: {
+                index: anchorIndex,
+                align: 'start',
+                offset: anchor.offset,
+              },
+              purgeItemSizes: true,
+            };
+          }
         }
       }
     }

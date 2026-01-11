@@ -221,6 +221,12 @@
 
 /* ANSI color classes for fancy-ansi */
 @layer components {
+  .wysiwyg p,
+  .wysiwyg li,
+  .wysiwyg blockquote {
+    @apply leading-relaxed;
+  }
+
   .ansi-red {
     @apply text-red-500;
   }
