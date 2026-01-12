@@ -45,23 +45,25 @@ async fn serve_file(path: &str) -> impl IntoResponse + use<> {
                 .unwrap()
         }
         None => {
-            // For SPA routing, serve index.html for unknown routes
-            if let Some(index) = Assets::get("index.html") {
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, HeaderValue::from_static("text/html"))
-                    .header(
-                        header::CACHE_CONTROL,
-                        HeaderValue::from_static(cache_control_for_path("index.html")),
-                    )
-                    .body(Body::from(index.data.into_owned()))
-                    .unwrap()
-            } else {
-                Response::builder()
-                    .status(StatusCode::NOT_FOUND)
-                    .body(Body::from("404 Not Found"))
-                    .unwrap()
+            // For SPA routing, only serve index.html for non-asset paths.
+            if should_fallback_to_index(path) {
+                if let Some(index) = Assets::get("index.html") {
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, HeaderValue::from_static("text/html"))
+                        .header(
+                            header::CACHE_CONTROL,
+                            HeaderValue::from_static(cache_control_for_path("index.html")),
+                        )
+                        .body(Body::from(index.data.into_owned()))
+                        .unwrap();
+                }
             }
+
+            Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::from("404 Not Found"))
+                .unwrap()
         }
     }
 }
@@ -95,6 +97,19 @@ fn is_hashed_asset(path: &str) -> bool {
     }
 
     hash.chars().all(|ch| ch.is_ascii_alphanumeric())
+}
+
+fn should_fallback_to_index(path: &str) -> bool {
+    if path.is_empty() {
+        return true;
+    }
+
+    let file_name = match Path::new(path).file_name().and_then(|name| name.to_str()) {
+        Some(name) => name,
+        None => return false,
+    };
+
+    !file_name.contains('.')
 }
 
 #[cfg(test)]

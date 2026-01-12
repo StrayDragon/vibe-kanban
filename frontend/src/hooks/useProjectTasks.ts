@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Operation } from 'rfc6902';
 import { useJsonPatchWsStream } from './useJsonPatchWsStream';
 import { normalizeIdMapPatches } from './jsonPatchUtils';
@@ -24,6 +24,14 @@ export interface UseProjectTasksResult {
  */
 export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
   const endpoint = `/api/tasks/stream/ws?project_id=${encodeURIComponent(projectId)}`;
+  const [connectEnabled, setConnectEnabled] = useState(false);
+
+  useEffect(() => {
+    setConnectEnabled(false);
+    if (!projectId) return;
+    const timer = window.setTimeout(() => setConnectEnabled(true), 200);
+    return () => window.clearTimeout(timer);
+  }, [projectId]);
 
   const initialData = useCallback((): TasksState => ({ tasks: {} }), []);
   const deduplicatePatches = useCallback(
@@ -34,7 +42,7 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
 
   const { data, isConnected, error } = useJsonPatchWsStream(
     endpoint,
-    !!projectId,
+    connectEnabled,
     initialData,
     { deduplicatePatches }
   );
@@ -72,7 +80,7 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
     return { tasks: sorted, tasksById: merged, tasksByStatus: byStatus };
   }, [localTasksById]);
 
-  const isLoading = !data && !error; // until first snapshot
+  const isLoading = !!projectId && !data && !error; // until first snapshot
 
   return {
     tasks,

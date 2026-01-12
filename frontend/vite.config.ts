@@ -49,6 +49,8 @@ export default schemas;
   };
 }
 
+const shouldGenerateSourceMap = process.env.VITE_SOURCEMAP === "true";
+
 export default defineConfig({
   plugins: [
     react(),
@@ -77,7 +79,7 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ["wa-sqlite"],
   },
-  build: { sourcemap: true },
+  build: { sourcemap: shouldGenerateSourceMap },
   test: {
     environment: "jsdom",
     setupFiles: "./src/test/setup.ts",

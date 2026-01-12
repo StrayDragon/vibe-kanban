@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useJsonPatchWsStream } from './useJsonPatchWsStream';
 import { scratchApi } from '@/lib/api';
 import { ScratchType, type Scratch, type UpdateScratch } from 'shared/types';
@@ -22,34 +22,46 @@ export interface UseScratchResult {
  */
 export const useScratch = (
   scratchType: ScratchType,
-  id: string
+  id?: string | null
 ): UseScratchResult => {
-  const endpoint = scratchApi.getStreamUrl(scratchType, id);
+  const enabled = Boolean(id);
+  const [connectEnabled, setConnectEnabled] = useState(false);
+  const endpoint =
+    enabled && id ? scratchApi.getStreamUrl(scratchType, id) : undefined;
 
   const initialData = useCallback((): ScratchState => ({ scratch: null }), []);
 
+  useEffect(() => {
+    setConnectEnabled(false);
+    if (!enabled) return;
+    const timer = window.setTimeout(() => setConnectEnabled(true), 200);
+    return () => window.clearTimeout(timer);
+  }, [enabled, id]);
+
   const { data, isConnected, error } = useJsonPatchWsStream<ScratchState>(
     endpoint,
-    true,
+    connectEnabled,
     initialData
   );
 
   // Treat deleted scratches as null
   const rawScratch = data?.scratch as (Scratch & { deleted?: boolean }) | null;
-  const scratch = rawScratch?.deleted ? null : rawScratch;
+  const scratch = rawScratch?.deleted ? null : rawScratch ?? null;
 
   const updateScratch = useCallback(
     async (update: UpdateScratch) => {
+      if (!id) return;
       await scratchApi.update(scratchType, id, update);
     },
     [scratchType, id]
   );
 
   const deleteScratch = useCallback(async () => {
+    if (!id) return;
     await scratchApi.delete(scratchType, id);
   }, [scratchType, id]);
 
-  const isLoading = !data && !error && !isConnected;
+  const isLoading = connectEnabled && !data && !error && !isConnected;
 
   return {
     scratch,

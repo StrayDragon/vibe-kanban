@@ -137,10 +137,11 @@ async fn handle_scratch_ws(
             }
             Err(e) => {
                 tracing::error!("scratch stream error: {}", e);
-                break;
+                continue;
             }
         }
     }
+    let _ = sender.close().await;
     Ok(())
 }
 

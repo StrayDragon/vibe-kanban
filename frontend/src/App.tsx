@@ -20,8 +20,6 @@ import { UserSystemProvider, useUserSystem } from '@/components/ConfigProvider';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { SearchProvider } from '@/contexts/SearchContext';
 
-import { HotkeysProvider } from 'react-hotkeys-hook';
-
 import { ProjectProvider } from '@/contexts/ProjectContext';
 import { ThemeMode } from 'shared/types';
 import { Loader } from '@/components/ui/loader';
@@ -156,11 +154,9 @@ function App() {
       <UserSystemProvider>
         <ClickedElementsProvider>
           <ProjectProvider>
-            <HotkeysProvider initiallyActiveScopes={['*', 'global', 'kanban']}>
-              <NiceModal.Provider>
-                <AppContent />
-              </NiceModal.Provider>
-            </HotkeysProvider>
+            <NiceModal.Provider>
+              <AppContent />
+            </NiceModal.Provider>
           </ProjectProvider>
         </ClickedElementsProvider>
       </UserSystemProvider>

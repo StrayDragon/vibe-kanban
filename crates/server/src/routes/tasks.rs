@@ -94,10 +94,11 @@ async fn handle_tasks_ws(
             }
             Err(e) => {
                 tracing::error!("stream error: {}", e);
-                break;
+                continue;
             }
         }
     }
+    let _ = sender.close().await;
     Ok(())
 }
 

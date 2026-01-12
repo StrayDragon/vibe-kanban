@@ -66,11 +66,12 @@ async fn handle_projects_ws(socket: WebSocket, deployment: DeploymentImpl) -> an
             }
             Err(e) => {
                 tracing::error!("stream error: {}", e);
-                break;
+                continue;
             }
         }
     }
 
+    let _ = sender.close().await;
     Ok(())
 }
 

@@ -363,10 +363,11 @@ async fn handle_execution_processes_ws(
             }
             Err(e) => {
                 tracing::error!("stream error: {}", e);
-                break;
+                continue;
             }
         }
     }
+    let _ = sender.close().await;
     Ok(())
 }
 

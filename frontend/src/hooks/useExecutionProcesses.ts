@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { Operation } from 'rfc6902';
 import { useJsonPatchWsStream } from './useJsonPatchWsStream';
 import { normalizeIdMapPatches } from './jsonPatchUtils';
@@ -27,6 +27,7 @@ export const useExecutionProcesses = (
   opts?: { showSoftDeleted?: boolean }
 ): UseExecutionProcessesResult => {
   const showSoftDeleted = opts?.showSoftDeleted;
+  const [connectEnabled, setConnectEnabled] = useState(false);
   let endpoint: string | undefined;
 
   if (taskAttemptId) {
@@ -36,6 +37,13 @@ export const useExecutionProcesses = (
     }
     endpoint = `/api/execution-processes/stream/ws?${params.toString()}`;
   }
+
+  useEffect(() => {
+    setConnectEnabled(false);
+    if (!taskAttemptId) return;
+    const timer = window.setTimeout(() => setConnectEnabled(true), 200);
+    return () => window.clearTimeout(timer);
+  }, [taskAttemptId, showSoftDeleted]);
 
   const initialData = useCallback(
     (): ExecutionProcessState => ({ execution_processes: {} }),
@@ -54,7 +62,7 @@ export const useExecutionProcesses = (
   const { data, isConnected, error } =
     useJsonPatchWsStream<ExecutionProcessState>(
       endpoint,
-      !!taskAttemptId,
+      connectEnabled,
       initialData,
       { deduplicatePatches }
     );
