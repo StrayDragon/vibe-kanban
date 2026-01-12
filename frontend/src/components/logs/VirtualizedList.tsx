@@ -1,13 +1,12 @@
+import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import {
-  DataWithScrollModifier,
-  ScrollModifier,
-  ScrollModifierOption,
-  VirtuosoMessageList,
-  VirtuosoMessageListLicense,
-  VirtuosoMessageListMethods,
-  VirtuosoMessageListProps,
-} from '@virtuoso.dev/message-list';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import DisplayConversationEntry from '../NormalizedConversation/DisplayConversationEntry';
 import { useEntries } from '@/contexts/EntriesContext';
@@ -31,23 +30,27 @@ interface MessageListContext {
   task?: TaskWithAttemptStatus;
 }
 
-const INITIAL_TOP_ITEM = { index: 'LAST' as const, align: 'end' as const };
+const ListHeader = () => <div className="h-2"></div>;
+const ListFooter = () => <div className="h-2"></div>;
 
-const InitialDataScrollModifier: ScrollModifier = {
-  type: 'item-location',
-  location: INITIAL_TOP_ITEM,
-  purgeItemSizes: true,
-};
+type PendingScrollAction =
+  | {
+      type: 'bottom';
+      behavior?: 'auto' | 'smooth';
+    }
+  | {
+      type: 'index';
+      index: number;
+      align: 'start' | 'center' | 'end';
+      offset?: number;
+      behavior?: 'auto' | 'smooth';
+    };
 
-const AutoScrollToBottom: ScrollModifier = {
-  type: 'auto-scroll-to-bottom',
-  autoScroll: 'smooth',
-};
-
-const ItemContent: VirtuosoMessageListProps<
-  PatchTypeWithKey,
-  MessageListContext
->['ItemContent'] = ({ data, context }) => {
+const renderItem = (
+  _index: number,
+  data: PatchTypeWithKey,
+  context: MessageListContext
+) => {
   const attempt = context?.attempt;
   const task = context?.task;
 
@@ -72,17 +75,16 @@ const ItemContent: VirtuosoMessageListProps<
   return null;
 };
 
-const computeItemKey: VirtuosoMessageListProps<
-  PatchTypeWithKey,
-  MessageListContext
->['computeItemKey'] = ({ data }) => `l-${data.patchKey}`;
+const computeItemKey = (_index: number, data: PatchTypeWithKey) =>
+  `l-${data.patchKey}`;
 
 const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
-  const [channelData, setChannelData] =
-    useState<DataWithScrollModifier<PatchTypeWithKey> | null>(null);
+  const [channelData, setChannelData] = useState<PatchTypeWithKey[]>([]);
   const [loading, setLoading] = useState(true);
+  const [atBottom, setAtBottom] = useState(true);
   const { entries, setEntries, reset } = useEntries();
-  const messageListRef = useRef<VirtuosoMessageListMethods | null>(null);
+  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+  const scrollerElementRef = useRef<HTMLElement | null>(null);
   const prevLengthRef = useRef<number>(0);
   const pendingHistoricAnchorRef = useRef<{
     key: string;
@@ -92,9 +94,10 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     key: string;
     offset: number;
   } | null>(null);
+  const pendingScrollActionRef = useRef<PendingScrollAction | null>(null);
 
   const isNearBottom = useCallback(() => {
-    const scroller = messageListRef.current?.scrollerElement();
+    const scroller = scrollerElementRef.current;
     if (!scroller) return true;
     const remaining =
       scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
@@ -104,7 +107,7 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
   const captureAnchor = useCallback((targetRef: {
     current: { key: string; offset: number } | null;
   }) => {
-    const scroller = messageListRef.current?.scrollerElement();
+    const scroller = scrollerElementRef.current;
     if (!scroller || entries.length === 0) return;
 
     const scrollerRect = scroller.getBoundingClientRect();
@@ -150,9 +153,11 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
 
   useEffect(() => {
     setLoading(true);
-    setChannelData(null);
+    setChannelData([]);
     prevLengthRef.current = 0;
     pendingHistoricAnchorRef.current = null;
+    pendingResizeAnchorRef.current = null;
+    pendingScrollActionRef.current = null;
     reset();
   }, [attempt.id, reset]);
 
@@ -172,19 +177,15 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     const prevLen = prevLengthRef.current;
     const nextLen = newEntries.length;
     const appended = nextLen > prevLen;
-    let scrollModifier: ScrollModifier | undefined;
-    const shouldPurgeItemSizes =
+    let pendingScrollAction: PendingScrollAction | null = null;
+    const shouldPreserveAnchor =
       addType === 'running' && hasContentChanges && !loading;
 
-    if (shouldPurgeItemSizes && !wasNearBottom) {
+    if (shouldPreserveAnchor && !wasNearBottom) {
       captureResizeAnchor();
     }
 
-    if (loading || addType === 'initial') {
-      scrollModifier = InitialDataScrollModifier;
-    } else if (addType === 'running') {
-      scrollModifier = AutoScrollToBottom;
-    } else if (addType === 'historic') {
+    if (addType === 'historic') {
       const anchor = pendingHistoricAnchorRef.current;
       if (anchor) {
         pendingHistoricAnchorRef.current = null;
@@ -192,32 +193,22 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
           (entry) => entry.patchKey === anchor.key
         );
         if (anchorIndex >= 0) {
-          scrollModifier = {
-            type: 'item-location',
-            location: {
-              index: anchorIndex,
-              align: 'start',
-              offset: anchor.offset,
-            },
+          pendingScrollAction = {
+            type: 'index',
+            index: anchorIndex,
+            align: 'start',
+            offset: anchor.offset,
+            behavior: 'auto',
           };
-        }
-      }
-
-      if (!scrollModifier) {
-        const addedCount = Math.max(0, nextLen - prevLen);
-        if (addedCount > 0) {
-          scrollModifier = ScrollModifierOption.prepend;
         }
       }
     }
 
-    if (shouldPurgeItemSizes) {
+    if (loading || addType === 'initial') {
+      pendingScrollAction = { type: 'bottom', behavior: 'auto' };
+    } else if (shouldPreserveAnchor) {
       if (wasNearBottom) {
-        scrollModifier = {
-          type: 'item-location',
-          location: INITIAL_TOP_ITEM,
-          purgeItemSizes: true,
-        };
+        pendingScrollAction = { type: 'bottom', behavior: 'auto' };
       } else {
         const anchor = pendingResizeAnchorRef.current;
         if (anchor) {
@@ -226,14 +217,12 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
             (entry) => entry.patchKey === anchor.key
           );
           if (anchorIndex >= 0) {
-            scrollModifier = {
-              type: 'item-location',
-              location: {
-                index: anchorIndex,
-                align: 'start',
-                offset: anchor.offset,
-              },
-              purgeItemSizes: true,
+            pendingScrollAction = {
+              type: 'index',
+              index: anchorIndex,
+              align: 'start',
+              offset: anchor.offset,
+              behavior: 'auto',
             };
           }
         }
@@ -241,18 +230,19 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     }
 
     if (
-      !scrollModifier &&
+      !pendingScrollAction &&
       wasNearBottom &&
       appended &&
       !pendingHistoricAnchorRef.current
     ) {
-      scrollModifier = AutoScrollToBottom;
+      pendingScrollAction = { type: 'bottom', behavior: 'smooth' };
     }
 
     prevLengthRef.current = newEntries.length;
 
-    setChannelData({ data: newEntries, scrollModifier });
+    setChannelData(newEntries);
     setEntries(newEntries);
+    pendingScrollActionRef.current = pendingScrollAction;
 
     if (loading) {
       setLoading(newLoading);
@@ -273,6 +263,38 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     [attempt, task]
   );
 
+  useLayoutEffect(() => {
+    const action = pendingScrollActionRef.current;
+    if (!action) return;
+    pendingScrollActionRef.current = null;
+
+    requestAnimationFrame(() => {
+      if (!virtuosoRef.current || channelData.length === 0) return;
+      if (action.type === 'bottom') {
+        virtuosoRef.current.scrollToIndex({
+          index: 'LAST',
+          align: 'end',
+          behavior: action.behavior ?? 'auto',
+        });
+        return;
+      }
+      virtuosoRef.current.scrollToIndex({
+        index: action.index,
+        align: action.align,
+        offset: action.offset,
+        behavior: action.behavior ?? 'auto',
+      });
+    });
+  }, [channelData]);
+
+  const handleScrollerRef = useCallback(
+    (element: HTMLElement | Window | null) => {
+      scrollerElementRef.current =
+        element instanceof HTMLElement ? element : null;
+    },
+    []
+  );
+
   return (
     <ApprovalFormProvider>
       {hasMoreHistory && !loading && (
@@ -287,22 +309,20 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
           </button>
         </div>
       )}
-      <VirtuosoMessageListLicense
-        licenseKey={import.meta.env.VITE_PUBLIC_REACT_VIRTUOSO_LICENSE_KEY}
-      >
-        <VirtuosoMessageList<PatchTypeWithKey, MessageListContext>
-          ref={messageListRef}
-          className="flex-1"
-          data={channelData}
-          initialLocation={INITIAL_TOP_ITEM}
-          shortSizeAlign="bottom"
-          context={messageListContext}
-          computeItemKey={computeItemKey}
-          ItemContent={ItemContent}
-          Header={() => <div className="h-2"></div>}
-          Footer={() => <div className="h-2"></div>}
-        />
-      </VirtuosoMessageListLicense>
+      <Virtuoso<PatchTypeWithKey, MessageListContext>
+        ref={virtuosoRef}
+        className="flex-1"
+        data={channelData}
+        alignToBottom
+        context={messageListContext}
+        computeItemKey={computeItemKey}
+        itemContent={renderItem}
+        components={{ Header: ListHeader, Footer: ListFooter }}
+        atBottomStateChange={setAtBottom}
+        atBottomThreshold={48}
+        followOutput={atBottom ? 'smooth' : false}
+        scrollerRef={handleScrollerRef}
+      />
       {loading && (
         <div className="float-left top-0 left-0 w-full h-full bg-primary flex flex-col gap-2 justify-center items-center">
           <Loader2 className="h-8 w-8 animate-spin" />

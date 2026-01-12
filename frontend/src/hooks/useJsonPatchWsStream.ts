@@ -71,10 +71,30 @@ export const useJsonPatchWsStream = <T extends object>(
   }, [scheduleReconnect]);
 
   useEffect(() => {
+    const closeWebSocket = (ws: WebSocket) => {
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+
+      if (ws.readyState === WebSocket.CONNECTING) {
+        // Avoid closing during CONNECTING to prevent console warnings.
+        ws.onopen = () => ws.close();
+        return;
+      }
+
+      ws.onopen = null;
+      if (
+        ws.readyState === WebSocket.OPEN ||
+        ws.readyState === WebSocket.CLOSING
+      ) {
+        ws.close();
+      }
+    };
+
     if (!enabled || !endpoint) {
       // Close connection and reset state
       if (wsRef.current) {
-        wsRef.current.close();
+        closeWebSocket(wsRef.current);
         wsRef.current = null;
       }
       if (retryTimerRef.current) {
@@ -181,16 +201,7 @@ export const useJsonPatchWsStream = <T extends object>(
 
     return () => {
       if (wsRef.current) {
-        const ws = wsRef.current;
-
-        // Clear all event handlers first to prevent callbacks after cleanup
-        ws.onopen = null;
-        ws.onmessage = null;
-        ws.onerror = null;
-        ws.onclose = null;
-
-        // Close regardless of state
-        ws.close();
+        closeWebSocket(wsRef.current);
         wsRef.current = null;
       }
       if (retryTimerRef.current) {

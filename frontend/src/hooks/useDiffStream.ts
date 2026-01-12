@@ -59,7 +59,10 @@ export const useDiffStream = (
   const { data, error } = useJsonPatchWsStream<DiffStreamEvent>(
     endpoint,
     enabled && !!attemptId,
-    initialData
+    initialData,
+    {
+      reconnectOnCleanClose: options?.statsOnly ? false : undefined,
+    }
     // No need for injectInitialEntry or deduplicatePatches for diffs
   );
 
