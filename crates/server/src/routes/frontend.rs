@@ -46,18 +46,18 @@ async fn serve_file(path: &str) -> impl IntoResponse + use<> {
         }
         None => {
             // For SPA routing, only serve index.html for non-asset paths.
-            if should_fallback_to_index(path) {
-                if let Some(index) = Assets::get("index.html") {
-                    return Response::builder()
-                        .status(StatusCode::OK)
-                        .header(header::CONTENT_TYPE, HeaderValue::from_static("text/html"))
-                        .header(
-                            header::CACHE_CONTROL,
-                            HeaderValue::from_static(cache_control_for_path("index.html")),
-                        )
-                        .body(Body::from(index.data.into_owned()))
-                        .unwrap();
-                }
+            if should_fallback_to_index(path)
+                && let Some(index) = Assets::get("index.html")
+            {
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, HeaderValue::from_static("text/html"))
+                    .header(
+                        header::CACHE_CONTROL,
+                        HeaderValue::from_static(cache_control_for_path("index.html")),
+                    )
+                    .body(Body::from(index.data.into_owned()))
+                    .unwrap();
             }
 
             Response::builder()

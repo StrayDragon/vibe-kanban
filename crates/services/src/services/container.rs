@@ -1225,14 +1225,14 @@ pub trait ContainerService {
                 _ => false,
             };
 
-            if cursor_before_min {
-                if let Ok((entries, has_more)) = fetch_db_entries(cursor).await {
-                    return Ok(LogHistoryPageData {
-                        entries,
-                        has_more,
-                        history_truncated,
-                    });
-                }
+            if cursor_before_min
+                && let Ok((entries, has_more)) = fetch_db_entries(cursor).await
+            {
+                return Ok(LogHistoryPageData {
+                    entries,
+                    has_more,
+                    history_truncated,
+                });
             }
 
             let (entries, _) = match channel {

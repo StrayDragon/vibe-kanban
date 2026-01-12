@@ -187,7 +187,9 @@ mod tests {
         let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
     }
 
-    async fn create_workspace(pool: &sqlx::SqlitePool) -> Result<Uuid, sqlx::Error> {
+    async fn create_workspace(
+        pool: &sqlx::SqlitePool,
+    ) -> Result<Uuid, Box<dyn std::error::Error>> {
         let project_id = Uuid::new_v4();
         let project = CreateProject {
             name: "session-test".to_string(),
