@@ -23,6 +23,11 @@ interface UseJsonPatchStreamOptions<T> {
    * Defaults to true to keep long-lived streams healthy across idle timeouts.
    */
   reconnectOnCleanClose?: boolean;
+  /**
+   * Whether to reconnect after an error/unclean close.
+   * Defaults to true to allow recovery from transient failures.
+   */
+  reconnectOnError?: boolean;
 }
 
 interface UseJsonPatchStreamResult<T> {
@@ -49,10 +54,12 @@ export const useJsonPatchWsStream = <T extends object>(
   const retryAttemptsRef = useRef<number>(0);
   const [retryNonce, setRetryNonce] = useState(0);
   const finishedRef = useRef<boolean>(false);
+  const hadErrorRef = useRef<boolean>(false);
 
   const injectInitialEntry = options?.injectInitialEntry;
   const deduplicatePatches = options?.deduplicatePatches;
   const reconnectOnCleanClose = options?.reconnectOnCleanClose ?? true;
+  const reconnectOnError = options?.reconnectOnError ?? true;
 
   const scheduleReconnect = useCallback(() => {
     // Exponential backoff with cap: 1s, 2s, 4s, 8s (max), then stay at 8s
@@ -132,6 +139,7 @@ export const useJsonPatchWsStream = <T extends object>(
       ws.onopen = () => {
         setError(null);
         setIsConnected(true);
+        hadErrorRef.current = false;
         // Reset backoff on successful connection
         retryAttemptsRef.current = 0;
         if (retryTimerRef.current) {
@@ -181,6 +189,7 @@ export const useJsonPatchWsStream = <T extends object>(
       };
 
       ws.onerror = () => {
+        hadErrorRef.current = true;
         setError('Connection failed');
       };
 
@@ -190,6 +199,9 @@ export const useJsonPatchWsStream = <T extends object>(
 
         const isCleanClose = evt?.code === 1000 && evt?.wasClean;
         if (finishedRef.current || (isCleanClose && !reconnectOnCleanClose)) {
+          return;
+        }
+        if (hadErrorRef.current && !reconnectOnError) {
           return;
         }
 
@@ -219,6 +231,7 @@ export const useJsonPatchWsStream = <T extends object>(
     injectInitialEntry,
     deduplicatePatches,
     reconnectOnCleanClose,
+    reconnectOnError,
     requestReconnect,
     retryNonce,
   ]);

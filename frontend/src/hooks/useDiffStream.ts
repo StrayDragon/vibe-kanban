@@ -62,6 +62,7 @@ export const useDiffStream = (
     initialData,
     {
       reconnectOnCleanClose: options?.statsOnly ? false : undefined,
+      reconnectOnError: options?.statsOnly ? false : undefined,
     }
     // No need for injectInitialEntry or deduplicatePatches for diffs
   );
