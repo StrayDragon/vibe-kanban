@@ -54,7 +54,6 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
     const { data: attempts = [], isLoading: isLoadingAttempts } =
       useTaskAttemptsWithSessions(taskId, {
         enabled: modal.visible,
-        refetchInterval: 5000,
       });
 
     const { data: task, isLoading: isLoadingTask } = useTask(taskId, {
