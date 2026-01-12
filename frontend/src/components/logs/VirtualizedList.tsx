@@ -89,10 +89,12 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
   const pendingHistoricAnchorRef = useRef<{
     key: string;
     offset: number;
+    index: number;
   } | null>(null);
   const pendingResizeAnchorRef = useRef<{
     key: string;
     offset: number;
+    index: number;
   } | null>(null);
   const pendingScrollActionRef = useRef<PendingScrollAction | null>(null);
 
@@ -105,7 +107,7 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
   }, []);
 
   const captureAnchor = useCallback((targetRef: {
-    current: { key: string; offset: number } | null;
+    current: { key: string; offset: number; index: number } | null;
   }) => {
     const scroller = scrollerElementRef.current;
     if (!scroller || entries.length === 0) return;
@@ -140,6 +142,7 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     targetRef.current = {
       key: entry.patchKey,
       offset: anchorItem.rect.top - scrollerRect.top,
+      index,
     };
   }, [entries]);
 
@@ -170,18 +173,23 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     const prevEntriesByKey = new Map(
       entries.map((entry) => [entry.patchKey, entry])
     );
-    const hasContentChanges = newEntries.some((entry) => {
+    let minChangedIndex: number | null = null;
+    newEntries.forEach((entry, index) => {
       const prevEntry = prevEntriesByKey.get(entry.patchKey);
-      return prevEntry && prevEntry !== entry;
+      if (prevEntry && prevEntry !== entry) {
+        minChangedIndex =
+          minChangedIndex === null ? index : Math.min(minChangedIndex, index);
+      }
     });
+    const hasContentChanges = minChangedIndex !== null;
     const prevLen = prevLengthRef.current;
     const nextLen = newEntries.length;
     const appended = nextLen > prevLen;
     let pendingScrollAction: PendingScrollAction | null = null;
-    const shouldPreserveAnchor =
-      addType === 'running' && hasContentChanges && !loading;
+    const shouldCaptureResizeAnchor =
+      addType === 'running' && hasContentChanges && !loading && !wasNearBottom;
 
-    if (shouldPreserveAnchor && !wasNearBottom) {
+    if (shouldCaptureResizeAnchor) {
       captureResizeAnchor();
     }
 
@@ -206,26 +214,29 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
 
     if (loading || addType === 'initial') {
       pendingScrollAction = { type: 'bottom', behavior: 'auto' };
-    } else if (shouldPreserveAnchor) {
-      if (wasNearBottom) {
-        pendingScrollAction = { type: 'bottom', behavior: 'auto' };
-      } else {
-        const anchor = pendingResizeAnchorRef.current;
-        if (anchor) {
-          pendingResizeAnchorRef.current = null;
-          const anchorIndex = newEntries.findIndex(
-            (entry) => entry.patchKey === anchor.key
-          );
-          if (anchorIndex >= 0) {
-            pendingScrollAction = {
-              type: 'index',
-              index: anchorIndex,
-              align: 'start',
-              offset: anchor.offset,
-              behavior: 'auto',
-            };
-          }
+    } else if (shouldCaptureResizeAnchor) {
+      const anchor = pendingResizeAnchorRef.current;
+      const shouldPreserveAnchor =
+        anchor &&
+        minChangedIndex !== null &&
+        minChangedIndex <= anchor.index;
+
+      if (shouldPreserveAnchor) {
+        pendingResizeAnchorRef.current = null;
+        const anchorIndex = newEntries.findIndex(
+          (entry) => entry.patchKey === anchor.key
+        );
+        if (anchorIndex >= 0) {
+          pendingScrollAction = {
+            type: 'index',
+            index: anchorIndex,
+            align: 'start',
+            offset: anchor.offset,
+            behavior: 'auto',
+          };
         }
+      } else if (anchor) {
+        pendingResizeAnchorRef.current = null;
       }
     }
 
@@ -294,6 +305,11 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     },
     []
   );
+  const followOutput = pendingScrollActionRef.current
+    ? false
+    : atBottom
+      ? 'smooth'
+      : false;
 
   return (
     <ApprovalFormProvider>
@@ -325,7 +341,7 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
         components={{ Header: ListHeader, Footer: ListFooter }}
         atBottomStateChange={setAtBottom}
         atBottomThreshold={48}
-        followOutput={atBottom ? 'smooth' : false}
+        followOutput={followOutput}
         scrollerRef={handleScrollerRef}
       />
       {loading && (
