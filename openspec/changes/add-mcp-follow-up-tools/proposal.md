@@ -4,8 +4,7 @@
 MCP users can start tasks but cannot send follow-up prompts or queue messages for active sessions, which blocks multi-agent scheduling and self-dispatch workflows.
 
 ## What Changes
-- Add an MCP tool to send an immediate follow-up prompt for a session/workspace.
-- Add an MCP tool to queue a follow-up prompt to run when the current execution finishes.
+- Add a single MCP tool to handle follow-up actions (`send`, `queue`, `cancel`).
 - Resolve workspace_id to the latest session_id when session_id is not supplied.
 - Return explicit errors when no session exists or when the prompt/message is empty.
 

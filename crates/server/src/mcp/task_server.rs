@@ -238,14 +238,24 @@ pub struct StartWorkspaceSessionResponse {
     pub workspace_id: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FollowUpAction {
+    Send,
+    Queue,
+    Cancel,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct FollowUpRequest {
-    #[schemars(description = "The session ID to send the follow-up to")]
+    #[schemars(description = "The session ID to target for the follow-up action")]
     pub session_id: Option<Uuid>,
     #[schemars(description = "The workspace ID whose latest session should be used")]
     pub workspace_id: Option<Uuid>,
-    #[schemars(description = "The follow-up prompt to send")]
-    pub prompt: String,
+    #[schemars(description = "The follow-up prompt for send/queue actions")]
+    pub prompt: Option<String>,
+    #[schemars(description = "The follow-up action to perform")]
+    pub action: FollowUpAction,
     #[schemars(description = "Optional executor variant for this follow-up")]
     pub variant: Option<String>,
 }
@@ -253,25 +263,9 @@ pub struct FollowUpRequest {
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct FollowUpResponse {
     pub session_id: String,
-    pub execution_process_id: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct QueueFollowUpRequest {
-    #[schemars(description = "The session ID to queue the follow-up for")]
-    pub session_id: Option<Uuid>,
-    #[schemars(description = "The workspace ID whose latest session should be used")]
-    pub workspace_id: Option<Uuid>,
-    #[schemars(description = "The follow-up message to queue")]
-    pub message: String,
-    #[schemars(description = "Optional executor variant for this follow-up")]
-    pub variant: Option<String>,
-}
-
-#[derive(Debug, Serialize, schemars::JsonSchema)]
-pub struct QueueFollowUpResponse {
-    pub session_id: String,
-    pub status: String,
+    pub action: FollowUpAction,
+    pub execution_process_id: Option<String>,
+    pub status: Option<String>,
     pub queued_message: Option<McpQueuedMessage>,
 }
 
@@ -294,17 +288,35 @@ impl McpQueuedMessage {
     }
 }
 
-impl QueueFollowUpResponse {
-    fn from_status(session_id: Uuid, status: QueueStatus) -> Self {
+impl FollowUpResponse {
+    fn from_execution(
+        session_id: Uuid,
+        action: FollowUpAction,
+        execution_process: ExecutionProcess,
+    ) -> Self {
+        Self {
+            session_id: session_id.to_string(),
+            action,
+            execution_process_id: Some(execution_process.id.to_string()),
+            status: None,
+            queued_message: None,
+        }
+    }
+
+    fn from_status(session_id: Uuid, action: FollowUpAction, status: QueueStatus) -> Self {
         match status {
             QueueStatus::Empty => Self {
                 session_id: session_id.to_string(),
-                status: "empty".to_string(),
+                action,
+                execution_process_id: None,
+                status: Some("empty".to_string()),
                 queued_message: None,
             },
             QueueStatus::Queued { message } => Self {
                 session_id: session_id.to_string(),
-                status: "queued".to_string(),
+                action,
+                execution_process_id: None,
+                status: Some("queued".to_string()),
                 queued_message: Some(McpQueuedMessage::from_queued_message(message)),
             },
         }
@@ -833,24 +845,33 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "Send a follow-up prompt to an existing session. Provide `session_id` or `workspace_id`."
+        description = "Manage follow-up actions for a session. Provide `session_id` or `workspace_id`, plus action=send|queue|cancel."
     )]
-    async fn send_follow_up(
+    async fn follow_up(
         &self,
         Parameters(FollowUpRequest {
             session_id,
             workspace_id,
             prompt,
+            action,
             variant,
         }): Parameters<FollowUpRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        if prompt.trim().is_empty() {
-            return Self::err("Prompt must not be empty.".to_string(), None::<String>);
-        }
-
         let session_id = match self.resolve_session_id(session_id, workspace_id).await {
             Ok(session_id) => session_id,
             Err(e) => return Ok(e),
+        };
+
+        let prompt = match action {
+            FollowUpAction::Send | FollowUpAction::Queue => {
+                let prompt = prompt.unwrap_or_default();
+                let trimmed = prompt.trim();
+                if trimmed.is_empty() {
+                    return Self::err("Prompt must not be empty.".to_string(), None::<String>);
+                }
+                Some(trimmed.to_string())
+            }
+            FollowUpAction::Cancel => None,
         };
 
         let variant = variant.and_then(|value| {
@@ -862,81 +883,70 @@ impl TaskServer {
             }
         });
 
-        #[derive(Serialize)]
-        struct FollowUpPayload {
-            prompt: String,
-            variant: Option<String>,
-            retry_process_id: Option<Uuid>,
-            force_when_dirty: Option<bool>,
-            perform_git_reset: Option<bool>,
-        }
+        match action {
+            FollowUpAction::Send => {
+                #[derive(Serialize)]
+                struct FollowUpPayload {
+                    prompt: String,
+                    variant: Option<String>,
+                    retry_process_id: Option<Uuid>,
+                    force_when_dirty: Option<bool>,
+                    perform_git_reset: Option<bool>,
+                }
 
-        let payload = FollowUpPayload {
-            prompt,
-            variant,
-            retry_process_id: None,
-            force_when_dirty: None,
-            perform_git_reset: None,
-        };
+                let payload = FollowUpPayload {
+                    prompt: prompt.unwrap_or_default(),
+                    variant,
+                    retry_process_id: None,
+                    force_when_dirty: None,
+                    perform_git_reset: None,
+                };
 
-        let url = self.url(&format!("/api/sessions/{}/follow-up", session_id));
-        let execution_process: ExecutionProcess =
-            match self.send_json(self.client.post(&url).json(&payload)).await {
-                Ok(process) => process,
-                Err(e) => return Ok(e),
-            };
+                let url = self.url(&format!("/api/sessions/{}/follow-up", session_id));
+                let execution_process: ExecutionProcess =
+                    match self.send_json(self.client.post(&url).json(&payload)).await {
+                        Ok(process) => process,
+                        Err(e) => return Ok(e),
+                    };
 
-        TaskServer::success(&FollowUpResponse {
-            session_id: session_id.to_string(),
-            execution_process_id: execution_process.id.to_string(),
-        })
-    }
-
-    #[tool(
-        description = "Queue a follow-up message to run after the current execution finishes. Provide `session_id` or `workspace_id`."
-    )]
-    async fn queue_follow_up(
-        &self,
-        Parameters(QueueFollowUpRequest {
-            session_id,
-            workspace_id,
-            message,
-            variant,
-        }): Parameters<QueueFollowUpRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        if message.trim().is_empty() {
-            return Self::err("Message must not be empty.".to_string(), None::<String>);
-        }
-
-        let session_id = match self.resolve_session_id(session_id, workspace_id).await {
-            Ok(session_id) => session_id,
-            Err(e) => return Ok(e),
-        };
-
-        let variant = variant.and_then(|value| {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
+                TaskServer::success(&FollowUpResponse::from_execution(
+                    session_id,
+                    action,
+                    execution_process,
+                ))
             }
-        });
+            FollowUpAction::Queue => {
+                #[derive(Serialize)]
+                struct QueuePayload {
+                    message: String,
+                    variant: Option<String>,
+                }
 
-        #[derive(Serialize)]
-        struct QueuePayload {
-            message: String,
-            variant: Option<String>,
+                let payload = QueuePayload {
+                    message: prompt.unwrap_or_default(),
+                    variant,
+                };
+
+                let url = self.url(&format!("/api/sessions/{}/queue", session_id));
+                let status: QueueStatus =
+                    match self.send_json(self.client.post(&url).json(&payload)).await {
+                        Ok(status) => status,
+                        Err(e) => return Ok(e),
+                    };
+
+                TaskServer::success(&FollowUpResponse::from_status(session_id, action, status))
+            }
+            FollowUpAction::Cancel => {
+                let url = self.url(&format!("/api/sessions/{}/queue", session_id));
+                let status: QueueStatus =
+                    match self.send_json(self.client.delete(&url)).await {
+                        Ok(status) => status,
+                        Err(e) => return Ok(e),
+                    };
+
+                TaskServer::success(&FollowUpResponse::from_status(session_id, action, status))
+            }
         }
-
-        let payload = QueuePayload { message, variant };
-        let url = self.url(&format!("/api/sessions/{}/queue", session_id));
-        let status: QueueStatus =
-            match self.send_json(self.client.post(&url).json(&payload)).await {
-                Ok(status) => status,
-                Err(e) => return Ok(e),
-            };
-
-        TaskServer::success(&QueueFollowUpResponse::from_status(session_id, status))
     }
 
     #[tool(
@@ -1034,7 +1044,7 @@ impl TaskServer {
 #[tool_handler]
 impl ServerHandler for TaskServer {
     fn get_info(&self) -> ServerInfo {
-        let mut instruction = "A task and project management server. If you need to create or update tickets or tasks then use these tools. Most of them absolutely require that you pass the `project_id` of the project that you are currently working on. You can get project ids by using `list projects`. Call `list_tasks` to fetch the `task_ids` of all the tasks in a project`.. TOOLS: 'list_projects', 'list_tasks', 'create_task', 'start_workspace_session', 'send_follow_up', 'queue_follow_up', 'get_task', 'update_task', 'delete_task', 'list_repos'. Make sure to pass `project_id` or `task_id` where required. You can use list tools to get the available ids.".to_string();
+        let mut instruction = "A task and project management server. If you need to create or update tickets or tasks then use these tools. Most of them absolutely require that you pass the `project_id` of the project that you are currently working on. You can get project ids by using `list projects`. Call `list_tasks` to fetch the `task_ids` of all the tasks in a project`.. TOOLS: 'list_projects', 'list_tasks', 'create_task', 'start_workspace_session', 'follow_up', 'get_task', 'update_task', 'delete_task', 'list_repos'. Make sure to pass `project_id` or `task_id` where required. You can use list tools to get the available ids.".to_string();
         if self.context.is_some() {
             let context_instruction = "Use 'get_context' to fetch project/task/workspace metadata for the active Vibe Kanban workspace session when available.";
             instruction = format!("{} {}", context_instruction, instruction);
