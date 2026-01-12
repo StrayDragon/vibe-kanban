@@ -30,8 +30,10 @@ try {
     env: { ...process.env, DATABASE_URL: databaseUrl }
   });
 
-  // Prepare queries
-  const sqlxCommand = checkMode ? 'cargo sqlx prepare --check' : 'cargo sqlx prepare';
+  // Prepare queries (include tests so rust-analyzer/cargo check --tests won't fail in offline mode)
+  const sqlxCommand = checkMode
+    ? 'cargo sqlx prepare --check -- --tests'
+    : 'cargo sqlx prepare -- --tests';
   console.log(checkMode ? 'Checking prepared queries...' : 'Preparing queries...');
   execSync(sqlxCommand, {
     stdio: 'inherit',
