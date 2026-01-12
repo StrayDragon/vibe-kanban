@@ -527,7 +527,11 @@ impl TaskServer {
             Some(workspace_id) => workspace_id,
             None => {
                 return Err(
-                    Self::err("session_id or workspace_id is required", None::<String>).unwrap(),
+                    Self::err(
+                        "session_id or workspace_id is required".to_string(),
+                        None::<String>,
+                    )
+                    .unwrap(),
                 );
             }
         };
@@ -542,7 +546,7 @@ impl TaskServer {
         let Some(latest) = latest else {
             return Err(
                 Self::err(
-                    "No sessions found for workspace",
+                    "No sessions found for workspace".to_string(),
                     Some(workspace_id.to_string()),
                 )
                 .unwrap(),
