@@ -729,6 +729,7 @@ export function TaskFollowUpSection({
             type="file"
             accept="image/*"
             multiple
+            name="followUpAttachments"
             className="hidden"
             onChange={handleFileInputChange}
           />

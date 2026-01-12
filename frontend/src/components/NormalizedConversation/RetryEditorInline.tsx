@@ -180,6 +180,7 @@ export function RetryEditorInline({
           type="file"
           accept="image/*"
           multiple
+          name="retryAttachments"
           className="hidden"
           onChange={handleFileInputChange}
         />
