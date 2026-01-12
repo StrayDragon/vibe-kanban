@@ -278,6 +278,7 @@ async fn handle_task_attempt_diff_ws(
             }
         }
     }
+    let _ = sender.close().await;
     Ok(())
 }
 
