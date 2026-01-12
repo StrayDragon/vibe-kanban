@@ -1,3 +1,5 @@
+use std::future::IntoFuture;
+
 use anyhow::{self, Error as AnyhowError};
 use deployment::{Deployment, DeploymentError};
 use server::{DeploymentImpl, routes};
@@ -5,8 +7,12 @@ use services::services::container::ContainerService;
 use sqlx::Error as SqlxError;
 use strip_ansi_escapes::strip;
 use thiserror::Error;
+use tokio::sync::watch;
 use tracing_subscriber::{EnvFilter, prelude::*};
 use utils::{assets::asset_dir, browser::open_browser, port_file::write_port_file};
+
+const GRACEFUL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 #[derive(Debug, Error)]
 pub enum VibeKanbanError {
@@ -112,55 +118,146 @@ async fn main() -> Result<(), VibeKanbanError> {
         });
     }
 
-    axum::serve(listener, app_router)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    let (shutdown_rx, force_exit_rx) = spawn_shutdown_watchers();
 
-    perform_cleanup_actions(&deployment).await;
+    let server = axum::serve(listener, app_router)
+        .with_graceful_shutdown(wait_for_watch_true(shutdown_rx.clone()))
+        .into_future();
+    tokio::pin!(server);
+
+    let serve_result = tokio::select! {
+        res = &mut server => res,
+        _ = wait_for_watch_true(force_exit_rx.clone()) => {
+            tracing::warn!("Force shutdown requested (second signal), exiting immediately");
+            std::process::exit(130);
+        }
+        _ = shutdown_deadline(shutdown_rx.clone(), GRACEFUL_SHUTDOWN_TIMEOUT) => {
+            tracing::warn!(
+                "Graceful shutdown timed out after {:?}, exiting immediately",
+                GRACEFUL_SHUTDOWN_TIMEOUT
+            );
+            std::process::exit(130);
+        }
+    };
+
+    serve_result?;
+
+    tokio::select! {
+        _ = perform_cleanup_actions(&deployment) => {}
+        _ = wait_for_watch_true(force_exit_rx.clone()) => {
+            tracing::warn!("Force shutdown requested during cleanup, exiting immediately");
+            std::process::exit(130);
+        }
+        _ = tokio::time::sleep(CLEANUP_TIMEOUT) => {
+            tracing::warn!("Cleanup timed out after {:?}, exiting immediately", CLEANUP_TIMEOUT);
+            std::process::exit(130);
+        }
+    }
+
+    if *shutdown_rx.borrow() {
+        std::process::exit(0);
+    }
 
     Ok(())
 }
 
-pub async fn shutdown_signal() {
-    // Always wait for Ctrl+C
-    let ctrl_c = async {
-        if let Err(e) = tokio::signal::ctrl_c().await {
-            tracing::error!("Failed to install Ctrl+C handler: {e}");
-        }
-    };
-
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-
-        // Try to install SIGTERM handler, but don't panic if it fails
-        let terminate = async {
-            if let Ok(mut sigterm) = signal(SignalKind::terminate()) {
-                sigterm.recv().await;
-            } else {
-                tracing::error!("Failed to install SIGTERM handler");
-                // Fallback: never resolves
-                std::future::pending::<()>().await;
-            }
-        };
-
-        tokio::select! {
-            _ = ctrl_c => {},
-            _ = terminate => {},
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        // Only ctrl_c is available, so just await it
-        ctrl_c.await;
+pub async fn perform_cleanup_actions(deployment: &DeploymentImpl) {
+    if let Err(e) = deployment.container().kill_all_running_processes().await {
+        tracing::warn!("Failed to cleanly kill running execution processes: {e}");
     }
 }
 
-pub async fn perform_cleanup_actions(deployment: &DeploymentImpl) {
-    deployment
-        .container()
-        .kill_all_running_processes()
-        .await
-        .expect("Failed to cleanly kill running execution processes");
+fn spawn_shutdown_watchers() -> (watch::Receiver<bool>, watch::Receiver<bool>) {
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let (force_exit_tx, force_exit_rx) = watch::channel(false);
+
+    tokio::spawn(async move {
+        let mut shutdown_sent = false;
+
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+
+            let mut sigint = match signal(SignalKind::interrupt()) {
+                Ok(sig) => sig,
+                Err(e) => {
+                    tracing::error!("Failed to install SIGINT handler: {e}");
+                    return;
+                }
+            };
+
+            let mut sigterm = match signal(SignalKind::terminate()) {
+                Ok(sig) => Some(sig),
+                Err(e) => {
+                    tracing::error!("Failed to install SIGTERM handler: {e}");
+                    None
+                }
+            };
+
+            loop {
+                tokio::select! {
+                    _ = sigint.recv() => {},
+                    _ = async {
+                        if let Some(sigterm) = sigterm.as_mut() {
+                            sigterm.recv().await;
+                        } else {
+                            std::future::pending::<()>().await;
+                        }
+                    } => {},
+                }
+
+                if !shutdown_sent {
+                    shutdown_sent = true;
+                    tracing::info!(
+                        "Shutdown signal received, starting graceful shutdown (press Ctrl+C again to force)"
+                    );
+                    let _ = shutdown_tx.send(true);
+                } else {
+                    tracing::warn!("Second shutdown signal received, forcing exit");
+                    let _ = force_exit_tx.send(true);
+                    break;
+                }
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                tracing::error!("Failed to install Ctrl+C handler: {e}");
+                return;
+            }
+
+            tracing::info!(
+                "Shutdown signal received, starting graceful shutdown (press Ctrl+C again to force)"
+            );
+            let _ = shutdown_tx.send(true);
+
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                tracing::error!("Failed to install Ctrl+C handler: {e}");
+                return;
+            }
+
+            tracing::warn!("Second shutdown signal received, forcing exit");
+            let _ = force_exit_tx.send(true);
+        }
+    });
+
+    (shutdown_rx, force_exit_rx)
+}
+
+async fn wait_for_watch_true(mut rx: watch::Receiver<bool>) {
+    loop {
+        if *rx.borrow() {
+            return;
+        }
+
+        if rx.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
+async fn shutdown_deadline(rx: watch::Receiver<bool>, timeout: std::time::Duration) {
+    wait_for_watch_true(rx).await;
+    tokio::time::sleep(timeout).await;
 }
