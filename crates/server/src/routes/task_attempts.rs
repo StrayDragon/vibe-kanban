@@ -99,6 +99,34 @@ pub async fn get_task_attempts(
     Ok(ResponseJson(ApiResponse::success(workspaces)))
 }
 
+#[derive(Debug, Serialize)]
+pub struct WorkspaceWithSession {
+    #[serde(flatten)]
+    pub workspace: Workspace,
+    pub session: Option<Session>,
+}
+
+pub async fn get_task_attempts_with_latest_session(
+    State(deployment): State<DeploymentImpl>,
+    Query(query): Query<TaskAttemptQuery>,
+) -> Result<ResponseJson<ApiResponse<Vec<WorkspaceWithSession>>>, ApiError> {
+    let pool = &deployment.db().pool;
+    let workspaces = Workspace::fetch_all(pool, query.task_id).await?;
+    let workspace_ids: Vec<Uuid> = workspaces.iter().map(|workspace| workspace.id).collect();
+    let sessions_by_workspace =
+        Session::find_latest_by_workspace_ids(pool, &workspace_ids).await?;
+
+    let attempts = workspaces
+        .into_iter()
+        .map(|workspace| WorkspaceWithSession {
+            session: sessions_by_workspace.get(&workspace.id).cloned(),
+            workspace,
+        })
+        .collect();
+
+    Ok(ResponseJson(ApiResponse::success(attempts)))
+}
+
 pub async fn get_task_attempt(
     Extension(workspace): Extension<Workspace>,
 ) -> Result<ResponseJson<ApiResponse<Workspace>>, ApiError> {
@@ -1446,6 +1474,10 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
 
     let task_attempts_router = Router::new()
         .route("/", get(get_task_attempts).post(create_task_attempt))
+        .route(
+            "/with-latest-session",
+            get(get_task_attempts_with_latest_session),
+        )
         .nest("/{id}", task_attempt_id_router)
         .nest("/{id}/images", images::router(deployment));
 

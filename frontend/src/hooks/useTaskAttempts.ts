@@ -1,8 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { attemptsApi, sessionsApi } from '@/lib/api';
+import { attemptsApi } from '@/lib/api';
 import type { Workspace } from 'shared/types';
 import type { WorkspaceWithSession } from '@/types/attempt';
-import { createWorkspaceWithSession } from '@/types/attempt';
 
 export const taskAttemptKeys = {
   all: ['taskAttempts'] as const,
@@ -38,17 +37,7 @@ export function useTaskAttemptsWithSessions(taskId?: string, opts?: Options) {
 
   return useQuery<WorkspaceWithSession[]>({
     queryKey: taskAttemptKeys.byTaskWithSessions(taskId),
-    queryFn: async () => {
-      const attempts = await attemptsApi.getAll(taskId!);
-      // Fetch sessions for all attempts in parallel
-      const sessionsResults = await Promise.all(
-        attempts.map((attempt) => sessionsApi.getByWorkspace(attempt.id))
-      );
-      return attempts.map((attempt, i) => {
-        const session = sessionsResults[i][0];
-        return createWorkspaceWithSession(attempt, session);
-      });
-    },
+    queryFn: () => attemptsApi.getAllWithSessions(taskId!),
     enabled,
     refetchInterval,
   });
