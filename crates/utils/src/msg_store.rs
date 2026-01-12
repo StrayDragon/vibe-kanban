@@ -68,6 +68,12 @@ pub struct LogEntrySnapshot {
     pub entry_json: Value,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct HistoryMetadata {
+    pub min_index: Option<usize>,
+    pub evicted: bool,
+}
+
 #[derive(Clone, Debug)]
 pub enum LogEntryEvent {
     Append { entry_index: usize, entry: Value },
@@ -247,6 +253,14 @@ impl MsgStore {
         (entries, has_more)
     }
 
+    pub fn raw_history_metadata(&self) -> HistoryMetadata {
+        let inner = self.inner.read().unwrap();
+        HistoryMetadata {
+            min_index: inner.raw_entries.front().map(|entry| entry.entry_index),
+            evicted: inner.raw_evicted,
+        }
+    }
+
     pub fn normalized_history_page(
         &self,
         limit: usize,
@@ -279,6 +293,15 @@ impl MsgStore {
         });
 
         (entries, has_more)
+    }
+
+    pub fn normalized_history_metadata(&self) -> HistoryMetadata {
+        let inner = self.inner.read().unwrap();
+        let min_index = inner.normalized_entries.iter().next().map(|(idx, _)| *idx);
+        HistoryMetadata {
+            min_index,
+            evicted: inner.normalized_evicted,
+        }
     }
 
     pub fn raw_history_plus_stream(

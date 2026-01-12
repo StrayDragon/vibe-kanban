@@ -82,7 +82,7 @@ describe('useConversationHistory', () => {
       }));
       const next_cursor = BigInt(start);
       const has_more = pageIndex < 10;
-      return { entries, next_cursor, has_more };
+      return { entries, next_cursor, has_more, history_truncated: false };
     });
 
     const fetchMock = vi.fn();
@@ -117,6 +117,7 @@ describe('useConversationHistory', () => {
     );
 
     await waitFor(() => expect(result.current.hasMoreHistory).toBe(true));
+    await waitFor(() => expect(result.current.historyTruncated).toBe(false));
 
     const calls = onEntriesUpdated.mock.calls;
     const initialEntries = calls[calls.length - 1]?.[0] ?? [];
@@ -132,6 +133,83 @@ describe('useConversationHistory', () => {
     });
 
     expect(fetchMock.mock.calls[10][0]).toContain('cursor=21');
+  });
+
+  it('flags historyTruncated when server reports partial history', async () => {
+    const now = new Date().toISOString();
+    const executionProcess: ExecutionProcess = {
+      id: 'process-truncated',
+      session_id: 'session-truncated',
+      run_reason: 'codingagent',
+      executor_action: {
+        typ: {
+          type: 'CodingAgentInitialRequest',
+          prompt: 'hi',
+          executor_profile_id: {
+            executor: BaseCodingAgent.CODEX,
+            variant: null,
+          },
+          working_dir: null,
+        },
+        next_action: null,
+      },
+      status: ExecutionProcessStatus.completed,
+      exit_code: null,
+      dropped: false,
+      started_at: now,
+      completed_at: now,
+      created_at: now,
+      updated_at: now,
+    };
+
+    mockExecutionContext.executionProcessesVisible = [executionProcess];
+
+    const normalizedEntry: PatchType = {
+      type: 'NORMALIZED_ENTRY',
+      content: {
+        entry_type: { type: 'assistant_message' },
+        content: 'hi',
+        metadata: null,
+        timestamp: null,
+      },
+    };
+
+    const page: LogHistoryPage = {
+      entries: [{ entry_index: 1n, entry: normalizedEntry }],
+      next_cursor: null,
+      has_more: false,
+      history_truncated: true,
+    };
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => makeApiResponse(page),
+    });
+
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    streamLogEntriesMock.mockImplementation(() => ({
+      close: vi.fn(),
+      isConnected: () => true,
+    }));
+
+    const attempt: Workspace = {
+      id: 'workspace-truncated',
+      task_id: 'task-truncated',
+      container_ref: null,
+      branch: 'main',
+      agent_working_dir: null,
+      setup_completed_at: null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const onEntriesUpdated = vi.fn();
+    const { result } = renderHook(() =>
+      useConversationHistory({ attempt, onEntriesUpdated })
+    );
+
+    await waitFor(() => expect(result.current.historyTruncated).toBe(true));
   });
 
   it('loads older processes when history is paged', async () => {
@@ -180,6 +258,7 @@ describe('useConversationHistory', () => {
       })),
       next_cursor: 1n,
       has_more: false,
+      history_truncated: false,
     });
 
     const processes = Array.from({ length: 12 }, (_, index) => {

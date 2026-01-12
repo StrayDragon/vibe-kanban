@@ -19,7 +19,7 @@ const makeApiResponse = (data: LogHistoryPage): ApiResponse<LogHistoryPage> => (
 });
 
 describe('useLogStream', () => {
-  it('sets truncated when older history exists and clears after loading older', async () => {
+  it('tracks hasMoreHistory without marking history as truncated', async () => {
     const rawEntryA: PatchType = { type: 'STDOUT', content: 'line-a' };
     const rawEntryB: PatchType = { type: 'STDERR', content: 'line-b' };
 
@@ -30,12 +30,14 @@ describe('useLogStream', () => {
       ],
       next_cursor: 1n,
       has_more: true,
+      history_truncated: false,
     };
 
     const pageTwo: LogHistoryPage = {
       entries: [{ entry_index: 0n, entry: rawEntryA }],
       next_cursor: null,
       has_more: false,
+      history_truncated: false,
     };
 
     const fetchMock = vi
@@ -59,13 +61,41 @@ describe('useLogStream', () => {
     const { result } = renderHook(() => useLogStream('process-1'));
 
     await waitFor(() => expect(result.current.hasMoreHistory).toBe(true));
-    expect(result.current.truncated).toBe(true);
+    expect(result.current.historyTruncated).toBe(false);
+    expect(result.current.bufferTruncated).toBe(false);
 
     await act(async () => {
       await result.current.loadOlder();
     });
 
     await waitFor(() => expect(result.current.hasMoreHistory).toBe(false));
-    await waitFor(() => expect(result.current.truncated).toBe(false));
+    await waitFor(() => expect(result.current.historyTruncated).toBe(false));
+  });
+
+  it('flags historyTruncated when server reports partial history', async () => {
+    const rawEntry: PatchType = { type: 'STDOUT', content: 'partial' };
+
+    const page: LogHistoryPage = {
+      entries: [{ entry_index: 1n, entry: rawEntry }],
+      next_cursor: null,
+      has_more: false,
+      history_truncated: true,
+    };
+
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => makeApiResponse(page),
+    });
+
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    streamLogEntriesMock.mockImplementation(() => ({
+      close: vi.fn(),
+      isConnected: () => true,
+    }));
+
+    const { result } = renderHook(() => useLogStream('process-2'));
+
+    await waitFor(() => expect(result.current.historyTruncated).toBe(true));
   });
 });

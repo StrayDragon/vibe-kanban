@@ -14,14 +14,16 @@ interface ProcessLogsViewerProps {
 export function ProcessLogsViewerContent({
   logs,
   error,
-  truncated = false,
+  historyTruncated = false,
+  bufferTruncated = false,
   hasMoreHistory = false,
   loadingOlder = false,
   onLoadOlder,
 }: {
   logs: LogEntry[];
   error: string | null;
-  truncated?: boolean;
+  historyTruncated?: boolean;
+  bufferTruncated?: boolean;
   hasMoreHistory?: boolean;
   loadingOlder?: boolean;
   onLoadOlder?: () => void;
@@ -76,9 +78,12 @@ export function ProcessLogsViewerContent({
 
   return (
     <div className="h-full">
-      {truncated && (
+      {(historyTruncated || bufferTruncated || hasMoreHistory) && (
         <div className="flex items-center justify-between gap-2 px-4 py-2 text-xs text-muted-foreground border-b">
-          <span>History truncated</span>
+          <div className="flex flex-col gap-1">
+            {historyTruncated && <span>Some older logs are unavailable.</span>}
+            {bufferTruncated && <span>Showing the most recent logs only.</span>}
+          </div>
           {hasMoreHistory && onLoadOlder && (
             <button
               onClick={onLoadOlder}
@@ -127,14 +132,16 @@ export default function ProcessLogsViewer({
     error,
     hasMoreHistory,
     loadingOlder,
-    truncated,
+    historyTruncated,
+    bufferTruncated,
     loadOlder,
   } = useLogStream(processId);
   return (
     <ProcessLogsViewerContent
       logs={logs}
       error={error}
-      truncated={truncated}
+      historyTruncated={historyTruncated}
+      bufferTruncated={bufferTruncated}
       hasMoreHistory={hasMoreHistory}
       loadingOlder={loadingOlder}
       onLoadOlder={loadOlder}

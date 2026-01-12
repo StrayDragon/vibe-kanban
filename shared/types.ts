@@ -170,7 +170,7 @@ export type ImageMetadata = { exists: boolean, file_name: string | null, path: s
 
 export type IndexedLogEntry = { entry_index: bigint, entry: PatchType, };
 
-export type LogHistoryPage = { entries: Array<IndexedLogEntry>, next_cursor: bigint | null, has_more: boolean, };
+export type LogHistoryPage = { entries: Array<IndexedLogEntry>, next_cursor: bigint | null, has_more: boolean, history_truncated: boolean, };
 
 export type LogStreamEvent = { "type": "append", entry_index: bigint, entry: PatchType, } | { "type": "replace", entry_index: bigint, entry: PatchType, } | { "type": "finished" };
 

@@ -14,7 +14,8 @@ interface UseLogStreamResult {
   error: string | null;
   hasMoreHistory: boolean;
   loadingOlder: boolean;
-  truncated: boolean;
+  historyTruncated: boolean;
+  bufferTruncated: boolean;
   loadOlder: () => Promise<void>;
 }
 
@@ -38,10 +39,10 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
   const [cursor, setCursor] = useState<bigint | null>(null);
   const [hasMoreHistory, setHasMoreHistory] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [truncated, setTruncated] = useState(false);
+  const [historyTruncated, setHistoryTruncated] = useState(false);
+  const [bufferTruncated, setBufferTruncated] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
 
-  const hasMoreHistoryRef = useRef(hasMoreHistory);
   const bufferLimitRef = useRef<number>(RAW_BUFFER_LIMIT);
   const droppedLinesRef = useRef<boolean>(false);
   const entriesRef = useRef<Map<string, LogEntry>>(new Map());
@@ -54,15 +55,13 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
   const finishedRef = useRef(false);
   const streamCycleRef = useRef(0);
 
-  const updateTruncated = useCallback(() => {
-    const truncatedNow = hasMoreHistoryRef.current || droppedLinesRef.current;
-    setTruncated(truncatedNow);
+  const updateBufferTruncated = useCallback(() => {
+    setBufferTruncated(droppedLinesRef.current);
   }, []);
 
   useEffect(() => {
-    hasMoreHistoryRef.current = hasMoreHistory;
-    updateTruncated();
-  }, [hasMoreHistory, updateTruncated]);
+    updateBufferTruncated();
+  }, [hasMoreHistory, updateBufferTruncated]);
 
   const fetchHistoryPage = useCallback(
     async (cursorValue: bigint | null) => {
@@ -112,8 +111,8 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
       .filter(Boolean) as LogEntry[];
 
     setLogs(nextLogs);
-    updateTruncated();
-  }, [updateTruncated]);
+    updateBufferTruncated();
+  }, [updateBufferTruncated]);
 
   const upsertEntries = useCallback(
     (entries: IndexedRawEntry[]) => {
@@ -164,6 +163,10 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
         setCursor((prev) => mergeCursor(prev, nextCursor));
         setHasMoreHistory((prev) => prev || page.has_more);
       }
+
+      if (page.history_truncated) {
+        setHistoryTruncated(true);
+      }
     },
     [mergeCursor, rebuildLogs, upsertEntries]
   );
@@ -191,7 +194,8 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
     setCursor(null);
     setHasMoreHistory(false);
     setLoadingOlder(false);
-    setTruncated(false);
+    setHistoryTruncated(false);
+    setBufferTruncated(false);
     droppedLinesRef.current = false;
     bufferLimitRef.current = RAW_BUFFER_LIMIT;
     entriesRef.current = new Map();
@@ -232,7 +236,7 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
       } finally {
         refreshInFlightRef.current = false;
         if (streamCycleRef.current === cycle) {
-          updateTruncated();
+          updateBufferTruncated();
         }
       }
     };
@@ -296,7 +300,7 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
     processId,
     retryNonce,
     scheduleReconnect,
-    updateTruncated,
+    updateBufferTruncated,
     upsertEntries,
   ]);
 
@@ -320,7 +324,7 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
       setError('Failed to load more history');
     } finally {
       setLoadingOlder(false);
-      updateTruncated();
+      updateBufferTruncated();
     }
   }, [
     applyHistoryPage,
@@ -328,8 +332,16 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
     fetchHistoryPage,
     hasMoreHistory,
     loadingOlder,
-    updateTruncated,
+    updateBufferTruncated,
   ]);
 
-  return { logs, error, hasMoreHistory, loadingOlder, truncated, loadOlder };
+  return {
+    logs,
+    error,
+    hasMoreHistory,
+    loadingOlder,
+    historyTruncated,
+    bufferTruncated,
+    loadOlder,
+  };
 };

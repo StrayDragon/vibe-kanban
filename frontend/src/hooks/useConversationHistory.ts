@@ -41,6 +41,7 @@ type ExecutionProcessState = {
   entries: PatchTypeWithKey[];
   cursor: bigint | null;
   hasMore: boolean;
+  historyTruncated: boolean;
 };
 
 type ExecutionProcessStateStore = Record<string, ExecutionProcessState>;
@@ -54,6 +55,7 @@ interface UseConversationHistoryResult {
   loadOlderHistory: () => Promise<void>;
   hasMoreHistory: boolean;
   loadingOlder: boolean;
+  historyTruncated: boolean;
 }
 
 const CONVERSATION_PAGE_SIZE = 20;
@@ -241,6 +243,7 @@ export const useConversationHistory = ({
   const onEntriesUpdatedRef = useRef<OnEntriesUpdated | null>(null);
   const [hasMoreHistory, setHasMoreHistory] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [historyTruncated, setHistoryTruncated] = useState(false);
 
   const mergeIntoDisplayed = (
     mutator: (state: ExecutionProcessStateStore) => void
@@ -277,6 +280,14 @@ export const useConversationHistory = ({
     const hasMoreInOldest = displayed[oldestDisplayed.id]?.hasMore ?? false;
 
     setHasMoreHistory(hasOlderHidden || hasMoreInOldest);
+  }, []);
+
+  const refreshHistoryTruncated = useCallback(() => {
+    const displayed = displayedExecutionProcesses.current;
+    const truncated = Object.values(displayed).some(
+      (process) => process.historyTruncated
+    );
+    setHistoryTruncated(truncated);
   }, []);
 
   useEffect(() => {
@@ -562,8 +573,14 @@ export const useConversationHistory = ({
       const entries = flattenEntriesForEmit(executionProcessState);
       onEntriesUpdatedRef.current?.(entries, addEntryType, loading);
       refreshHasMoreHistory();
+      refreshHistoryTruncated();
     },
-    [flattenEntriesForEmit, refreshHasMoreHistory, trimOldestProcessesToLimit]
+    [
+      flattenEntriesForEmit,
+      refreshHasMoreHistory,
+      refreshHistoryTruncated,
+      trimOldestProcessesToLimit,
+    ]
   );
 
   const getLiveExecutionProcess = (
@@ -607,6 +624,7 @@ export const useConversationHistory = ({
           entries: [],
           cursor: null,
           hasMore: false,
+          historyTruncated: false,
         };
       }
     });
@@ -630,6 +648,7 @@ export const useConversationHistory = ({
           entries: [],
           cursor: null,
           hasMore: false,
+          historyTruncated: false,
         };
 
         const mergedEntries = mergeHistoryEntries(
@@ -649,6 +668,8 @@ export const useConversationHistory = ({
           entries: limited.entries,
           cursor: limited.cursor,
           hasMore: (page?.has_more ?? existing.hasMore) || limited.trimmed,
+          historyTruncated:
+            existing.historyTruncated || (page?.history_truncated ?? false),
         };
       });
     },
@@ -672,6 +693,7 @@ export const useConversationHistory = ({
           entries: [],
           cursor: null,
           hasMore: false,
+          historyTruncated: false,
         };
 
         const mergedEntries = mergeHistoryEntries(
@@ -694,6 +716,8 @@ export const useConversationHistory = ({
           entries: limited.entries,
           cursor: limited.cursor,
           hasMore: page.has_more || limited.trimmed,
+          historyTruncated:
+            existing.historyTruncated || page.history_truncated,
         };
       });
     },
@@ -1132,5 +1156,10 @@ export const useConversationHistory = ({
     emitEntries(displayedExecutionProcesses.current, 'initial', true);
   }, [attempt.id, emitEntries]);
 
-  return { loadOlderHistory, hasMoreHistory, loadingOlder };
+  return {
+    loadOlderHistory,
+    hasMoreHistory,
+    loadingOlder,
+    historyTruncated,
+  };
 };

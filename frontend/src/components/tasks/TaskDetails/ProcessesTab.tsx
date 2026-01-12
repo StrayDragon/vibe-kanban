@@ -50,7 +50,8 @@ function ProcessesTab({ attemptId }: ProcessesTabProps) {
     error: logsError,
     hasMoreHistory,
     loadingOlder,
-    truncated,
+    historyTruncated,
+    bufferTruncated,
     loadOlder,
   } = useLogStream(selectedProcess?.id ?? '');
 
@@ -326,7 +327,8 @@ function ProcessesTab({ attemptId }: ProcessesTabProps) {
               <ProcessLogsViewerContent
                 logs={logs}
                 error={logsError}
-                truncated={truncated}
+                historyTruncated={historyTruncated}
+                bufferTruncated={bufferTruncated}
                 hasMoreHistory={hasMoreHistory}
                 loadingOlder={loadingOlder}
                 onLoadOlder={loadOlder}

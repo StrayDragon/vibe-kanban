@@ -73,6 +73,7 @@ pub struct DiffStreamOptions {
 pub struct LogHistoryPageData {
     pub entries: Vec<LogEntrySnapshot>,
     pub has_more: bool,
+    pub history_truncated: bool,
 }
 
 #[derive(Debug, Error)]
@@ -1127,24 +1128,7 @@ pub trait ContainerService {
         limit: usize,
         cursor: Option<i64>,
     ) -> Result<LogHistoryPageData, ContainerError> {
-        if execution_process.status == ExecutionProcessStatus::Running
-            && let Some(store) = self.get_msg_store_by_id(&execution_process.id).await
-        {
-            let cursor = cursor.and_then(|c| usize::try_from(c).ok());
-            let (entries, has_more) = match channel {
-                LogEntryChannel::Raw => store.raw_history_page(limit, cursor),
-                LogEntryChannel::Normalized => store.normalized_history_page(limit, cursor),
-            };
-            return Ok(LogHistoryPageData { entries, has_more });
-        }
-
-        if execution_process.status != ExecutionProcessStatus::Running {
-            self.backfill_log_entries_if_incomplete(execution_process.id, channel)
-                .await?;
-        }
-
-        if ExecutionProcessLogEntry::has_any(&self.db().pool, execution_process.id, channel).await?
-        {
+        let fetch_db_entries = |cursor| async move {
             let mut rows = ExecutionProcessLogEntry::fetch_page(
                 &self.db().pool,
                 execution_process.id,
@@ -1189,21 +1173,125 @@ pub trait ContainerService {
                 false
             };
 
-            return Ok(LogHistoryPageData { entries, has_more });
+            Ok::<_, ContainerError>((entries, has_more))
+        };
+
+        let cursor_usize = cursor.and_then(|c| usize::try_from(c).ok());
+
+        if execution_process.status == ExecutionProcessStatus::Running
+            && let Some(store) = self.get_msg_store_by_id(&execution_process.id).await
+        {
+            let history_meta = match channel {
+                LogEntryChannel::Raw => store.raw_history_metadata(),
+                LogEntryChannel::Normalized => store.normalized_history_metadata(),
+            };
+
+            if !history_meta.evicted {
+                let (entries, has_more) = match channel {
+                    LogEntryChannel::Raw => store.raw_history_page(limit, cursor_usize),
+                    LogEntryChannel::Normalized => store.normalized_history_page(limit, cursor_usize),
+                };
+                return Ok(LogHistoryPageData {
+                    entries,
+                    has_more,
+                    history_truncated: false,
+                });
+            }
+
+            let mut history_truncated = true;
+            if let Some(min_index) = history_meta.min_index {
+                match ExecutionProcessLogEntry::has_older(
+                    &self.db().pool,
+                    execution_process.id,
+                    channel,
+                    min_index as i64,
+                )
+                .await
+                {
+                    Ok(has_older) => history_truncated = !has_older,
+                    Err(err) => {
+                        tracing::warn!(
+                            "Failed to check older log entries for {}: {}",
+                            execution_process.id,
+                            err
+                        );
+                    }
+                }
+            }
+
+            let cursor_before_min = match (cursor_usize, history_meta.min_index) {
+                (Some(cursor), Some(min_index)) => cursor <= min_index,
+                (Some(_), None) => true,
+                _ => false,
+            };
+
+            if cursor_before_min {
+                if let Ok((entries, has_more)) = fetch_db_entries(cursor).await {
+                    return Ok(LogHistoryPageData {
+                        entries,
+                        has_more,
+                        history_truncated,
+                    });
+                }
+            }
+
+            let (entries, _) = match channel {
+                LogEntryChannel::Raw => store.raw_history_page(limit, cursor_usize),
+                LogEntryChannel::Normalized => store.normalized_history_page(limit, cursor_usize),
+            };
+
+            let has_more = if let Some(first) = entries.first() {
+                ExecutionProcessLogEntry::has_older(
+                    &self.db().pool,
+                    execution_process.id,
+                    channel,
+                    first.entry_index as i64,
+                )
+                .await
+                .unwrap_or(false)
+            } else {
+                false
+            };
+
+            return Ok(LogHistoryPageData {
+                entries,
+                has_more,
+                history_truncated,
+            });
+        }
+
+        if execution_process.status != ExecutionProcessStatus::Running {
+            self.backfill_log_entries_if_incomplete(execution_process.id, channel)
+                .await?;
+        }
+
+        if ExecutionProcessLogEntry::has_any(&self.db().pool, execution_process.id, channel).await?
+        {
+            let (entries, has_more) = fetch_db_entries(cursor).await?;
+
+            return Ok(LogHistoryPageData {
+                entries,
+                has_more,
+                history_truncated: false,
+            });
         }
 
         if let Some(store) = self.get_msg_store_by_id(&execution_process.id).await {
-            let cursor = cursor.and_then(|c| usize::try_from(c).ok());
             let (entries, has_more) = match channel {
-                LogEntryChannel::Raw => store.raw_history_page(limit, cursor),
-                LogEntryChannel::Normalized => store.normalized_history_page(limit, cursor),
+                LogEntryChannel::Raw => store.raw_history_page(limit, cursor_usize),
+                LogEntryChannel::Normalized => store.normalized_history_page(limit, cursor_usize),
             };
-            return Ok(LogHistoryPageData { entries, has_more });
+            return Ok(LogHistoryPageData {
+                entries,
+                has_more,
+                history_truncated: false,
+            });
         }
 
         Ok(LogHistoryPageData {
             entries: Vec::new(),
             has_more: false,
+            history_truncated: false,
         })
     }
 

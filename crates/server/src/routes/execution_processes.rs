@@ -55,6 +55,7 @@ pub struct LogHistoryPage {
     pub entries: Vec<IndexedLogEntry>,
     pub next_cursor: Option<i64>,
     pub has_more: bool,
+    pub history_truncated: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]
@@ -184,6 +185,7 @@ async fn build_log_history_page(
         entries,
         next_cursor,
         has_more: page.has_more,
+        history_truncated: page.history_truncated,
     })
 }
 

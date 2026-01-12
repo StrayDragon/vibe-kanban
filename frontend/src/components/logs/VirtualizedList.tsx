@@ -249,7 +249,7 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     }
   };
 
-  const { loadOlderHistory, hasMoreHistory, loadingOlder } =
+  const { loadOlderHistory, hasMoreHistory, loadingOlder, historyTruncated } =
     useConversationHistory({ attempt, onEntriesUpdated });
 
   const handleLoadOlderHistory = useCallback(() => {
@@ -297,16 +297,21 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
 
   return (
     <ApprovalFormProvider>
-      {hasMoreHistory && !loading && (
-        <div className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground">
-          <button
-            onClick={handleLoadOlderHistory}
-            disabled={loadingOlder}
-            className="flex items-center gap-1 px-2 py-1 rounded border border-border hover:text-foreground disabled:opacity-50"
-          >
-            {loadingOlder && <Loader2 className="h-3 w-3 animate-spin" />}
-            Load earlier history
-          </button>
+      {(historyTruncated || hasMoreHistory) && !loading && (
+        <div className="flex flex-col items-center gap-2 py-2 text-xs text-muted-foreground">
+          {historyTruncated && (
+            <span>Some earlier conversation history is unavailable.</span>
+          )}
+          {hasMoreHistory && (
+            <button
+              onClick={handleLoadOlderHistory}
+              disabled={loadingOlder}
+              className="flex items-center gap-1 px-2 py-1 rounded border border-border hover:text-foreground disabled:opacity-50"
+            >
+              {loadingOlder && <Loader2 className="h-3 w-3 animate-spin" />}
+              Load earlier history
+            </button>
+          )}
         </div>
       )}
       <Virtuoso<PatchTypeWithKey, MessageListContext>

@@ -67,7 +67,8 @@ export function DevServerLogsView({
             <ProcessLogsViewerContent
               logs={logs}
               error={error ?? null}
-              truncated={false}
+              historyTruncated={false}
+              bufferTruncated={false}
               hasMoreHistory={false}
             />
           ) : (
