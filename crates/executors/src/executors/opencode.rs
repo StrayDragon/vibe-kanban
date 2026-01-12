@@ -42,7 +42,7 @@ pub struct Opencode {
 
 impl Opencode {
     fn build_command_builder(&self) -> CommandBuilder {
-        let builder = CommandBuilder::new("npx -y opencode-ai@1.0.134").extend_params(["acp"]);
+        let builder = CommandBuilder::new("npx -y opencode-ai@latest").extend_params(["acp"]);
         apply_overrides(builder, &self.cmd)
     }
 
