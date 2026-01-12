@@ -861,6 +861,7 @@ export const useConversationHistory = ({
       let cursor: bigint | null = null;
       let hasMore = false;
       let entries: PatchTypeWithKey[] = [];
+      let historyTruncated = false;
 
       try {
         do {
@@ -888,6 +889,7 @@ export const useConversationHistory = ({
           entries = limited.entries;
           cursor = limited.cursor;
           hasMore = page.has_more || limited.trimmed;
+          historyTruncated = historyTruncated || page.history_truncated;
 
           localDisplayedExecutionProcesses[executionProcess.id] = {
             executionProcess: {
@@ -899,6 +901,7 @@ export const useConversationHistory = ({
             entries,
             cursor,
             hasMore,
+            historyTruncated,
           };
 
           if (
