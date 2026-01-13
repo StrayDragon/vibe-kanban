@@ -303,3 +303,9 @@
     @apply underline;
   }
 }
+
+@layer utilities {
+  .scroll-anchor-none {
+    overflow-anchor: none;
+  }
+}

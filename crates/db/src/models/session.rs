@@ -99,11 +99,11 @@ impl Session {
         }
 
         let mut query_builder = sqlx::QueryBuilder::new(
-            r#"SELECT id AS "id!: Uuid",
-                      workspace_id AS "workspace_id!: Uuid",
+            r#"SELECT id,
+                      workspace_id,
                       executor,
-                      created_at AS "created_at!: DateTime<Utc>",
-                      updated_at AS "updated_at!: DateTime<Utc>"
+                      created_at,
+                      updated_at
                FROM sessions
                WHERE workspace_id IN ("#,
         );

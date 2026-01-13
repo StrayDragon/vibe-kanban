@@ -96,55 +96,53 @@ function AppContent() {
     <I18nextProvider i18n={i18n}>
       <ThemeProvider initialTheme={config?.theme || ThemeMode.SYSTEM}>
         <SearchProvider>
-          <EventStreamProvider>
-            <div className="h-screen flex flex-col bg-background">
-              <Routes>
-                {/* VS Code full-page logs route (outside NormalLayout for minimal UI) */}
-                <Route
-                  path="/projects/:projectId/tasks/:taskId/attempts/:attemptId/full"
-                  element={<FullAttemptLogsPage />}
-                />
+          <div className="h-screen flex flex-col bg-background">
+            <Routes>
+              {/* VS Code full-page logs route (outside NormalLayout for minimal UI) */}
+              <Route
+                path="/projects/:projectId/tasks/:taskId/attempts/:attemptId/full"
+                element={<FullAttemptLogsPage />}
+              />
 
-                <Route element={<NormalLayout />}>
-                  <Route path="/" element={<Projects />} />
-                  <Route path="/projects" element={<Projects />} />
-                  <Route path="/projects/:projectId" element={<Projects />} />
-                  <Route path="/tasks" element={<TasksOverview />} />
-                  <Route
-                    path="/tasks/:projectId/:taskId"
-                    element={<TasksOverview />}
-                  />
-                  <Route
-                    path="/tasks/:projectId/:taskId/attempts/:attemptId"
-                    element={<TasksOverview />}
-                  />
-                  <Route
-                    path="/projects/:projectId/tasks"
-                    element={<ProjectTasks />}
-                  />
-                  <Route path="/settings/*" element={<SettingsLayout />}>
-                    <Route index element={<Navigate to="general" replace />} />
-                    <Route path="general" element={<GeneralSettings />} />
-                    <Route path="projects" element={<ProjectSettings />} />
-                    <Route path="agents" element={<AgentSettings />} />
-                    <Route path="mcp" element={<McpSettings />} />
-                  </Route>
-                  <Route
-                    path="/mcp-servers"
-                    element={<Navigate to="/settings/mcp" replace />}
-                  />
-                  <Route
-                    path="/projects/:projectId/tasks/:taskId"
-                    element={<ProjectTasks />}
-                  />
-                  <Route
-                    path="/projects/:projectId/tasks/:taskId/attempts/:attemptId"
-                    element={<ProjectTasks />}
-                  />
+              <Route element={<NormalLayout />}>
+                <Route path="/" element={<Projects />} />
+                <Route path="/projects" element={<Projects />} />
+                <Route path="/projects/:projectId" element={<Projects />} />
+                <Route path="/tasks" element={<TasksOverview />} />
+                <Route
+                  path="/tasks/:projectId/:taskId"
+                  element={<TasksOverview />}
+                />
+                <Route
+                  path="/tasks/:projectId/:taskId/attempts/:attemptId"
+                  element={<TasksOverview />}
+                />
+                <Route
+                  path="/projects/:projectId/tasks"
+                  element={<ProjectTasks />}
+                />
+                <Route path="/settings/*" element={<SettingsLayout />}>
+                  <Route index element={<Navigate to="general" replace />} />
+                  <Route path="general" element={<GeneralSettings />} />
+                  <Route path="projects" element={<ProjectSettings />} />
+                  <Route path="agents" element={<AgentSettings />} />
+                  <Route path="mcp" element={<McpSettings />} />
                 </Route>
-              </Routes>
-            </div>
-          </EventStreamProvider>
+                <Route
+                  path="/mcp-servers"
+                  element={<Navigate to="/settings/mcp" replace />}
+                />
+                <Route
+                  path="/projects/:projectId/tasks/:taskId"
+                  element={<ProjectTasks />}
+                />
+                <Route
+                  path="/projects/:projectId/tasks/:taskId/attempts/:attemptId"
+                  element={<ProjectTasks />}
+                />
+              </Route>
+            </Routes>
+          </div>
         </SearchProvider>
       </ThemeProvider>
     </I18nextProvider>
@@ -157,9 +155,11 @@ function App() {
       <UserSystemProvider>
         <ClickedElementsProvider>
           <ProjectProvider>
-            <NiceModal.Provider>
-              <AppContent />
-            </NiceModal.Provider>
+            <EventStreamProvider>
+              <NiceModal.Provider>
+                <AppContent />
+              </NiceModal.Provider>
+            </EventStreamProvider>
           </ProjectProvider>
         </ClickedElementsProvider>
       </UserSystemProvider>

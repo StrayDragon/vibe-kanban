@@ -46,6 +46,54 @@ type PendingScrollAction =
       behavior?: 'auto' | 'smooth';
     };
 
+const normalizedEntryEquals = (
+  prevEntry: PatchTypeWithKey,
+  nextEntry: PatchTypeWithKey
+) => {
+  if (prevEntry.type !== 'NORMALIZED_ENTRY') return false;
+  if (nextEntry.type !== 'NORMALIZED_ENTRY') return false;
+
+  if (prevEntry.content.content !== nextEntry.content.content) return false;
+
+  if (
+    JSON.stringify(prevEntry.content.entry_type) !==
+    JSON.stringify(nextEntry.content.entry_type)
+  ) {
+    return false;
+  }
+
+  return (
+    JSON.stringify(prevEntry.content.metadata ?? null) ===
+    JSON.stringify(nextEntry.content.metadata ?? null)
+  );
+};
+
+const areEntriesEquivalent = (
+  prevEntry: PatchTypeWithKey,
+  nextEntry: PatchTypeWithKey
+) => {
+  if (prevEntry.type !== nextEntry.type) return false;
+
+  if (prevEntry.type === 'STDOUT' || prevEntry.type === 'STDERR') {
+    return prevEntry.content === nextEntry.content;
+  }
+
+  if (prevEntry.type === 'DIFF' && nextEntry.type === 'DIFF') {
+    return (
+      JSON.stringify(prevEntry.content) === JSON.stringify(nextEntry.content)
+    );
+  }
+
+  if (
+    prevEntry.type === 'NORMALIZED_ENTRY' &&
+    nextEntry.type === 'NORMALIZED_ENTRY'
+  ) {
+    return normalizedEntryEquals(prevEntry, nextEntry);
+  }
+
+  return false;
+};
+
 const renderItem = (
   _index: number,
   data: PatchTypeWithKey,
@@ -176,7 +224,7 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     let minChangedIndex: number | null = null;
     newEntries.forEach((entry, index) => {
       const prevEntry = prevEntriesByKey.get(entry.patchKey);
-      if (prevEntry && prevEntry !== entry) {
+      if (prevEntry && !areEntriesEquivalent(prevEntry, entry)) {
         minChangedIndex =
           minChangedIndex === null ? index : Math.min(minChangedIndex, index);
       }
@@ -332,7 +380,7 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
       )}
       <Virtuoso<PatchTypeWithKey, MessageListContext>
         ref={virtuosoRef}
-        className="flex-1"
+        className="flex-1 scroll-anchor-none"
         data={channelData}
         alignToBottom
         context={messageListContext}
