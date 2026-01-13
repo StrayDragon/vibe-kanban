@@ -8,18 +8,6 @@ import enCommon from './locales/en/common.json';
 import enSettings from './locales/en/settings.json';
 import enProjects from './locales/en/projects.json';
 import enTasks from './locales/en/tasks.json';
-import jaCommon from './locales/ja/common.json';
-import jaSettings from './locales/ja/settings.json';
-import jaProjects from './locales/ja/projects.json';
-import jaTasks from './locales/ja/tasks.json';
-import esCommon from './locales/es/common.json';
-import esSettings from './locales/es/settings.json';
-import esProjects from './locales/es/projects.json';
-import esTasks from './locales/es/tasks.json';
-import koCommon from './locales/ko/common.json';
-import koSettings from './locales/ko/settings.json';
-import koProjects from './locales/ko/projects.json';
-import koTasks from './locales/ko/tasks.json';
 import zhHansCommon from './locales/zh-Hans/common.json';
 import zhHansSettings from './locales/zh-Hans/settings.json';
 import zhHansProjects from './locales/zh-Hans/projects.json';
@@ -31,24 +19,6 @@ const resources = {
     settings: enSettings,
     projects: enProjects,
     tasks: enTasks,
-  },
-  ja: {
-    common: jaCommon,
-    settings: jaSettings,
-    projects: jaProjects,
-    tasks: jaTasks,
-  },
-  es: {
-    common: esCommon,
-    settings: esSettings,
-    projects: esProjects,
-    tasks: esTasks,
-  },
-  ko: {
-    common: koCommon,
-    settings: koSettings,
-    projects: koProjects,
-    tasks: koTasks,
   },
   'zh-Hans': {
     common: zhHansCommon,
