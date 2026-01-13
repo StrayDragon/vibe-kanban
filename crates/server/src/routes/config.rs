@@ -122,6 +122,8 @@ async fn update_config(
         ));
     }
 
+    let new_config = new_config.normalized();
+
     // Get old config state before updating
     let old_config = deployment.config().read().await.clone();
 

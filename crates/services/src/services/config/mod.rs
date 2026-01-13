@@ -3,9 +3,13 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 pub mod editor;
-mod versions;
+mod schema;
 
-pub use editor::EditorOpenError;
+pub use editor::{EditorConfig, EditorOpenError, EditorType};
+pub use schema::{
+    Config, DiffPreviewGuardPreset, GitHubConfig, NotificationConfig, ShowcaseState, SoundFile,
+    ThemeMode, UiLanguage, CURRENT_CONFIG_VERSION,
+};
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -17,23 +21,16 @@ pub enum ConfigError {
     ValidationError(String),
 }
 
-pub type Config = versions::v9::Config;
-pub type NotificationConfig = versions::v9::NotificationConfig;
-pub type EditorConfig = versions::v9::EditorConfig;
-pub type ThemeMode = versions::v9::ThemeMode;
-pub type SoundFile = versions::v9::SoundFile;
-pub type EditorType = versions::v9::EditorType;
-pub type GitHubConfig = versions::v9::GitHubConfig;
-pub type UiLanguage = versions::v9::UiLanguage;
-pub type ShowcaseState = versions::v9::ShowcaseState;
-pub type DiffPreviewGuardPreset = versions::v9::DiffPreviewGuardPreset;
-
-/// Will always return config, trying old schemas or eventually returning default
+/// Will always return config, falling back to defaults on missing/invalid files.
 pub async fn load_config_from_file(config_path: &PathBuf) -> Config {
     match std::fs::read_to_string(config_path) {
-        Ok(raw_config) => Config::from(raw_config),
-        Err(_) => {
-            tracing::info!("No config file found, creating one");
+        Ok(raw_config) => Config::from_raw(&raw_config),
+        Err(err) => {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                tracing::info!("No config file found, creating one");
+            } else {
+                tracing::warn!("Failed to read config file: {}", err);
+            }
             Config::default()
         }
     }
@@ -44,7 +41,8 @@ pub async fn save_config_to_file(
     config: &Config,
     config_path: &PathBuf,
 ) -> Result<(), ConfigError> {
-    let raw_config = serde_json::to_string_pretty(config)?;
+    let normalized = config.clone().normalized();
+    let raw_config = serde_json::to_string_pretty(&normalized)?;
     std::fs::write(config_path, raw_config)?;
     Ok(())
 }

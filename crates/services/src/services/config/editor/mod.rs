@@ -30,12 +30,15 @@ pub enum EditorOpenError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(default)]
 pub struct EditorConfig {
+    #[serde(alias = "editorType")]
     editor_type: EditorType,
+    #[serde(alias = "customCommand")]
     custom_command: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "remoteSshHost")]
     remote_ssh_host: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "remoteSshUser")]
     remote_ssh_user: Option<String>,
 }
 
@@ -65,7 +68,7 @@ impl Default for EditorConfig {
 }
 
 impl EditorConfig {
-    /// Create a new EditorConfig. This is primarily used by version migrations.
+    /// Create a new EditorConfig for explicit construction in handlers/tests.
     pub fn new(
         editor_type: EditorType,
         custom_command: Option<String>,
