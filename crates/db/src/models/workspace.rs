@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, SqlitePool, Type};
+use sqlx::{FromRow, QueryBuilder, SqlitePool, Type};
 use thiserror::Error;
 use ts_rs::TS;
 use uuid::Uuid;
@@ -139,6 +139,43 @@ impl Workspace {
             .await
             .map_err(WorkspaceError::Database)?,
         };
+
+        Ok(workspaces)
+    }
+
+    /// Fetch all workspaces for a list of task IDs. Newest first.
+    pub async fn fetch_all_by_task_ids(
+        pool: &SqlitePool,
+        task_ids: &[Uuid],
+    ) -> Result<Vec<Self>, WorkspaceError> {
+        if task_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut query_builder = QueryBuilder::new(
+            r#"SELECT id AS "id!: Uuid",
+                      task_id AS "task_id!: Uuid",
+                      container_ref,
+                      branch,
+                      agent_working_dir,
+                      setup_completed_at AS "setup_completed_at: DateTime<Utc>",
+                      created_at AS "created_at!: DateTime<Utc>",
+                      updated_at AS "updated_at!: DateTime<Utc>"
+               FROM workspaces
+               WHERE task_id IN ("#,
+        );
+
+        let mut separated = query_builder.separated(", ");
+        for task_id in task_ids {
+            separated.push_bind(task_id);
+        }
+        query_builder.push(") ORDER BY created_at DESC");
+
+        let workspaces = query_builder
+            .build_query_as()
+            .fetch_all(pool)
+            .await
+            .map_err(WorkspaceError::Database)?;
 
         Ok(workspaces)
     }

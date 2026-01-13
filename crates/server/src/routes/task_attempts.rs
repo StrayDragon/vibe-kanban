@@ -83,6 +83,20 @@ pub struct TaskAttemptQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct TaskAttemptLatestSummaryRequest {
+    pub task_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TaskAttemptLatestSummary {
+    pub task_id: Uuid,
+    pub latest_attempt_id: Option<Uuid>,
+    pub latest_workspace_branch: Option<String>,
+    pub latest_session_id: Option<Uuid>,
+    pub latest_session_executor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct DiffStreamQuery {
     #[serde(default)]
     pub stats_only: bool,
@@ -125,6 +139,73 @@ pub async fn get_task_attempts_with_latest_session(
         .collect();
 
     Ok(ResponseJson(ApiResponse::success(attempts)))
+}
+
+pub async fn get_task_attempts_latest_summaries(
+    State(deployment): State<DeploymentImpl>,
+    Json(payload): Json<TaskAttemptLatestSummaryRequest>,
+) -> Result<ResponseJson<ApiResponse<Vec<TaskAttemptLatestSummary>>>, ApiError> {
+    if payload.task_ids.is_empty() {
+        return Ok(ResponseJson(ApiResponse::success(Vec::new())));
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let task_ids: Vec<Uuid> = payload
+        .task_ids
+        .into_iter()
+        .filter(|task_id| seen.insert(*task_id))
+        .collect();
+
+    let pool = &deployment.db().pool;
+    let workspaces = Workspace::fetch_all_by_task_ids(pool, &task_ids).await?;
+    let workspace_ids: Vec<Uuid> = workspaces.iter().map(|workspace| workspace.id).collect();
+    let sessions_by_workspace = Session::find_latest_by_workspace_ids(pool, &workspace_ids).await?;
+
+    let mut latest_by_task: HashMap<Uuid, Workspace> = HashMap::new();
+    for workspace in workspaces {
+        match latest_by_task.entry(workspace.task_id) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(workspace);
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let current = entry.get();
+                let created_cmp = workspace.created_at.cmp(&current.created_at);
+                let is_newer = if created_cmp == std::cmp::Ordering::Equal {
+                    workspace.id < current.id
+                } else {
+                    created_cmp == std::cmp::Ordering::Greater
+                };
+
+                if is_newer {
+                    entry.insert(workspace);
+                }
+            }
+        }
+    }
+
+    let mut summaries = Vec::with_capacity(task_ids.len());
+    for task_id in task_ids {
+        if let Some(workspace) = latest_by_task.get(&task_id) {
+            let session = sessions_by_workspace.get(&workspace.id);
+            summaries.push(TaskAttemptLatestSummary {
+                task_id,
+                latest_attempt_id: Some(workspace.id),
+                latest_workspace_branch: Some(workspace.branch.clone()),
+                latest_session_id: session.map(|s| s.id),
+                latest_session_executor: session.and_then(|s| s.executor.clone()),
+            });
+        } else {
+            summaries.push(TaskAttemptLatestSummary {
+                task_id,
+                latest_attempt_id: None,
+                latest_workspace_branch: None,
+                latest_session_id: None,
+                latest_session_executor: None,
+            });
+        }
+    }
+
+    Ok(ResponseJson(ApiResponse::success(summaries)))
 }
 
 pub async fn get_task_attempt(
@@ -1477,6 +1558,10 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         .route(
             "/with-latest-session",
             get(get_task_attempts_with_latest_session),
+        )
+        .route(
+            "/latest-summaries",
+            post(get_task_attempts_latest_summaries),
         )
         .nest("/{id}", task_attempt_id_router)
         .nest("/{id}/images", images::router(deployment));

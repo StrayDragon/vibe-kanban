@@ -150,6 +150,22 @@ graph TB
 - `image.rs`：附加到任务的截图
 - `workspace.rs`：项目工作区（包含 git worktrees）
 
+**实体关系（Attempt = Workspace）**：
+
+```mermaid
+erDiagram
+    PROJECT ||--o{ TASK : contains
+    PROJECT ||--o{ PROJECT_REPO : has
+    REPO ||--o{ PROJECT_REPO : in
+    TASK ||--o{ WORKSPACE : attempts
+    WORKSPACE ||--o{ WORKSPACE_REPO : uses
+    REPO ||--o{ WORKSPACE_REPO : checked_out
+    WORKSPACE ||--o{ SESSION : runs
+    SESSION ||--o{ EXECUTION_PROCESS : spawns
+```
+
+说明：MCP 里统一使用 **attempt** 概念，当前代码中 `attempt_id == workspace.id`。
+
 **核心设计**：所有模型使用 `ts-rs` derive 自动生成 TypeScript 类型，确保跨 FFI 边界的类型安全。
 
 ### 4. 服务层 (`crates/services/src/services/`)

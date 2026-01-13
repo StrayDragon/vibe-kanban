@@ -1,4 +1,4 @@
-use std::{future::Future, str::FromStr};
+use std::{cmp::Ordering, future::Future, str::FromStr};
 
 use db::models::{
     execution_process::ExecutionProcess,
@@ -31,7 +31,7 @@ use crate::routes::{
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateTaskRequest {
-    #[schemars(description = "The ID of the project to create the task in. This is required!")]
+    #[schemars(description = "The ID of the project to create the task in (UUID string). This is required!")]
     pub project_id: Uuid,
     #[schemars(description = "The title of the task")]
     pub title: String,
@@ -41,12 +41,13 @@ pub struct CreateTaskRequest {
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct CreateTaskResponse {
+    #[schemars(description = "The unique identifier of the created task (UUID string)")]
     pub task_id: String,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct ProjectSummary {
-    #[schemars(description = "The unique identifier of the project")]
+    #[schemars(description = "The unique identifier of the project (UUID string)")]
     pub id: String,
     #[schemars(description = "The name of the project")]
     pub name: String,
@@ -69,7 +70,7 @@ impl ProjectSummary {
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct McpRepoSummary {
-    #[schemars(description = "The unique identifier of the repository")]
+    #[schemars(description = "The unique identifier of the repository (UUID string)")]
     pub id: String,
     #[schemars(description = "The name of the repository")]
     pub name: String,
@@ -77,26 +78,31 @@ pub struct McpRepoSummary {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListReposRequest {
-    #[schemars(description = "The ID of the project to list repositories from")]
+    #[schemars(description = "The ID of the project to list repositories from (UUID string)")]
     pub project_id: Uuid,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct ListReposResponse {
+    #[schemars(description = "Repository summaries for the project")]
     pub repos: Vec<McpRepoSummary>,
+    #[schemars(description = "Number of repositories returned")]
     pub count: usize,
+    #[schemars(description = "The project identifier used for the query (UUID string)")]
     pub project_id: String,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct ListProjectsResponse {
+    #[schemars(description = "Project summaries")]
     pub projects: Vec<ProjectSummary>,
+    #[schemars(description = "Number of projects returned")]
     pub count: usize,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListTasksRequest {
-    #[schemars(description = "The ID of the project to list tasks from")]
+    #[schemars(description = "The ID of the project to list tasks from (UUID string)")]
     pub project_id: Uuid,
     #[schemars(
         description = "Optional status filter: 'todo', 'inprogress', 'inreview', 'done', 'cancelled'"
@@ -108,7 +114,7 @@ pub struct ListTasksRequest {
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct TaskSummary {
-    #[schemars(description = "The unique identifier of the task")]
+    #[schemars(description = "The unique identifier of the task (UUID string)")]
     pub id: String,
     #[schemars(description = "The title of the task")]
     pub title: String,
@@ -118,29 +124,52 @@ pub struct TaskSummary {
     pub created_at: String,
     #[schemars(description = "When the task was last updated")]
     pub updated_at: String,
+    #[schemars(description = "Latest attempt id for this task (UUID string)")]
+    pub latest_attempt_id: Option<String>,
+    #[schemars(description = "Workspace branch for the latest attempt")]
+    pub latest_workspace_branch: Option<String>,
+    #[schemars(description = "Latest session id for the latest attempt (UUID string)")]
+    pub latest_session_id: Option<String>,
+    #[schemars(description = "Executor for the latest session of the latest attempt")]
+    pub latest_session_executor: Option<String>,
     #[schemars(description = "Whether the task has an in-progress execution attempt")]
-    pub has_in_progress_attempt: Option<bool>,
+    pub has_in_progress_attempt: bool,
     #[schemars(description = "Whether the last execution attempt failed")]
-    pub last_attempt_failed: Option<bool>,
+    pub last_attempt_failed: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+struct TaskAttemptSummary {
+    latest_attempt_id: Option<String>,
+    latest_workspace_branch: Option<String>,
+    latest_session_id: Option<String>,
+    latest_session_executor: Option<String>,
 }
 
 impl TaskSummary {
-    fn from_task_with_status(task: TaskWithAttemptStatus) -> Self {
+    fn from_task_with_status(
+        task: TaskWithAttemptStatus,
+        attempt_summary: TaskAttemptSummary,
+    ) -> Self {
         Self {
             id: task.id.to_string(),
             title: task.title.to_string(),
             status: task.status.to_string(),
             created_at: task.created_at.to_rfc3339(),
             updated_at: task.updated_at.to_rfc3339(),
-            has_in_progress_attempt: Some(task.has_in_progress_attempt),
-            last_attempt_failed: Some(task.last_attempt_failed),
+            latest_attempt_id: attempt_summary.latest_attempt_id,
+            latest_workspace_branch: attempt_summary.latest_workspace_branch,
+            latest_session_id: attempt_summary.latest_session_id,
+            latest_session_executor: attempt_summary.latest_session_executor,
+            has_in_progress_attempt: task.has_in_progress_attempt,
+            last_attempt_failed: task.last_attempt_failed,
         }
     }
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct TaskDetails {
-    #[schemars(description = "The unique identifier of the task")]
+    #[schemars(description = "The unique identifier of the task (UUID string)")]
     pub id: String,
     #[schemars(description = "The title of the task")]
     pub title: String,
@@ -175,21 +204,63 @@ impl TaskDetails {
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct ListTasksResponse {
+    #[schemars(description = "Task summaries with latest attempt/session info")]
     pub tasks: Vec<TaskSummary>,
+    #[schemars(description = "Number of tasks returned")]
     pub count: usize,
+    #[schemars(description = "The project identifier used for the query (UUID string)")]
     pub project_id: String,
+    #[schemars(description = "Filters applied to the task listing")]
     pub applied_filters: ListTasksFilters,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct ListTasksFilters {
+    #[schemars(description = "Status filter applied to the list, if any")]
     pub status: Option<String>,
+    #[schemars(description = "Maximum number of tasks returned")]
     pub limit: i32,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ListTaskAttemptsRequest {
+    #[schemars(description = "The ID of the task to list attempts for (UUID string)")]
+    pub task_id: Uuid,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct TaskAttemptDetails {
+    #[schemars(description = "Attempt identifier (UUID string)")]
+    pub attempt_id: String,
+    #[schemars(description = "Workspace branch name for this attempt")]
+    pub workspace_branch: String,
+    #[schemars(description = "When the attempt workspace was created (RFC3339)")]
+    pub created_at: String,
+    #[schemars(description = "When the attempt workspace was last updated (RFC3339)")]
+    pub updated_at: String,
+    #[schemars(description = "Latest session id for this attempt (UUID string)")]
+    pub latest_session_id: Option<String>,
+    #[schemars(description = "Executor for the latest session in this attempt")]
+    pub latest_session_executor: Option<String>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ListTaskAttemptsResponse {
+    #[schemars(description = "The task identifier used for the query (UUID string)")]
+    pub task_id: String,
+    #[schemars(description = "Number of attempts returned")]
+    pub count: usize,
+    #[schemars(description = "Attempts ordered by workspace creation time (newest first)")]
+    pub attempts: Vec<TaskAttemptDetails>,
+    #[schemars(description = "Latest attempt id (UUID string)")]
+    pub latest_attempt_id: Option<String>,
+    #[schemars(description = "Latest session id for the latest attempt (UUID string)")]
+    pub latest_session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct UpdateTaskRequest {
-    #[schemars(description = "The ID of the task to update")]
+    #[schemars(description = "The ID of the task to update (UUID string)")]
     pub task_id: Uuid,
     #[schemars(description = "New title for the task")]
     pub title: Option<String>,
@@ -201,26 +272,27 @@ pub struct UpdateTaskRequest {
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct UpdateTaskResponse {
+    #[schemars(description = "Updated task details")]
     pub task: TaskDetails,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DeleteTaskRequest {
-    #[schemars(description = "The ID of the task to delete")]
+    #[schemars(description = "The ID of the task to delete (UUID string)")]
     pub task_id: Uuid,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct McpWorkspaceRepoInput {
-    #[schemars(description = "The repository ID")]
+    #[schemars(description = "The repository ID (UUID string)")]
     pub repo_id: Uuid,
-    #[schemars(description = "The base branch for this repository")]
-    pub base_branch: String,
+    #[schemars(description = "The target branch for this repository")]
+    pub target_branch: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct StartWorkspaceSessionRequest {
-    #[schemars(description = "The ID of the task to start")]
+pub struct StartTaskAttemptRequest {
+    #[schemars(description = "The ID of the task to start (UUID string)")]
     pub task_id: Uuid,
     #[schemars(
         description = "The coding agent executor to run ('CLAUDE_CODE', 'CODEX', 'GEMINI', 'CURSOR_AGENT', 'OPENCODE')"
@@ -228,14 +300,16 @@ pub struct StartWorkspaceSessionRequest {
     pub executor: String,
     #[schemars(description = "Optional executor variant, if needed")]
     pub variant: Option<String>,
-    #[schemars(description = "Base branch for each repository in the project")]
+    #[schemars(description = "Target branch for each repository in the project")]
     pub repos: Vec<McpWorkspaceRepoInput>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-pub struct StartWorkspaceSessionResponse {
+pub struct StartTaskAttemptResponse {
+    #[schemars(description = "The task identifier for the new attempt (UUID string)")]
     pub task_id: String,
-    pub workspace_id: String,
+    #[schemars(description = "The created attempt identifier (UUID string)")]
+    pub attempt_id: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
@@ -248,10 +322,12 @@ pub enum FollowUpAction {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct FollowUpRequest {
-    #[schemars(description = "The session ID to target for the follow-up action")]
+    #[schemars(description = "The session ID to target for the follow-up action (UUID string)")]
     pub session_id: Option<Uuid>,
-    #[schemars(description = "The workspace ID whose latest session should be used")]
-    pub workspace_id: Option<Uuid>,
+    #[schemars(
+        description = "The attempt ID whose latest session should be used (UUID string)"
+    )]
+    pub attempt_id: Option<Uuid>,
     #[schemars(description = "The follow-up prompt for send/queue actions")]
     pub prompt: Option<String>,
     #[schemars(description = "The follow-up action to perform")]
@@ -262,18 +338,27 @@ pub struct FollowUpRequest {
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct FollowUpResponse {
+    #[schemars(description = "The session id used for the follow-up (UUID string)")]
     pub session_id: String,
+    #[schemars(description = "The follow-up action that was performed")]
     pub action: FollowUpAction,
+    #[schemars(description = "Execution process id if a follow-up run was started (UUID string)")]
     pub execution_process_id: Option<String>,
+    #[schemars(description = "Queue status when queue/cancel is used")]
     pub status: Option<String>,
+    #[schemars(description = "Queued message details when queue/cancel is used")]
     pub queued_message: Option<McpQueuedMessage>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct McpQueuedMessage {
+    #[schemars(description = "The session id the message is queued for (UUID string)")]
     pub session_id: String,
+    #[schemars(description = "The queued message content")]
     pub message: String,
+    #[schemars(description = "Executor variant the queued message targets")]
     pub variant: Option<String>,
+    #[schemars(description = "When the message was queued (RFC3339)")]
     pub queued_at: String,
 }
 
@@ -325,17 +410,19 @@ impl FollowUpResponse {
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct DeleteTaskResponse {
+    #[schemars(description = "The deleted task id (UUID string)")]
     pub deleted_task_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GetTaskRequest {
-    #[schemars(description = "The ID of the task to retrieve")]
+    #[schemars(description = "The ID of the task to retrieve (UUID string)")]
     pub task_id: Uuid,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct GetTaskResponse {
+    #[schemars(description = "Task details")]
     pub task: TaskDetails,
 }
 
@@ -349,7 +436,7 @@ pub struct TaskServer {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
 pub struct McpRepoContext {
-    #[schemars(description = "The unique identifier of the repository")]
+    #[schemars(description = "The unique identifier of the repository (UUID string)")]
     pub repo_id: Uuid,
     #[schemars(description = "The name of the repository")]
     pub repo_name: String,
@@ -359,10 +446,19 @@ pub struct McpRepoContext {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, schemars::JsonSchema)]
 pub struct McpContext {
+    #[schemars(description = "The unique identifier of the project (UUID string)")]
     pub project_id: Uuid,
+    #[schemars(description = "The name of the project")]
+    pub project_name: String,
+    #[schemars(description = "The unique identifier of the task (UUID string)")]
     pub task_id: Uuid,
+    #[schemars(description = "The task title")]
     pub task_title: String,
-    pub workspace_id: Uuid,
+    #[schemars(description = "Current task status (todo|inprogress|inreview|done|cancelled)")]
+    pub task_status: String,
+    #[schemars(description = "The attempt identifier for the active workspace (UUID string)")]
+    pub attempt_id: Uuid,
+    #[schemars(description = "The workspace branch for this attempt")]
     pub workspace_branch: String,
     #[schemars(
         description = "Repository info and target branches for each repo in this workspace"
@@ -437,9 +533,11 @@ impl TaskServer {
 
         Some(McpContext {
             project_id: ctx.project.id,
+            project_name: ctx.project.name,
             task_id: ctx.task.id,
             task_title: ctx.task.title,
-            workspace_id: ctx.workspace.id,
+            task_status: ctx.task.status.to_string(),
+            attempt_id: ctx.workspace.id,
             workspace_branch: ctx.workspace.branch,
             workspace_repos,
         })
@@ -451,6 +549,26 @@ struct ApiResponseEnvelope<T> {
     success: bool,
     data: Option<T>,
     message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspaceWithSession {
+    workspace: Workspace,
+    session: Option<Session>,
+}
+
+#[derive(Debug, Serialize)]
+struct TaskAttemptSummariesRequest {
+    task_ids: Vec<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TaskAttemptSummaryEntry {
+    task_id: Uuid,
+    latest_attempt_id: Option<Uuid>,
+    latest_workspace_branch: Option<String>,
+    latest_session_id: Option<Uuid>,
+    latest_session_executor: Option<String>,
 }
 
 impl TaskServer {
@@ -517,18 +635,18 @@ impl TaskServer {
     async fn resolve_session_id(
         &self,
         session_id: Option<Uuid>,
-        workspace_id: Option<Uuid>,
+        attempt_id: Option<Uuid>,
     ) -> Result<Uuid, CallToolResult> {
         if let Some(session_id) = session_id {
             return Ok(session_id);
         }
 
-        let workspace_id = match workspace_id {
-            Some(workspace_id) => workspace_id,
+        let attempt_id = match attempt_id {
+            Some(attempt_id) => attempt_id,
             None => {
                 return Err(
                     Self::err(
-                        "session_id or workspace_id is required".to_string(),
+                        "session_id or attempt_id is required".to_string(),
                         None::<String>,
                     )
                     .unwrap(),
@@ -536,7 +654,7 @@ impl TaskServer {
             }
         };
 
-        let url = self.url(&format!("/api/sessions?workspace_id={}", workspace_id));
+        let url = self.url(&format!("/api/sessions?workspace_id={}", attempt_id));
         let sessions: Vec<Session> = match self.send_json(self.client.get(&url)).await {
             Ok(sessions) => sessions,
             Err(e) => return Err(e),
@@ -546,14 +664,101 @@ impl TaskServer {
         let Some(latest) = latest else {
             return Err(
                 Self::err(
-                    "No sessions found for workspace".to_string(),
-                    Some(workspace_id.to_string()),
+                    "No sessions found for attempt".to_string(),
+                    Some(attempt_id.to_string()),
                 )
                 .unwrap(),
             );
         };
 
         Ok(latest.id)
+    }
+
+    async fn fetch_attempts_with_latest_session(
+        &self,
+        task_id: Uuid,
+    ) -> Result<Vec<WorkspaceWithSession>, CallToolResult> {
+        let url = self.url(&format!(
+            "/api/task-attempts/with-latest-session?task_id={}",
+            task_id
+        ));
+
+        match self.send_json(self.client.get(&url)).await {
+            Ok(attempts) => Ok(attempts),
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn fetch_task_attempt_summaries(
+        &self,
+        task_ids: Vec<Uuid>,
+    ) -> Result<std::collections::HashMap<Uuid, TaskAttemptSummary>, CallToolResult> {
+        if task_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+
+        let url = self.url("/api/task-attempts/latest-summaries");
+        let payload = TaskAttemptSummariesRequest { task_ids };
+        let summaries: Vec<TaskAttemptSummaryEntry> =
+            match self.send_json(self.client.post(&url).json(&payload)).await {
+                Ok(summaries) => summaries,
+                Err(e) => return Err(e),
+            };
+
+        let mut by_task = std::collections::HashMap::new();
+        for summary in summaries {
+            by_task.insert(
+                summary.task_id,
+                TaskAttemptSummary {
+                    latest_attempt_id: summary.latest_attempt_id.map(|id| id.to_string()),
+                    latest_workspace_branch: summary.latest_workspace_branch,
+                    latest_session_id: summary.latest_session_id.map(|id| id.to_string()),
+                    latest_session_executor: summary.latest_session_executor,
+                },
+            );
+        }
+
+        Ok(by_task)
+    }
+
+    fn summarize_attempts(attempts: &[WorkspaceWithSession]) -> TaskAttemptSummary {
+        let latest = attempts
+            .iter()
+            .min_by(|a, b| Self::compare_attempts_newest_first(*a, *b));
+
+        let Some(latest) = latest else {
+            return TaskAttemptSummary::default();
+        };
+
+        TaskAttemptSummary {
+            latest_attempt_id: Some(latest.workspace.id.to_string()),
+            latest_workspace_branch: Some(latest.workspace.branch.clone()),
+            latest_session_id: latest.session.as_ref().map(|s| s.id.to_string()),
+            latest_session_executor: latest.session.as_ref().and_then(|s| s.executor.clone()),
+        }
+    }
+
+    fn attempt_details_from(attempt: &WorkspaceWithSession) -> TaskAttemptDetails {
+        TaskAttemptDetails {
+            attempt_id: attempt.workspace.id.to_string(),
+            workspace_branch: attempt.workspace.branch.clone(),
+            created_at: attempt.workspace.created_at.to_rfc3339(),
+            updated_at: attempt.workspace.updated_at.to_rfc3339(),
+            latest_session_id: attempt.session.as_ref().map(|s| s.id.to_string()),
+            latest_session_executor: attempt.session.as_ref().and_then(|s| s.executor.clone()),
+        }
+    }
+
+    fn compare_attempts_newest_first(
+        a: &WorkspaceWithSession,
+        b: &WorkspaceWithSession,
+    ) -> Ordering {
+        let created_cmp = b.workspace.created_at.cmp(&a.workspace.created_at);
+        if created_cmp == Ordering::Equal {
+            a.workspace.id.cmp(&b.workspace.id)
+        } else {
+            created_cmp
+        }
     }
 
     /// Expands @tagname references in text by replacing them with tag content.
@@ -612,7 +817,7 @@ impl TaskServer {
 #[tool_router]
 impl TaskServer {
     #[tool(
-        description = "Return project, task, and workspace metadata for the current workspace session context."
+        description = "Return project, task, and attempt metadata for the current workspace session context."
     )]
     async fn get_context(&self) -> Result<CallToolResult, ErrorData> {
         // Context was fetched at startup and cached
@@ -752,10 +957,17 @@ impl TaskServer {
         });
         let limited: Vec<TaskWithAttemptStatus> = filtered.take(task_limit).collect();
 
-        let task_summaries: Vec<TaskSummary> = limited
-            .into_iter()
-            .map(TaskSummary::from_task_with_status)
-            .collect();
+        let task_ids: Vec<Uuid> = limited.iter().map(|task| task.id).collect();
+        let summaries = match self.fetch_task_attempt_summaries(task_ids).await {
+            Ok(summaries) => summaries,
+            Err(e) => return Ok(e),
+        };
+
+        let mut task_summaries = Vec::with_capacity(limited.len());
+        for task in limited {
+            let attempt_summary = summaries.get(&task.id).cloned().unwrap_or_default();
+            task_summaries.push(TaskSummary::from_task_with_status(task, attempt_summary));
+        }
 
         let response = ListTasksResponse {
             count: task_summaries.len(),
@@ -771,16 +983,47 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "Start working on a task by creating and launching a new workspace session."
+        description = "List all attempts for a task, including latest session details. `task_id` is required!"
     )]
-    async fn start_workspace_session(
+    async fn list_task_attempts(
         &self,
-        Parameters(StartWorkspaceSessionRequest {
+        Parameters(ListTaskAttemptsRequest { task_id }): Parameters<ListTaskAttemptsRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut attempts = match self.fetch_attempts_with_latest_session(task_id).await {
+            Ok(attempts) => attempts,
+            Err(e) => return Ok(e),
+        };
+
+        attempts.sort_by(Self::compare_attempts_newest_first);
+
+        let attempt_details: Vec<TaskAttemptDetails> = attempts
+            .iter()
+            .map(Self::attempt_details_from)
+            .collect();
+        let summary = Self::summarize_attempts(&attempts);
+
+        let response = ListTaskAttemptsResponse {
+            task_id: task_id.to_string(),
+            count: attempt_details.len(),
+            attempts: attempt_details,
+            latest_attempt_id: summary.latest_attempt_id,
+            latest_session_id: summary.latest_session_id,
+        };
+
+        TaskServer::success(&response)
+    }
+
+    #[tool(
+        description = "Start working on a task by creating and launching a new attempt (workspace)."
+    )]
+    async fn start_task_attempt(
+        &self,
+        Parameters(StartTaskAttemptRequest {
             task_id,
             executor,
             variant,
             repos,
-        }): Parameters<StartWorkspaceSessionRequest>,
+        }): Parameters<StartTaskAttemptRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         if repos.is_empty() {
             return Self::err(
@@ -823,7 +1066,7 @@ impl TaskServer {
             .into_iter()
             .map(|r| WorkspaceRepoInput {
                 repo_id: r.repo_id,
-                target_branch: r.base_branch,
+                target_branch: r.target_branch,
             })
             .collect();
 
@@ -840,28 +1083,28 @@ impl TaskServer {
             Err(e) => return Ok(e),
         };
 
-        let response = StartWorkspaceSessionResponse {
+        let response = StartTaskAttemptResponse {
             task_id: workspace.task_id.to_string(),
-            workspace_id: workspace.id.to_string(),
+            attempt_id: workspace.id.to_string(),
         };
 
         TaskServer::success(&response)
     }
 
     #[tool(
-        description = "Manage follow-up actions for a session. Provide `session_id` or `workspace_id`, plus action=send|queue|cancel."
+        description = "Manage follow-up actions for a session. Provide `session_id` or `attempt_id`, plus action=send|queue|cancel."
     )]
     async fn follow_up(
         &self,
         Parameters(FollowUpRequest {
             session_id,
-            workspace_id,
+            attempt_id,
             prompt,
             action,
             variant,
         }): Parameters<FollowUpRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let session_id = match self.resolve_session_id(session_id, workspace_id).await {
+        let session_id = match self.resolve_session_id(session_id, attempt_id).await {
             Ok(session_id) => session_id,
             Err(e) => return Ok(e),
         };
@@ -954,7 +1197,7 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "Update an existing task/ticket's title, description, or status. `project_id` and `task_id` are required! `title`, `description`, and `status` are optional."
+        description = "Update an existing task/ticket's title, description, or status. `task_id` is required; `title`, `description`, and `status` are optional."
     )]
     async fn update_task(
         &self,
@@ -1004,7 +1247,7 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "Delete a task/ticket from a project. `project_id` and `task_id` are required!"
+        description = "Delete a task/ticket. `task_id` is required!"
     )]
     async fn delete_task(
         &self,
@@ -1026,7 +1269,7 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "Get detailed information (like task description) about a specific task/ticket. You can use `list_tasks` to find the `task_ids` of all tasks in a project. `project_id` and `task_id` are required!"
+        description = "Get detailed information (like task description) about a specific task/ticket. Use `list_tasks` to find task IDs. `task_id` is required!"
     )]
     async fn get_task(
         &self,
@@ -1048,9 +1291,9 @@ impl TaskServer {
 #[tool_handler]
 impl ServerHandler for TaskServer {
     fn get_info(&self) -> ServerInfo {
-        let mut instruction = "A task and project management server. If you need to create or update tickets or tasks then use these tools. Most of them absolutely require that you pass the `project_id` of the project that you are currently working on. You can get project ids by using `list projects`. Call `list_tasks` to fetch the `task_ids` of all the tasks in a project`.. TOOLS: 'list_projects', 'list_tasks', 'create_task', 'start_workspace_session', 'follow_up', 'get_task', 'update_task', 'delete_task', 'list_repos'. Make sure to pass `project_id` or `task_id` where required. You can use list tools to get the available ids.".to_string();
+        let mut instruction = "A task and project management server. Use list tools to discover ids, then perform create/update/start/follow-up actions. TOOLS: 'list_projects', 'list_repos', 'list_tasks', 'list_task_attempts', 'get_task', 'create_task', 'update_task', 'delete_task', 'start_task_attempt', 'follow_up'. Use `list_tasks` to get task ids and latest attempt/session summaries. Use `list_task_attempts` to inspect attempts and get attempt_id/session_id for follow-up. The `follow_up` tool accepts either attempt_id (preferred) or session_id. attempt_id refers to the task attempt workspace id.".to_string();
         if self.context.is_some() {
-            let context_instruction = "Use 'get_context' to fetch project/task/workspace metadata for the active Vibe Kanban workspace session when available.";
+            let context_instruction = "Use 'get_context' to fetch project/task/attempt metadata for the active Vibe Kanban workspace session when available.";
             instruction = format!("{} {}", context_instruction, instruction);
         }
 
