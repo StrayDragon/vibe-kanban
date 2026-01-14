@@ -8,13 +8,14 @@ use ts_rs::TS;
 use workspace_utils::msg_store::MsgStore;
 
 use crate::{
+    agent_command::{AgentCommandKey, agent_command_resolver, command_identity_for_agent},
     approvals::ExecutorApprovalService,
     auto_retry::AutoRetryConfig,
     command::{CmdOverrides, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
     executors::{
-        AppendPrompt, AvailabilityInfo, ExecutorError, SpawnedChild, StandardCodingAgentExecutor,
-        acp::AcpAgentHarness,
+        AppendPrompt, AvailabilityInfo, BaseCodingAgent, ExecutorError, SpawnedChild,
+        StandardCodingAgentExecutor, acp::AcpAgentHarness,
     },
 };
 
@@ -41,8 +42,15 @@ pub struct Opencode {
 }
 
 impl Opencode {
-    fn build_command_builder(&self) -> CommandBuilder {
-        let builder = CommandBuilder::new("npx -y opencode-ai@latest").extend_params(["acp"]);
+    async fn build_command_builder(&self) -> CommandBuilder {
+        let resolved = agent_command_resolver()
+            .resolve_with_overrides(
+                AgentCommandKey::Agent(BaseCodingAgent::Opencode),
+                command_identity_for_agent(BaseCodingAgent::Opencode),
+                &self.cmd,
+            )
+            .await;
+        let builder = CommandBuilder::new(resolved.base_command).extend_params(["acp"]);
         apply_overrides(builder, &self.cmd)
     }
 
@@ -72,7 +80,7 @@ impl StandardCodingAgentExecutor for Opencode {
         if let Some(agent) = &self.mode {
             harness = harness.with_mode(agent);
         }
-        let opencode_command = self.build_command_builder().build_initial()?;
+        let opencode_command = self.build_command_builder().await.build_initial()?;
         let approvals = if self.auto_approve {
             None
         } else {
@@ -106,7 +114,7 @@ impl StandardCodingAgentExecutor for Opencode {
         if let Some(agent) = &self.mode {
             harness = harness.with_mode(agent);
         }
-        let opencode_command = self.build_command_builder().build_follow_up(&[])?;
+        let opencode_command = self.build_command_builder().await.build_follow_up(&[])?;
         let approvals = if self.auto_approve {
             None
         } else {

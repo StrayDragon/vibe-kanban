@@ -260,6 +260,20 @@
         "notFound": "Not Found",
         "notFoundTooltip": "No previous usage detected. Agent may require installation and/or login."
       },
+      "command": {
+        "title": "Command Version",
+        "versionLabel": "Version",
+        "checking": "Checking...",
+        "latestFallback": "No global install detected; falling back to latest via npx.",
+        "sources": {
+          "pnpm": "pnpm global",
+          "npm": "npm global",
+          "npx": "npx (latest)",
+          "system": "System binary",
+          "override": "Override",
+          "unknown": "Unknown"
+        }
+      },
       "editor": {
         "formLabel": "Edit JSON",
         "agentLabel": "Agent",

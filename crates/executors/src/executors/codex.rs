@@ -30,14 +30,14 @@ use self::{
     session::SessionHandler,
 };
 use crate::{
+    agent_command::{AgentCommandKey, agent_command_resolver, command_identity_for_agent},
     approvals::ExecutorApprovalService,
     auto_retry::AutoRetryConfig,
     command::{CmdOverrides, CommandBuilder, CommandParts, apply_overrides},
     env::ExecutionEnv,
     executors::{
-        AppendPrompt, AvailabilityInfo, ExecutorError, ExecutorExitResult, SpawnedChild,
-        StandardCodingAgentExecutor,
-        codex::{jsonrpc::ExitSignalSender, normalize_logs::Error},
+        AppendPrompt, AvailabilityInfo, BaseCodingAgent, ExecutorError, ExecutorExitResult,
+        SpawnedChild, StandardCodingAgentExecutor, codex::{jsonrpc::ExitSignalSender, normalize_logs::Error},
     },
     stdout_dup::create_stdout_pipe_writer,
 };
@@ -157,7 +157,7 @@ impl StandardCodingAgentExecutor for Codex {
         prompt: &str,
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
-        let command_parts = self.build_command_builder().build_initial()?;
+        let command_parts = self.build_command_builder().await.build_initial()?;
         self.spawn_inner(current_dir, prompt, command_parts, None, env)
             .await
     }
@@ -169,7 +169,7 @@ impl StandardCodingAgentExecutor for Codex {
         session_id: &str,
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
-        let command_parts = self.build_command_builder().build_follow_up(&[])?;
+        let command_parts = self.build_command_builder().await.build_follow_up(&[])?;
         self.spawn_inner(current_dir, prompt, command_parts, Some(session_id), env)
             .await
     }
@@ -212,12 +212,15 @@ impl StandardCodingAgentExecutor for Codex {
 }
 
 impl Codex {
-    pub fn base_command() -> &'static str {
-        "npx -y @openai/codex"
-    }
-
-    fn build_command_builder(&self) -> CommandBuilder {
-        let mut builder = CommandBuilder::new(Self::base_command());
+    async fn build_command_builder(&self) -> CommandBuilder {
+        let resolved = agent_command_resolver()
+            .resolve_with_overrides(
+                AgentCommandKey::Agent(BaseCodingAgent::Codex),
+                command_identity_for_agent(BaseCodingAgent::Codex),
+                &self.cmd,
+            )
+            .await;
+        let mut builder = CommandBuilder::new(resolved.base_command);
         builder = builder.extend_params(["app-server"]);
         if self.oss.unwrap_or(false) {
             builder = builder.extend_params(["--oss"]);

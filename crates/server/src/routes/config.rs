@@ -10,6 +10,7 @@ use axum::{
 };
 use deployment::{Deployment, DeploymentError};
 use executors::{
+    agent_command::{AgentCommandResolution, agent_command_resolver},
     executors::{
         AvailabilityInfo, BaseAgentCapability, BaseCodingAgent, CodingAgent,
         StandardCodingAgentExecutor,
@@ -81,6 +82,8 @@ pub struct UserSystemInfo {
     pub environment: Environment,
     /// Capabilities supported per executor (e.g., { "CLAUDE_CODE": ["SESSION_FORK"] })
     pub capabilities: HashMap<String, Vec<BaseAgentCapability>>,
+    /// Resolved command source/version per executor
+    pub agent_command_resolutions: HashMap<String, AgentCommandResolution>,
 }
 
 // TODO: update frontend, BE schema has changed, this replaces GET /config and /config/constants
@@ -104,6 +107,7 @@ async fn get_user_system_info(
             }
             caps
         },
+        agent_command_resolutions: agent_command_resolver().snapshot().await,
     };
 
     ResponseJson(ApiResponse::success(user_system_info))

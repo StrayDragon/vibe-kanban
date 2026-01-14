@@ -59,8 +59,13 @@ export function AgentSettings() {
     refetch,
   } = useProfiles();
 
-  const { config, updateAndSaveConfig, profiles, reloadSystem } =
-    useUserSystem();
+  const {
+    config,
+    updateAndSaveConfig,
+    profiles,
+    reloadSystem,
+    agentCommandResolutions,
+  } = useUserSystem();
 
   // Local editor state (draft that may differ from server)
   const [localProfilesContent, setLocalProfilesContent] = useState('');
@@ -89,6 +94,43 @@ export function AgentSettings() {
 
   // Check agent availability when draft executor changes
   const agentAvailability = useAgentAvailability(executorDraft?.executor);
+
+  const commandInfo = agentCommandResolutions?.[selectedExecutorType] ?? null;
+  const executorsMap = localParsedProfiles?.executors as ExecutorsMap | undefined;
+  const selectedVariantConfig =
+    executorsMap?.[selectedExecutorType]?.[selectedConfiguration];
+  const selectedAgentConfig = (selectedVariantConfig?.[
+    selectedExecutorType
+  ] ?? null) as Record<string, unknown> | null;
+  const baseCommandOverride = selectedAgentConfig?.base_command_override as
+    | string
+    | undefined;
+  const commandStatus = baseCommandOverride
+    ? 'READY'
+    : commandInfo?.status ?? 'CHECKING';
+  const commandSource = baseCommandOverride
+    ? 'OVERRIDE'
+    : commandInfo?.source ?? 'UNKNOWN';
+  const commandVersion = baseCommandOverride ? null : commandInfo?.version ?? null;
+  const commandFallbackToLatest =
+    !baseCommandOverride && commandInfo?.fallback_to_latest;
+  const sourceLabels: Record<string, string> = {
+    PNPM_GLOBAL: t('settings.agents.command.sources.pnpm'),
+    NPM_GLOBAL: t('settings.agents.command.sources.npm'),
+    NPX_LATEST: t('settings.agents.command.sources.npx'),
+    SYSTEM_BINARY: t('settings.agents.command.sources.system'),
+    OVERRIDE: t('settings.agents.command.sources.override'),
+    UNKNOWN: t('settings.agents.command.sources.unknown'),
+  };
+  const sourceLabel =
+    commandStatus === 'CHECKING'
+      ? t('settings.agents.command.checking')
+      : sourceLabels[commandSource] ??
+        t('settings.agents.command.sources.unknown');
+  const versionLabel =
+    commandStatus === 'CHECKING'
+      ? t('settings.agents.command.checking')
+      : commandVersion ?? t('settings.agents.command.sources.unknown');
 
   // Sync server state to local state when not dirty
   useEffect(() => {
@@ -778,6 +820,26 @@ export function AgentSettings() {
                   </div>
                 </div>
               </div>
+
+              <div className="rounded-md border px-3 py-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">
+                    {t('settings.agents.command.title')}
+                  </span>
+                  <span className="text-muted-foreground">{sourceLabel}</span>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {t('settings.agents.command.versionLabel')}: {versionLabel}
+                </div>
+              </div>
+
+              {commandFallbackToLatest && (
+                <Alert>
+                  <AlertDescription>
+                    {t('settings.agents.command.latestFallback')}
+                  </AlertDescription>
+                </Alert>
+              )}
 
               {(() => {
                 const executorsMap =

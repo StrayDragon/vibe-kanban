@@ -260,6 +260,20 @@
         "notFound": "未找到",
         "notFoundTooltip": "未检测到以前的使用。代理可能需要安装和/或登录。"
       },
+      "command": {
+        "title": "命令版本",
+        "versionLabel": "版本",
+        "checking": "检查中...",
+        "latestFallback": "未检测到全局安装，已回退为 npx 最新版本。",
+        "sources": {
+          "pnpm": "pnpm 全局",
+          "npm": "npm 全局",
+          "npx": "npx（latest）",
+          "system": "系统可执行文件",
+          "override": "自定义命令",
+          "unknown": "未知"
+        }
+      },
       "editor": {
         "formLabel": "编辑 JSON",
         "agentLabel": "代理",

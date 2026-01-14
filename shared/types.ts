@@ -122,7 +122,11 @@ export type UserSystemInfo = { config: Config, environment: Environment,
 /**
  * Capabilities supported per executor (e.g., { "CLAUDE_CODE": ["SESSION_FORK"] })
  */
-capabilities: { [key in string]?: Array<BaseAgentCapability> }, executors: { [key in BaseCodingAgent]?: ExecutorConfig }, };
+capabilities: { [key in string]?: Array<BaseAgentCapability> }, 
+/**
+ * Resolved command source/version per executor
+ */
+agent_command_resolutions: { [key in string]?: AgentCommandResolution }, executors: { [key in BaseCodingAgent]?: ExecutorConfig }, };
 
 export type Environment = { os_type: string, os_version: string, os_architecture: string, bitness: string, };
 
@@ -298,6 +302,12 @@ export type ScriptRequest = { script: string, language: ScriptRequestLanguage, c
 working_dir: string | null, };
 
 export type ScriptRequestLanguage = "Bash";
+
+export type AgentCommandResolution = { source: AgentCommandSource, version?: string | null, status: AgentCommandStatus, fallback_to_latest: boolean, };
+
+export enum AgentCommandSource { PNPM_GLOBAL = "PNPM_GLOBAL", NPM_GLOBAL = "NPM_GLOBAL", NPX_LATEST = "NPX_LATEST", SYSTEM_BINARY = "SYSTEM_BINARY", OVERRIDE = "OVERRIDE", UNKNOWN = "UNKNOWN" }
+
+export enum AgentCommandStatus { CHECKING = "CHECKING", READY = "READY" }
 
 export enum BaseCodingAgent { CLAUDE_CODE = "CLAUDE_CODE", AMP = "AMP", GEMINI = "GEMINI", CODEX = "CODEX", FAKE_AGENT = "FAKE_AGENT", OPENCODE = "OPENCODE", CURSOR_AGENT = "CURSOR_AGENT", QWEN_CODE = "QWEN_CODE", COPILOT = "COPILOT", DROID = "DROID" }
 

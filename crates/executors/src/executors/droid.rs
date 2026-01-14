@@ -10,10 +10,13 @@ use ts_rs::TS;
 use workspace_utils::msg_store::MsgStore;
 
 use crate::{
+    agent_command::{AgentCommandKey, agent_command_resolver, command_identity_for_agent},
     auto_retry::AutoRetryConfig,
     command::CommandParts,
     env::ExecutionEnv,
-    executors::{AppendPrompt, ExecutorError, SpawnedChild, StandardCodingAgentExecutor},
+    executors::{
+        AppendPrompt, BaseCodingAgent, ExecutorError, SpawnedChild, StandardCodingAgentExecutor,
+    },
     logs::utils::EntryIndexProvider,
 };
 
@@ -86,10 +89,17 @@ pub struct Droid {
 }
 
 impl Droid {
-    pub fn build_command_builder(&self) -> crate::command::CommandBuilder {
+    pub async fn build_command_builder(&self) -> crate::command::CommandBuilder {
         use crate::command::{CommandBuilder, apply_overrides};
+        let resolved = agent_command_resolver()
+            .resolve_with_overrides(
+                AgentCommandKey::Agent(BaseCodingAgent::Droid),
+                command_identity_for_agent(BaseCodingAgent::Droid),
+                &self.cmd,
+            )
+            .await;
         let mut builder =
-            CommandBuilder::new("droid exec").params(["--output-format", "stream-json"]);
+            CommandBuilder::new(resolved.base_command).params(["--output-format", "stream-json"]);
         builder = match &self.autonomy {
             Autonomy::Normal => builder,
             Autonomy::Low => builder.extend_params(["--auto", "low"]),
@@ -148,7 +158,7 @@ impl StandardCodingAgentExecutor for Droid {
         prompt: &str,
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
-        let droid_command = self.build_command_builder().build_initial()?;
+        let droid_command = self.build_command_builder().await.build_initial()?;
         let combined_prompt = self.append_prompt.combine_prompt(prompt);
 
         spawn_droid(droid_command, &combined_prompt, current_dir, env, &self.cmd).await
@@ -168,6 +178,7 @@ impl StandardCodingAgentExecutor for Droid {
         })?;
         let continue_cmd = self
             .build_command_builder()
+            .await
             .build_follow_up(&["--session-id".to_string(), forked_session_id.clone()])?;
         let combined_prompt = self.append_prompt.combine_prompt(prompt);
 

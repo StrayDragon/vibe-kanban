@@ -8,13 +8,14 @@ use ts_rs::TS;
 use workspace_utils::msg_store::MsgStore;
 
 use crate::{
+    agent_command::{AgentCommandKey, agent_command_resolver, command_identity_for_agent},
     approvals::ExecutorApprovalService,
     auto_retry::AutoRetryConfig,
     command::{CmdOverrides, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
     executors::{
-        AppendPrompt, AvailabilityInfo, ExecutorError, SpawnedChild, StandardCodingAgentExecutor,
-        gemini::AcpAgentHarness,
+        AppendPrompt, AvailabilityInfo, BaseCodingAgent, ExecutorError, SpawnedChild,
+        StandardCodingAgentExecutor, gemini::AcpAgentHarness,
     },
 };
 
@@ -36,8 +37,15 @@ pub struct QwenCode {
 }
 
 impl QwenCode {
-    fn build_command_builder(&self) -> CommandBuilder {
-        let mut builder = CommandBuilder::new("npx -y @qwen-code/qwen-code@0.2.1");
+    async fn build_command_builder(&self) -> CommandBuilder {
+        let resolved = agent_command_resolver()
+            .resolve_with_overrides(
+                AgentCommandKey::Agent(BaseCodingAgent::QwenCode),
+                command_identity_for_agent(BaseCodingAgent::QwenCode),
+                &self.cmd,
+            )
+            .await;
+        let mut builder = CommandBuilder::new(resolved.base_command);
 
         if self.yolo.unwrap_or(false) {
             builder = builder.extend_params(["--yolo"]);
@@ -59,7 +67,7 @@ impl StandardCodingAgentExecutor for QwenCode {
         prompt: &str,
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
-        let qwen_command = self.build_command_builder().build_initial()?;
+        let qwen_command = self.build_command_builder().await.build_initial()?;
         let combined_prompt = self.append_prompt.combine_prompt(prompt);
         let harness = AcpAgentHarness::with_session_namespace("qwen_sessions");
         let approvals = if self.yolo.unwrap_or(false) {
@@ -86,7 +94,7 @@ impl StandardCodingAgentExecutor for QwenCode {
         session_id: &str,
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
-        let qwen_command = self.build_command_builder().build_follow_up(&[])?;
+        let qwen_command = self.build_command_builder().await.build_follow_up(&[])?;
         let combined_prompt = self.append_prompt.combine_prompt(prompt);
         let harness = AcpAgentHarness::with_session_namespace("qwen_sessions");
         let approvals = if self.yolo.unwrap_or(false) {

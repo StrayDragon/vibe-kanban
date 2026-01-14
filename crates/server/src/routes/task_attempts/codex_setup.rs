@@ -9,8 +9,9 @@ use executors::{
         ExecutorAction, ExecutorActionType,
         script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
     },
+    agent_command::{AgentCommandKey, agent_command_resolver, command_identity_for_agent},
     command::{CommandBuilder, apply_overrides},
-    executors::{ExecutorError, codex::Codex},
+    executors::{BaseCodingAgent, ExecutorError, codex::Codex},
 };
 use services::services::container::ContainerService;
 use uuid::Uuid;
@@ -76,7 +77,14 @@ pub async fn run_codex_setup(
 }
 
 async fn get_setup_helper_action(codex: &Codex) -> Result<ExecutorAction, ApiError> {
-    let mut login_command = CommandBuilder::new(Codex::base_command());
+    let resolved = agent_command_resolver()
+        .resolve_with_overrides(
+            AgentCommandKey::Agent(BaseCodingAgent::Codex),
+            command_identity_for_agent(BaseCodingAgent::Codex),
+            &codex.cmd,
+        )
+        .await;
+    let mut login_command = CommandBuilder::new(resolved.base_command);
     login_command = login_command.extend_params(["login"]);
     login_command = apply_overrides(login_command, &codex.cmd);
 

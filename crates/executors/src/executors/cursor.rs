@@ -16,11 +16,13 @@ use workspace_utils::{
 };
 
 use crate::{
+    agent_command::{AgentCommandKey, agent_command_resolver, command_identity_for_agent},
     auto_retry::AutoRetryConfig,
     command::{CmdOverrides, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
     executors::{
-        AppendPrompt, AvailabilityInfo, ExecutorError, SpawnedChild, StandardCodingAgentExecutor,
+        AppendPrompt, AvailabilityInfo, BaseCodingAgent, ExecutorError, SpawnedChild,
+        StandardCodingAgentExecutor,
     },
     logs::{
         ActionType, FileChange, NormalizedEntry, NormalizedEntryError, NormalizedEntryType,
@@ -54,9 +56,16 @@ impl CursorAgent {
         "cursor-agent"
     }
 
-    fn build_command_builder(&self) -> CommandBuilder {
+    async fn build_command_builder(&self) -> CommandBuilder {
+        let resolved = agent_command_resolver()
+            .resolve_with_overrides(
+                AgentCommandKey::Agent(BaseCodingAgent::CursorAgent),
+                command_identity_for_agent(BaseCodingAgent::CursorAgent),
+                &self.cmd,
+            )
+            .await;
         let mut builder =
-            CommandBuilder::new(Self::base_command()).params(["-p", "--output-format=stream-json"]);
+            CommandBuilder::new(resolved.base_command).params(["-p", "--output-format=stream-json"]);
 
         if self.force.unwrap_or(false) {
             builder = builder.extend_params(["--force"]);
@@ -80,7 +89,7 @@ impl StandardCodingAgentExecutor for CursorAgent {
     ) -> Result<SpawnedChild, ExecutorError> {
         mcp::ensure_mcp_server_trust(self, current_dir).await;
 
-        let command_parts = self.build_command_builder().build_initial()?;
+        let command_parts = self.build_command_builder().await.build_initial()?;
 
         let (executable_path, args) = command_parts.into_resolved().await?;
 
@@ -120,6 +129,7 @@ impl StandardCodingAgentExecutor for CursorAgent {
 
         let command_parts = self
             .build_command_builder()
+            .await
             .build_follow_up(&["--resume".to_string(), session_id.to_string()])?;
         let (executable_path, args) = command_parts.into_resolved().await?;
 

@@ -12,6 +12,7 @@ import {
   type Environment,
   type UserSystemInfo,
   type BaseAgentCapability,
+  type AgentCommandResolution,
 } from 'shared/types';
 import type { ExecutorConfig } from 'shared/types';
 import { configApi } from '../lib/api';
@@ -22,6 +23,7 @@ interface UserSystemState {
   environment: Environment | null;
   profiles: Record<string, ExecutorConfig> | null;
   capabilities: Record<string, BaseAgentCapability[]> | null;
+  agentCommandResolutions: Record<string, AgentCommandResolution> | null;
 }
 
 interface UserSystemContextType {
@@ -38,9 +40,13 @@ interface UserSystemContextType {
   environment: Environment | null;
   profiles: Record<string, ExecutorConfig> | null;
   capabilities: Record<string, BaseAgentCapability[]> | null;
+  agentCommandResolutions: Record<string, AgentCommandResolution> | null;
   setEnvironment: (env: Environment | null) => void;
   setProfiles: (profiles: Record<string, ExecutorConfig> | null) => void;
   setCapabilities: (caps: Record<string, BaseAgentCapability[]> | null) => void;
+  setAgentCommandResolutions: (
+    resolutions: Record<string, AgentCommandResolution> | null
+  ) => void;
 
   // Reload system data
   reloadSystem: () => Promise<void>;
@@ -75,6 +81,11 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
     (userSystemInfo?.capabilities as Record<
       string,
       BaseAgentCapability[]
+    > | null) || null;
+  const agentCommandResolutions =
+    (userSystemInfo?.agent_command_resolutions as Record<
+      string,
+      AgentCommandResolution
     > | null) || null;
 
   // Sync language with i18n when config changes
@@ -171,6 +182,16 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
     [queryClient]
   );
 
+  const setAgentCommandResolutions = useCallback(
+    (newResolutions: Record<string, AgentCommandResolution> | null) => {
+      queryClient.setQueryData<UserSystemInfo>(['user-system'], (old) => {
+        if (!old || !newResolutions) return old;
+        return { ...old, agent_command_resolutions: newResolutions };
+      });
+    },
+    [queryClient]
+  );
+
   // Memoize context value to prevent unnecessary re-renders
   const value = useMemo<UserSystemContextType>(
     () => ({
@@ -179,17 +200,20 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
         environment,
         profiles,
         capabilities,
+        agentCommandResolutions,
       },
       config,
       environment,
       profiles,
       capabilities,
+      agentCommandResolutions,
       updateConfig,
       saveConfig,
       updateAndSaveConfig,
       setEnvironment,
       setProfiles,
       setCapabilities,
+      setAgentCommandResolutions,
       reloadSystem,
       loading: isLoading,
     }),
@@ -198,6 +222,7 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
       environment,
       profiles,
       capabilities,
+      agentCommandResolutions,
       updateConfig,
       saveConfig,
       updateAndSaveConfig,
@@ -206,6 +231,7 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
       setEnvironment,
       setProfiles,
       setCapabilities,
+      setAgentCommandResolutions,
     ]
   );
 

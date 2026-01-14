@@ -49,6 +49,7 @@ impl Deployment for LocalDeployment {
         let mut raw_config = load_config_from_file(&config_path()).await;
 
         let profiles = ExecutorConfigs::get_cached();
+        executors::agent_command::agent_command_resolver().warm_cache();
         if !raw_config.onboarding_acknowledged
             && let Ok(recommended_executor) = profiles.get_recommended_executor_profile().await
         {

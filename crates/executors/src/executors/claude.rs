@@ -23,13 +23,17 @@ use self::{
     types::PermissionMode,
 };
 use crate::{
+    agent_command::{
+        AgentCommandKey, agent_command_resolver, claude_router_identity,
+        command_identity_for_agent,
+    },
     approvals::ExecutorApprovalService,
     auto_retry::AutoRetryConfig,
     command::{CmdOverrides, CommandBuilder, CommandParts, apply_overrides},
     env::ExecutionEnv,
     executors::{
-        AppendPrompt, AvailabilityInfo, ExecutorError, SpawnedChild, StandardCodingAgentExecutor,
-        codex::client::LogWriter,
+        AppendPrompt, AvailabilityInfo, BaseCodingAgent, ExecutorError, SpawnedChild,
+        StandardCodingAgentExecutor, codex::client::LogWriter,
     },
     logs::{
         ActionType, FileChange, NormalizedEntry, NormalizedEntryError, NormalizedEntryType,
@@ -39,14 +43,6 @@ use crate::{
     },
     stdout_dup::create_stdout_pipe_writer,
 };
-
-fn base_command(claude_code_router: bool) -> &'static str {
-    if claude_code_router {
-        "npx -y @musistudio/claude-code-router@1.0.66 code"
-    } else {
-        "npx -y @anthropic-ai/claude-code"
-    }
-}
 
 use derivative::Derivative;
 
@@ -87,9 +83,19 @@ impl ClaudeCode {
             );
         }
 
-        let mut builder =
-            CommandBuilder::new(base_command(self.claude_code_router.unwrap_or(false)))
-                .params(["-p"]);
+        let use_router = self.claude_code_router.unwrap_or(false);
+        let (key, identity) = if use_router {
+            (AgentCommandKey::ClaudeRouter, claude_router_identity())
+        } else {
+            (
+                AgentCommandKey::Agent(BaseCodingAgent::ClaudeCode),
+                command_identity_for_agent(BaseCodingAgent::ClaudeCode),
+            )
+        };
+        let resolved = agent_command_resolver()
+            .resolve_with_overrides(key, identity, &self.cmd)
+            .await;
+        let mut builder = CommandBuilder::new(resolved.base_command).params(["-p"]);
 
         let plan = self.plan.unwrap_or(false);
         let approvals = self.approvals.unwrap_or(false);

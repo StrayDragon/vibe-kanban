@@ -22,11 +22,13 @@ use uuid::Uuid;
 use workspace_utils::{msg_store::MsgStore, path::get_vibe_kanban_temp_dir};
 
 use crate::{
+    agent_command::{AgentCommandKey, agent_command_resolver, command_identity_for_agent},
     auto_retry::AutoRetryConfig,
     command::{CmdOverrides, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
     executors::{
-        AppendPrompt, AvailabilityInfo, ExecutorError, SpawnedChild, StandardCodingAgentExecutor,
+        AppendPrompt, AvailabilityInfo, BaseCodingAgent, ExecutorError, SpawnedChild,
+        StandardCodingAgentExecutor,
     },
     logs::{
         NormalizedEntry, NormalizedEntryType, plain_text_processor::PlainTextLogProcessor,
@@ -58,8 +60,15 @@ pub struct Copilot {
 }
 
 impl Copilot {
-    fn build_command_builder(&self, log_dir: &str) -> CommandBuilder {
-        let mut builder = CommandBuilder::new("npx -y @github/copilot@0.0.367").params([
+    async fn build_command_builder(&self, log_dir: &str) -> CommandBuilder {
+        let resolved = agent_command_resolver()
+            .resolve_with_overrides(
+                AgentCommandKey::Agent(BaseCodingAgent::Copilot),
+                command_identity_for_agent(BaseCodingAgent::Copilot),
+                &self.cmd,
+            )
+            .await;
+        let mut builder = CommandBuilder::new(resolved.base_command).params([
             "--no-color",
             "--log-level",
             "debug",
@@ -110,6 +119,7 @@ impl StandardCodingAgentExecutor for Copilot {
         let log_dir = Self::create_temp_log_dir(current_dir).await?;
         let command_parts = self
             .build_command_builder(&log_dir.to_string_lossy())
+            .await
             .build_initial()?;
         let (program_path, args) = command_parts.into_resolved().await?;
 
@@ -153,6 +163,7 @@ impl StandardCodingAgentExecutor for Copilot {
         let log_dir = Self::create_temp_log_dir(current_dir).await?;
         let command_parts = self
             .build_command_builder(&log_dir.to_string_lossy())
+            .await
             .build_follow_up(&["--resume".to_string(), session_id.to_string()])?;
         let (program_path, args) = command_parts.into_resolved().await?;
 
