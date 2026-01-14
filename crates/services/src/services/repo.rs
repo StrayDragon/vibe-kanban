@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use db::models::repo::Repo as RepoModel;
-use sqlx::SqlitePool;
+use db::DbErr;
 use thiserror::Error;
 use utils::path::expand_tilde;
 use uuid::Uuid;
@@ -11,7 +11,7 @@ use super::git::{GitService, GitServiceError};
 #[derive(Debug, Error)]
 pub enum RepoError {
     #[error(transparent)]
-    Database(#[from] sqlx::Error),
+    Database(#[from] DbErr),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("Path does not exist: {0}")]
@@ -62,7 +62,7 @@ impl RepoService {
 
     pub async fn register(
         &self,
-        pool: &SqlitePool,
+        pool: &db::DbPool,
         path: &str,
         display_name: Option<&str>,
     ) -> Result<RepoModel> {
@@ -80,12 +80,16 @@ impl RepoService {
         Ok(repo)
     }
 
-    pub async fn find_by_id(&self, pool: &SqlitePool, repo_id: Uuid) -> Result<Option<RepoModel>> {
+    pub async fn find_by_id(
+        &self,
+        pool: &db::DbPool,
+        repo_id: Uuid,
+    ) -> Result<Option<RepoModel>> {
         let repo = RepoModel::find_by_id(pool, repo_id).await?;
         Ok(repo)
     }
 
-    pub async fn get_by_id(&self, pool: &SqlitePool, repo_id: Uuid) -> Result<RepoModel> {
+    pub async fn get_by_id(&self, pool: &db::DbPool, repo_id: Uuid) -> Result<RepoModel> {
         self.find_by_id(pool, repo_id)
             .await?
             .ok_or(RepoError::NotFound)
@@ -93,7 +97,7 @@ impl RepoService {
 
     pub async fn init_repo(
         &self,
-        pool: &SqlitePool,
+        pool: &db::DbPool,
         git: &GitService,
         parent_path: &str,
         folder_name: &str,

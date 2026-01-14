@@ -23,7 +23,7 @@ import {
   CreateProject,
   CreateProjectRepo,
   UpdateProjectRepo,
-  SearchResult,
+  ProjectFileSearchResponse,
   Task,
   TaskRelationships,
   Tag,
@@ -45,6 +45,7 @@ import {
   RenameBranchRequest,
   RenameBranchResponse,
   CheckEditorAvailabilityResponse,
+  CliDependencyPreflightResponse,
   AvailabilityInfo,
   BaseCodingAgent,
   RunAgentSetupRequest,
@@ -255,13 +256,13 @@ export const projectsApi = {
     query: string,
     mode?: string,
     options?: RequestInit
-  ): Promise<SearchResult[]> => {
+  ): Promise<ProjectFileSearchResponse> => {
     const modeParam = mode ? `&mode=${encodeURIComponent(mode)}` : '';
     const response = await makeRequest(
       `/api/projects/${id}/search?q=${encodeURIComponent(query)}${modeParam}`,
       options
     );
-    return handleApiResponse<SearchResult[]>(response);
+    return handleApiResponse<ProjectFileSearchResponse>(response);
   },
 
   getRepositories: async (projectId: string): Promise<Repo[]> => {
@@ -783,6 +784,14 @@ export const configApi = {
       `/api/agents/check-availability?executor=${encodeURIComponent(agent)}`
     );
     return handleApiResponse<AvailabilityInfo>(response);
+  },
+  cliPreflight: async (
+    agent: BaseCodingAgent
+  ): Promise<CliDependencyPreflightResponse> => {
+    const response = await makeRequest(
+      `/api/preflight/cli?executor=${encodeURIComponent(agent)}`
+    );
+    return handleApiResponse<CliDependencyPreflightResponse>(response);
   },
 };
 

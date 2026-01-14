@@ -1,21 +1,26 @@
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, Set,
+};
+use sea_orm::sea_query::{Expr, ExprTrait, Query};
 use serde::{Deserialize, Serialize};
-use sqlx::{Executor, FromRow, Sqlite, SqlitePool};
 use thiserror::Error;
 use ts_rs::TS;
 use uuid::Uuid;
 
+use crate::entities::{project_repo, repo, workspace_repo};
+
 #[derive(Debug, Error)]
 pub enum RepoError {
     #[error(transparent)]
-    Database(#[from] sqlx::Error),
+    Database(#[from] DbErr),
     #[error("Repository not found")]
     NotFound,
 }
 
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct Repo {
     pub id: Uuid,
     pub path: PathBuf,
@@ -28,102 +33,146 @@ pub struct Repo {
 }
 
 impl Repo {
-    /// Get repos that still have the migration sentinel as their name.
-    /// Used by the startup backfill to fix repo names.
-    pub async fn list_needing_name_fix(pool: &SqlitePool) -> Result<Vec<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            Repo,
-            r#"SELECT id as "id!: Uuid",
-                      path,
-                      name,
-                      display_name,
-                      created_at as "created_at!: DateTime<Utc>",
-                      updated_at as "updated_at!: DateTime<Utc>"
-               FROM repos
-               WHERE name = '__NEEDS_BACKFILL__'"#
-        )
-        .fetch_all(pool)
-        .await
+    fn from_model(model: repo::Model) -> Self {
+        Self {
+            id: model.uuid,
+            path: PathBuf::from(model.path),
+            name: model.name,
+            display_name: model.display_name,
+            created_at: model.created_at.into(),
+            updated_at: model.updated_at.into(),
+        }
     }
 
-    pub async fn update_name(
-        pool: &SqlitePool,
+    /// Get repos that still have the migration sentinel as their name.
+    /// Used by the startup backfill to fix repo names.
+    pub async fn list_needing_name_fix<C: ConnectionTrait>(
+        db: &C,
+    ) -> Result<Vec<Self>, DbErr> {
+        let records = repo::Entity::find()
+            .filter(repo::Column::Name.eq("__NEEDS_BACKFILL__"))
+            .all(db)
+            .await?;
+        Ok(records.into_iter().map(Self::from_model).collect())
+    }
+
+    pub async fn update_name<C: ConnectionTrait>(
+        db: &C,
         id: Uuid,
         name: &str,
         display_name: &str,
-    ) -> Result<(), sqlx::Error> {
-        sqlx::query!(
-            "UPDATE repos SET name = $1, display_name = $2, updated_at = datetime('now', 'subsec') WHERE id = $3",
-            name,
-            display_name,
-            id
-        )
-        .execute(pool)
-        .await?;
+    ) -> Result<(), DbErr> {
+        let record = repo::Entity::find()
+            .filter(repo::Column::Uuid.eq(id))
+            .one(db)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+
+        let mut active: repo::ActiveModel = record.into();
+        active.name = Set(name.to_string());
+        active.display_name = Set(display_name.to_string());
+        active.updated_at = Set(Utc::now().into());
+        active.update(db).await?;
         Ok(())
     }
 
-    pub async fn find_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            Repo,
-            r#"SELECT id as "id!: Uuid",
-                      path,
-                      name,
-                      display_name,
-                      created_at as "created_at!: DateTime<Utc>",
-                      updated_at as "updated_at!: DateTime<Utc>"
-               FROM repos
-               WHERE id = $1"#,
-            id
-        )
-        .fetch_optional(pool)
-        .await
+    pub async fn find_by_id<C: ConnectionTrait>(
+        db: &C,
+        id: Uuid,
+    ) -> Result<Option<Self>, DbErr> {
+        let record = repo::Entity::find()
+            .filter(repo::Column::Uuid.eq(id))
+            .one(db)
+            .await?;
+        Ok(record.map(Self::from_model))
     }
 
-    pub async fn find_or_create<'e, E>(
-        executor: E,
+    pub async fn find_or_create<C: ConnectionTrait>(
+        db: &C,
         path: &Path,
         display_name: &str,
-    ) -> Result<Self, sqlx::Error>
-    where
-        E: Executor<'e, Database = Sqlite>,
-    {
+    ) -> Result<Self, DbErr> {
         let path_str = path.to_string_lossy().to_string();
+        if let Some(existing) = repo::Entity::find()
+            .filter(repo::Column::Path.eq(path_str.clone()))
+            .one(db)
+            .await?
+        {
+            return Ok(Self::from_model(existing));
+        }
+
         let id = Uuid::new_v4();
         let repo_name = path
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| id.to_string());
+        let now = Utc::now();
+        let active = repo::ActiveModel {
+            uuid: Set(id),
+            path: Set(path_str.clone()),
+            name: Set(repo_name),
+            display_name: Set(display_name.to_string()),
+            created_at: Set(now.into()),
+            updated_at: Set(now.into()),
+            ..Default::default()
+        };
 
-        // Use INSERT OR IGNORE + SELECT to handle race conditions atomically
-        sqlx::query_as!(
-            Repo,
-            r#"INSERT INTO repos (id, path, name, display_name)
-               VALUES ($1, $2, $3, $4)
-               ON CONFLICT(path) DO UPDATE SET updated_at = updated_at
-               RETURNING id as "id!: Uuid",
-                         path,
-                         name,
-                         display_name,
-                         created_at as "created_at!: DateTime<Utc>",
-                         updated_at as "updated_at!: DateTime<Utc>""#,
-            id,
-            path_str,
-            repo_name,
-            display_name,
-        )
-        .fetch_one(executor)
-        .await
+        let insert = repo::Entity::insert(active)
+            .on_conflict(
+                sea_orm::sea_query::OnConflict::column(repo::Column::Path)
+                    .do_nothing()
+                    .to_owned(),
+            )
+            .exec(db)
+            .await?;
+
+        if insert.last_insert_id > 0 {
+            if let Some(created) = repo::Entity::find_by_id(insert.last_insert_id)
+                .one(db)
+                .await?
+            {
+                return Ok(Self::from_model(created));
+            }
+        }
+
+        let record = repo::Entity::find()
+            .filter(repo::Column::Path.eq(path_str))
+            .one(db)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+        Ok(Self::from_model(record))
     }
 
-    pub async fn delete_orphaned(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query!(
-            r#"DELETE FROM repos
-               WHERE id NOT IN (SELECT repo_id FROM project_repos)
-                 AND id NOT IN (SELECT repo_id FROM workspace_repos)"#
-        )
-        .execute(pool)
-        .await?;
+    pub async fn delete_orphaned<C: ConnectionTrait>(db: &C) -> Result<u64, DbErr> {
+        let delete = Query::delete()
+            .from_table(repo::Entity)
+            .and_where(
+                Expr::col((repo::Entity, repo::Column::Id))
+                    .not_in_subquery(
+                        Query::select()
+                            .column(project_repo::Column::RepoId)
+                            .from(project_repo::Entity)
+                            .to_owned(),
+                    )
+                    .and(
+                        Expr::col((repo::Entity, repo::Column::Id))
+                            .not_in_subquery(
+                                Query::select()
+                                    .column(workspace_repo::Column::RepoId)
+                                    .from(workspace_repo::Entity)
+                                    .to_owned(),
+                            ),
+                    ),
+            )
+            .to_owned();
+
+        let result = db.execute(&delete).await?;
         Ok(result.rows_affected())
+    }
+}
+
+impl From<repo::Model> for Repo {
+    fn from(model: repo::Model) -> Self {
+        Self::from_model(model)
     }
 }

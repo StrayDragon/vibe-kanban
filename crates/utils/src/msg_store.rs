@@ -8,7 +8,7 @@ use futures::{StreamExt, TryStreamExt, future};
 use json_patch::{Patch, PatchOperation};
 use serde_json::Value;
 use tokio::{sync::broadcast, task::JoinHandle};
-use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
+use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{log_msg::LogMsg, stream_lines::LinesStreamExt};
 
@@ -305,7 +305,7 @@ impl MsgStore {
     }
 
     pub fn raw_history_plus_stream(
-        &self,
+        self: Arc<Self>,
     ) -> futures::stream::BoxStream<'static, Result<LogEntryEvent, std::io::Error>> {
         let finished = self.inner.read().unwrap().finished;
         let history = self.raw_history_page(usize::MAX, None).0;
@@ -322,18 +322,58 @@ impl MsgStore {
                 Ok::<_, std::io::Error>(LogEntryEvent::Finished)
             })))
         } else {
-            let live = BroadcastStream::new(self.raw_sender.subscribe()).map(|res| match res {
-                Ok(event) => Ok::<_, std::io::Error>(event),
-                Err(BroadcastStreamRecvError::Lagged(skipped)) => Err(std::io::Error::other(
-                    format!("raw log stream lagged by {skipped} messages"),
-                )),
-            });
+            let store = self.clone();
+            let rx = store.raw_sender.subscribe();
+            let live = futures::stream::unfold(
+                (store, VecDeque::<LogEntryEvent>::new(), rx, false),
+                |(store, mut pending, mut rx, finished)| async move {
+                    if finished {
+                        return None;
+                    }
+
+                    loop {
+                        if let Some(event) = pending.pop_front() {
+                            let done = matches!(event, LogEntryEvent::Finished);
+                            return Some((
+                                Ok::<_, std::io::Error>(event),
+                                (store, pending, rx, done),
+                            ));
+                        }
+
+                        match rx.recv().await {
+                            Ok(event) => {
+                                let done = matches!(event, LogEntryEvent::Finished);
+                                return Some((
+                                    Ok::<_, std::io::Error>(event),
+                                    (store, pending, rx, done),
+                                ));
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                                tracing::warn!(
+                                    "raw entry stream lagged by {skipped} messages; resyncing"
+                                );
+                                let snapshot = store.raw_history_page(usize::MAX, None).0;
+                                for entry in snapshot {
+                                    pending.push_back(LogEntryEvent::Replace {
+                                        entry_index: entry.entry_index,
+                                        entry: entry.entry_json,
+                                    });
+                                }
+                                if store.inner.read().unwrap().finished {
+                                    pending.push_back(LogEntryEvent::Finished);
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                        }
+                    }
+                },
+            );
             Box::pin(hist.chain(live))
         }
     }
 
     pub fn normalized_history_plus_stream(
-        &self,
+        self: Arc<Self>,
     ) -> futures::stream::BoxStream<'static, Result<LogEntryEvent, std::io::Error>> {
         let finished = self.inner.read().unwrap().finished;
         let history = self.normalized_history_page(usize::MAX, None).0;
@@ -350,15 +390,52 @@ impl MsgStore {
                 Ok::<_, std::io::Error>(LogEntryEvent::Finished)
             })))
         } else {
-            let live =
-                BroadcastStream::new(self.normalized_sender.subscribe()).map(|res| match res {
-                    Ok(event) => Ok::<_, std::io::Error>(event),
-                    Err(BroadcastStreamRecvError::Lagged(skipped)) => Err(
-                        std::io::Error::other(format!(
-                            "normalized log stream lagged by {skipped} messages"
-                        )),
-                    ),
-                });
+            let store = self.clone();
+            let rx = store.normalized_sender.subscribe();
+            let live = futures::stream::unfold(
+                (store, VecDeque::<LogEntryEvent>::new(), rx, false),
+                |(store, mut pending, mut rx, finished)| async move {
+                    if finished {
+                        return None;
+                    }
+
+                    loop {
+                        if let Some(event) = pending.pop_front() {
+                            let done = matches!(event, LogEntryEvent::Finished);
+                            return Some((
+                                Ok::<_, std::io::Error>(event),
+                                (store, pending, rx, done),
+                            ));
+                        }
+
+                        match rx.recv().await {
+                            Ok(event) => {
+                                let done = matches!(event, LogEntryEvent::Finished);
+                                return Some((
+                                    Ok::<_, std::io::Error>(event),
+                                    (store, pending, rx, done),
+                                ));
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                                tracing::warn!(
+                                    "normalized entry stream lagged by {skipped} messages; resyncing"
+                                );
+                                let snapshot = store.normalized_history_page(usize::MAX, None).0;
+                                for entry in snapshot {
+                                    pending.push_back(LogEntryEvent::Replace {
+                                        entry_index: entry.entry_index,
+                                        entry: entry.entry_json,
+                                    });
+                                }
+                                if store.inner.read().unwrap().finished {
+                                    pending.push_back(LogEntryEvent::Finished);
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                        }
+                    }
+                },
+            );
             Box::pin(hist.chain(live))
         }
     }
@@ -619,6 +696,41 @@ struct NormalizedEntryJson {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    fn store_with_broadcast_capacity(capacity: usize) -> MsgStore {
+        let (sender, _) = broadcast::channel(capacity);
+        let (raw_sender, _) = broadcast::channel(capacity);
+        let (normalized_sender, _) = broadcast::channel(capacity);
+        MsgStore {
+            inner: RwLock::new(Inner {
+                history: VecDeque::with_capacity(32),
+                total_bytes: 0,
+                raw_entries: VecDeque::with_capacity(64),
+                raw_total_bytes: 0,
+                raw_next_index: 0,
+                raw_evicted: false,
+                normalized_entries: BTreeMap::new(),
+                normalized_total_bytes: 0,
+                normalized_max_index: 0,
+                normalized_evicted: false,
+                finished: false,
+            }),
+            sender,
+            raw_sender,
+            normalized_sender,
+        }
+    }
+
+    async fn next_event(
+        stream: &mut futures::stream::BoxStream<'static, Result<LogEntryEvent, std::io::Error>>,
+    ) -> LogEntryEvent {
+        tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("stream stalled")
+            .expect("stream ended")
+            .expect("stream error")
+    }
 
     #[test]
     fn raw_history_assigns_entry_indexes() {
@@ -676,5 +788,88 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].entry_index, 0);
         assert_eq!(entries[0].entry_json["content"]["content"], "updated");
+    }
+
+    #[tokio::test]
+    async fn raw_stream_resyncs_after_lag_and_continues() {
+        let store = Arc::new(store_with_broadcast_capacity(4));
+        let mut stream = store.clone().raw_history_plus_stream();
+
+        for idx in 0..10 {
+            store.push_stdout(format!("msg {idx}"));
+        }
+
+        for idx in 0..10 {
+            match next_event(&mut stream).await {
+                LogEntryEvent::Replace { entry_index, .. } => assert_eq!(entry_index, idx),
+                other => panic!("expected replace event, got {other:?}"),
+            }
+        }
+
+        for idx in 6..10 {
+            match next_event(&mut stream).await {
+                LogEntryEvent::Append { entry_index, .. } => assert_eq!(entry_index, idx),
+                other => panic!("expected append event, got {other:?}"),
+            }
+        }
+
+        store.push_stdout("after");
+        match next_event(&mut stream).await {
+            LogEntryEvent::Append { entry_index, .. } => assert_eq!(entry_index, 10),
+            other => panic!("expected append event, got {other:?}"),
+        }
+
+        store.push_finished();
+        assert!(matches!(next_event(&mut stream).await, LogEntryEvent::Finished));
+    }
+
+    fn normalized_add_patch(entry_index: usize, content: &str) -> Patch {
+        serde_json::from_value(serde_json::json!([{
+            "op": "add",
+            "path": format!("/entries/{entry_index}"),
+            "value": {
+                "type": "NORMALIZED_ENTRY",
+                "content": {
+                    "entry_type": { "type": "assistant_message" },
+                    "content": content,
+                    "metadata": null,
+                    "timestamp": null
+                }
+            }
+        }]))
+        .expect("valid normalized add patch")
+    }
+
+    #[tokio::test]
+    async fn normalized_stream_resyncs_after_lag_and_continues() {
+        let store = Arc::new(store_with_broadcast_capacity(4));
+        let mut stream = store.clone().normalized_history_plus_stream();
+
+        for idx in 0..10 {
+            store.push_patch(normalized_add_patch(idx, &format!("entry {idx}")));
+        }
+
+        for idx in 0..10 {
+            match next_event(&mut stream).await {
+                LogEntryEvent::Replace { entry_index, .. } => assert_eq!(entry_index, idx),
+                other => panic!("expected replace event, got {other:?}"),
+            }
+        }
+
+        for idx in 6..10 {
+            match next_event(&mut stream).await {
+                LogEntryEvent::Append { entry_index, .. } => assert_eq!(entry_index, idx),
+                other => panic!("expected append event, got {other:?}"),
+            }
+        }
+
+        store.push_patch(normalized_add_patch(10, "after"));
+        match next_event(&mut stream).await {
+            LogEntryEvent::Append { entry_index, .. } => assert_eq!(entry_index, 10),
+            other => panic!("expected append event, got {other:?}"),
+        }
+
+        store.push_finished();
+        assert!(matches!(next_event(&mut stream).await, LogEntryEvent::Finished));
     }
 }

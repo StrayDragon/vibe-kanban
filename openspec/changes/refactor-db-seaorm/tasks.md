@@ -1,0 +1,15 @@
+## 1. Implementation
+- [x] 1.1 Audit all SQLx usage and group queries by table/module.
+- [x] 1.2 Add SeaORM + sea-orm-migration dependencies and workspace structure.
+- [x] 1.3 Confirm SeaORM feature flags for UUID/JSON and decide UUID generation strategy for SQLite/PG.
+- [x] 1.4 Define the new baseline schema with `id` PK + `uuid` unique keys and updated FK relationships.
+- [x] 1.5 Implement SeaORM migrations for the new baseline (P0 tables + event_outbox).
+- [x] 1.6 Remove legacy SQLx migrations after SeaORM baseline is wired in.
+- [x] 1.7 Define SeaORM entities for the new schema (id/uuid, enums, JSON, relations).
+- [x] 1.8 Update DBService and connection setup to use SeaORM Database/ConnectOptions.
+- [x] 1.9 Port CRUD/query logic to SeaORM, adding `find_by_uuid` helpers and uuid->id resolution.
+- [x] 1.10 Implement EventDispatcher, DomainEvent, EventPublisher, and an outbox table for post-commit delivery.
+- [x] 1.11 Rework event stream hooks to use EventDispatcher and remove rowid reliance.
+- [x] 1.12 Remove SQLx-specific retry logic and update tests (including UUID feature verification).
+- [x] 1.13 Reset local databases for the new schema and update dev scripts if needed.
+- [x] 1.14 Adjust `.cargo/config.toml` target-dir for worktree-local builds during dependency changes (if needed).

@@ -1,17 +1,24 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, SqlitePool};
+use sea_orm::{ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder, Set};
 use strum_macros::{Display, EnumDiscriminants, EnumString};
-use thiserror::Error;
 use ts_rs::TS;
 use uuid::Uuid;
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::{
+    entities::scratch,
+    events::{EVENT_SCRATCH_CREATED, EVENT_SCRATCH_DELETED, EVENT_SCRATCH_UPDATED, ScratchEventPayload},
+    models::{event_outbox::EventOutbox, ids},
+};
 
 #[derive(Debug, Error)]
 pub enum ScratchError {
     #[error(transparent)]
     Serde(#[from] serde_json::Error),
     #[error(transparent)]
-    Database(#[from] sqlx::Error),
+    Database(#[from] DbErr),
     #[error("Scratch type mismatch: expected '{expected}' but got '{actual}'")]
     TypeMismatch { expected: String, actual: String },
 }
@@ -57,15 +64,6 @@ impl ScratchPayload {
     }
 }
 
-#[derive(Debug, Clone, FromRow)]
-struct ScratchRow {
-    pub id: Uuid,
-    pub scratch_type: String,
-    pub payload: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct Scratch {
     pub id: Uuid,
@@ -81,23 +79,24 @@ impl Scratch {
     }
 }
 
-impl TryFrom<ScratchRow> for Scratch {
-    type Error = ScratchError;
-    fn try_from(r: ScratchRow) -> Result<Self, ScratchError> {
-        let payload: ScratchPayload = serde_json::from_str(&r.payload)?;
-        payload.validate_type(r.scratch_type.parse().map_err(|_| {
-            ScratchError::TypeMismatch {
-                expected: r.scratch_type.clone(),
-                actual: payload.scratch_type().to_string(),
-            }
-        })?)?;
-        Ok(Scratch {
-            id: r.id,
-            payload,
-            created_at: r.created_at,
-            updated_at: r.updated_at,
-        })
-    }
+fn map_row(
+    model: scratch::Model,
+    session_id: Uuid,
+) -> Result<Scratch, ScratchError> {
+    let payload: ScratchPayload = serde_json::from_value(model.payload)?;
+    payload.validate_type(model.scratch_type.parse().map_err(|_| {
+        ScratchError::TypeMismatch {
+            expected: model.scratch_type.clone(),
+            actual: payload.scratch_type().to_string(),
+        }
+    })?)?;
+
+    Ok(Scratch {
+        id: session_id,
+        payload,
+        created_at: model.created_at.into(),
+        updated_at: model.updated_at.into(),
+    })
 }
 
 /// Request body for creating a scratch (id comes from URL path, type from payload)
@@ -113,163 +112,153 @@ pub struct UpdateScratch {
 }
 
 impl Scratch {
-    pub async fn create(
-        pool: &SqlitePool,
+    pub async fn create<C: ConnectionTrait>(
+        db: &C,
         id: Uuid,
         data: &CreateScratch,
     ) -> Result<Self, ScratchError> {
         let scratch_type_str = data.payload.scratch_type().to_string();
-        let payload_str = serde_json::to_string(&data.payload)?;
+        let payload_value = serde_json::to_value(&data.payload)?;
 
-        let row = sqlx::query_as!(
-            ScratchRow,
-            r#"
-            INSERT INTO scratch (id, scratch_type, payload)
-            VALUES ($1, $2, $3)
-            RETURNING
-                id              as "id!: Uuid",
-                scratch_type,
-                payload,
-                created_at      as "created_at!: DateTime<Utc>",
-                updated_at      as "updated_at!: DateTime<Utc>"
-            "#,
-            id,
-            scratch_type_str,
-            payload_str,
-        )
-        .fetch_one(pool)
-        .await?;
+        let session_row_id = ids::session_id_by_uuid(db, id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Session not found".to_string()))?;
 
-        Scratch::try_from(row)
+        let active = scratch::ActiveModel {
+            uuid: Set(Uuid::new_v4()),
+            session_id: Set(session_row_id),
+            scratch_type: Set(scratch_type_str.clone()),
+            payload: Set(payload_value),
+            created_at: Set(Utc::now().into()),
+            updated_at: Set(Utc::now().into()),
+            ..Default::default()
+        };
+
+        let model = active.insert(db).await?;
+        let payload = serde_json::to_value(ScratchEventPayload {
+            scratch_id: id,
+            scratch_type: scratch_type_str.clone(),
+        })
+        .map_err(ScratchError::Serde)?;
+        EventOutbox::enqueue(db, EVENT_SCRATCH_CREATED, "scratch", id, payload).await?;
+        map_row(model, id)
     }
 
-    pub async fn find_by_id(
-        pool: &SqlitePool,
+    pub async fn find_by_id<C: ConnectionTrait>(
+        db: &C,
         id: Uuid,
         scratch_type: &ScratchType,
     ) -> Result<Option<Self>, ScratchError> {
         let scratch_type_str = scratch_type.to_string();
-        let row = sqlx::query_as!(
-            ScratchRow,
-            r#"
-            SELECT
-                id              as "id!: Uuid",
-                scratch_type,
-                payload,
-                created_at      as "created_at!: DateTime<Utc>",
-                updated_at      as "updated_at!: DateTime<Utc>"
-            FROM scratch
-            WHERE id = $1 AND scratch_type = $2
-            "#,
-            id,
-            scratch_type_str,
-        )
-        .fetch_optional(pool)
-        .await?;
+        let session_row_id = ids::session_id_by_uuid(db, id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Session not found".to_string()))?;
 
-        let scratch = row.map(Scratch::try_from).transpose()?;
+        let record = scratch::Entity::find()
+            .filter(scratch::Column::SessionId.eq(session_row_id))
+            .filter(scratch::Column::ScratchType.eq(scratch_type_str))
+            .one(db)
+            .await?;
+
+        let scratch = record.map(|row| map_row(row, id)).transpose()?;
         Ok(scratch)
     }
 
-    pub async fn find_all(pool: &SqlitePool) -> Result<Vec<Self>, ScratchError> {
-        let rows = sqlx::query_as!(
-            ScratchRow,
-            r#"
-            SELECT
-                id              as "id!: Uuid",
-                scratch_type,
-                payload,
-                created_at      as "created_at!: DateTime<Utc>",
-                updated_at      as "updated_at!: DateTime<Utc>"
-            FROM scratch
-            ORDER BY created_at DESC
-            "#
-        )
-        .fetch_all(pool)
-        .await?;
+    pub async fn find_all<C: ConnectionTrait>(db: &C) -> Result<Vec<Self>, ScratchError> {
+        let records = scratch::Entity::find()
+            .order_by_desc(scratch::Column::CreatedAt)
+            .all(db)
+            .await?;
 
-        let scratches = rows
-            .into_iter()
-            .filter_map(|row| Scratch::try_from(row).ok())
-            .collect();
+        let mut scratches = Vec::with_capacity(records.len());
+        for record in records {
+            if let Some(session_id) = ids::session_uuid_by_id(db, record.session_id).await? {
+                if let Ok(scratch) = map_row(record, session_id) {
+                    scratches.push(scratch);
+                }
+            }
+        }
 
         Ok(scratches)
     }
 
     /// Upsert a scratch record - creates if not exists, updates if exists.
-    pub async fn update(
-        pool: &SqlitePool,
+    pub async fn update<C: ConnectionTrait>(
+        db: &C,
         id: Uuid,
         scratch_type: &ScratchType,
         data: &UpdateScratch,
     ) -> Result<Self, ScratchError> {
-        let payload_str = serde_json::to_string(&data.payload)?;
+        let payload_value = serde_json::to_value(&data.payload)?;
         let scratch_type_str = scratch_type.to_string();
+        let session_row_id = ids::session_id_by_uuid(db, id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Session not found".to_string()))?;
 
-        // Upsert: insert if not exists, update if exists
-        let row = sqlx::query_as!(
-            ScratchRow,
-            r#"
-            INSERT INTO scratch (id, scratch_type, payload)
-            VALUES ($1, $2, $3)
-            ON CONFLICT(id, scratch_type) DO UPDATE SET
-                payload = excluded.payload,
-                updated_at = datetime('now', 'subsec')
-            RETURNING
-                id              as "id!: Uuid",
-                scratch_type,
-                payload,
-                created_at      as "created_at!: DateTime<Utc>",
-                updated_at      as "updated_at!: DateTime<Utc>"
-            "#,
-            id,
-            scratch_type_str,
-            payload_str,
-        )
-        .fetch_one(pool)
-        .await?;
+        let active = scratch::ActiveModel {
+            uuid: Set(Uuid::new_v4()),
+            session_id: Set(session_row_id),
+            scratch_type: Set(scratch_type_str.clone()),
+            payload: Set(payload_value),
+            created_at: Set(Utc::now().into()),
+            updated_at: Set(Utc::now().into()),
+            ..Default::default()
+        };
 
-        Scratch::try_from(row)
+        scratch::Entity::insert(active)
+            .on_conflict(
+                sea_orm::sea_query::OnConflict::columns([
+                    scratch::Column::SessionId,
+                    scratch::Column::ScratchType,
+                ])
+                .update_columns([
+                    scratch::Column::Payload,
+                    scratch::Column::UpdatedAt,
+                ])
+                .to_owned(),
+            )
+            .exec(db)
+            .await?;
+
+        let record = scratch::Entity::find()
+            .filter(scratch::Column::SessionId.eq(session_row_id))
+            .filter(scratch::Column::ScratchType.eq(scratch_type_str))
+            .one(db)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Scratch not found".to_string()))?;
+
+        let payload = serde_json::to_value(ScratchEventPayload {
+            scratch_id: id,
+            scratch_type: scratch_type.to_string(),
+        })
+        .map_err(ScratchError::Serde)?;
+        EventOutbox::enqueue(db, EVENT_SCRATCH_UPDATED, "scratch", id, payload).await?;
+        map_row(record, id)
     }
 
-    pub async fn delete(
-        pool: &SqlitePool,
+    pub async fn delete<C: ConnectionTrait>(
+        db: &C,
         id: Uuid,
         scratch_type: &ScratchType,
-    ) -> Result<u64, sqlx::Error> {
+    ) -> Result<u64, DbErr> {
         let scratch_type_str = scratch_type.to_string();
-        let result = sqlx::query!(
-            "DELETE FROM scratch WHERE id = $1 AND scratch_type = $2",
-            id,
-            scratch_type_str
-        )
-        .execute(pool)
-        .await?;
-        Ok(result.rows_affected())
-    }
+        let session_row_id = ids::session_id_by_uuid(db, id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Session not found".to_string()))?;
 
-    pub async fn find_by_rowid(
-        pool: &SqlitePool,
-        rowid: i64,
-    ) -> Result<Option<Self>, ScratchError> {
-        let row = sqlx::query_as!(
-            ScratchRow,
-            r#"
-            SELECT
-                id              as "id!: Uuid",
-                scratch_type,
-                payload,
-                created_at      as "created_at!: DateTime<Utc>",
-                updated_at      as "updated_at!: DateTime<Utc>"
-            FROM scratch
-            WHERE rowid = $1
-            "#,
-            rowid
-        )
-        .fetch_optional(pool)
-        .await?;
-
-        let scratch = row.map(Scratch::try_from).transpose()?;
-        Ok(scratch)
+        let result = scratch::Entity::delete_many()
+            .filter(scratch::Column::SessionId.eq(session_row_id))
+            .filter(scratch::Column::ScratchType.eq(scratch_type_str))
+            .exec(db)
+            .await?;
+        if result.rows_affected > 0 {
+            let payload = serde_json::to_value(ScratchEventPayload {
+                scratch_id: id,
+                scratch_type: scratch_type.to_string(),
+            })
+            .map_err(|err| DbErr::Custom(err.to_string()))?;
+            EventOutbox::enqueue(db, EVENT_SCRATCH_DELETED, "scratch", id, payload).await?;
+        }
+        Ok(result.rows_affected)
     }
 }

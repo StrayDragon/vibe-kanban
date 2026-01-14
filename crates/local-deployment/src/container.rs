@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use command_group::AsyncGroupChild;
 use db::{
     DBService,
+    DbErr,
     models::{
         coding_agent_turn::CodingAgentTurn,
         execution_process::{
@@ -1226,7 +1227,7 @@ impl ContainerService for LocalContainerService {
         let task = workspace
             .parent_task(&self.db.pool)
             .await?
-            .ok_or(sqlx::Error::RowNotFound)?;
+            .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
 
         let workspace_dir_name =
             LocalContainerService::dir_name_from_workspace(&workspace.id, &task.title);
@@ -1308,7 +1309,7 @@ impl ContainerService for LocalContainerService {
             let task = workspace
                 .parent_task(&self.db.pool)
                 .await?
-                .ok_or(sqlx::Error::RowNotFound)?;
+                .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
             let workspace_dir_name =
                 LocalContainerService::dir_name_from_workspace(&workspace.id, &task.title);
             WorkspaceManager::get_workspace_base_dir().join(&workspace_dir_name)

@@ -6,7 +6,6 @@ use enum_dispatch::enum_dispatch;
 use futures_io::Error as FuturesIoError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sqlx::Type;
 use strum_macros::{Display, EnumDiscriminants, EnumString, VariantNames};
 use thiserror::Error;
 use ts_rs::TS;
@@ -83,11 +82,10 @@ pub enum ExecutorError {
 #[strum_discriminants(
     name(BaseCodingAgent),
     // Only add Hash; Eq/PartialEq are already provided by EnumDiscriminants.
-    derive(EnumString, Hash, strum_macros::Display, Serialize, Deserialize, TS, Type),
+    derive(EnumString, Hash, strum_macros::Display, Serialize, Deserialize, TS),
     strum(serialize_all = "SCREAMING_SNAKE_CASE"),
     ts(use_ts_enum),
-    serde(rename_all = "SCREAMING_SNAKE_CASE"),
-    sqlx(type_name = "TEXT", rename_all = "SCREAMING_SNAKE_CASE")
+    serde(rename_all = "SCREAMING_SNAKE_CASE")
 )]
 pub enum CodingAgent {
     ClaudeCode,

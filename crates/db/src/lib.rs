@@ -1,115 +1,54 @@
-use std::{str::FromStr, sync::Arc, time::Duration};
+use std::time::Duration;
 
-use sqlx::{
-    Error, Pool, Sqlite, SqlitePool,
-    sqlite::{
-        SqliteConnectOptions, SqliteConnection, SqliteJournalMode, SqlitePoolOptions,
-        SqliteSynchronous,
-    },
-};
+use sea_orm::{ConnectOptions, ConnectionTrait, Database, DatabaseConnection, Statement};
+use sea_orm_migration::MigratorTrait;
 use utils::assets::asset_dir;
 
+pub mod events;
 pub mod models;
-mod retry;
+pub mod entities;
+pub mod types;
 
 #[derive(Clone)]
 pub struct DBService {
-    pub pool: Pool<Sqlite>,
+    pub pool: DatabaseConnection,
 }
 
-// TEMP: remove after update-log-history-streaming migration is guaranteed in all releases.
-async fn warn_if_missing_log_entries_table(pool: &Pool<Sqlite>) {
-    let table_exists = sqlx::query_scalar::<_, i64>(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_process_log_entries'",
-    )
-    .fetch_optional(pool)
-    .await;
-
-    match table_exists {
-        Ok(Some(_)) => {}
-        Ok(None) => {
-            tracing::warn!(
-                "Missing execution_process_log_entries table; log history v2 endpoints will be unavailable. \
-                 Run migrations or deploy a build that includes the update-log-history-streaming migration."
-            );
-        }
-        Err(err) => {
-            tracing::warn!(
-                "Failed to verify execution_process_log_entries table: {}",
-                err
-            );
-        }
-    }
-}
+pub type DbPool = DatabaseConnection;
+pub use sea_orm::DbErr;
+pub use sea_orm::TransactionTrait;
 
 impl DBService {
-    pub async fn new() -> Result<DBService, Error> {
-        let database_url = format!(
-            "sqlite://{}",
-            asset_dir().join("db.sqlite").to_string_lossy()
-        );
-        let options = SqliteConnectOptions::from_str(&database_url)?
-            .create_if_missing(true)
-            .journal_mode(SqliteJournalMode::Wal)
-            .synchronous(SqliteSynchronous::Normal)
-            .busy_timeout(Duration::from_secs(30));
-        let pool = SqlitePool::connect_with(options).await?;
-        sqlx::migrate!("./migrations").run(&pool).await?;
-        warn_if_missing_log_entries_table(&pool).await;
-        Ok(DBService { pool })
-    }
+    pub async fn new() -> Result<DBService, DbErr> {
+        let db_path = asset_dir().join("db.sqlite");
+        let database_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
 
-    pub async fn new_with_after_connect<F>(after_connect: F) -> Result<DBService, Error>
-    where
-        F: for<'a> Fn(
-                &'a mut SqliteConnection,
-            ) -> std::pin::Pin<
-                Box<dyn std::future::Future<Output = Result<(), Error>> + Send + 'a>,
-            > + Send
-            + Sync
-            + 'static,
-    {
-        let pool = Self::create_pool(Some(Arc::new(after_connect))).await?;
-        Ok(DBService { pool })
-    }
-
-    async fn create_pool<F>(after_connect: Option<Arc<F>>) -> Result<Pool<Sqlite>, Error>
-    where
-        F: for<'a> Fn(
-                &'a mut SqliteConnection,
-            ) -> std::pin::Pin<
-                Box<dyn std::future::Future<Output = Result<(), Error>> + Send + 'a>,
-            > + Send
-            + Sync
-            + 'static,
-    {
-        let database_url = format!(
-            "sqlite://{}",
-            asset_dir().join("db.sqlite").to_string_lossy()
-        );
-        let options = SqliteConnectOptions::from_str(&database_url)?
-            .create_if_missing(true)
-            .journal_mode(SqliteJournalMode::Wal)
-            .synchronous(SqliteSynchronous::Normal)
-            .busy_timeout(Duration::from_secs(30));
-
-        let pool = if let Some(hook) = after_connect {
-            SqlitePoolOptions::new()
-                .after_connect(move |conn, _meta| {
-                    let hook = hook.clone();
-                    Box::pin(async move {
-                        hook(conn).await?;
-                        Ok(())
-                    })
-                })
-                .connect_with(options)
+        if db_path.exists() {
+            let mut check_options = ConnectOptions::new(database_url.clone());
+            check_options.sqlx_logging(false);
+            let check_pool = Database::connect(check_options).await?;
+            let has_migrations = check_pool
+                .query_one_raw(Statement::from_string(
+                    check_pool.get_database_backend(),
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='seaql_migrations'",
+                ))
                 .await?
-        } else {
-            SqlitePool::connect_with(options).await?
-        };
+                .is_some();
+            drop(check_pool);
 
-        sqlx::migrate!("./migrations").run(&pool).await?;
-        warn_if_missing_log_entries_table(&pool).await;
-        Ok(pool)
+            if !has_migrations {
+                std::fs::remove_file(&db_path)
+                    .map_err(|err| DbErr::Custom(err.to_string()))?;
+            }
+        }
+
+        let mut options = ConnectOptions::new(database_url);
+        options
+            .max_connections(5)
+            .connect_timeout(Duration::from_secs(30))
+            .sqlx_logging(false);
+        let pool = Database::connect(options).await?;
+        db_migration::Migrator::up(&pool, None).await?;
+        Ok(DBService { pool })
     }
 }

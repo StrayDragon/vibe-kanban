@@ -13,13 +13,14 @@ Vibe Kanban 是一个为 AI 编码代理设计的任务管理和编排系统。�
 
 ### 后端 (Rust)
 - **Web 框架**：Axum 0.8（支持 WebSocket 的异步 HTTP）
-- **数据库**：SQLite + SQLx（编译时检查的查询）
+- **数据库**：SQLite + SeaORM（异步 ORM）
 - **运行时**：Tokio（异步运行时）
 - **核心库**：
   - `ts-rs`：从 Rust 结构体生成 TypeScript 类型
   - `git2`：Git 仓库操作
   - `rmcp`：MCP（模型上下文协议）服务器实现
-  - `sqlx`：类型安全的 SQL 查询
+  - `sea-orm`：异步 ORM + SeaQuery 查询构建
+  - `sea-orm-migration`：迁移管理
   - `axum` + `tower-http`：支持 CORS、跟踪、请求 ID 的 HTTP 服务器
 
 ### 前端 (TypeScript/React)
@@ -218,6 +219,7 @@ erDiagram
 常用环境变量（默认值）：
 - `VK_FILE_SEARCH_CACHE_MAX_REPOS=25`
 - `VK_FILE_SEARCH_CACHE_TTL_SECS=3600`
+- `VK_FILE_SEARCH_MAX_FILES=200000`
 - `VK_FILE_SEARCH_WATCHERS_MAX=25`
 - `VK_FILE_SEARCH_WATCHER_TTL_SECS=21600`
 - `VK_FILE_STATS_CACHE_MAX_REPOS=25`
@@ -426,8 +428,8 @@ graph LR
 
 ### 5. 事件驱动更新
 数据库更改自动触发事件：
-- SQLx `after_execute` 钩子
-- EventService 监听所有变更
+- SeaORM 写入时入队 `event_outbox`
+- EventService 轮询 outbox 并派发补丁
 - 前端通过 SSE 接收实时更新
 - 无需轮询
 
@@ -592,11 +594,11 @@ pnpm run check
 
 ### 数据库迁移
 ```bash
-# 1. 在 migrations/ 中创建迁移
-# 2. 为离线 SQLx 检查运行 prepare-db
+# 1. 在 crates/db/migration/src 中创建迁移
+# 2. 运行 SeaORM 迁移
 pnpm run prepare-db
 
-# 3. SQLx 在编译时验证查询
+# 3. 运行检查
 cargo check
 ```
 
@@ -640,7 +642,7 @@ cargo test --workspace
 
 ### 3. 数据库优化
 - 索引列（project_id、task_id、created_at）
-- 通过 SQLx 的准备语句
+- 通过 SeaORM/SeaQuery 的参数化查询
 - 连接池
 - 全面的异步操作
 
@@ -667,7 +669,7 @@ cargo test --workspace
 ### 3. 输入验证
 - 代理配置的基于 schema 的验证
 - 路径遍历保护
-- SQL 注入预防 (SQLx)
+- SQL 注入预防 (SeaORM/SeaQuery)
 - 命令注入预防 (shlex 用于 shell 转义)
 
 ### 4. 认证
@@ -750,20 +752,23 @@ pub struct LocalContainerService {
 
 ### 添加新数据库模型
 
-1. **定义模型** (`//crates/db/src/models/my_model.rs`):
+1. **定义实体** (`//crates/db/src/entities/my_model.rs`):
 ```rust
-#[derive(Debug, Clone, Serialize, Deserialize, TS, sqlx::FromRow)]
-pub struct MyModel {
-    pub id: Uuid,
+#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+#[sea_orm(table_name = "my_models")]
+pub struct Model {
+    #[sea_orm(primary_key)]
+    pub id: i64,
+    pub uuid: Uuid,
     pub name: String,
 }
 ```
 
-2. **添加 CRUD 方法**:
+2. **添加模型封装和 CRUD** (`//crates/db/src/models/my_model.rs`):
 ```rust
 impl MyModel {
-    pub async fn create(pool: &SqlitePool, data: CreateMyModel) -> Result<Self> {
-        // SQLx 查询
+    pub async fn create<C: ConnectionTrait>(db: &C, data: CreateMyModel) -> Result<Self, DbErr> {
+        // SeaORM Entity + ActiveModel
     }
 }
 ```

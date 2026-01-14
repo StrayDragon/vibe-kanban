@@ -6,9 +6,13 @@ const path = require('path');
 
 const checkMode = process.argv.includes('--check');
 
-console.log(checkMode ? 'Checking SQLx prepared queries...' : 'Preparing database for SQLx...');
+console.log(
+  checkMode
+    ? 'Checking SeaORM migrations...'
+    : 'Preparing database for SeaORM migrations...'
+);
 
-// Change to backend directory
+// Change to database crate directory
 const backendDir = path.join(__dirname, '..', 'crates/db');
 process.chdir(backendDir);
 
@@ -19,29 +23,18 @@ fs.writeFileSync(dbFile, '');
 try {
   // Get absolute path (cross-platform)
   const dbPath = path.resolve(dbFile);
-  const databaseUrl = `sqlite:${dbPath}`;
+  const databaseUrl = `sqlite://${dbPath}`;
 
   console.log(`Using database: ${databaseUrl}`);
 
   // Run migrations
-  console.log('Running migrations...');
-  execSync('cargo sqlx migrate run', {
+  console.log('Running SeaORM migrations...');
+  execSync('cargo run -p db-migration -- up', {
     stdio: 'inherit',
     env: { ...process.env, DATABASE_URL: databaseUrl }
   });
 
-  // Prepare queries (include tests so rust-analyzer/cargo check --tests won't fail in offline mode)
-  const sqlxCommand = checkMode
-    ? 'cargo sqlx prepare --check -- --tests'
-    : 'cargo sqlx prepare -- --tests';
-  console.log(checkMode ? 'Checking prepared queries...' : 'Preparing queries...');
-  execSync(sqlxCommand, {
-    stdio: 'inherit',
-    env: { ...process.env, DATABASE_URL: databaseUrl }
-  });
-
-  console.log(checkMode ? 'SQLx check complete!' : 'Database preparation complete!');
-
+  console.log(checkMode ? 'SeaORM migration check complete!' : 'Database preparation complete!');
 } finally {
   // Clean up temporary file
   if (fs.existsSync(dbFile)) {

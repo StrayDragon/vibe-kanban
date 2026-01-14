@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import RepoBranchSelector from '@/components/tasks/RepoBranchSelector';
 import { ExecutorProfileSelector } from '@/components/settings';
 import { useAttemptCreation } from '@/hooks/useAttemptCreation';
@@ -27,6 +28,7 @@ import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { defineModal } from '@/lib/modals';
 import type { ExecutorProfileId, BaseCodingAgent } from 'shared/types';
 import { useKeySubmitTask, Scope } from '@/keyboard';
+import { useCliDependencyPreflight } from '@/hooks/useCliDependencyPreflight';
 
 export interface CreateAttemptDialogProps {
   taskId: string;
@@ -119,6 +121,10 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
 
     const effectiveProfile = userSelectedProfile ?? defaultProfile;
 
+    const selectedAgent = effectiveProfile?.executor ?? null;
+    const { data: cliPreflight, isLoading: preflightLoading } =
+      useCliDependencyPreflight(selectedAgent, modal.visible);
+
     const isLoadingInitial =
       isLoadingRepos ||
       isLoadingBranches ||
@@ -189,6 +195,29 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
                   showLabel={true}
                 />
               </div>
+            )}
+
+            {selectedAgent && (
+              <Alert
+                variant={
+                  cliPreflight?.agent.type === 'NOT_FOUND'
+                    ? 'destructive'
+                    : 'default'
+                }
+              >
+                <AlertTitle>{t('createAttemptDialog.preflight.title')}</AlertTitle>
+                <AlertDescription>
+                  {preflightLoading
+                    ? t('createAttemptDialog.preflight.checking')
+                    : cliPreflight?.agent.type === 'LOGIN_DETECTED'
+                      ? t('createAttemptDialog.preflight.agentReady')
+                      : cliPreflight?.agent.type === 'INSTALLATION_FOUND'
+                        ? t('createAttemptDialog.preflight.agentInstalled')
+                        : cliPreflight?.agent.type === 'NOT_FOUND'
+                          ? t('createAttemptDialog.preflight.agentNotFound')
+                          : null}
+                </AlertDescription>
+              </Alert>
             )}
 
             <RepoBranchSelector

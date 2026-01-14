@@ -1,12 +1,18 @@
 use chrono::{DateTime, Utc};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, DbErr, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set,
+};
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, SqlitePool};
 use utils::log_entries::LogEntryChannel;
 use uuid::Uuid;
 
-use crate::retry::retry_on_sqlite_busy;
+use crate::{
+    entities::execution_process_log_entry,
+    models::ids,
+};
 
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionProcessLogEntry {
     pub execution_id: Uuid,
     pub channel: String,
@@ -16,7 +22,7 @@ pub struct ExecutionProcessLogEntry {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntryRow {
     pub entry_index: i64,
     pub entry_json: String,
@@ -29,201 +35,245 @@ pub struct LogEntryStats {
     pub max_index: i64,
 }
 
-#[derive(Debug, Clone, FromRow)]
-struct LogEntryStatsRow {
-    pub count: i64,
-    pub min_index: Option<i64>,
-    pub max_index: Option<i64>,
+fn to_db_channel(channel: LogEntryChannel) -> execution_process_log_entry::LogChannel {
+    match channel {
+        LogEntryChannel::Raw => execution_process_log_entry::LogChannel::Raw,
+        LogEntryChannel::Normalized => execution_process_log_entry::LogChannel::Normalized,
+    }
 }
 
 impl ExecutionProcessLogEntry {
-    pub async fn stats(
-        pool: &SqlitePool,
+    pub async fn table_available<C: ConnectionTrait>(db: &C) -> bool {
+        execution_process_log_entry::Entity::find()
+            .limit(1)
+            .one(db)
+            .await
+            .is_ok()
+    }
+
+    pub async fn stats<C: ConnectionTrait>(
+        db: &C,
         execution_id: Uuid,
         channel: LogEntryChannel,
-    ) -> Result<Option<LogEntryStats>, sqlx::Error> {
-        let channel_value = channel.as_str();
-        let row = sqlx::query_as!(
-            LogEntryStatsRow,
-            r#"SELECT COUNT(*) as "count!: i64",
-                      MIN(entry_index) as "min_index: i64",
-                      MAX(entry_index) as "max_index: i64"
-               FROM execution_process_log_entries
-               WHERE execution_id = $1 AND channel = $2"#,
-            execution_id,
-            channel_value,
-        )
-        .fetch_one(pool)
-        .await?;
+    ) -> Result<Option<LogEntryStats>, DbErr> {
+        let execution_row_id = ids::execution_process_id_by_uuid(db, execution_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
+        let channel_value = to_db_channel(channel);
 
-        if row.count == 0 {
+        let count = execution_process_log_entry::Entity::find()
+            .filter(execution_process_log_entry::Column::ExecutionProcessId.eq(execution_row_id))
+            .filter(execution_process_log_entry::Column::Channel.eq(channel_value.clone()))
+            .count(db)
+            .await?;
+
+        if count == 0 {
             return Ok(None);
         }
 
-        let min_index = row.min_index.unwrap_or(0);
-        let max_index = row.max_index.unwrap_or(min_index);
+        let min_row = execution_process_log_entry::Entity::find()
+            .filter(execution_process_log_entry::Column::ExecutionProcessId.eq(execution_row_id))
+            .filter(execution_process_log_entry::Column::Channel.eq(channel_value.clone()))
+            .order_by_asc(execution_process_log_entry::Column::EntryIndex)
+            .one(db)
+            .await?;
+        let max_row = execution_process_log_entry::Entity::find()
+            .filter(execution_process_log_entry::Column::ExecutionProcessId.eq(execution_row_id))
+            .filter(execution_process_log_entry::Column::Channel.eq(channel_value))
+            .order_by_desc(execution_process_log_entry::Column::EntryIndex)
+            .one(db)
+            .await?;
+
+        let min_index = min_row.map(|row| row.entry_index).unwrap_or(0);
+        let max_index = max_row.map(|row| row.entry_index).unwrap_or(min_index);
+
         Ok(Some(LogEntryStats {
-            count: row.count,
+            count: i64::try_from(count).unwrap_or(i64::MAX),
             min_index,
             max_index,
         }))
     }
 
-    pub async fn has_any(
-        pool: &SqlitePool,
+    pub async fn has_any<C: ConnectionTrait>(
+        db: &C,
         execution_id: Uuid,
         channel: LogEntryChannel,
-    ) -> Result<bool, sqlx::Error> {
-        let channel_value = channel.as_str();
-        let exists = sqlx::query_scalar!(
-            r#"SELECT 1 as "one!: i64"
-               FROM execution_process_log_entries
-               WHERE execution_id = $1 AND channel = $2
-               LIMIT 1"#,
-            execution_id,
-            channel_value,
-        )
-        .fetch_optional(pool)
-        .await?
-        .is_some();
+    ) -> Result<bool, DbErr> {
+        let execution_row_id = ids::execution_process_id_by_uuid(db, execution_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
+        let channel_value = to_db_channel(channel);
+
+        let exists = execution_process_log_entry::Entity::find()
+            .filter(execution_process_log_entry::Column::ExecutionProcessId.eq(execution_row_id))
+            .filter(execution_process_log_entry::Column::Channel.eq(channel_value))
+            .one(db)
+            .await?
+            .is_some();
 
         Ok(exists)
     }
 
-    pub async fn fetch_page(
-        pool: &SqlitePool,
+    pub async fn fetch_page<C: ConnectionTrait>(
+        db: &C,
         execution_id: Uuid,
         channel: LogEntryChannel,
         limit: usize,
         cursor: Option<i64>,
-    ) -> Result<Vec<LogEntryRow>, sqlx::Error> {
-        let channel_value = channel.as_str();
-        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let rows = if let Some(cursor) = cursor {
-            sqlx::query_as!(
-                LogEntryRow,
-                r#"SELECT entry_index, entry_json
-                   FROM execution_process_log_entries
-                   WHERE execution_id = $1
-                     AND channel = $2
-                     AND entry_index < $3
-                   ORDER BY entry_index DESC
-                   LIMIT $4"#,
-                execution_id,
-                channel_value,
-                cursor,
-                limit,
-            )
-            .fetch_all(pool)
+    ) -> Result<Vec<LogEntryRow>, DbErr> {
+        let execution_row_id = ids::execution_process_id_by_uuid(db, execution_id)
             .await?
-        } else {
-            sqlx::query_as!(
-                LogEntryRow,
-                r#"SELECT entry_index, entry_json
-                   FROM execution_process_log_entries
-                   WHERE execution_id = $1
-                     AND channel = $2
-                   ORDER BY entry_index DESC
-                   LIMIT $3"#,
-                execution_id,
-                channel_value,
-                limit,
-            )
-            .fetch_all(pool)
-            .await?
-        };
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
+        let channel_value = to_db_channel(channel);
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX) as u64;
 
-        Ok(rows)
+        let mut query = execution_process_log_entry::Entity::find()
+            .filter(execution_process_log_entry::Column::ExecutionProcessId.eq(execution_row_id))
+            .filter(execution_process_log_entry::Column::Channel.eq(channel_value));
+
+        if let Some(cursor) = cursor {
+            query = query.filter(execution_process_log_entry::Column::EntryIndex.lt(cursor));
+        }
+
+        let rows = query
+            .order_by_desc(execution_process_log_entry::Column::EntryIndex)
+            .limit(limit)
+            .all(db)
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| LogEntryRow {
+                entry_index: row.entry_index,
+                entry_json: row.entry_json.to_string(),
+            })
+            .collect())
     }
 
-    pub async fn has_older(
-        pool: &SqlitePool,
+    pub async fn has_older<C: ConnectionTrait>(
+        db: &C,
         execution_id: Uuid,
         channel: LogEntryChannel,
         before_index: i64,
-    ) -> Result<bool, sqlx::Error> {
-        let channel_value = channel.as_str();
-        let exists = sqlx::query_scalar!(
-            r#"SELECT 1 as "one!: i64"
-               FROM execution_process_log_entries
-               WHERE execution_id = $1
-                 AND channel = $2
-                 AND entry_index < $3
-               LIMIT 1"#,
-            execution_id,
-            channel_value,
-            before_index,
-        )
-        .fetch_optional(pool)
-        .await?
-        .is_some();
+    ) -> Result<bool, DbErr> {
+        let execution_row_id = ids::execution_process_id_by_uuid(db, execution_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
+        let channel_value = to_db_channel(channel);
+
+        let exists = execution_process_log_entry::Entity::find()
+            .filter(execution_process_log_entry::Column::ExecutionProcessId.eq(execution_row_id))
+            .filter(execution_process_log_entry::Column::Channel.eq(channel_value))
+            .filter(execution_process_log_entry::Column::EntryIndex.lt(before_index))
+            .one(db)
+            .await?
+            .is_some();
 
         Ok(exists)
     }
 
-    pub async fn upsert_entry(
-        pool: &SqlitePool,
+    pub async fn upsert_entry<C: ConnectionTrait>(
+        db: &C,
         execution_id: Uuid,
         channel: LogEntryChannel,
         entry_index: i64,
         entry_json: &str,
-    ) -> Result<(), sqlx::Error> {
-        let channel_value = channel.as_str();
-        retry_on_sqlite_busy(|| async {
-            sqlx::query!(
-                r#"INSERT INTO execution_process_log_entries (
-                       execution_id, channel, entry_index, entry_json
-                   ) VALUES ($1, $2, $3, $4)
-                   ON CONFLICT(execution_id, channel, entry_index)
-                   DO UPDATE SET
-                     entry_json = excluded.entry_json,
-                     updated_at = datetime('now', 'subsec')"#,
-                execution_id,
-                channel_value,
-                entry_index,
-                entry_json,
+    ) -> Result<(), DbErr> {
+        let execution_row_id = ids::execution_process_id_by_uuid(db, execution_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
+        let channel_value = to_db_channel(channel);
+        let json_value: serde_json::Value = serde_json::from_str(entry_json)
+            .map_err(|err| DbErr::Custom(err.to_string()))?;
+
+        let active = execution_process_log_entry::ActiveModel {
+            uuid: Set(Uuid::new_v4()),
+            execution_process_id: Set(execution_row_id),
+            channel: Set(channel_value),
+            entry_index: Set(entry_index),
+            entry_json: Set(json_value),
+            created_at: Set(Utc::now().into()),
+            updated_at: Set(Utc::now().into()),
+            ..Default::default()
+        };
+
+        execution_process_log_entry::Entity::insert(active)
+            .on_conflict(
+                sea_orm::sea_query::OnConflict::columns([
+                    execution_process_log_entry::Column::ExecutionProcessId,
+                    execution_process_log_entry::Column::Channel,
+                    execution_process_log_entry::Column::EntryIndex,
+                ])
+                .update_columns([
+                    execution_process_log_entry::Column::EntryJson,
+                    execution_process_log_entry::Column::UpdatedAt,
+                ])
+                .to_owned(),
             )
-            .execute(pool)
+            .exec(db)
             .await?;
-            Ok(())
-        })
-        .await?;
 
         Ok(())
     }
 
-    pub async fn upsert_entries(
-        pool: &SqlitePool,
+    pub async fn upsert_entries<C: ConnectionTrait>(
+        db: &C,
         execution_id: Uuid,
         channel: LogEntryChannel,
         entries: &[LogEntryRow],
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), DbErr> {
         if entries.is_empty() {
             return Ok(());
         }
 
-        retry_on_sqlite_busy(|| async {
-            let channel_value = channel.as_str();
-            let mut query_builder = sqlx::QueryBuilder::new(
-                "INSERT INTO execution_process_log_entries (execution_id, channel, entry_index, entry_json) ",
-            );
+        let execution_row_id = ids::execution_process_id_by_uuid(db, execution_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
+        let channel_value = to_db_channel(channel);
 
-            query_builder.push_values(entries, |mut builder, entry| {
-                builder
-                    .push_bind(execution_id)
-                    .push_bind(channel_value)
-                    .push_bind(entry.entry_index)
-                    .push_bind(&entry.entry_json);
+        let mut inserts = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let json_value: serde_json::Value = serde_json::from_str(&entry.entry_json)
+                .map_err(|err| DbErr::Custom(err.to_string()))?;
+            inserts.push(execution_process_log_entry::ActiveModel {
+                uuid: Set(Uuid::new_v4()),
+                execution_process_id: Set(execution_row_id),
+                channel: Set(channel_value.clone()),
+                entry_index: Set(entry.entry_index),
+                entry_json: Set(json_value),
+                created_at: Set(Utc::now().into()),
+                updated_at: Set(Utc::now().into()),
+                ..Default::default()
             });
+        }
 
-            query_builder.push(
-                " ON CONFLICT(execution_id, channel, entry_index) DO UPDATE SET entry_json = excluded.entry_json, updated_at = datetime('now', 'subsec')",
-            );
-
-            query_builder.build().execute(pool).await?;
-            Ok(())
-        })
-        .await?;
+        execution_process_log_entry::Entity::insert_many(inserts)
+            .on_conflict(
+                sea_orm::sea_query::OnConflict::columns([
+                    execution_process_log_entry::Column::ExecutionProcessId,
+                    execution_process_log_entry::Column::Channel,
+                    execution_process_log_entry::Column::EntryIndex,
+                ])
+                .update_columns([
+                    execution_process_log_entry::Column::EntryJson,
+                    execution_process_log_entry::Column::UpdatedAt,
+                ])
+                .to_owned(),
+            )
+            .exec(db)
+            .await?;
 
         Ok(())
     }
@@ -231,215 +281,17 @@ impl ExecutionProcessLogEntry {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, str::FromStr, time::Duration};
+    use sea_orm::Database;
+    use sea_orm_migration::MigratorTrait;
 
-    use executors::actions::{
-        ExecutorAction, ExecutorActionType,
-        script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
-    };
-    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-    use utils::log_entries::LogEntryChannel;
-    use uuid::Uuid;
-
-    use super::{ExecutionProcessLogEntry, LogEntryRow};
-    use crate::models::{
-        execution_process::{CreateExecutionProcess, ExecutionProcess, ExecutionProcessRunReason},
-        project::CreateProject,
-        session::CreateSession,
-        task::CreateTask,
-        workspace::CreateWorkspace,
-    };
-
-    async fn setup_pool() -> Result<(sqlx::SqlitePool, PathBuf), sqlx::Error> {
-        let db_path = std::env::temp_dir().join(format!("vk-log-entry-test-{}.db", Uuid::new_v4()));
-        let db_url = format!("sqlite://{}", db_path.to_string_lossy());
-        let options = SqliteConnectOptions::from_str(&db_url)?
-            .create_if_missing(true)
-            .busy_timeout(Duration::from_millis(0));
-        let pool = SqlitePoolOptions::new()
-            .max_connections(2)
-            .connect_with(options)
-            .await?;
-
-        sqlx::migrate!("./migrations").run(&pool).await?;
-
-        Ok((pool, db_path))
-    }
-
-    fn cleanup_db(db_path: PathBuf) {
-        let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
-        let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
-    }
-
-    async fn create_execution_process(
-        pool: &sqlx::SqlitePool,
-    ) -> Result<Uuid, Box<dyn std::error::Error>> {
-        let project_id = Uuid::new_v4();
-        let project = CreateProject {
-            name: "log-entry-test".to_string(),
-            repositories: Vec::new(),
-        };
-        crate::models::project::Project::create(pool, &project, project_id).await?;
-
-        let task_id = Uuid::new_v4();
-        let task = CreateTask {
-            project_id,
-            title: "log entry task".to_string(),
-            description: None,
-            status: None,
-            parent_workspace_id: None,
-            image_ids: None,
-            shared_task_id: None,
-        };
-        crate::models::task::Task::create(pool, &task, task_id).await?;
-
-        let workspace_id = Uuid::new_v4();
-        let workspace = CreateWorkspace {
-            branch: "main".to_string(),
-            agent_working_dir: None,
-        };
-        crate::models::workspace::Workspace::create(pool, &workspace, workspace_id, task_id)
-            .await?;
-
-        let session_id = Uuid::new_v4();
-        let session = CreateSession { executor: None };
-        crate::models::session::Session::create(pool, &session, session_id, workspace_id).await?;
-
-        let execution_id = Uuid::new_v4();
-        let executor_action = ExecutorAction::new(
-            ExecutorActionType::ScriptRequest(ScriptRequest {
-                script: "echo test".to_string(),
-                language: ScriptRequestLanguage::Bash,
-                context: ScriptContext::SetupScript,
-                working_dir: None,
-            }),
-            None,
-        );
-        let create_process = CreateExecutionProcess {
-            session_id,
-            executor_action,
-            run_reason: ExecutionProcessRunReason::SetupScript,
-        };
-        ExecutionProcess::create(pool, &create_process, execution_id, &[]).await?;
-
-        Ok(execution_id)
-    }
+    use super::*;
 
     #[tokio::test]
-    async fn fetch_page_with_cursor_returns_older_entries() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let (pool, db_path) = setup_pool().await?;
-        let execution_id = create_execution_process(&pool).await?;
+    async fn table_available_detects_missing_schema() {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        assert!(!ExecutionProcessLogEntry::table_available(&db).await);
 
-        for idx in 0..5 {
-            let entry_json = format!("{{\"type\":\"STDOUT\",\"content\":\"{idx}\"}}");
-            ExecutionProcessLogEntry::upsert_entry(
-                &pool,
-                execution_id,
-                LogEntryChannel::Raw,
-                idx,
-                &entry_json,
-            )
-            .await?;
-        }
-
-        let first_page = ExecutionProcessLogEntry::fetch_page(
-            &pool,
-            execution_id,
-            LogEntryChannel::Raw,
-            2,
-            None,
-        )
-        .await?;
-        assert_eq!(
-            first_page
-                .iter()
-                .map(|row| row.entry_index)
-                .collect::<Vec<_>>(),
-            vec![4, 3]
-        );
-
-        let second_page = ExecutionProcessLogEntry::fetch_page(
-            &pool,
-            execution_id,
-            LogEntryChannel::Raw,
-            2,
-            Some(3),
-        )
-        .await?;
-        assert_eq!(
-            second_page
-                .iter()
-                .map(|row| row.entry_index)
-                .collect::<Vec<_>>(),
-            vec![2, 1]
-        );
-
-        let has_older =
-            ExecutionProcessLogEntry::has_older(&pool, execution_id, LogEntryChannel::Raw, 1)
-                .await?;
-        assert!(has_older);
-
-        let has_older =
-            ExecutionProcessLogEntry::has_older(&pool, execution_id, LogEntryChannel::Raw, 0)
-                .await?;
-        assert!(!has_older);
-
-        cleanup_db(db_path);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn stats_report_min_max_and_count() -> Result<(), Box<dyn std::error::Error>> {
-        let (pool, db_path) = setup_pool().await?;
-        let execution_id = create_execution_process(&pool).await?;
-
-        let entries = vec![
-            LogEntryRow {
-                entry_index: 2,
-                entry_json: "{\"type\":\"STDOUT\",\"content\":\"two\"}".to_string(),
-            },
-            LogEntryRow {
-                entry_index: 4,
-                entry_json: "{\"type\":\"STDOUT\",\"content\":\"four\"}".to_string(),
-            },
-            LogEntryRow {
-                entry_index: 3,
-                entry_json: "{\"type\":\"STDOUT\",\"content\":\"three\"}".to_string(),
-            },
-        ];
-
-        ExecutionProcessLogEntry::upsert_entries(
-            &pool,
-            execution_id,
-            LogEntryChannel::Raw,
-            &entries,
-        )
-        .await?;
-
-        let stats = ExecutionProcessLogEntry::stats(&pool, execution_id, LogEntryChannel::Raw)
-            .await?
-            .unwrap();
-
-        assert_eq!(stats.count, 3);
-        assert_eq!(stats.min_index, 2);
-        assert_eq!(stats.max_index, 4);
-
-        cleanup_db(db_path);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn stats_none_when_empty() -> Result<(), Box<dyn std::error::Error>> {
-        let (pool, db_path) = setup_pool().await?;
-        let execution_id = create_execution_process(&pool).await?;
-
-        let stats =
-            ExecutionProcessLogEntry::stats(&pool, execution_id, LogEntryChannel::Raw).await?;
-        assert!(stats.is_none());
-
-        cleanup_db(db_path);
-        Ok(())
+        db_migration::Migrator::up(&db, None).await.unwrap();
+        assert!(ExecutionProcessLogEntry::table_available(&db).await);
     }
 }

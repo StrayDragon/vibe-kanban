@@ -4,9 +4,9 @@ use db::models::{
     execution_process::ExecutionProcess, execution_process_repo_state::ExecutionProcessRepoState,
     workspace::Workspace, workspace_repo::WorkspaceRepo,
 };
+use db::DbPool;
 use deployment::Deployment;
 use services::services::{container::ContainerService, git::WorktreeResetOptions};
-use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};
@@ -16,7 +16,7 @@ use crate::{DeploymentImpl, error::ApiError};
 /// or falls back to the previous process's after_head_commit.
 pub async fn restore_worktrees_to_process(
     deployment: &DeploymentImpl,
-    pool: &SqlitePool,
+    pool: &DbPool,
     workspace: &Workspace,
     target_process_id: Uuid,
     perform_git_reset: bool,

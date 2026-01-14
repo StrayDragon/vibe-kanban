@@ -47,7 +47,7 @@ use services::services::{
     git::{ConflictOp, GitCliError, GitMergeOptions, GitServiceError},
     github::GitHubService,
 };
-use sqlx::Error as SqlxError;
+use db::DbErr;
 use ts_rs::TS;
 use utils::response::ApiResponse;
 use uuid::Uuid;
@@ -251,12 +251,12 @@ pub async fn create_task_attempt(
     let pool = &deployment.db().pool;
     let task = Task::find_by_id(&deployment.db().pool, payload.task_id)
         .await?
-        .ok_or(SqlxError::RowNotFound)?;
+        .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
 
     let project = task
         .parent_project(pool)
         .await?
-        .ok_or(SqlxError::RowNotFound)?;
+        .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
 
     let agent_working_dir = project
         .default_agent_working_dir
@@ -1165,13 +1165,13 @@ pub async fn start_dev_server(
     let task = workspace
         .parent_task(&deployment.db().pool)
         .await?
-        .ok_or(SqlxError::RowNotFound)?;
+        .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
 
     // Get parent project
     let project = task
         .parent_project(&deployment.db().pool)
         .await?
-        .ok_or(SqlxError::RowNotFound)?;
+        .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
 
     // Stop any existing dev servers for this project
     let existing_dev_servers =
@@ -1364,12 +1364,12 @@ pub async fn run_setup_script(
     let task = workspace
         .parent_task(pool)
         .await?
-        .ok_or(SqlxError::RowNotFound)?;
+        .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
 
     let project = task
         .parent_project(pool)
         .await?
-        .ok_or(SqlxError::RowNotFound)?;
+        .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
     let project_repos = ProjectRepo::find_by_project_id_with_names(pool, project.id).await?;
     let executor_action = match deployment
         .container()
@@ -1437,12 +1437,12 @@ pub async fn run_cleanup_script(
     let task = workspace
         .parent_task(pool)
         .await?
-        .ok_or(SqlxError::RowNotFound)?;
+        .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
 
     let project = task
         .parent_project(pool)
         .await?
-        .ok_or(SqlxError::RowNotFound)?;
+        .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
     let project_repos = ProjectRepo::find_by_project_id_with_names(pool, project.id).await?;
     let executor_action = match deployment
         .container()

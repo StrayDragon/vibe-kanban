@@ -32,6 +32,6 @@ rustflags = ["-C", "link-arg=/DEBUG:FASTLINK"]
 [target.aarch64-pc-windows-msvc]
 rustflags = ["-C", "link-arg=/DEBUG:FASTLINK"]
 
-# Shared target dir to avoid per-worktree build artifacts.
+# Use per-worktree target dir to avoid cross-branch conflicts.
 [build]
-target-dir = "/var/tmp/vibe-kanban/cache/cargo-target"
+target-dir = "target"

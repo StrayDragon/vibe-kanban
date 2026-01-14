@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -15,7 +16,6 @@ use moka::future::Cache;
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
@@ -45,6 +45,12 @@ pub struct SearchQuery {
     pub mode: SearchMode,
 }
 
+#[derive(Debug)]
+pub struct RepoSearchResponse {
+    pub results: Vec<SearchResult>,
+    pub index_truncated: bool,
+}
+
 /// FST-indexed file search result
 #[derive(Clone, Debug)]
 pub struct IndexedFile {
@@ -60,6 +66,7 @@ pub struct IndexedFile {
 pub struct FileIndex {
     pub files: Vec<IndexedFile>,
     pub map: Map<Vec<u8>>,
+    pub index_truncated: bool,
 }
 
 /// Errors that can occur during file index building
@@ -76,12 +83,12 @@ pub enum FileIndexError {
 }
 
 /// Cached repository data with FST index and git stats
-#[derive(Clone)]
 pub struct CachedRepo {
     pub head_sha: String,
     pub fst_index: Map<Vec<u8>>,
     pub indexed_files: Vec<IndexedFile>,
     pub stats: Arc<FileStats>,
+    pub index_truncated: bool,
     pub build_ts: Instant,
 }
 
@@ -101,7 +108,7 @@ pub enum CacheError {
 
 /// File search cache with FST indexing
 pub struct FileSearchCache {
-    cache: Cache<PathBuf, CachedRepo>,
+    cache: Cache<PathBuf, Arc<CachedRepo>>,
     git_service: GitService,
     file_ranker: FileRanker,
     build_queue: mpsc::UnboundedSender<PathBuf>,
@@ -240,7 +247,7 @@ impl FileSearchCache {
         repo_path: &Path,
         query: &str,
         mode: SearchMode,
-    ) -> Result<Vec<SearchResult>, CacheError> {
+    ) -> Result<RepoSearchResponse, CacheError> {
         let repo_path_buf = repo_path.to_path_buf();
 
         // Check if we have a valid cache entry
@@ -249,7 +256,10 @@ impl FileSearchCache {
             && head_info.oid == cached.head_sha
         {
             // Cache hit - perform fast search with mode-based filtering
-            return Ok(self.search_in_cache(&cached, query, mode).await);
+            return Ok(RepoSearchResponse {
+                results: self.search_in_cache(cached.as_ref(), query, mode).await,
+                index_truncated: cached.index_truncated,
+            });
         }
 
         // Cache miss - trigger background refresh and return error
@@ -274,7 +284,7 @@ impl FileSearchCache {
     }
 
     /// Pre-warm cache for most active projects
-    pub async fn warm_most_active(&self, db_pool: &SqlitePool, limit: i32) -> Result<(), String> {
+    pub async fn warm_most_active(&self, db_pool: &db::DbPool, limit: i32) -> Result<(), String> {
         info!("Starting file search cache warming...");
 
         // Get most active projects
@@ -389,22 +399,35 @@ impl FileSearchCache {
             .map_err(|e| format!("Failed to get git stats: {e}"))?;
 
         // Build file index
-        let file_index = Self::build_file_index(repo_path)
+        let max_files = cache_budgets().file_search_max_files;
+        let file_index = Self::build_file_index(repo_path, max_files)
             .map_err(|e| format!("Failed to build file index: {e}"))?;
+
+        if file_index.index_truncated && should_warn("file_search_index_truncated") {
+            warn!(
+                "File search index truncated for repo {:?}: indexed {} entries (cap={})",
+                repo_path,
+                file_index.files.len(),
+                max_files
+            );
+        }
 
         Ok(CachedRepo {
             head_sha: head_info.oid,
             fst_index: file_index.map,
             indexed_files: file_index.files,
             stats,
+            index_truncated: file_index.index_truncated,
             build_ts: Instant::now(),
         })
     }
 
     /// Build FST index from filesystem traversal using superset approach
-    fn build_file_index(repo_path: &Path) -> Result<FileIndex, FileIndexError> {
+    fn build_file_index(repo_path: &Path, max_files: usize) -> Result<FileIndex, FileIndexError> {
+        let max_files = max_files.max(1);
         let mut indexed_files = Vec::new();
         let mut fst_keys = Vec::new();
+        let mut index_truncated = false;
 
         // Build superset walker - include ignored files but exclude .git and performance killers
         let mut builder = WalkBuilder::new(repo_path);
@@ -437,12 +460,19 @@ impl FileSearchCache {
             .filter_entry(|entry| {
                 let name = entry.file_name().to_string_lossy();
                 name != ".git"
+                    && name != "node_modules"
+                    && name != "target"
+                    && name != "dist"
+                    && name != "build"
             })
             .build();
 
         // Collect paths from ignore-aware walker to know what's NOT ignored
-        let mut non_ignored_paths = std::collections::HashSet::new();
+        let mut non_ignored_paths = HashSet::new();
         for result in ignore_walker {
+            if non_ignored_paths.len() >= max_files {
+                break;
+            }
             if let Ok(entry) = result
                 && let Ok(relative_path) = entry.path().strip_prefix(repo_path)
             {
@@ -452,6 +482,10 @@ impl FileSearchCache {
 
         // Now walk all files and determine their ignore status
         for result in walker {
+            if indexed_files.len() >= max_files {
+                index_truncated = true;
+                break;
+            }
             let entry = result?;
             let path = entry.path();
 
@@ -521,13 +555,14 @@ impl FileSearchCache {
         Ok(FileIndex {
             files: indexed_files,
             map: fst_map,
+            index_truncated,
         })
     }
 
     /// Background worker for cache building
     async fn background_worker(
         mut build_receiver: mpsc::UnboundedReceiver<PathBuf>,
-        cache: Cache<PathBuf, CachedRepo>,
+        cache: Cache<PathBuf, Arc<CachedRepo>>,
         git_service: GitService,
         file_ranker: FileRanker,
     ) {
@@ -542,7 +577,7 @@ impl FileSearchCache {
 
             match cache_builder.build_repo_cache(&repo_path).await {
                 Ok(cached_repo) => {
-                    cache.insert(repo_path.clone(), cached_repo).await;
+                    cache.insert(repo_path.clone(), Arc::new(cached_repo)).await;
                     Self::warn_if_cache_near_capacity(cache.entry_count() as usize);
                     info!("Successfully cached repo: {:?}", repo_path);
                 }
@@ -560,6 +595,18 @@ impl FileSearchCache {
         self.prune_watchers();
         if self.watchers.contains_key(&repo_path_buf) {
             return Ok(()); // Already watching
+        }
+
+        if let Some(cached) = self.cache.get(&repo_path_buf).await
+            && cached.index_truncated
+        {
+            if should_warn("file_search_watcher_skip_truncated") {
+                warn!(
+                    "Skipping file watcher registration for repo {:?}: file search index truncated",
+                    repo_path
+                );
+            }
+            return Ok(());
         }
 
         let git_dir = repo_path.join(".git");
@@ -624,5 +671,60 @@ impl FileSearchCache {
 impl Default for FileSearchCache {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, fs, time::Instant};
+
+    use tempfile::tempdir;
+
+    use super::*;
+
+    #[test]
+    fn build_file_index_enforces_cap_and_records_truncation() {
+        let dir = tempdir().expect("tempdir");
+        for idx in 0..5 {
+            fs::write(dir.path().join(format!("file-{idx}.txt")), "hello")
+                .expect("write test file");
+        }
+
+        let index = FileSearchCache::build_file_index(dir.path(), 3).expect("build index");
+
+        assert_eq!(index.files.len(), 3);
+        assert!(index.index_truncated);
+    }
+
+    #[tokio::test]
+    async fn setup_watcher_skips_truncated_repos() {
+        let dir = tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join(".git")).expect("create .git dir");
+        fs::write(dir.path().join(".git/HEAD"), "ref: refs/heads/main\n")
+            .expect("create HEAD");
+
+        let cache = FileSearchCache::new();
+
+        cache
+            .cache
+            .insert(
+                dir.path().to_path_buf(),
+                Arc::new(CachedRepo {
+                    head_sha: "test".to_string(),
+                    fst_index: MapBuilder::memory().into_map(),
+                    indexed_files: vec![],
+                    stats: Arc::new(HashMap::new()),
+                    index_truncated: true,
+                    build_ts: Instant::now(),
+                }),
+            )
+            .await;
+
+        cache
+            .setup_watcher(dir.path())
+            .await
+            .expect("setup_watcher should succeed");
+
+        assert_eq!(cache.watcher_count(), 0);
     }
 }

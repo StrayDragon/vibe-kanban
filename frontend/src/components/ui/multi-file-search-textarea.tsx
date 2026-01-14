@@ -9,6 +9,12 @@ interface FileSearchResult extends SearchResult {
   name: string;
 }
 
+interface CachedFileSearchResults {
+  results: FileSearchResult[];
+  indexTruncated: boolean;
+  truncatedRepos: string[];
+}
+
 interface MultiFileSearchTextareaProps {
   value: string;
   onChange: (value: string) => void;
@@ -39,11 +45,13 @@ export function MultiFileSearchTextarea({
   const [currentTokenStart, setCurrentTokenStart] = useState(-1);
   const [currentTokenEnd, setCurrentTokenEnd] = useState(-1);
   const [isLoading, setIsLoading] = useState(false);
+  const [indexTruncated, setIndexTruncated] = useState(false);
+  const [truncatedRepos, setTruncatedRepos] = useState<string[]>([]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const searchCacheRef = useRef<Map<string, FileSearchResult[]>>(new Map());
+  const searchCacheRef = useRef<Map<string, CachedFileSearchResults>>(new Map());
   const itemRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   // Search for files when query changes
@@ -51,15 +59,19 @@ export function MultiFileSearchTextarea({
     if (!searchQuery || !projectId || searchQuery.length < 2) {
       setSearchResults([]);
       setShowDropdown(false);
+      setIndexTruncated(false);
+      setTruncatedRepos([]);
       return;
     }
 
     // Check cache first
     const cached = searchCacheRef.current.get(searchQuery);
     if (cached) {
-      setSearchResults(cached);
-      setShowDropdown(cached.length > 0);
+      setSearchResults(cached.results);
+      setShowDropdown(cached.results.length > 0);
       setSelectedIndex(-1);
+      setIndexTruncated(cached.indexTruncated);
+      setTruncatedRepos(cached.truncatedRepos);
       return;
     }
 
@@ -86,17 +98,23 @@ export function MultiFileSearchTextarea({
 
         // Only process if this request wasn't aborted
         if (!abortController.signal.aborted) {
-          const fileResults: FileSearchResult[] = result.map((item) => ({
+          const fileResults: FileSearchResult[] = result.results.map((item) => ({
             ...item,
             name: item.path.split('/').pop() || item.path,
           }));
 
           // Cache the results
-          searchCacheRef.current.set(searchQuery, fileResults);
+          searchCacheRef.current.set(searchQuery, {
+            results: fileResults,
+            indexTruncated: result.index_truncated,
+            truncatedRepos: result.truncated_repos,
+          });
 
           setSearchResults(fileResults);
           setShowDropdown(fileResults.length > 0);
           setSelectedIndex(-1);
+          setIndexTruncated(result.index_truncated);
+          setTruncatedRepos(result.truncated_repos);
         }
       } catch (error) {
         if (!abortController.signal.aborted) {
@@ -356,6 +374,14 @@ export function MultiFileSearchTextarea({
               </div>
             ) : (
               <div className="py-1">
+                {indexTruncated && (
+                  <div className="px-3 py-2 text-xs text-amber-700 bg-amber-50 border-b border-amber-200">
+                    Results may be incomplete (index capped)
+                    {truncatedRepos.length > 0
+                      ? `: ${truncatedRepos.join(', ')}`
+                      : ''}
+                  </div>
+                )}
                 {searchResults.map((file, index) => (
                   <div
                     key={file.path}

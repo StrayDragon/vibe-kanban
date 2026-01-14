@@ -12,7 +12,8 @@ use ts_rs::TS;
 
 mod cli;
 
-use cli::{GhCli, GhCliError, PrComment, PrReviewComment};
+pub use cli::GhCliError;
+use cli::{GhCli, PrComment, PrReviewComment};
 pub use cli::{PrCommentAuthor, ReviewCommentUser};
 
 /// Unified PR comment that can be either a general comment or review comment

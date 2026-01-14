@@ -12,6 +12,7 @@ use axum::{
     response::{IntoResponse, Json as ResponseJson},
     routing::{delete, get, post, put},
 };
+use db::DbErr;
 use db::models::{
     image::TaskImage,
     project::{Project, ProjectError},
@@ -23,9 +24,9 @@ use db::models::{
 use deployment::Deployment;
 use executors::profile::ExecutorProfileId;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
+use db::TransactionTrait;
 use serde::{Deserialize, Serialize};
 use services::services::{container::ContainerService, workspace_manager::WorkspaceManager};
-use sqlx::Error as SqlxError;
 use ts_rs::TS;
 use utils::response::ApiResponse;
 use uuid::Uuid;
@@ -201,7 +202,9 @@ pub async fn create_task_and_start(
         .is_ok();
     let task = Task::find_by_id(pool, task.id)
         .await?
-        .ok_or(ApiError::Database(SqlxError::RowNotFound))?;
+        .ok_or(ApiError::Database(DbErr::RecordNotFound(
+            "Task not found".to_string(),
+        )))?;
 
     tracing::info!("Started attempt for task {}", task.id);
     Ok(ResponseJson(ApiResponse::success(TaskWithAttemptStatus {
@@ -281,22 +284,24 @@ pub async fn delete_task(
         .collect();
 
     // Use a transaction to ensure atomicity: either all operations succeed or all are rolled back
-    let mut tx = pool.begin().await?;
+    let tx = pool.begin().await?;
 
     // Nullify parent_workspace_id for all child tasks before deletion
     // This breaks parent-child relationships to avoid foreign key constraint violations
     let mut total_children_affected = 0u64;
     for attempt in &attempts {
         let children_affected =
-            Task::nullify_children_by_workspace_id(&mut *tx, attempt.id).await?;
+            Task::nullify_children_by_workspace_id(&tx, attempt.id).await?;
         total_children_affected += children_affected;
     }
 
     // Delete task from database (FK CASCADE will handle task_attempts)
-    let rows_affected = Task::delete(&mut *tx, task.id).await?;
+    let rows_affected = Task::delete(&tx, task.id).await?;
 
     if rows_affected == 0 {
-        return Err(ApiError::Database(SqlxError::RowNotFound));
+        return Err(ApiError::Database(DbErr::RecordNotFound(
+            "Task not found".to_string(),
+        )));
     }
 
     // Commit the transaction - if this fails, all changes are rolled back

@@ -5,6 +5,7 @@ use axum::{
     response::Json as ResponseJson,
     routing::{get, put},
 };
+use db::DbErr;
 use db::models::tag::{CreateTag, Tag, UpdateTag};
 use deployment::Deployment;
 use serde::Deserialize;
@@ -59,7 +60,9 @@ pub async fn delete_tag(
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
     let rows_affected = Tag::delete(&deployment.db().pool, tag.id).await?;
     if rows_affected == 0 {
-        Err(ApiError::Database(sqlx::Error::RowNotFound))
+        Err(ApiError::Database(DbErr::RecordNotFound(
+            "Tag not found".to_string(),
+        )))
     } else {
         Ok(ResponseJson(ApiResponse::success(())))
     }

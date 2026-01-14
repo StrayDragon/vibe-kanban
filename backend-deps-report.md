@@ -11,7 +11,7 @@ Potential removals (no direct usage found)
 - crates/local-deployment/Cargo.toml: bytes, json-patch, openssl-sys, reqwest (no refs in crates/local-deployment/src)
 - crates/server/Cargo.toml: ignore, rand, secrecy, sha2 (no refs in crates/server/src)
 - crates/services/Cargo.toml: base64, reqwest, secrecy (no refs in crates/services/src)
-- crates/utils/Cargo.toml: reqwest, sqlx (no refs in crates/utils/src)
+- crates/utils/Cargo.toml: reqwest (no refs in crates/utils/src)
 
 Upgrade candidates (manual review)
 - Git dependencies pinned to a branch/commit:
@@ -19,7 +19,7 @@ Upgrade candidates (manual review)
   - codex-protocol, codex-app-server-protocol, codex-mcp-types (git rev)
   Consider bumping the commit or switching to crates.io releases if available.
 - Security/compatibility updates to check (run `cargo outdated -w`):
-  - tokio, axum, tower-http, reqwest, sqlx, tracing, git2, rust-embed,
+  - tokio, axum, tower-http, reqwest, tracing, git2, rust-embed,
     notify/notify-debouncer-full, json-patch, uuid, chrono
   Rationale: runtime/networking libs often ship patch fixes; evaluate in CI.
 

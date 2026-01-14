@@ -298,7 +298,14 @@
     "selectBranch": "Select branch",
     "error": "Failed to create attempt. Please try again.",
     "creating": "Creating...",
-    "start": "Start"
+    "start": "Start",
+    "preflight": {
+      "title": "CLI preflight",
+      "checking": "Checking coding agent CLI...",
+      "agentReady": "Coding agent login detected.",
+      "agentInstalled": "Coding agent installation detected.",
+      "agentNotFound": "Coding agent CLI was not detected. The attempt will be created, but the coding process may fail to start until you install/login."
+    }
   },
   "repoBranchSelector": {
     "label": "Base branch"
@@ -423,6 +430,19 @@
     "autoGenerateLabel": "Auto-generate PR description with AI",
     "creating": "Creating...",
     "createButton": "Create PR",
+    "preflight": {
+      "title": "CLI preflight",
+      "checking": "Checking...",
+      "githubLabel": "GitHub CLI:",
+      "githubReady": "Ready",
+      "githubNotInstalled": "Not installed",
+      "githubNotAuthenticated": "Not authenticated",
+      "githubError": "Check failed",
+      "agentLabel": "Coding agent CLI:",
+      "agentReady": "Login detected",
+      "agentInstalled": "Installation detected",
+      "agentNotFound": "Not detected"
+    },
     "errors": {
       "insufficientPermissions": "Insufficient permissions. Please ensure the GitHub CLI has the necessary permissions.",
       "repoNotFoundOrNoAccess": "Repository not found or no access. Please check your repository access and ensure you are authenticated.",

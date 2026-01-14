@@ -26,13 +26,7 @@ pub async fn get_context(
 
     match result {
         Ok(info) => {
-            let ctx = Workspace::load_context(
-                &deployment.db().pool,
-                info.workspace_id,
-                info.task_id,
-                info.project_id,
-            )
-            .await?;
+            let ctx = Workspace::load_context(&deployment.db().pool, info.workspace_id).await?;
             Ok(ResponseJson(ApiResponse::success(ctx)))
         }
         Err(e) => Err(ApiError::Database(e)),

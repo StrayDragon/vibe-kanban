@@ -26,6 +26,7 @@ use services::services::config::{
     editor::{EditorConfig, EditorType},
     save_config_to_file,
 };
+use services::services::github::GitHubService;
 use tokio::fs;
 use ts_rs::TS;
 use utils::{assets::config_path, response::ApiResponse};
@@ -46,6 +47,7 @@ pub fn router() -> Router<DeploymentImpl> {
             get(check_editor_availability),
         )
         .route("/agents/check-availability", get(check_agent_availability))
+        .route("/preflight/cli", get(cli_dependency_preflight))
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]
@@ -526,6 +528,68 @@ async fn check_agent_availability(
     ResponseJson(ApiResponse::success(info))
 }
 
+#[derive(Debug, Serialize, Deserialize, TS)]
+pub struct CliDependencyPreflightQuery {
+    pub executor: BaseCodingAgent,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(tag = "type", rename_all = "snake_case")]
+pub enum GhCliPreflightStatus {
+    Ready,
+    NotInstalled,
+    NotAuthenticated,
+    Error { message: String },
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+pub struct CliDependencyPreflightResponse {
+    pub agent: AvailabilityInfo,
+    pub github_cli: GhCliPreflightStatus,
+}
+
+fn map_github_cli_preflight_status(err: &services::services::github::GitHubServiceError) -> GhCliPreflightStatus {
+    match err {
+        services::services::github::GitHubServiceError::GhCliNotInstalled(_) => {
+            GhCliPreflightStatus::NotInstalled
+        }
+        services::services::github::GitHubServiceError::AuthFailed(_) => {
+            GhCliPreflightStatus::NotAuthenticated
+        }
+        _ => GhCliPreflightStatus::Error {
+            message: err.to_string(),
+        },
+    }
+}
+
+async fn cli_dependency_preflight(
+    Query(query): Query<CliDependencyPreflightQuery>,
+) -> ResponseJson<ApiResponse<CliDependencyPreflightResponse>> {
+    let profiles = ExecutorConfigs::get_cached();
+    let profile_id = ExecutorProfileId::new(query.executor);
+
+    let agent = match profiles.get_coding_agent(&profile_id) {
+        Some(agent) => agent.get_availability_info(),
+        None => AvailabilityInfo::NotFound,
+    };
+
+    let github_cli = match GitHubService::new() {
+        Ok(service) => match service.check_token().await {
+            Ok(_) => GhCliPreflightStatus::Ready,
+            Err(err) => map_github_cli_preflight_status(&err),
+        },
+        Err(err) => GhCliPreflightStatus::Error {
+            message: err.to_string(),
+        },
+    };
+
+    ResponseJson(ApiResponse::success(CliDependencyPreflightResponse {
+        agent,
+        github_cli,
+    }))
+}
+
 fn apply_llman_groups_to_profiles(
     profiles: &mut ExecutorConfigs,
     groups: &HashMap<String, HashMap<String, String>>,
@@ -636,6 +700,33 @@ mod tests {
             assert_eq!(env.get("TOKEN"), Some(&"abc".to_string()));
         } else {
             panic!("expected ClaudeCode variant");
+        }
+    }
+
+    #[test]
+    fn github_cli_preflight_maps_statuses() {
+        use services::services::github::{GhCliError, GitHubServiceError};
+
+        let not_installed = GitHubServiceError::GhCliNotInstalled(GhCliError::NotAvailable);
+        assert!(matches!(
+            map_github_cli_preflight_status(&not_installed),
+            GhCliPreflightStatus::NotInstalled
+        ));
+
+        let not_authenticated = GitHubServiceError::AuthFailed(GhCliError::AuthFailed(
+            "auth failed".to_string(),
+        ));
+        assert!(matches!(
+            map_github_cli_preflight_status(&not_authenticated),
+            GhCliPreflightStatus::NotAuthenticated
+        ));
+
+        let other = GitHubServiceError::Repository("unexpected".to_string());
+        match map_github_cli_preflight_status(&other) {
+            GhCliPreflightStatus::Error { message } => {
+                assert!(message.contains("unexpected"));
+            }
+            other => panic!("expected error mapping, got {other:?}"),
         }
     }
 }

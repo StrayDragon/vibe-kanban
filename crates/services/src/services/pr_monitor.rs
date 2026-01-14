@@ -8,7 +8,7 @@ use db::{
         workspace::{Workspace, WorkspaceError},
     },
 };
-use sqlx::error::Error as SqlxError;
+use db::DbErr;
 use thiserror::Error;
 use tokio::time::interval;
 use tracing::{debug, error, info};
@@ -22,7 +22,7 @@ enum PrMonitorError {
     #[error(transparent)]
     WorkspaceError(#[from] WorkspaceError),
     #[error(transparent)]
-    Sqlx(#[from] SqlxError),
+    Database(#[from] DbErr),
 }
 
 /// Service to monitor GitHub PRs and update task status when they are merged

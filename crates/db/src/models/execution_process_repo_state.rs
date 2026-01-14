@@ -1,10 +1,18 @@
 use chrono::{DateTime, Utc};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
+    Set,
+};
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, SqlitePool};
 use ts_rs::TS;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize, TS)]
+use crate::{
+    entities::execution_process_repo_state,
+    models::ids,
+};
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ExecutionProcessRepoState {
     pub id: Uuid,
     pub execution_process_id: Uuid,
@@ -27,133 +35,173 @@ pub struct CreateExecutionProcessRepoState {
 }
 
 impl ExecutionProcessRepoState {
-    pub async fn create_many(
-        pool: &SqlitePool,
+    fn from_model(
+        model: execution_process_repo_state::Model,
+        execution_process_id: Uuid,
+        repo_id: Uuid,
+    ) -> Self {
+        Self {
+            id: model.uuid,
+            execution_process_id,
+            repo_id,
+            before_head_commit: model.before_head_commit,
+            after_head_commit: model.after_head_commit,
+            merge_commit: model.merge_commit,
+            created_at: model.created_at.into(),
+            updated_at: model.updated_at.into(),
+        }
+    }
+
+    pub async fn create_many<C: ConnectionTrait>(
+        db: &C,
         execution_process_id: Uuid,
         entries: &[CreateExecutionProcessRepoState],
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), DbErr> {
         if entries.is_empty() {
             return Ok(());
         }
 
-        let now = Utc::now();
+        let execution_row_id = ids::execution_process_id_by_uuid(db, execution_process_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
 
+        let now = Utc::now();
+        let mut inserts = Vec::with_capacity(entries.len());
         for entry in entries {
-            let id = Uuid::new_v4();
-            sqlx::query!(
-                r#"INSERT INTO execution_process_repo_states (
-                        id,
-                        execution_process_id,
-                        repo_id,
-                        before_head_commit,
-                        after_head_commit,
-                        merge_commit,
-                        created_at,
-                        updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
-                id,
-                execution_process_id,
-                entry.repo_id,
-                entry.before_head_commit,
-                entry.after_head_commit,
-                entry.merge_commit,
-                now,
-                now
-            )
-            .execute(pool)
-            .await?;
+            let repo_row_id = ids::repo_id_by_uuid(db, entry.repo_id)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+            inserts.push(execution_process_repo_state::ActiveModel {
+                uuid: Set(Uuid::new_v4()),
+                execution_process_id: Set(execution_row_id),
+                repo_id: Set(repo_row_id),
+                before_head_commit: Set(entry.before_head_commit.clone()),
+                after_head_commit: Set(entry.after_head_commit.clone()),
+                merge_commit: Set(entry.merge_commit.clone()),
+                created_at: Set(now.into()),
+                updated_at: Set(now.into()),
+                ..Default::default()
+            });
         }
 
+        execution_process_repo_state::Entity::insert_many(inserts)
+            .exec(db)
+            .await?;
         Ok(())
     }
 
-    pub async fn update_before_head_commit(
-        pool: &SqlitePool,
+    pub async fn update_before_head_commit<C: ConnectionTrait>(
+        db: &C,
         execution_process_id: Uuid,
         repo_id: Uuid,
         before_head_commit: &str,
-    ) -> Result<(), sqlx::Error> {
-        let now = Utc::now();
-        sqlx::query!(
-            r#"UPDATE execution_process_repo_states
-               SET before_head_commit = $1, updated_at = $2
-             WHERE execution_process_id = $3
-               AND repo_id = $4"#,
-            before_head_commit,
-            now,
-            execution_process_id,
-            repo_id
-        )
-        .execute(pool)
-        .await?;
+    ) -> Result<(), DbErr> {
+        let execution_row_id = ids::execution_process_id_by_uuid(db, execution_process_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
+        let repo_row_id = ids::repo_id_by_uuid(db, repo_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+
+        let record = execution_process_repo_state::Entity::find()
+            .filter(execution_process_repo_state::Column::ExecutionProcessId.eq(execution_row_id))
+            .filter(execution_process_repo_state::Column::RepoId.eq(repo_row_id))
+            .one(db)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo state not found".to_string()))?;
+
+        let mut active: execution_process_repo_state::ActiveModel = record.into();
+        active.before_head_commit = Set(Some(before_head_commit.to_string()));
+        active.updated_at = Set(Utc::now().into());
+        active.update(db).await?;
         Ok(())
     }
 
-    pub async fn update_after_head_commit(
-        pool: &SqlitePool,
+    pub async fn update_after_head_commit<C: ConnectionTrait>(
+        db: &C,
         execution_process_id: Uuid,
         repo_id: Uuid,
         after_head_commit: &str,
-    ) -> Result<(), sqlx::Error> {
-        let now = Utc::now();
-        sqlx::query!(
-            r#"UPDATE execution_process_repo_states
-               SET after_head_commit = $1, updated_at = $2
-             WHERE execution_process_id = $3
-               AND repo_id = $4"#,
-            after_head_commit,
-            now,
-            execution_process_id,
-            repo_id
-        )
-        .execute(pool)
-        .await?;
+    ) -> Result<(), DbErr> {
+        let execution_row_id = ids::execution_process_id_by_uuid(db, execution_process_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
+        let repo_row_id = ids::repo_id_by_uuid(db, repo_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+
+        let record = execution_process_repo_state::Entity::find()
+            .filter(execution_process_repo_state::Column::ExecutionProcessId.eq(execution_row_id))
+            .filter(execution_process_repo_state::Column::RepoId.eq(repo_row_id))
+            .one(db)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo state not found".to_string()))?;
+
+        let mut active: execution_process_repo_state::ActiveModel = record.into();
+        active.after_head_commit = Set(Some(after_head_commit.to_string()));
+        active.updated_at = Set(Utc::now().into());
+        active.update(db).await?;
         Ok(())
     }
 
-    pub async fn set_merge_commit(
-        pool: &SqlitePool,
+    pub async fn set_merge_commit<C: ConnectionTrait>(
+        db: &C,
         execution_process_id: Uuid,
         repo_id: Uuid,
         merge_commit: &str,
-    ) -> Result<(), sqlx::Error> {
-        let now = Utc::now();
-        sqlx::query!(
-            r#"UPDATE execution_process_repo_states
-               SET merge_commit = $1, updated_at = $2
-             WHERE execution_process_id = $3
-               AND repo_id = $4"#,
-            merge_commit,
-            now,
-            execution_process_id,
-            repo_id
-        )
-        .execute(pool)
-        .await?;
+    ) -> Result<(), DbErr> {
+        let execution_row_id = ids::execution_process_id_by_uuid(db, execution_process_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
+        let repo_row_id = ids::repo_id_by_uuid(db, repo_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+
+        let record = execution_process_repo_state::Entity::find()
+            .filter(execution_process_repo_state::Column::ExecutionProcessId.eq(execution_row_id))
+            .filter(execution_process_repo_state::Column::RepoId.eq(repo_row_id))
+            .one(db)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo state not found".to_string()))?;
+
+        let mut active: execution_process_repo_state::ActiveModel = record.into();
+        active.merge_commit = Set(Some(merge_commit.to_string()));
+        active.updated_at = Set(Utc::now().into());
+        active.update(db).await?;
         Ok(())
     }
 
-    pub async fn find_by_execution_process_id(
-        pool: &SqlitePool,
+    pub async fn find_by_execution_process_id<C: ConnectionTrait>(
+        db: &C,
         execution_process_id: Uuid,
-    ) -> Result<Vec<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            ExecutionProcessRepoState,
-            r#"SELECT
-                    id               as "id!: Uuid",
-                    execution_process_id as "execution_process_id!: Uuid",
-                    repo_id as "repo_id!: Uuid",
-                    before_head_commit,
-                    after_head_commit,
-                    merge_commit,
-                    created_at as "created_at!: DateTime<Utc>",
-                    updated_at as "updated_at!: DateTime<Utc>"
-               FROM execution_process_repo_states
-               WHERE execution_process_id = $1
-               ORDER BY created_at ASC"#,
-            execution_process_id
-        )
-        .fetch_all(pool)
-        .await
+    ) -> Result<Vec<Self>, DbErr> {
+        let execution_row_id = ids::execution_process_id_by_uuid(db, execution_process_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
+
+        let models = execution_process_repo_state::Entity::find()
+            .filter(execution_process_repo_state::Column::ExecutionProcessId.eq(execution_row_id))
+            .order_by_asc(execution_process_repo_state::Column::CreatedAt)
+            .all(db)
+            .await?;
+
+        let mut states = Vec::with_capacity(models.len());
+        for model in models {
+            let repo_id = ids::repo_uuid_by_id(db, model.repo_id)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+            states.push(Self::from_model(model, execution_process_id, repo_id));
+        }
+        Ok(states)
     }
 }

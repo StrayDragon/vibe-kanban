@@ -1,16 +1,18 @@
 use chrono::{DateTime, Utc};
+use sea_orm::{ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder, Set};
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, SqlitePool};
 use ts_rs::TS;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize, TS)]
+use crate::{entities::coding_agent_turn, models::ids};
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct CodingAgentTurn {
     pub id: Uuid,
     pub execution_process_id: Uuid,
-    pub agent_session_id: Option<String>, // Session ID from Claude/Amp coding agent
-    pub prompt: Option<String>,           // The prompt sent to the executor
-    pub summary: Option<String>,          // Final assistant message/summary
+    pub agent_session_id: Option<String>,
+    pub prompt: Option<String>,
+    pub summary: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -22,133 +24,133 @@ pub struct CreateCodingAgentTurn {
 }
 
 impl CodingAgentTurn {
-    /// Find coding agent turn by execution process ID
-    pub async fn find_by_execution_process_id(
-        pool: &SqlitePool,
-        execution_process_id: Uuid,
-    ) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            CodingAgentTurn,
-            r#"SELECT
-                id as "id!: Uuid",
-                execution_process_id as "execution_process_id!: Uuid",
-                agent_session_id,
-                prompt,
-                summary,
-                created_at as "created_at!: DateTime<Utc>",
-                updated_at as "updated_at!: DateTime<Utc>"
-               FROM coding_agent_turns
-               WHERE execution_process_id = $1"#,
-            execution_process_id
-        )
-        .fetch_optional(pool)
-        .await
+    fn from_model(model: coding_agent_turn::Model, execution_process_id: Uuid) -> Self {
+        Self {
+            id: model.uuid,
+            execution_process_id,
+            agent_session_id: model.agent_session_id,
+            prompt: model.prompt,
+            summary: model.summary,
+            created_at: model.created_at.into(),
+            updated_at: model.updated_at.into(),
+        }
     }
 
-    pub async fn find_by_agent_session_id(
-        pool: &SqlitePool,
+    /// Find coding agent turn by execution process ID
+    pub async fn find_by_execution_process_id<C: ConnectionTrait>(
+        db: &C,
+        execution_process_id: Uuid,
+    ) -> Result<Option<Self>, DbErr> {
+        let execution_row_id = ids::execution_process_id_by_uuid(db, execution_process_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
+
+        let record = coding_agent_turn::Entity::find()
+            .filter(coding_agent_turn::Column::ExecutionProcessId.eq(execution_row_id))
+            .one(db)
+            .await?;
+
+        Ok(record.map(|model| Self::from_model(model, execution_process_id)))
+    }
+
+    pub async fn find_by_agent_session_id<C: ConnectionTrait>(
+        db: &C,
         agent_session_id: &str,
-    ) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            CodingAgentTurn,
-            r#"SELECT
-                id as "id!: Uuid",
-                execution_process_id as "execution_process_id!: Uuid",
-                agent_session_id,
-                prompt,
-                summary,
-                created_at as "created_at!: DateTime<Utc>",
-                updated_at as "updated_at!: DateTime<Utc>"
-               FROM coding_agent_turns
-               WHERE agent_session_id = ?
-               ORDER BY updated_at DESC
-               LIMIT 1"#,
-            agent_session_id
-        )
-        .fetch_optional(pool)
-        .await
+    ) -> Result<Option<Self>, DbErr> {
+        let record = coding_agent_turn::Entity::find()
+            .filter(coding_agent_turn::Column::AgentSessionId.eq(agent_session_id))
+            .order_by_desc(coding_agent_turn::Column::UpdatedAt)
+            .one(db)
+            .await?;
+
+        if let Some(model) = record {
+            let execution_process_id = ids::execution_process_uuid_by_id(db, model.execution_process_id)
+                .await?
+                .ok_or(DbErr::RecordNotFound(
+                    "Execution process not found".to_string(),
+                ))?;
+            return Ok(Some(Self::from_model(model, execution_process_id)));
+        }
+        Ok(None)
     }
 
     /// Create a new coding agent turn
-    pub async fn create(
-        pool: &SqlitePool,
+    pub async fn create<C: ConnectionTrait>(
+        db: &C,
         data: &CreateCodingAgentTurn,
         id: Uuid,
-    ) -> Result<Self, sqlx::Error> {
+    ) -> Result<Self, DbErr> {
+        let execution_row_id = ids::execution_process_id_by_uuid(db, data.execution_process_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
+
         let now = Utc::now();
+        let active = coding_agent_turn::ActiveModel {
+            uuid: Set(id),
+            execution_process_id: Set(execution_row_id),
+            agent_session_id: Set(None),
+            prompt: Set(data.prompt.clone()),
+            summary: Set(None),
+            created_at: Set(now.into()),
+            updated_at: Set(now.into()),
+            ..Default::default()
+        };
 
-        tracing::debug!(
-            "Creating coding agent turn: id={}, execution_process_id={}, agent_session_id=None (will be set later)",
-            id,
-            data.execution_process_id
-        );
-
-        sqlx::query_as!(
-            CodingAgentTurn,
-            r#"INSERT INTO coding_agent_turns (
-                id, execution_process_id, agent_session_id, prompt, summary,
-                created_at, updated_at
-               )
-               VALUES ($1, $2, $3, $4, $5, $6, $7)
-               RETURNING
-                id as "id!: Uuid",
-                execution_process_id as "execution_process_id!: Uuid",
-                agent_session_id,
-                prompt,
-                summary,
-                created_at as "created_at!: DateTime<Utc>",
-                updated_at as "updated_at!: DateTime<Utc>""#,
-            id,
-            data.execution_process_id,
-            None::<String>, // agent_session_id initially None until parsed from output
-            data.prompt,
-            None::<String>, // summary initially None
-            now,            // created_at
-            now             // updated_at
-        )
-        .fetch_one(pool)
-        .await
+        let model = active.insert(db).await?;
+        Ok(Self::from_model(model, data.execution_process_id))
     }
 
     /// Update coding agent turn with agent session ID
-    pub async fn update_agent_session_id(
-        pool: &SqlitePool,
+    pub async fn update_agent_session_id<C: ConnectionTrait>(
+        db: &C,
         execution_process_id: Uuid,
         agent_session_id: &str,
-    ) -> Result<(), sqlx::Error> {
-        let now = Utc::now();
-        sqlx::query!(
-            r#"UPDATE coding_agent_turns
-               SET agent_session_id = $1, updated_at = $2
-               WHERE execution_process_id = $3"#,
-            agent_session_id,
-            now,
-            execution_process_id
-        )
-        .execute(pool)
-        .await?;
+    ) -> Result<(), DbErr> {
+        let execution_row_id = ids::execution_process_id_by_uuid(db, execution_process_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
 
+        let record = coding_agent_turn::Entity::find()
+            .filter(coding_agent_turn::Column::ExecutionProcessId.eq(execution_row_id))
+            .one(db)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Coding agent turn not found".to_string()))?;
+
+        let mut active: coding_agent_turn::ActiveModel = record.into();
+        active.agent_session_id = Set(Some(agent_session_id.to_string()));
+        active.updated_at = Set(Utc::now().into());
+        active.update(db).await?;
         Ok(())
     }
 
     /// Update coding agent turn summary
-    pub async fn update_summary(
-        pool: &SqlitePool,
+    pub async fn update_summary<C: ConnectionTrait>(
+        db: &C,
         execution_process_id: Uuid,
         summary: &str,
-    ) -> Result<(), sqlx::Error> {
-        let now = Utc::now();
-        sqlx::query!(
-            r#"UPDATE coding_agent_turns
-               SET summary = $1, updated_at = $2
-               WHERE execution_process_id = $3"#,
-            summary,
-            now,
-            execution_process_id
-        )
-        .execute(pool)
-        .await?;
+    ) -> Result<(), DbErr> {
+        let execution_row_id = ids::execution_process_id_by_uuid(db, execution_process_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
 
+        let record = coding_agent_turn::Entity::find()
+            .filter(coding_agent_turn::Column::ExecutionProcessId.eq(execution_row_id))
+            .one(db)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Coding agent turn not found".to_string()))?;
+
+        let mut active: coding_agent_turn::ActiveModel = record.into();
+        active.summary = Set(Some(summary.to_string()));
+        active.updated_at = Set(Utc::now().into());
+        active.update(db).await?;
         Ok(())
     }
 }

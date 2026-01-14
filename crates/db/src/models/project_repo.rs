@@ -1,25 +1,29 @@
 use std::path::Path;
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
+use sea_orm::{ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, SqlitePool};
 use thiserror::Error;
 use ts_rs::TS;
 use uuid::Uuid;
 
 use super::repo::Repo;
+use crate::{
+    entities::{project_repo, repo},
+    models::ids,
+};
 
 #[derive(Debug, Error)]
 pub enum ProjectRepoError {
     #[error(transparent)]
-    Database(#[from] sqlx::Error),
+    Database(#[from] DbErr),
     #[error("Repository not found")]
     NotFound,
     #[error("Repository already exists in this project")]
     AlreadyExists,
 }
 
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ProjectRepo {
     pub id: Uuid,
     pub project_id: Uuid,
@@ -31,7 +35,7 @@ pub struct ProjectRepo {
 }
 
 /// ProjectRepo with the associated repo name (for script execution in worktrees)
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone)]
 pub struct ProjectRepoWithName {
     pub id: Uuid,
     pub project_id: Uuid,
@@ -59,231 +63,271 @@ pub struct UpdateProjectRepo {
 }
 
 impl ProjectRepo {
-    pub async fn find_by_project_id(
-        pool: &SqlitePool,
-        project_id: Uuid,
-    ) -> Result<Vec<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            ProjectRepo,
-            r#"SELECT id as "id!: Uuid",
-                      project_id as "project_id!: Uuid",
-                      repo_id as "repo_id!: Uuid",
-                      setup_script,
-                      cleanup_script,
-                      copy_files,
-                      parallel_setup_script as "parallel_setup_script!: bool"
-               FROM project_repos
-               WHERE project_id = $1"#,
-            project_id
-        )
-        .fetch_all(pool)
-        .await
-    }
-
-    pub async fn find_by_repo_id(
-        pool: &SqlitePool,
-        repo_id: Uuid,
-    ) -> Result<Vec<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            ProjectRepo,
-            r#"SELECT id as "id!: Uuid",
-                      project_id as "project_id!: Uuid",
-                      repo_id as "repo_id!: Uuid",
-                      setup_script,
-                      cleanup_script,
-                      copy_files,
-                      parallel_setup_script as "parallel_setup_script!: bool"
-               FROM project_repos
-               WHERE repo_id = $1"#,
-            repo_id
-        )
-        .fetch_all(pool)
-        .await
-    }
-
-    pub async fn find_by_project_id_with_names(
-        pool: &SqlitePool,
-        project_id: Uuid,
-    ) -> Result<Vec<ProjectRepoWithName>, sqlx::Error> {
-        sqlx::query_as!(
-            ProjectRepoWithName,
-            r#"SELECT pr.id as "id!: Uuid",
-                      pr.project_id as "project_id!: Uuid",
-                      pr.repo_id as "repo_id!: Uuid",
-                      r.name as "repo_name!",
-                      pr.setup_script,
-                      pr.cleanup_script,
-                      pr.copy_files,
-                      pr.parallel_setup_script as "parallel_setup_script!: bool"
-               FROM project_repos pr
-               JOIN repos r ON r.id = pr.repo_id
-               WHERE pr.project_id = $1
-               ORDER BY r.display_name ASC"#,
-            project_id
-        )
-        .fetch_all(pool)
-        .await
-    }
-
-    pub async fn find_repos_for_project(
-        pool: &SqlitePool,
-        project_id: Uuid,
-    ) -> Result<Vec<Repo>, sqlx::Error> {
-        sqlx::query_as!(
-            Repo,
-            r#"SELECT r.id as "id!: Uuid",
-                      r.path,
-                      r.name,
-                      r.display_name, 
-                      r.created_at as "created_at!: DateTime<Utc>",
-                      r.updated_at as "updated_at!: DateTime<Utc>"
-               FROM repos r
-               JOIN project_repos pr ON r.id = pr.repo_id
-               WHERE pr.project_id = $1
-               ORDER BY r.display_name ASC"#,
-            project_id
-        )
-        .fetch_all(pool)
-        .await
-    }
-
-    pub async fn find_by_project_and_repo(
-        pool: &SqlitePool,
-        project_id: Uuid,
-        repo_id: Uuid,
-    ) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            ProjectRepo,
-            r#"SELECT id as "id!: Uuid",
-                      project_id as "project_id!: Uuid",
-                      repo_id as "repo_id!: Uuid",
-                      setup_script,
-                      cleanup_script,
-                      copy_files,
-                      parallel_setup_script as "parallel_setup_script!: bool"
-               FROM project_repos
-               WHERE project_id = $1 AND repo_id = $2"#,
+    fn from_model(model: project_repo::Model, project_id: Uuid, repo_id: Uuid) -> Self {
+        Self {
+            id: model.uuid,
             project_id,
-            repo_id
-        )
-        .fetch_optional(pool)
-        .await
+            repo_id,
+            setup_script: model.setup_script,
+            cleanup_script: model.cleanup_script,
+            copy_files: model.copy_files,
+            parallel_setup_script: model.parallel_setup_script,
+        }
     }
 
-    pub async fn add_repo_to_project(
-        pool: &SqlitePool,
+    pub async fn find_by_project_id<C: ConnectionTrait>(
+        db: &C,
+        project_id: Uuid,
+    ) -> Result<Vec<Self>, DbErr> {
+        let project_row_id = ids::project_id_by_uuid(db, project_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+
+        let models = project_repo::Entity::find()
+            .filter(project_repo::Column::ProjectId.eq(project_row_id))
+            .all(db)
+            .await?;
+
+        let mut repos = Vec::with_capacity(models.len());
+        for model in models {
+            let repo_id = ids::repo_uuid_by_id(db, model.repo_id)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+            repos.push(Self::from_model(model, project_id, repo_id));
+        }
+        Ok(repos)
+    }
+
+    pub async fn find_by_repo_id<C: ConnectionTrait>(
+        db: &C,
+        repo_id: Uuid,
+    ) -> Result<Vec<Self>, DbErr> {
+        let repo_row_id = ids::repo_id_by_uuid(db, repo_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+
+        let models = project_repo::Entity::find()
+            .filter(project_repo::Column::RepoId.eq(repo_row_id))
+            .all(db)
+            .await?;
+
+        let mut repos = Vec::with_capacity(models.len());
+        for model in models {
+            let project_id = ids::project_uuid_by_id(db, model.project_id)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+            repos.push(Self::from_model(model, project_id, repo_id));
+        }
+        Ok(repos)
+    }
+
+    pub async fn find_by_project_id_with_names<C: ConnectionTrait>(
+        db: &C,
+        project_id: Uuid,
+    ) -> Result<Vec<ProjectRepoWithName>, DbErr> {
+        let project_row_id = ids::project_id_by_uuid(db, project_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+
+        let models = project_repo::Entity::find()
+            .filter(project_repo::Column::ProjectId.eq(project_row_id))
+            .all(db)
+            .await?;
+
+        let mut repos = Vec::with_capacity(models.len());
+        for model in models {
+            let repo_model = repo::Entity::find_by_id(model.repo_id)
+                .one(db)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+            repos.push(ProjectRepoWithName {
+                id: model.uuid,
+                project_id,
+                repo_id: repo_model.uuid,
+                repo_name: repo_model.name,
+                setup_script: model.setup_script,
+                cleanup_script: model.cleanup_script,
+                copy_files: model.copy_files,
+                parallel_setup_script: model.parallel_setup_script,
+            });
+        }
+
+        repos.sort_by(|a, b| a.repo_name.cmp(&b.repo_name));
+        Ok(repos)
+    }
+
+    pub async fn find_repos_for_project<C: ConnectionTrait>(
+        db: &C,
+        project_id: Uuid,
+    ) -> Result<Vec<Repo>, DbErr> {
+        let project_row_id = ids::project_id_by_uuid(db, project_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+
+        let models = project_repo::Entity::find()
+            .filter(project_repo::Column::ProjectId.eq(project_row_id))
+            .all(db)
+            .await?;
+
+        let mut repos = Vec::new();
+        for model in models {
+            if let Some(repo_model) = repo::Entity::find_by_id(model.repo_id).one(db).await? {
+                repos.push(Repo::from(repo_model));
+            }
+        }
+        repos.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        Ok(repos)
+    }
+
+    pub async fn find_by_project_and_repo<C: ConnectionTrait>(
+        db: &C,
+        project_id: Uuid,
+        repo_id: Uuid,
+    ) -> Result<Option<Self>, DbErr> {
+        let project_row_id = ids::project_id_by_uuid(db, project_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+        let repo_row_id = ids::repo_id_by_uuid(db, repo_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+
+        let record = project_repo::Entity::find()
+            .filter(project_repo::Column::ProjectId.eq(project_row_id))
+            .filter(project_repo::Column::RepoId.eq(repo_row_id))
+            .one(db)
+            .await?;
+
+        Ok(record.map(|model| Self::from_model(model, project_id, repo_id)))
+    }
+
+    pub async fn add_repo_to_project<C: ConnectionTrait>(
+        db: &C,
         project_id: Uuid,
         repo_path: &str,
         repo_name: &str,
     ) -> Result<Repo, ProjectRepoError> {
-        let repo = Repo::find_or_create(pool, Path::new(repo_path), repo_name).await?;
+        let repo = Repo::find_or_create(db, Path::new(repo_path), repo_name).await?;
 
-        if Self::find_by_project_and_repo(pool, project_id, repo.id)
+        if Self::find_by_project_and_repo(db, project_id, repo.id)
             .await?
             .is_some()
         {
             return Err(ProjectRepoError::AlreadyExists);
         }
 
-        let id = Uuid::new_v4();
-        sqlx::query!(
-            r#"INSERT INTO project_repos (id, project_id, repo_id)
-               VALUES ($1, $2, $3)"#,
-            id,
-            project_id,
-            repo.id
-        )
-        .execute(pool)
-        .await?;
+        let project_row_id = ids::project_id_by_uuid(db, project_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+        let repo_row_id = ids::repo_id_by_uuid(db, repo.id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+
+        let active = project_repo::ActiveModel {
+            uuid: Set(Uuid::new_v4()),
+            project_id: Set(project_row_id),
+            repo_id: Set(repo_row_id),
+            setup_script: Set(None),
+            cleanup_script: Set(None),
+            copy_files: Set(None),
+            parallel_setup_script: Set(false),
+            ..Default::default()
+        };
+        active.insert(db).await?;
 
         Ok(repo)
     }
 
-    pub async fn remove_repo_from_project(
-        pool: &SqlitePool,
+    pub async fn remove_repo_from_project<C: ConnectionTrait>(
+        db: &C,
         project_id: Uuid,
         repo_id: Uuid,
     ) -> Result<(), ProjectRepoError> {
-        let result = sqlx::query!(
-            "DELETE FROM project_repos WHERE project_id = $1 AND repo_id = $2",
-            project_id,
-            repo_id
-        )
-        .execute(pool)
-        .await?;
+        let project_row_id = ids::project_id_by_uuid(db, project_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+        let repo_row_id = ids::repo_id_by_uuid(db, repo_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
 
-        if result.rows_affected() == 0 {
+        let result = project_repo::Entity::delete_many()
+            .filter(project_repo::Column::ProjectId.eq(project_row_id))
+            .filter(project_repo::Column::RepoId.eq(repo_row_id))
+            .exec(db)
+            .await?;
+
+        if result.rows_affected == 0 {
             return Err(ProjectRepoError::NotFound);
         }
 
         Ok(())
     }
 
-    pub async fn create(
-        executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    pub async fn create<C: ConnectionTrait>(
+        db: &C,
         project_id: Uuid,
         repo_id: Uuid,
-    ) -> Result<Self, sqlx::Error> {
-        let id = Uuid::new_v4();
-        sqlx::query_as!(
-            ProjectRepo,
-            r#"INSERT INTO project_repos (id, project_id, repo_id)
-               VALUES ($1, $2, $3)
-               RETURNING id as "id!: Uuid",
-                         project_id as "project_id!: Uuid",
-                         repo_id as "repo_id!: Uuid",
-                         setup_script,
-                         cleanup_script,
-                         copy_files,
-                         parallel_setup_script as "parallel_setup_script!: bool""#,
-            id,
-            project_id,
-            repo_id
-        )
-        .fetch_one(executor)
-        .await
+    ) -> Result<Self, DbErr> {
+        let project_row_id = ids::project_id_by_uuid(db, project_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+        let repo_row_id = ids::repo_id_by_uuid(db, repo_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+
+        let active = project_repo::ActiveModel {
+            uuid: Set(Uuid::new_v4()),
+            project_id: Set(project_row_id),
+            repo_id: Set(repo_row_id),
+            setup_script: Set(None),
+            cleanup_script: Set(None),
+            copy_files: Set(None),
+            parallel_setup_script: Set(false),
+            ..Default::default()
+        };
+        let model = active.insert(db).await?;
+        Ok(Self::from_model(model, project_id, repo_id))
     }
 
-    pub async fn update(
-        pool: &SqlitePool,
+    pub async fn update<C: ConnectionTrait>(
+        db: &C,
         project_id: Uuid,
         repo_id: Uuid,
         payload: &UpdateProjectRepo,
     ) -> Result<Self, ProjectRepoError> {
-        let existing = Self::find_by_project_and_repo(pool, project_id, repo_id).await?;
-        let existing = existing.ok_or(ProjectRepoError::NotFound)?;
+        let record = Self::find_by_project_and_repo(db, project_id, repo_id)
+            .await?
+            .ok_or(ProjectRepoError::NotFound)?;
 
-        let setup_script = payload.setup_script.clone();
-        let cleanup_script = payload.cleanup_script.clone();
-        let copy_files = payload.copy_files.clone();
-        let parallel_setup_script = payload
-            .parallel_setup_script
-            .unwrap_or(existing.parallel_setup_script);
+        let project_row_id = ids::project_id_by_uuid(db, project_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+        let repo_row_id = ids::repo_id_by_uuid(db, repo_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
 
-        sqlx::query_as!(
-            ProjectRepo,
-            r#"UPDATE project_repos
-               SET setup_script = $1,
-                   cleanup_script = $2,
-                   copy_files = $3,
-                   parallel_setup_script = $4
-               WHERE project_id = $5 AND repo_id = $6
-               RETURNING id as "id!: Uuid",
-                         project_id as "project_id!: Uuid",
-                         repo_id as "repo_id!: Uuid",
-                         setup_script,
-                         cleanup_script,
-                         copy_files,
-                         parallel_setup_script as "parallel_setup_script!: bool""#,
-            setup_script,
-            cleanup_script,
-            copy_files,
-            parallel_setup_script,
-            project_id,
-            repo_id
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(ProjectRepoError::from)
+        let model = project_repo::Entity::find()
+            .filter(project_repo::Column::ProjectId.eq(project_row_id))
+            .filter(project_repo::Column::RepoId.eq(repo_row_id))
+            .one(db)
+            .await?
+            .ok_or(ProjectRepoError::NotFound)?;
+
+        let mut active: project_repo::ActiveModel = model.into();
+        if payload.setup_script.is_some() {
+            active.setup_script = Set(payload.setup_script.clone());
+        }
+        if payload.cleanup_script.is_some() {
+            active.cleanup_script = Set(payload.cleanup_script.clone());
+        }
+        if payload.copy_files.is_some() {
+            active.copy_files = Set(payload.copy_files.clone());
+        }
+        if let Some(parallel) = payload.parallel_setup_script {
+            active.parallel_setup_script = Set(parallel);
+        }
+        active.updated_at = Set(Utc::now().into());
+
+        let updated = active.update(db).await?;
+        Ok(Self::from_model(updated, record.project_id, record.repo_id))
     }
 }

@@ -4,25 +4,28 @@ use std::{
 };
 
 use db::models::{
-    project::{CreateProject, Project, ProjectError, SearchMatchType, SearchResult, UpdateProject},
+    project::{
+        CreateProject, Project, ProjectError, ProjectFileSearchResponse, SearchMatchType,
+        SearchResult, UpdateProject,
+    },
     project_repo::{CreateProjectRepo, ProjectRepo},
     repo::Repo,
 };
 use ignore::WalkBuilder;
-use sqlx::SqlitePool;
+use db::DbErr;
 use thiserror::Error;
 use uuid::Uuid;
 
 use super::{
     file_ranker::FileRanker,
-    file_search_cache::{CacheError, FileSearchCache, SearchMode, SearchQuery},
+    file_search_cache::{CacheError, FileSearchCache, RepoSearchResponse, SearchMode, SearchQuery},
     repo::{RepoError, RepoService},
 };
 
 #[derive(Debug, Error)]
 pub enum ProjectServiceError {
     #[error(transparent)]
-    Database(#[from] sqlx::Error),
+    Database(#[from] DbErr),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -68,7 +71,7 @@ impl ProjectService {
 
     pub async fn create_project(
         &self,
-        pool: &SqlitePool,
+        pool: &db::DbPool,
         repo_service: &RepoService,
         payload: CreateProject,
     ) -> Result<Project> {
@@ -135,7 +138,7 @@ impl ProjectService {
 
     pub async fn update_project(
         &self,
-        pool: &SqlitePool,
+        pool: &db::DbPool,
         existing: &Project,
         payload: UpdateProject,
     ) -> Result<Project> {
@@ -146,7 +149,7 @@ impl ProjectService {
 
     pub async fn add_repository(
         &self,
-        pool: &SqlitePool,
+        pool: &db::DbPool,
         repo_service: &RepoService,
         project_id: Uuid,
         payload: &CreateProjectRepo,
@@ -200,7 +203,7 @@ impl ProjectService {
 
     pub async fn delete_repository(
         &self,
-        pool: &SqlitePool,
+        pool: &db::DbPool,
         project_id: Uuid,
         repo_id: Uuid,
     ) -> Result<()> {
@@ -231,7 +234,7 @@ impl ProjectService {
         Ok(())
     }
 
-    pub async fn delete_project(&self, pool: &SqlitePool, project_id: Uuid) -> Result<u64> {
+    pub async fn delete_project(&self, pool: &db::DbPool, project_id: Uuid) -> Result<u64> {
         let rows_affected = Project::delete(pool, project_id).await?;
 
         if let Err(e) = Repo::delete_orphaned(pool).await {
@@ -241,7 +244,7 @@ impl ProjectService {
         Ok(rows_affected)
     }
 
-    pub async fn get_repositories(&self, pool: &SqlitePool, project_id: Uuid) -> Result<Vec<Repo>> {
+    pub async fn get_repositories(&self, pool: &db::DbPool, project_id: Uuid) -> Result<Vec<Repo>> {
         let repos = ProjectRepo::find_repos_for_project(pool, project_id).await?;
         Ok(repos)
     }
@@ -251,10 +254,14 @@ impl ProjectService {
         cache: &FileSearchCache,
         repositories: &[Repo],
         query: &SearchQuery,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<ProjectFileSearchResponse> {
         let query_str = query.q.trim();
         if query_str.is_empty() || repositories.is_empty() {
-            return Ok(vec![]);
+            return Ok(ProjectFileSearchResponse {
+                results: vec![],
+                index_truncated: false,
+                truncated_repos: vec![],
+            });
         }
 
         // Search in parallel and prefix paths with repo name
@@ -265,27 +272,44 @@ impl ProjectService {
                 let repo_path = repo.path.clone();
                 let query = query.clone();
                 async move {
-                    let results = self
+                    let response = self
                         .search_single_repo(cache, &repo_path, &query)
                         .await
                         .unwrap_or_else(|e| {
                             tracing::warn!("Search failed for repo {}: {}", repo_name, e);
-                            vec![]
+                            RepoSearchResponse {
+                                results: vec![],
+                                index_truncated: false,
+                            }
                         });
-                    (repo_name, results)
+                    (repo_name, response)
                 }
             })
             .collect();
 
         let repo_results = futures::future::join_all(search_futures).await;
 
+        let mut truncated_repos: Vec<String> = repo_results
+            .iter()
+            .filter_map(|(repo_name, response)| {
+                if response.index_truncated {
+                    Some(repo_name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        truncated_repos.sort();
+        truncated_repos.dedup();
+        let index_truncated = !truncated_repos.is_empty();
+
         let mut all_results: Vec<SearchResult> = repo_results
             .into_iter()
-            .flat_map(|(repo_name, results)| {
-                results.into_iter().map(move |r| SearchResult {
+            .flat_map(|(repo_name, response)| {
+                response.results.into_iter().map(move |r| SearchResult {
                     path: format!("{}/{}", repo_name, r.path),
                     is_file: r.is_file,
-                    match_type: r.match_type.clone(),
+                    match_type: r.match_type,
                 })
             })
             .collect();
@@ -302,7 +326,11 @@ impl ProjectService {
         });
 
         all_results.truncate(10);
-        Ok(all_results)
+        Ok(ProjectFileSearchResponse {
+            results: all_results,
+            index_truncated,
+            truncated_repos,
+        })
     }
 
     async fn search_single_repo(
@@ -310,19 +338,26 @@ impl ProjectService {
         cache: &FileSearchCache,
         repo_path: &Path,
         query: &SearchQuery,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<RepoSearchResponse> {
         let query_str = query.q.trim();
         if query_str.is_empty() {
-            return Ok(vec![]);
+            return Ok(RepoSearchResponse {
+                results: vec![],
+                index_truncated: false,
+            });
         }
 
         // Try cache first
         match cache.search(repo_path, query_str, query.mode.clone()).await {
-            Ok(results) => Ok(results),
+            Ok(response) => Ok(response),
             Err(CacheError::Miss) | Err(CacheError::BuildError(_)) => {
                 // Fall back to filesystem search
-                self.search_files_in_repo(repo_path, query_str, query.mode.clone())
-                    .await
+                Ok(RepoSearchResponse {
+                    results: self
+                        .search_files_in_repo(repo_path, query_str, query.mode.clone())
+                        .await?,
+                    index_truncated: false,
+                })
             }
         }
     }

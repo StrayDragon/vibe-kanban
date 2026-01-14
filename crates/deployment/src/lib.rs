@@ -30,7 +30,7 @@ use services::services::{
     repo::RepoService,
     worktree_manager::WorktreeError,
 };
-use sqlx::Error as SqlxError;
+use db::DbErr;
 use thiserror::Error;
 use tokio::sync::RwLock;
 
@@ -39,7 +39,7 @@ pub enum DeploymentError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
-    Sqlx(#[from] SqlxError),
+    Database(#[from] DbErr),
     #[error(transparent)]
     Git2(#[from] Git2Error),
     #[error(transparent)]

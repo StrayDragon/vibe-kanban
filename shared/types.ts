@@ -12,6 +12,8 @@ export type UpdateProject = { name: string | null, dev_script: string | null, de
 
 export type SearchResult = { path: string, is_file: boolean, match_type: SearchMatchType, };
 
+export type ProjectFileSearchResponse = { results: Array<SearchResult>, index_truncated: boolean, truncated_repos: Array<string>, };
+
 export type SearchMatchType = "FileName" | "DirectoryName" | "FullPath";
 
 export type Repo = { id: string, path: string, name: string, display_name: string, created_at: Date, updated_at: Date, };
@@ -141,6 +143,12 @@ export type CheckEditorAvailabilityQuery = { editor_type: EditorType, };
 export type CheckEditorAvailabilityResponse = { available: boolean, };
 
 export type CheckAgentAvailabilityQuery = { executor: BaseCodingAgent, };
+
+export type CliDependencyPreflightQuery = { executor: BaseCodingAgent, };
+
+export type GhCliPreflightStatus = { "type": "ready" } | { "type": "not_installed" } | { "type": "not_authenticated" } | { "type": "error", message: string, };
+
+export type CliDependencyPreflightResponse = { agent: AvailabilityInfo, github_cli: GhCliPreflightStatus, };
 
 export type ImportLlmanProfilesResponse = { path: string, imported: number, updated: number, skipped: number, };
 

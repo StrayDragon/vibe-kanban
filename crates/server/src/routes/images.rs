@@ -9,6 +9,7 @@ use axum::{
     routing::{delete, get, post},
 };
 use chrono::{DateTime, Utc};
+use db::DbErr;
 use db::models::{
     image::{Image, TaskImage},
     task::Task,
@@ -16,7 +17,6 @@ use db::models::{
 use deployment::Deployment;
 use serde::{Deserialize, Serialize};
 use services::services::image::ImageError;
-use sqlx::Error as SqlxError;
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
 use ts_rs::TS;
@@ -120,7 +120,9 @@ pub async fn upload_task_image(
 ) -> Result<ResponseJson<ApiResponse<ImageResponse>>, ApiError> {
     Task::find_by_id(&deployment.db().pool, task_id)
         .await?
-        .ok_or(ApiError::Database(SqlxError::RowNotFound))?;
+        .ok_or(ApiError::Database(DbErr::RecordNotFound(
+            "Task not found".to_string(),
+        )))?;
 
     let image_response = process_image_upload(&deployment, multipart, Some(task_id)).await?;
     Ok(ResponseJson(ApiResponse::success(image_response)))

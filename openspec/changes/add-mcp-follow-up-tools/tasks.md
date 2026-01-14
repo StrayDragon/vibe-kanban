@@ -6,6 +6,6 @@
 - [x] 1.5 Add tests or lightweight QA notes covering follow-up send/queue/cancel flows.
 
 ## 2. QA Notes
-- [ ] 2.1 Use MCP follow_up action=send with session_id and verify a new execution process starts.
-- [ ] 2.2 Use MCP follow_up action=queue with workspace_id and verify queue status is returned.
-- [ ] 2.3 Use MCP follow_up action=cancel and verify queue status clears.
+- [x] 2.1 Use MCP follow_up action=send with session_id and verify a new execution process starts.
+- [x] 2.2 Use MCP follow_up action=queue with workspace_id and verify queue status is returned.
+- [x] 2.3 Use MCP follow_up action=cancel and verify queue status clears.

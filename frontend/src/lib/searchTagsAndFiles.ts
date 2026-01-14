@@ -26,11 +26,13 @@ export async function searchTagsAndFiles(
 
   // Fetch files (if projectId is available and query has content)
   if (projectId && query.length > 0) {
-    const fileResults = await projectsApi.searchFiles(projectId, query);
-    const fileSearchResults: FileSearchResult[] = fileResults.map((item) => ({
+    const fileResponse = await projectsApi.searchFiles(projectId, query);
+    const fileSearchResults: FileSearchResult[] = fileResponse.results.map(
+      (item) => ({
       ...item,
       name: item.path.split('/').pop() || item.path,
-    }));
+      })
+    );
     results.push(
       ...fileSearchResults.map((file) => ({ type: 'file' as const, file }))
     );

@@ -1,15 +1,17 @@
 use std::{collections::HashSet, sync::Arc};
 
-use db::models::{
-    execution_process::ExecutionProcess,
-    project::Project,
-    scratch::Scratch,
-    session::Session,
-    task::{Task, TaskWithAttemptStatus},
+use db::{
+    DbPool,
+    models::{
+        execution_process::ExecutionProcess,
+        project::Project,
+        scratch::Scratch,
+        session::Session,
+        task::{Task, TaskWithAttemptStatus},
+    },
 };
 use futures::StreamExt;
 use serde_json::json;
-use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use utils::log_msg::LogMsg;
@@ -18,7 +20,7 @@ use uuid::Uuid;
 use super::{
     EventService,
     patches::execution_process_patch,
-    types::{EventError, EventPatch, RecordTypes},
+    types::EventError,
 };
 
 impl EventService {
@@ -104,61 +106,6 @@ impl EventService {
                                             // Since we don't have the task data, we'll allow all removals
                                             // and let the client handle filtering
                                             return Some(Ok(LogMsg::JsonPatch(patch)));
-                                        }
-                                        _ => {}
-                                    }
-                                } else if let Ok(event_patch_value) = serde_json::to_value(patch_op)
-                                    && let Ok(event_patch) =
-                                        serde_json::from_value::<EventPatch>(event_patch_value)
-                                {
-                                    // Handle old EventPatch format for non-task records
-                                    match &event_patch.value.record {
-                                        RecordTypes::Task(task) => {
-                                            if project_filter.is_none_or(|id| task.project_id == id)
-                                            {
-                                                return Some(Ok(LogMsg::JsonPatch(patch)));
-                                            }
-                                        }
-                                        RecordTypes::DeletedTask {
-                                            project_id: Some(deleted_project_id),
-                                            ..
-                                        } => {
-                                            if project_filter
-                                                .is_none_or(|id| *deleted_project_id == id)
-                                            {
-                                                return Some(Ok(LogMsg::JsonPatch(patch)));
-                                            }
-                                        }
-                                        RecordTypes::Workspace(workspace) => {
-                                            if let Some(project_filter) = project_filter {
-                                                // Check if this workspace belongs to a task in our project
-                                                if let Ok(Some(task)) =
-                                                    Task::find_by_id(&db_pool, workspace.task_id)
-                                                        .await
-                                                    && task.project_id == project_filter
-                                                {
-                                                    return Some(Ok(LogMsg::JsonPatch(patch)));
-                                                }
-                                            } else {
-                                                return Some(Ok(LogMsg::JsonPatch(patch)));
-                                            }
-                                        }
-                                        RecordTypes::DeletedWorkspace {
-                                            task_id: Some(deleted_task_id),
-                                            ..
-                                        } => {
-                                            if let Some(project_filter) = project_filter {
-                                                // Check if deleted workspace belonged to a task in our project
-                                                if let Ok(Some(task)) =
-                                                    Task::find_by_id(&db_pool, *deleted_task_id)
-                                                        .await
-                                                    && task.project_id == project_filter
-                                                {
-                                                    return Some(Ok(LogMsg::JsonPatch(patch)));
-                                                }
-                                            } else {
-                                                return Some(Ok(LogMsg::JsonPatch(patch)));
-                                            }
                                         }
                                         _ => {}
                                     }
@@ -292,7 +239,7 @@ impl EventService {
     ) -> Result<futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>, EventError>
     {
         async fn build_execution_processes_snapshot(
-            db_pool: &SqlitePool,
+            db_pool: &DbPool,
             workspace_id: Uuid,
             show_soft_deleted: bool,
         ) -> Result<(LogMsg, HashSet<Uuid>), EventError> {
@@ -334,7 +281,7 @@ impl EventService {
 
         async fn session_matches_workspace(
             session_ids: &RwLock<HashSet<Uuid>>,
-            db_pool: &SqlitePool,
+            db_pool: &DbPool,
             workspace_id: Uuid,
             session_id: Uuid,
         ) -> bool {
@@ -440,49 +387,6 @@ impl EventService {
                                         _ => {}
                                     }
                                 }
-                                // Fallback to legacy EventPatch format for backward compatibility
-                                else if let Ok(event_patch_value) = serde_json::to_value(patch_op)
-                                    && let Ok(event_patch) =
-                                        serde_json::from_value::<EventPatch>(event_patch_value)
-                                {
-                                    match &event_patch.value.record {
-                                        RecordTypes::ExecutionProcess(process) => {
-                                            if session_matches_workspace(
-                                                &session_ids,
-                                                &db_pool,
-                                                workspace_id,
-                                                process.session_id,
-                                            )
-                                            .await
-                                            {
-                                                if !show_soft_deleted && process.dropped {
-                                                    let remove_patch =
-                                                        execution_process_patch::remove(process.id);
-                                                    return Some(Ok(LogMsg::JsonPatch(
-                                                        remove_patch,
-                                                    )));
-                                                }
-                                                return Some(Ok(LogMsg::JsonPatch(patch)));
-                                            }
-                                        }
-                                        RecordTypes::DeletedExecutionProcess {
-                                            session_id: Some(deleted_session_id),
-                                            ..
-                                        } => {
-                                            if session_matches_workspace(
-                                                &session_ids,
-                                                &db_pool,
-                                                workspace_id,
-                                                *deleted_session_id,
-                                            )
-                                            .await
-                                            {
-                                                return Some(Ok(LogMsg::JsonPatch(patch)));
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                }
                             }
                             None
                         }
@@ -543,7 +447,7 @@ impl EventService {
         }
 
         async fn load_scratch_snapshot(
-            db_pool: &SqlitePool,
+            db_pool: &DbPool,
             scratch_id: Uuid,
             scratch_type: &db::models::scratch::ScratchType,
         ) -> LogMsg {

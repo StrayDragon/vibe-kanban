@@ -13,7 +13,9 @@ use axum::{
     routing::{get, post},
 };
 use db::models::{
-    project::{CreateProject, Project, ProjectError, SearchResult, UpdateProject},
+    project::{
+        CreateProject, Project, ProjectError, ProjectFileSearchResponse, UpdateProject,
+    },
     project_repo::{CreateProjectRepo, ProjectRepo, UpdateProjectRepo},
     repo::Repo,
 };
@@ -215,7 +217,7 @@ pub async fn search_project_files(
     State(deployment): State<DeploymentImpl>,
     Extension(project): Extension<Project>,
     Query(search_query): Query<SearchQuery>,
-) -> Result<ResponseJson<ApiResponse<Vec<SearchResult>>>, StatusCode> {
+) -> Result<ResponseJson<ApiResponse<ProjectFileSearchResponse>>, StatusCode> {
     if search_query.q.trim().is_empty() {
         return Ok(ResponseJson(ApiResponse::error(
             "Query parameter 'q' is required and cannot be empty",

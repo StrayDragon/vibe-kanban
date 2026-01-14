@@ -1,18 +1,12 @@
 use chrono::{DateTime, Utc};
+use sea_orm::{ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder, Set};
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, SqlitePool, Type};
 use ts_rs::TS;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, Type)]
-#[sqlx(type_name = "merge_status", rename_all = "snake_case")]
-#[serde(rename_all = "snake_case")]
-pub enum MergeStatus {
-    Open,
-    Merged,
-    Closed,
-    Unknown,
-}
+pub use crate::types::{MergeStatus, MergeType};
+
+use crate::{entities::merge, models::ids};
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -47,31 +41,8 @@ pub struct PullRequestInfo {
     pub number: i64,
     pub url: String,
     pub status: MergeStatus,
-    pub merged_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub merged_at: Option<DateTime<Utc>>,
     pub merge_commit_sha: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[sqlx(type_name = "TEXT", rename_all = "snake_case")]
-pub enum MergeType {
-    Direct,
-    Pr,
-}
-
-#[derive(FromRow)]
-struct MergeRow {
-    id: Uuid,
-    workspace_id: Uuid,
-    repo_id: Uuid,
-    merge_type: MergeType,
-    merge_commit: Option<String>,
-    target_branch_name: String,
-    pr_number: Option<i64>,
-    pr_url: Option<String>,
-    pr_status: Option<MergeStatus>,
-    pr_merged_at: Option<DateTime<Utc>>,
-    pr_merge_commit_sha: Option<String>,
-    created_at: DateTime<Utc>,
 }
 
 impl Merge {
@@ -82,254 +53,204 @@ impl Merge {
         }
     }
 
+    async fn from_model<C: ConnectionTrait>(db: &C, model: merge::Model) -> Result<Self, DbErr> {
+        let workspace_id = ids::workspace_uuid_by_id(db, model.workspace_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
+        let repo_id = ids::repo_uuid_by_id(db, model.repo_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+
+        match model.merge_type {
+            MergeType::Direct => Ok(Merge::Direct(DirectMerge {
+                id: model.uuid,
+                workspace_id,
+                repo_id,
+                merge_commit: model
+                    .merge_commit
+                    .expect("direct merge must have merge_commit"),
+                target_branch_name: model.target_branch_name,
+                created_at: model.created_at.into(),
+            })),
+            MergeType::Pr => Ok(Merge::Pr(PrMerge {
+                id: model.uuid,
+                workspace_id,
+                repo_id,
+                created_at: model.created_at.into(),
+                target_branch_name: model.target_branch_name,
+                pr_info: PullRequestInfo {
+                    number: model.pr_number.expect("pr merge must have pr_number"),
+                    url: model.pr_url.expect("pr merge must have pr_url"),
+                    status: model.pr_status.expect("pr merge must have status"),
+                    merged_at: model.pr_merged_at.map(Into::into),
+                    merge_commit_sha: model.pr_merge_commit_sha,
+                },
+            })),
+        }
+    }
+
     /// Create a direct merge record
-    pub async fn create_direct(
-        pool: &SqlitePool,
+    pub async fn create_direct<C: ConnectionTrait>(
+        db: &C,
         workspace_id: Uuid,
         repo_id: Uuid,
         target_branch_name: &str,
         merge_commit: &str,
-    ) -> Result<DirectMerge, sqlx::Error> {
-        let id = Uuid::new_v4();
+    ) -> Result<DirectMerge, DbErr> {
+        let workspace_row_id = ids::workspace_id_by_uuid(db, workspace_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
+        let repo_row_id = ids::repo_id_by_uuid(db, repo_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
         let now = Utc::now();
 
-        sqlx::query_as!(
-            MergeRow,
-            r#"INSERT INTO merges (
-                id, workspace_id, repo_id, merge_type, merge_commit, created_at, target_branch_name
-            ) VALUES ($1, $2, $3, 'direct', $4, $5, $6)
-            RETURNING
-                id as "id!: Uuid",
-                workspace_id as "workspace_id!: Uuid",
-                repo_id as "repo_id!: Uuid",
-                merge_type as "merge_type!: MergeType",
-                merge_commit,
-                pr_number,
-                pr_url,
-                pr_status as "pr_status?: MergeStatus",
-                pr_merged_at as "pr_merged_at?: DateTime<Utc>",
-                pr_merge_commit_sha,
-                created_at as "created_at!: DateTime<Utc>",
-                target_branch_name as "target_branch_name!: String"
-            "#,
-            id,
-            workspace_id,
-            repo_id,
-            merge_commit,
-            now,
-            target_branch_name
-        )
-        .fetch_one(pool)
-        .await
-        .map(Into::into)
+        let active = merge::ActiveModel {
+            uuid: Set(Uuid::new_v4()),
+            workspace_id: Set(workspace_row_id),
+            repo_id: Set(repo_row_id),
+            merge_type: Set(MergeType::Direct),
+            merge_commit: Set(Some(merge_commit.to_string())),
+            target_branch_name: Set(target_branch_name.to_string()),
+            created_at: Set(now.into()),
+            ..Default::default()
+        };
+
+        let model = active.insert(db).await?;
+        match Self::from_model(db, model).await? {
+            Merge::Direct(direct) => Ok(direct),
+            _ => Err(DbErr::Custom("Unexpected merge type".to_string())),
+        }
     }
+
     /// Create a new PR record (when PR is opened)
-    pub async fn create_pr(
-        pool: &SqlitePool,
+    pub async fn create_pr<C: ConnectionTrait>(
+        db: &C,
         workspace_id: Uuid,
         repo_id: Uuid,
         target_branch_name: &str,
         pr_number: i64,
         pr_url: &str,
-    ) -> Result<PrMerge, sqlx::Error> {
-        let id = Uuid::new_v4();
+    ) -> Result<PrMerge, DbErr> {
+        let workspace_row_id = ids::workspace_id_by_uuid(db, workspace_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
+        let repo_row_id = ids::repo_id_by_uuid(db, repo_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
         let now = Utc::now();
 
-        sqlx::query_as!(
-            MergeRow,
-            r#"INSERT INTO merges (
-                id, workspace_id, repo_id, merge_type, pr_number, pr_url, pr_status, created_at, target_branch_name
-            ) VALUES ($1, $2, $3, 'pr', $4, $5, 'open', $6, $7)
-            RETURNING
-                id as "id!: Uuid",
-                workspace_id as "workspace_id!: Uuid",
-                repo_id as "repo_id!: Uuid",
-                merge_type as "merge_type!: MergeType",
-                merge_commit,
-                pr_number,
-                pr_url,
-                pr_status as "pr_status?: MergeStatus",
-                pr_merged_at as "pr_merged_at?: DateTime<Utc>",
-                pr_merge_commit_sha,
-                created_at as "created_at!: DateTime<Utc>",
-                target_branch_name as "target_branch_name!: String"
-            "#,
-            id,
-            workspace_id,
-            repo_id,
-            pr_number,
-            pr_url,
-            now,
-            target_branch_name
-        )
-        .fetch_one(pool)
-        .await
-        .map(Into::into)
+        let active = merge::ActiveModel {
+            uuid: Set(Uuid::new_v4()),
+            workspace_id: Set(workspace_row_id),
+            repo_id: Set(repo_row_id),
+            merge_type: Set(MergeType::Pr),
+            pr_number: Set(Some(pr_number)),
+            pr_url: Set(Some(pr_url.to_string())),
+            pr_status: Set(Some(MergeStatus::Open)),
+            target_branch_name: Set(target_branch_name.to_string()),
+            created_at: Set(now.into()),
+            ..Default::default()
+        };
+
+        let model = active.insert(db).await?;
+        match Self::from_model(db, model).await? {
+            Merge::Pr(pr) => Ok(pr),
+            _ => Err(DbErr::Custom("Unexpected merge type".to_string())),
+        }
     }
 
     /// Get all open PRs for monitoring
-    pub async fn get_open_prs(pool: &SqlitePool) -> Result<Vec<PrMerge>, sqlx::Error> {
-        let rows = sqlx::query_as!(
-            MergeRow,
-            r#"SELECT
-                id as "id!: Uuid",
-                workspace_id as "workspace_id!: Uuid",
-                repo_id as "repo_id!: Uuid",
-                merge_type as "merge_type!: MergeType",
-                merge_commit,
-                pr_number,
-                pr_url,
-                pr_status as "pr_status?: MergeStatus",
-                pr_merged_at as "pr_merged_at?: DateTime<Utc>",
-                pr_merge_commit_sha,
-                created_at as "created_at!: DateTime<Utc>",
-                target_branch_name as "target_branch_name!: String"
-               FROM merges
-               WHERE merge_type = 'pr' AND pr_status = 'open'
-               ORDER BY created_at DESC"#,
-        )
-        .fetch_all(pool)
-        .await?;
+    pub async fn get_open_prs<C: ConnectionTrait>(db: &C) -> Result<Vec<PrMerge>, DbErr> {
+        let records = merge::Entity::find()
+            .filter(merge::Column::MergeType.eq(MergeType::Pr))
+            .filter(merge::Column::PrStatus.eq(MergeStatus::Open))
+            .order_by_desc(merge::Column::CreatedAt)
+            .all(db)
+            .await?;
 
-        Ok(rows.into_iter().map(Into::into).collect())
+        let mut merges = Vec::with_capacity(records.len());
+        for model in records {
+            if let Merge::Pr(pr) = Self::from_model(db, model).await? {
+                merges.push(pr);
+            }
+        }
+        Ok(merges)
     }
 
     /// Update PR status for a workspace
-    pub async fn update_status(
-        pool: &SqlitePool,
+    pub async fn update_status<C: ConnectionTrait>(
+        db: &C,
         merge_id: Uuid,
         pr_status: MergeStatus,
         merge_commit_sha: Option<String>,
-    ) -> Result<(), sqlx::Error> {
+    ) -> Result<(), DbErr> {
         let merged_at = if matches!(pr_status, MergeStatus::Merged) {
             Some(Utc::now())
         } else {
             None
         };
 
-        sqlx::query!(
-            r#"UPDATE merges
-            SET pr_status = $1,
-                pr_merge_commit_sha = $2,
-                pr_merged_at = $3
-            WHERE id = $4"#,
-            pr_status,
-            merge_commit_sha,
-            merged_at,
-            merge_id
-        )
-        .execute(pool)
-        .await?;
+        let record = merge::Entity::find()
+            .filter(merge::Column::Uuid.eq(merge_id))
+            .one(db)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Merge not found".to_string()))?;
 
+        let mut active: merge::ActiveModel = record.into();
+        active.pr_status = Set(Some(pr_status));
+        active.pr_merge_commit_sha = Set(merge_commit_sha);
+        active.pr_merged_at = Set(merged_at.map(Into::into));
+        active.update(db).await?;
         Ok(())
     }
-    /// Find all merges for a workspace (returns both direct and PR merges)
-    pub async fn find_by_workspace_id(
-        pool: &SqlitePool,
-        workspace_id: Uuid,
-    ) -> Result<Vec<Self>, sqlx::Error> {
-        // Get raw data from database
-        let rows = sqlx::query_as!(
-            MergeRow,
-            r#"SELECT
-                id as "id!: Uuid",
-                workspace_id as "workspace_id!: Uuid",
-                repo_id as "repo_id!: Uuid",
-                merge_type as "merge_type!: MergeType",
-                merge_commit,
-                pr_number,
-                pr_url,
-                pr_status as "pr_status?: MergeStatus",
-                pr_merged_at as "pr_merged_at?: DateTime<Utc>",
-                pr_merge_commit_sha,
-                target_branch_name as "target_branch_name!: String",
-                created_at as "created_at!: DateTime<Utc>"
-            FROM merges
-            WHERE workspace_id = $1
-            ORDER BY created_at DESC"#,
-            workspace_id
-        )
-        .fetch_all(pool)
-        .await?;
 
-        // Convert to appropriate types based on merge_type
-        Ok(rows.into_iter().map(Into::into).collect())
+    /// Find all merges for a workspace (returns both direct and PR merges)
+    pub async fn find_by_workspace_id<C: ConnectionTrait>(
+        db: &C,
+        workspace_id: Uuid,
+    ) -> Result<Vec<Self>, DbErr> {
+        let workspace_row_id = ids::workspace_id_by_uuid(db, workspace_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
+
+        let records = merge::Entity::find()
+            .filter(merge::Column::WorkspaceId.eq(workspace_row_id))
+            .order_by_desc(merge::Column::CreatedAt)
+            .all(db)
+            .await?;
+
+        let mut merges = Vec::with_capacity(records.len());
+        for model in records {
+            merges.push(Self::from_model(db, model).await?);
+        }
+        Ok(merges)
     }
 
     /// Find all merges for a workspace and specific repo
-    pub async fn find_by_workspace_and_repo_id(
-        pool: &SqlitePool,
+    pub async fn find_by_workspace_and_repo_id<C: ConnectionTrait>(
+        db: &C,
         workspace_id: Uuid,
         repo_id: Uuid,
-    ) -> Result<Vec<Self>, sqlx::Error> {
-        let rows = sqlx::query_as!(
-            MergeRow,
-            r#"SELECT
-                id as "id!: Uuid",
-                workspace_id as "workspace_id!: Uuid",
-                repo_id as "repo_id!: Uuid",
-                merge_type as "merge_type!: MergeType",
-                merge_commit,
-                pr_number,
-                pr_url,
-                pr_status as "pr_status?: MergeStatus",
-                pr_merged_at as "pr_merged_at?: DateTime<Utc>",
-                pr_merge_commit_sha,
-                target_branch_name as "target_branch_name!: String",
-                created_at as "created_at!: DateTime<Utc>"
-            FROM merges
-            WHERE workspace_id = $1 AND repo_id = $2
-            ORDER BY created_at DESC"#,
-            workspace_id,
-            repo_id
-        )
-        .fetch_all(pool)
-        .await?;
+    ) -> Result<Vec<Self>, DbErr> {
+        let workspace_row_id = ids::workspace_id_by_uuid(db, workspace_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
+        let repo_row_id = ids::repo_id_by_uuid(db, repo_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
 
-        Ok(rows.into_iter().map(Into::into).collect())
-    }
-}
+        let records = merge::Entity::find()
+            .filter(merge::Column::WorkspaceId.eq(workspace_row_id))
+            .filter(merge::Column::RepoId.eq(repo_row_id))
+            .order_by_desc(merge::Column::CreatedAt)
+            .all(db)
+            .await?;
 
-// Conversion implementations
-impl From<MergeRow> for DirectMerge {
-    fn from(row: MergeRow) -> Self {
-        DirectMerge {
-            id: row.id,
-            workspace_id: row.workspace_id,
-            repo_id: row.repo_id,
-            merge_commit: row
-                .merge_commit
-                .expect("direct merge must have merge_commit"),
-            target_branch_name: row.target_branch_name,
-            created_at: row.created_at,
+        let mut merges = Vec::with_capacity(records.len());
+        for model in records {
+            merges.push(Self::from_model(db, model).await?);
         }
-    }
-}
-
-impl From<MergeRow> for PrMerge {
-    fn from(row: MergeRow) -> Self {
-        PrMerge {
-            id: row.id,
-            workspace_id: row.workspace_id,
-            repo_id: row.repo_id,
-            target_branch_name: row.target_branch_name,
-            pr_info: PullRequestInfo {
-                number: row.pr_number.expect("pr merge must have pr_number"),
-                url: row.pr_url.expect("pr merge must have pr_url"),
-                status: row.pr_status.expect("pr merge must have status"),
-                merged_at: row.pr_merged_at,
-                merge_commit_sha: row.pr_merge_commit_sha,
-            },
-            created_at: row.created_at,
-        }
-    }
-}
-
-impl From<MergeRow> for Merge {
-    fn from(row: MergeRow) -> Self {
-        match row.merge_type {
-            MergeType::Direct => Merge::Direct(DirectMerge::from(row)),
-            MergeType::Pr => Merge::Pr(PrMerge::from(row)),
-        }
+        Ok(merges)
     }
 }

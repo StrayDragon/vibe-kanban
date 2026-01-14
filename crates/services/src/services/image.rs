@@ -5,7 +5,7 @@ use std::{
 
 use db::models::image::{CreateImage, Image};
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
+use db::DbErr;
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -14,7 +14,7 @@ pub enum ImageError {
     Io(#[from] std::io::Error),
 
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(#[from] DbErr),
 
     #[error("Invalid image format")]
     InvalidFormat,
@@ -32,12 +32,12 @@ pub enum ImageError {
 #[derive(Clone)]
 pub struct ImageService {
     cache_dir: PathBuf,
-    pool: SqlitePool,
+    pool: db::DbPool,
     max_size_bytes: u64,
 }
 
 impl ImageService {
-    pub fn new(pool: SqlitePool) -> Result<Self, ImageError> {
+    pub fn new(pool: db::DbPool) -> Result<Self, ImageError> {
         let cache_dir = utils::cache_dir().join("images");
         fs::create_dir_all(&cache_dir)?;
         Ok(Self {

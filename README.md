@@ -42,6 +42,10 @@ tasks. Vibe Kanban streamlines this process, enabling you to:
 - Centralize MCP configuration for coding agents
 - Open projects remotely via SSH when running on a remote server
 
+## Docs
+
+- Operations: `docs/operations.md`
+
 ## License
 
 Apache-2.0. See `LICENSE` and `NOTICE` for attribution and fork notice.

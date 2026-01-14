@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::{Error as AnyhowError, anyhow};
 use async_trait::async_trait;
+use chrono::{Duration, Utc};
 use dashmap::DashSet;
 use db::{
     DBService,
@@ -42,7 +43,7 @@ use executors::{
 };
 use futures::{StreamExt, future};
 use once_cell::sync::Lazy;
-use sqlx::Error as SqlxError;
+use db::DbErr;
 use thiserror::Error;
 use tokio::{sync::RwLock, task::JoinHandle};
 use utils::{
@@ -63,6 +64,73 @@ pub type ContainerRef = String;
 
 static LOG_ENTRY_BACKFILL_COMPLETE: Lazy<DashSet<String>> = Lazy::new(DashSet::new);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LogPersistenceMode {
+    LogEntriesOnly,
+    LegacyJsonl,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LogPersistenceConfig {
+    mode: LogPersistenceMode,
+    log_entries_available: bool,
+}
+
+impl LogPersistenceConfig {
+    fn write_jsonl(self) -> bool {
+        matches!(self.mode, LogPersistenceMode::LegacyJsonl)
+    }
+
+    fn write_log_entries(self) -> bool {
+        self.log_entries_available
+    }
+}
+
+fn parse_log_persistence_mode_env() -> Option<LogPersistenceMode> {
+    let value = std::env::var("VK_LOG_PERSISTENCE_MODE").ok()?;
+    let value = value.trim().to_ascii_lowercase();
+    if value.is_empty() || value == "auto" {
+        return None;
+    }
+
+    match value.as_str() {
+        "log_entries" | "log-entries" | "entries" => Some(LogPersistenceMode::LogEntriesOnly),
+        "legacy_jsonl" | "legacy-jsonl" | "jsonl" | "legacy" => Some(LogPersistenceMode::LegacyJsonl),
+        _ => {
+            tracing::warn!(
+                "Invalid VK_LOG_PERSISTENCE_MODE='{value}'. Expected 'log_entries' or 'legacy_jsonl'."
+            );
+            None
+        }
+    }
+}
+
+async fn resolve_log_persistence_config(pool: &db::DbPool) -> LogPersistenceConfig {
+    let log_entries_available = ExecutionProcessLogEntry::table_available(pool).await;
+
+    let mode = match parse_log_persistence_mode_env() {
+        Some(LogPersistenceMode::LogEntriesOnly) if !log_entries_available => {
+            tracing::warn!(
+                "VK_LOG_PERSISTENCE_MODE forces log_entries, but execution_process_log_entries table is missing; falling back to legacy_jsonl"
+            );
+            LogPersistenceMode::LegacyJsonl
+        }
+        Some(mode) => mode,
+        None => {
+            if log_entries_available {
+                LogPersistenceMode::LogEntriesOnly
+            } else {
+                LogPersistenceMode::LegacyJsonl
+            }
+        }
+    };
+
+    LogPersistenceConfig {
+        mode,
+        log_entries_available,
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DiffStreamOptions {
     pub stats_only: bool,
@@ -81,7 +149,7 @@ pub enum ContainerError {
     #[error(transparent)]
     GitServiceError(#[from] GitServiceError),
     #[error(transparent)]
-    Sqlx(#[from] SqlxError),
+    Database(#[from] DbErr),
     #[error(transparent)]
     ExecutorError(#[from] ExecutorError),
     #[error(transparent)]
@@ -484,6 +552,38 @@ pub trait ContainerService {
         Ok(())
     }
 
+    async fn cleanup_legacy_jsonl_logs(&self) -> Result<(), ContainerError> {
+        const DEFAULT_RETENTION_DAYS: i64 = 14;
+        let retention_days = match std::env::var("VK_LEGACY_JSONL_RETENTION_DAYS") {
+            Ok(value) => match value.trim().parse::<i64>() {
+                Ok(parsed) => parsed,
+                Err(err) => {
+                    tracing::warn!(
+                        "Invalid VK_LEGACY_JSONL_RETENTION_DAYS='{value}': {err}. Using default {DEFAULT_RETENTION_DAYS}."
+                    );
+                    DEFAULT_RETENTION_DAYS
+                }
+            },
+            Err(_) => DEFAULT_RETENTION_DAYS,
+        };
+
+        if retention_days <= 0 {
+            tracing::info!("legacy JSONL cleanup disabled");
+            return Ok(());
+        }
+
+        let cutoff = Utc::now() - Duration::days(retention_days);
+        let deleted = ExecutionProcessLogs::delete_legacy_for_completed_before(&self.db().pool, cutoff).await?;
+        if deleted > 0 {
+            tracing::info!(
+                "legacy JSONL cleanup deleted {} rows (retention_days={})",
+                deleted,
+                retention_days
+            );
+        }
+        Ok(())
+    }
+
     async fn backfill_log_entries_for_execution(
         &self,
         execution_id: Uuid,
@@ -507,6 +607,11 @@ pub trait ContainerService {
     ) -> Result<usize, ContainerError> {
         let cache_key = format!("{execution_id}:{channel}");
         if LOG_ENTRY_BACKFILL_COMPLETE.contains(&cache_key) {
+            return Ok(0);
+        }
+
+        if !ExecutionProcessLogs::has_any(&self.db().pool, execution_id).await? {
+            LOG_ENTRY_BACKFILL_COMPLETE.insert(cache_key);
             return Ok(0);
         }
 
@@ -1295,7 +1400,11 @@ pub trait ContainerService {
         })
     }
 
-    fn spawn_stream_raw_logs_to_db(&self, execution_id: &Uuid) -> JoinHandle<()> {
+    fn spawn_stream_raw_logs_to_db(
+        &self,
+        execution_id: &Uuid,
+        write_jsonl: bool,
+    ) -> JoinHandle<()> {
         let execution_id = *execution_id;
         let msg_stores = self.msg_stores().clone();
         let db = self.db().clone();
@@ -1313,6 +1422,9 @@ pub trait ContainerService {
                 while let Some(Ok(msg)) = stream.next().await {
                     match &msg {
                         LogMsg::Stdout(_) | LogMsg::Stderr(_) => {
+                            if !write_jsonl {
+                                continue;
+                            }
                             // Serialize this individual message as a JSONL line
                             match serde_json::to_string(&msg) {
                                 Ok(jsonl_line) => {
@@ -1501,20 +1613,20 @@ pub trait ContainerService {
         let task = workspace
             .parent_task(&self.db().pool)
             .await?
-            .ok_or(SqlxError::RowNotFound)?;
+            .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
 
         // Get parent project
         let project = task
             .parent_project(&self.db().pool)
             .await?
-            .ok_or(SqlxError::RowNotFound)?;
+            .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
 
         let project_repos =
             ProjectRepo::find_by_project_id_with_names(&self.db().pool, project.id).await?;
 
         let workspace = Workspace::find_by_id(&self.db().pool, workspace.id)
             .await?
-            .ok_or(SqlxError::RowNotFound)?;
+            .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
 
         // Create a session for this workspace
         let session = Session::create(
@@ -1602,7 +1714,7 @@ pub trait ContainerService {
         let task = workspace
             .parent_task(&self.db().pool)
             .await?
-            .ok_or(SqlxError::RowNotFound)?;
+            .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
         if task.status != TaskStatus::InProgress
             && run_reason != &ExecutionProcessRunReason::DevServer
         {
@@ -1673,6 +1785,14 @@ pub trait ContainerService {
             .await?;
         }
 
+        let persistence = resolve_log_persistence_config(&self.db().pool).await;
+        tracing::debug!(
+            execution_id = execution_process.id.to_string(),
+            mode = ?persistence.mode,
+            log_entries_available = persistence.log_entries_available,
+            "log persistence configured"
+        );
+
         if let Err(start_error) = self
             .start_execution_inner(workspace, &execution_process, executor_action)
             .await
@@ -1695,14 +1815,48 @@ pub trait ContainerService {
             Task::update_status(&self.db().pool, task.id, TaskStatus::InReview).await?;
 
             // Emit stderr error message
-            let log_message = LogMsg::Stderr(format!("Failed to start execution: {start_error}"));
-            if let Ok(json_line) = serde_json::to_string(&log_message) {
-                let _ = ExecutionProcessLogs::append_log_line(
+            let stderr_content = format!("Failed to start execution: {start_error}");
+            if persistence.write_jsonl() {
+                let log_message = LogMsg::Stderr(stderr_content.clone());
+                if let Ok(json_line) = serde_json::to_string(&log_message) {
+                    let _ = ExecutionProcessLogs::append_log_line(
+                        &self.db().pool,
+                        execution_process.id,
+                        &format!("{json_line}\n"),
+                    )
+                    .await;
+                }
+            } else if persistence.write_log_entries() {
+                let entry_json = match serde_json::to_string(&serde_json::json!({
+                    "type": "STDERR",
+                    "content": stderr_content,
+                })) {
+                    Ok(entry_json) => entry_json,
+                    Err(err) => {
+                        tracing::error!(
+                            "Failed to encode raw error entry for {}: {}",
+                            execution_process.id,
+                            err
+                        );
+                        return Err(start_error);
+                    }
+                };
+
+                if let Err(err) = ExecutionProcessLogEntry::upsert_entry(
                     &self.db().pool,
                     execution_process.id,
-                    &format!("{json_line}\n"),
+                    LogEntryChannel::Raw,
+                    0,
+                    &entry_json,
                 )
-                .await;
+                .await
+                {
+                    tracing::error!(
+                        "Failed to persist raw error entry for {}: {}",
+                        execution_process.id,
+                        err
+                    );
+                }
             }
 
             // Emit NextAction with failure context for coding agent requests
@@ -1719,13 +1873,37 @@ pub trait ContainerService {
                     metadata: None,
                 };
                 let patch = ConversationPatch::add_normalized_entry(2, error_message);
-                if let Ok(json_line) = serde_json::to_string::<LogMsg>(&LogMsg::JsonPatch(patch)) {
-                    let _ = ExecutionProcessLogs::append_log_line(
-                        &self.db().pool,
-                        execution_process.id,
-                        &format!("{json_line}\n"),
-                    )
-                    .await;
+
+                if persistence.write_jsonl() {
+                    if let Ok(json_line) = serde_json::to_string::<LogMsg>(&LogMsg::JsonPatch(patch))
+                    {
+                        let _ = ExecutionProcessLogs::append_log_line(
+                            &self.db().pool,
+                            execution_process.id,
+                            &format!("{json_line}\n"),
+                        )
+                        .await;
+                    }
+                } else if persistence.write_log_entries() {
+                    let entries = extract_normalized_patch_entries(&patch);
+                    for entry in entries {
+                        if let Err(err) = ExecutionProcessLogEntry::upsert_entry(
+                            &self.db().pool,
+                            execution_process.id,
+                            LogEntryChannel::Normalized,
+                            entry.entry_index,
+                            &entry.entry_json,
+                        )
+                        .await
+                        {
+                            tracing::error!(
+                                "Failed to persist normalized error entry {} for {}: {}",
+                                entry.entry_index,
+                                execution_process.id,
+                                err
+                            );
+                        }
+                    }
                 }
             };
             return Err(start_error);
@@ -1755,9 +1933,11 @@ pub trait ContainerService {
             }
         }
 
-        self.spawn_stream_raw_logs_to_db(&execution_process.id);
-        self.spawn_stream_raw_entries_to_db(&execution_process.id);
-        self.spawn_stream_normalized_entries_to_db(&execution_process.id);
+        self.spawn_stream_raw_logs_to_db(&execution_process.id, persistence.write_jsonl());
+        if persistence.write_log_entries() {
+            self.spawn_stream_raw_entries_to_db(&execution_process.id);
+            self.spawn_stream_normalized_entries_to_db(&execution_process.id);
+        }
         Ok(execution_process)
     }
 

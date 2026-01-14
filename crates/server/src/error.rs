@@ -12,6 +12,7 @@ use db::models::{
 use deployment::DeploymentError;
 use executors::executors::ExecutorError;
 use git2::Error as Git2Error;
+use db::DbErr;
 use services::services::{
     config::{ConfigError, EditorOpenError},
     container::ContainerError,
@@ -51,7 +52,7 @@ pub enum ApiError {
     #[error(transparent)]
     Executor(#[from] ExecutorError),
     #[error(transparent)]
-    Database(#[from] sqlx::Error),
+    Database(#[from] DbErr),
     #[error(transparent)]
     Worktree(#[from] WorktreeError),
     #[error(transparent)]

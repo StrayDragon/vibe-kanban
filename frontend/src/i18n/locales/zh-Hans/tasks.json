@@ -311,7 +311,14 @@
     "selectBranch": "选择分支",
     "error": "创建尝试失败。请重试。",
     "creating": "创建中...",
-    "start": "开始"
+    "start": "开始",
+    "preflight": {
+      "title": "CLI 预检",
+      "checking": "正在检查编码代理 CLI…",
+      "agentReady": "检测到编码代理已登录。",
+      "agentInstalled": "检测到编码代理已安装。",
+      "agentNotFound": "未检测到编码代理 CLI。仍可创建尝试，但在安装/登录前，编码进程可能无法启动。"
+    }
   },
   "viewProcessesDialog": {
     "title": "执行进程"
@@ -423,6 +430,19 @@
     "autoGenerateLabel": "请求AI代理生成更好的PR描述",
     "creating": "创建中...",
     "createButton": "创建 PR",
+    "preflight": {
+      "title": "CLI 预检",
+      "checking": "检查中...",
+      "githubLabel": "GitHub CLI：",
+      "githubReady": "就绪",
+      "githubNotInstalled": "未安装",
+      "githubNotAuthenticated": "未登录",
+      "githubError": "检查失败",
+      "agentLabel": "编码代理 CLI：",
+      "agentReady": "检测到已登录",
+      "agentInstalled": "检测到已安装",
+      "agentNotFound": "未检测到"
+    },
     "errors": {
       "insufficientPermissions": "权限不足。请确保 GitHub CLI 具有必要的权限。",
       "repoNotFoundOrNoAccess": "未找到仓库或无访问权限。请检查您的仓库访问权限并确保您已通过身份验证。",

@@ -4,7 +4,7 @@ use anyhow::{self, Error as AnyhowError};
 use deployment::{Deployment, DeploymentError};
 use server::{DeploymentImpl, routes};
 use services::services::container::ContainerService;
-use sqlx::Error as SqlxError;
+use db::DbErr;
 use strip_ansi_escapes::strip;
 use thiserror::Error;
 use tokio::sync::watch;
@@ -19,7 +19,7 @@ pub enum VibeKanbanError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
-    Sqlx(#[from] SqlxError),
+    Database(#[from] DbErr),
     #[error(transparent)]
     Deployment(#[from] DeploymentError),
     #[error(transparent)]
@@ -63,6 +63,11 @@ async fn main() -> Result<(), VibeKanbanError> {
     deployment
         .container()
         .backfill_log_entries_startup()
+        .await
+        .map_err(DeploymentError::from)?;
+    deployment
+        .container()
+        .cleanup_legacy_jsonl_logs()
         .await
         .map_err(DeploymentError::from)?;
     deployment.spawn_pr_monitor_service().await;

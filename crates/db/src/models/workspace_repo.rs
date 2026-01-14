@@ -1,14 +1,22 @@
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QuerySelect,
+    Set,
+};
+use sea_orm::sea_query::Expr;
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, SqlitePool};
 use ts_rs::TS;
 use uuid::Uuid;
 
 use super::repo::Repo;
+use crate::{
+    entities::{project_repo, repo, task, workspace, workspace_repo},
+    models::ids,
+};
 
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct WorkspaceRepo {
     pub id: Uuid,
     pub workspace_id: Uuid,
@@ -44,230 +52,303 @@ pub struct RepoWithCopyFiles {
 }
 
 impl WorkspaceRepo {
-    pub async fn create_many(
-        pool: &SqlitePool,
+    fn from_model(model: workspace_repo::Model, workspace_id: Uuid, repo_id: Uuid) -> Self {
+        Self {
+            id: model.uuid,
+            workspace_id,
+            repo_id,
+            target_branch: model.target_branch,
+            created_at: model.created_at.into(),
+            updated_at: model.updated_at.into(),
+        }
+    }
+
+    pub async fn create_many<C: ConnectionTrait>(
+        db: &C,
         workspace_id: Uuid,
         repos: &[CreateWorkspaceRepo],
-    ) -> Result<Vec<Self>, sqlx::Error> {
+    ) -> Result<Vec<Self>, DbErr> {
+        let workspace_row_id = ids::workspace_id_by_uuid(db, workspace_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
+
         let mut results = Vec::with_capacity(repos.len());
-
         for repo in repos {
-            let id = Uuid::new_v4();
-            let workspace_repo = sqlx::query_as!(
-                WorkspaceRepo,
-                r#"INSERT INTO workspace_repos (id, workspace_id, repo_id, target_branch)
-                   VALUES ($1, $2, $3, $4)
-                   RETURNING id as "id!: Uuid",
-                             workspace_id as "workspace_id!: Uuid",
-                             repo_id as "repo_id!: Uuid",
-                             target_branch,
-                             created_at as "created_at!: DateTime<Utc>",
-                             updated_at as "updated_at!: DateTime<Utc>""#,
-                id,
-                workspace_id,
-                repo.repo_id,
-                repo.target_branch
-            )
-            .fetch_one(pool)
-            .await?;
-            results.push(workspace_repo);
+            let repo_row_id = ids::repo_id_by_uuid(db, repo.repo_id)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+            let active = workspace_repo::ActiveModel {
+                uuid: Set(Uuid::new_v4()),
+                workspace_id: Set(workspace_row_id),
+                repo_id: Set(repo_row_id),
+                target_branch: Set(repo.target_branch.clone()),
+                created_at: Set(Utc::now().into()),
+                updated_at: Set(Utc::now().into()),
+                ..Default::default()
+            };
+            let model = active.insert(db).await?;
+            results.push(Self::from_model(model, workspace_id, repo.repo_id));
         }
-
         Ok(results)
     }
 
-    pub async fn find_by_workspace_id(
-        pool: &SqlitePool,
+    pub async fn find_by_workspace_id<C: ConnectionTrait>(
+        db: &C,
         workspace_id: Uuid,
-    ) -> Result<Vec<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            WorkspaceRepo,
-            r#"SELECT id as "id!: Uuid",
-                      workspace_id as "workspace_id!: Uuid",
-                      repo_id as "repo_id!: Uuid",
-                      target_branch,
-                      created_at as "created_at!: DateTime<Utc>",
-                      updated_at as "updated_at!: DateTime<Utc>"
-               FROM workspace_repos
-               WHERE workspace_id = $1"#,
-            workspace_id
-        )
-        .fetch_all(pool)
-        .await
+    ) -> Result<Vec<Self>, DbErr> {
+        let workspace_row_id = ids::workspace_id_by_uuid(db, workspace_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
+
+        let models = workspace_repo::Entity::find()
+            .filter(workspace_repo::Column::WorkspaceId.eq(workspace_row_id))
+            .all(db)
+            .await?;
+
+        let mut repos = Vec::with_capacity(models.len());
+        for model in models {
+            let repo_id = ids::repo_uuid_by_id(db, model.repo_id)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+            repos.push(Self::from_model(model, workspace_id, repo_id));
+        }
+        Ok(repos)
     }
 
-    pub async fn find_repos_for_workspace(
-        pool: &SqlitePool,
+    pub async fn find_repos_for_workspace<C: ConnectionTrait>(
+        db: &C,
         workspace_id: Uuid,
-    ) -> Result<Vec<Repo>, sqlx::Error> {
-        sqlx::query_as!(
-            Repo,
-            r#"SELECT r.id as "id!: Uuid",
-                      r.path,
-                      r.name,
-                      r.display_name,
-                      r.created_at as "created_at!: DateTime<Utc>",
-                      r.updated_at as "updated_at!: DateTime<Utc>"
-               FROM repos r
-               JOIN workspace_repos wr ON r.id = wr.repo_id
-               WHERE wr.workspace_id = $1
-               ORDER BY r.display_name ASC"#,
-            workspace_id
-        )
-        .fetch_all(pool)
-        .await
+    ) -> Result<Vec<Repo>, DbErr> {
+        let workspace_row_id = ids::workspace_id_by_uuid(db, workspace_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
+
+        let models = workspace_repo::Entity::find()
+            .filter(workspace_repo::Column::WorkspaceId.eq(workspace_row_id))
+            .all(db)
+            .await?;
+
+        let mut repos = Vec::new();
+        for model in models {
+            if let Some(repo_model) = repo::Entity::find_by_id(model.repo_id).one(db).await? {
+                repos.push(Repo::from(repo_model));
+            }
+        }
+        repos.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        Ok(repos)
     }
 
-    pub async fn find_repos_with_target_branch_for_workspace(
-        pool: &SqlitePool,
+    pub async fn find_repos_with_target_branch_for_workspace<C: ConnectionTrait>(
+        db: &C,
         workspace_id: Uuid,
-    ) -> Result<Vec<RepoWithTargetBranch>, sqlx::Error> {
-        let rows = sqlx::query!(
-            r#"SELECT r.id as "id!: Uuid",
-                      r.path,
-                      r.name,
-                      r.display_name,
-                      r.created_at as "created_at!: DateTime<Utc>",
-                      r.updated_at as "updated_at!: DateTime<Utc>",
-                      wr.target_branch
-               FROM repos r
-               JOIN workspace_repos wr ON r.id = wr.repo_id
-               WHERE wr.workspace_id = $1
-               ORDER BY r.display_name ASC"#,
-            workspace_id
-        )
-        .fetch_all(pool)
-        .await?;
+    ) -> Result<Vec<RepoWithTargetBranch>, DbErr> {
+        let workspace_row_id = ids::workspace_id_by_uuid(db, workspace_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
 
-        Ok(rows
-            .into_iter()
-            .map(|row| RepoWithTargetBranch {
-                repo: Repo {
-                    id: row.id,
-                    path: PathBuf::from(row.path),
-                    name: row.name,
-                    display_name: row.display_name,
-                    created_at: row.created_at,
-                    updated_at: row.updated_at,
-                },
-                target_branch: row.target_branch,
-            })
-            .collect())
+        let models = workspace_repo::Entity::find()
+            .filter(workspace_repo::Column::WorkspaceId.eq(workspace_row_id))
+            .all(db)
+            .await?;
+
+        let mut repos = Vec::with_capacity(models.len());
+        for model in models {
+            let repo_model = repo::Entity::find_by_id(model.repo_id)
+                .one(db)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+            repos.push(RepoWithTargetBranch {
+                repo: Repo::from(repo_model),
+                target_branch: model.target_branch,
+            });
+        }
+        repos.sort_by(|a, b| a.repo.display_name.cmp(&b.repo.display_name));
+        Ok(repos)
     }
 
-    pub async fn find_by_workspace_and_repo_id(
-        pool: &SqlitePool,
+    pub async fn find_by_workspace_and_repo_id<C: ConnectionTrait>(
+        db: &C,
         workspace_id: Uuid,
         repo_id: Uuid,
-    ) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            WorkspaceRepo,
-            r#"SELECT id as "id!: Uuid",
-                      workspace_id as "workspace_id!: Uuid",
-                      repo_id as "repo_id!: Uuid",
-                      target_branch,
-                      created_at as "created_at!: DateTime<Utc>",
-                      updated_at as "updated_at!: DateTime<Utc>"
-               FROM workspace_repos
-               WHERE workspace_id = $1 AND repo_id = $2"#,
-            workspace_id,
-            repo_id
-        )
-        .fetch_optional(pool)
-        .await
+    ) -> Result<Option<Self>, DbErr> {
+        let workspace_row_id = ids::workspace_id_by_uuid(db, workspace_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
+        let repo_row_id = ids::repo_id_by_uuid(db, repo_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+
+        let record = workspace_repo::Entity::find()
+            .filter(workspace_repo::Column::WorkspaceId.eq(workspace_row_id))
+            .filter(workspace_repo::Column::RepoId.eq(repo_row_id))
+            .one(db)
+            .await?;
+
+        Ok(record.map(|model| Self::from_model(model, workspace_id, repo_id)))
     }
 
-    pub async fn update_target_branch(
-        pool: &SqlitePool,
+    pub async fn update_target_branch<C: ConnectionTrait>(
+        db: &C,
         workspace_id: Uuid,
         repo_id: Uuid,
         new_target_branch: &str,
-    ) -> Result<(), sqlx::Error> {
-        sqlx::query!(
-            "UPDATE workspace_repos SET target_branch = $1, updated_at = datetime('now') WHERE workspace_id = $2 AND repo_id = $3",
-            new_target_branch,
-            workspace_id,
-            repo_id
-        )
-        .execute(pool)
-        .await?;
+    ) -> Result<(), DbErr> {
+        let record = Self::find_by_workspace_and_repo_id(db, workspace_id, repo_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace repo not found".to_string()))?;
+
+        let workspace_row_id = ids::workspace_id_by_uuid(db, workspace_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
+        let repo_row_id = ids::repo_id_by_uuid(db, repo_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+
+        let model = workspace_repo::Entity::find()
+            .filter(workspace_repo::Column::WorkspaceId.eq(workspace_row_id))
+            .filter(workspace_repo::Column::RepoId.eq(repo_row_id))
+            .one(db)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace repo not found".to_string()))?;
+
+        let mut active: workspace_repo::ActiveModel = model.into();
+        active.target_branch = Set(new_target_branch.to_string());
+        active.updated_at = Set(Utc::now().into());
+        active.update(db).await?;
+
+        let _ = record;
         Ok(())
     }
 
-    pub async fn update_target_branch_for_children_of_workspace(
-        pool: &SqlitePool,
+    pub async fn update_target_branch_for_children_of_workspace<C: ConnectionTrait>(
+        db: &C,
         parent_workspace_id: Uuid,
         old_branch: &str,
         new_branch: &str,
-    ) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query!(
-            r#"UPDATE workspace_repos
-               SET target_branch = $1, updated_at = datetime('now')
-               WHERE target_branch = $2
-                 AND workspace_id IN (
-                     SELECT w.id FROM workspaces w
-                     JOIN tasks t ON w.task_id = t.id
-                     WHERE t.parent_workspace_id = $3
-                 )"#,
-            new_branch,
-            old_branch,
-            parent_workspace_id
-        )
-        .execute(pool)
-        .await?;
-        Ok(result.rows_affected())
+    ) -> Result<u64, DbErr> {
+        let parent_workspace_row_id = match ids::workspace_id_by_uuid(db, parent_workspace_id).await? {
+            Some(id) => id,
+            None => return Ok(0),
+        };
+
+        let task_ids: Vec<i64> = task::Entity::find()
+            .select_only()
+            .column(task::Column::Id)
+            .filter(task::Column::ParentWorkspaceId.eq(parent_workspace_row_id))
+            .into_tuple()
+            .all(db)
+            .await?;
+
+        if task_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let workspace_ids: Vec<i64> = workspace::Entity::find()
+            .select_only()
+            .column(workspace::Column::Id)
+            .filter(workspace::Column::TaskId.is_in(task_ids))
+            .into_tuple()
+            .all(db)
+            .await?;
+
+        if workspace_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let result = workspace_repo::Entity::update_many()
+            .col_expr(workspace_repo::Column::TargetBranch, Expr::value(new_branch.to_string()))
+            .filter(workspace_repo::Column::TargetBranch.eq(old_branch))
+            .filter(workspace_repo::Column::WorkspaceId.is_in(workspace_ids))
+            .exec(db)
+            .await?;
+
+        Ok(result.rows_affected)
     }
 
-    pub async fn find_unique_repos_for_task(
-        pool: &SqlitePool,
+    pub async fn find_unique_repos_for_task<C: ConnectionTrait>(
+        db: &C,
         task_id: Uuid,
-    ) -> Result<Vec<Repo>, sqlx::Error> {
-        sqlx::query_as!(
-            Repo,
-            r#"SELECT DISTINCT r.id as "id!: Uuid",
-                      r.path,
-                      r.name,
-                      r.display_name,
-                      r.created_at as "created_at!: DateTime<Utc>",
-                      r.updated_at as "updated_at!: DateTime<Utc>"
-               FROM repos r
-               JOIN workspace_repos wr ON r.id = wr.repo_id
-               JOIN workspaces w ON wr.workspace_id = w.id
-               WHERE w.task_id = $1
-               ORDER BY r.display_name ASC"#,
-            task_id
-        )
-        .fetch_all(pool)
-        .await
+    ) -> Result<Vec<Repo>, DbErr> {
+        let task_row_id = match ids::task_id_by_uuid(db, task_id).await? {
+            Some(id) => id,
+            None => return Ok(Vec::new()),
+        };
+
+        let workspace_ids: Vec<i64> = workspace::Entity::find()
+            .select_only()
+            .column(workspace::Column::Id)
+            .filter(workspace::Column::TaskId.eq(task_row_id))
+            .into_tuple()
+            .all(db)
+            .await?;
+
+        if workspace_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let repo_ids: Vec<i64> = workspace_repo::Entity::find()
+            .select_only()
+            .column(workspace_repo::Column::RepoId)
+            .filter(workspace_repo::Column::WorkspaceId.is_in(workspace_ids))
+            .into_tuple()
+            .all(db)
+            .await?;
+
+        let mut repos = Vec::new();
+        for repo_id in repo_ids.into_iter().collect::<std::collections::HashSet<_>>() {
+            if let Some(repo_model) = repo::Entity::find_by_id(repo_id).one(db).await? {
+                repos.push(Repo::from(repo_model));
+            }
+        }
+        repos.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        Ok(repos)
     }
 
     /// Find repos for a workspace with their copy_files configuration.
     /// Uses LEFT JOIN so repos without project_repo entries still appear (with NULL copy_files).
-    pub async fn find_repos_with_copy_files(
-        pool: &SqlitePool,
+    pub async fn find_repos_with_copy_files<C: ConnectionTrait>(
+        db: &C,
         workspace_id: Uuid,
-    ) -> Result<Vec<RepoWithCopyFiles>, sqlx::Error> {
-        let rows = sqlx::query!(
-            r#"SELECT r.id as "id!: Uuid", r.path, r.name, pr.copy_files
-               FROM repos r
-               JOIN workspace_repos wr ON r.id = wr.repo_id
-               JOIN workspaces w ON w.id = wr.workspace_id
-               JOIN tasks t ON t.id = w.task_id
-               LEFT JOIN project_repos pr ON pr.project_id = t.project_id AND pr.repo_id = r.id
-               WHERE wr.workspace_id = $1"#,
-            workspace_id
-        )
-        .fetch_all(pool)
-        .await?;
+    ) -> Result<Vec<RepoWithCopyFiles>, DbErr> {
+        let workspace_row_id = ids::workspace_id_by_uuid(db, workspace_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
 
-        Ok(rows
-            .into_iter()
-            .map(|row| RepoWithCopyFiles {
-                id: row.id,
-                path: PathBuf::from(row.path),
-                name: row.name,
-                copy_files: row.copy_files,
-            })
-            .collect())
+        let workspace_model = workspace::Entity::find_by_id(workspace_row_id)
+            .one(db)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
+
+        let task_model = task::Entity::find_by_id(workspace_model.task_id)
+            .one(db)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+
+        let models = workspace_repo::Entity::find()
+            .filter(workspace_repo::Column::WorkspaceId.eq(workspace_row_id))
+            .all(db)
+            .await?;
+
+        let mut repos = Vec::with_capacity(models.len());
+        for model in models {
+            let repo_model = repo::Entity::find_by_id(model.repo_id)
+                .one(db)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
+            let copy_files = project_repo::Entity::find()
+                .filter(project_repo::Column::ProjectId.eq(task_model.project_id))
+                .filter(project_repo::Column::RepoId.eq(repo_model.id))
+                .one(db)
+                .await?
+                .and_then(|row| row.copy_files);
+            repos.push(RepoWithCopyFiles {
+                id: repo_model.uuid,
+                path: PathBuf::from(repo_model.path),
+                name: repo_model.name,
+                copy_files,
+            });
+        }
+
+        Ok(repos)
     }
 }
