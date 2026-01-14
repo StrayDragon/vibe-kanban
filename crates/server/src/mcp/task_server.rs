@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, future::Future, str::FromStr};
+use std::{cmp::Ordering, str::FromStr};
 
 use db::models::{
     execution_process::ExecutionProcess,
@@ -9,21 +9,24 @@ use db::models::{
     task::{CreateTask, Task, TaskStatus, TaskWithAttemptStatus, UpdateTask},
     workspace::{Workspace, WorkspaceContext},
 };
-use executors::{executors::BaseCodingAgent, profile::ExecutorProfileId};
+use executors::{executors::{BaseCodingAgent, CodingAgent}, profile::ExecutorProfileId};
 use regex::Regex;
+use reqwest::StatusCode;
 use rmcp::{
     ErrorData, ServerHandler,
-    handler::server::tool::{Parameters, ToolRouter},
+    handler::server::tool::ToolRouter,
     model::{
         CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
     },
     schemars, tool, tool_handler, tool_router,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json;
+use serde_json::{self, Value};
 use services::services::queued_message::{QueueStatus, QueuedMessage};
+use strum::VariantNames;
 use uuid::Uuid;
 
+use crate::mcp::params::VkParameters;
 use crate::routes::{
     containers::ContainerQuery,
     task_attempts::{CreateTaskAttemptBody, WorkspaceRepoInput},
@@ -586,42 +589,220 @@ impl TaskServer {
         )]))
     }
 
-    fn err<S: Into<String>>(msg: S, details: Option<S>) -> Result<CallToolResult, ErrorData> {
+    fn err_payload<S: Into<String>>(
+        msg: S,
+        details: Option<Value>,
+        hint: Option<String>,
+        code: Option<&'static str>,
+        retryable: Option<bool>,
+    ) -> Value {
         let mut v = serde_json::json!({"success": false, "error": msg.into()});
-        if let Some(d) = details {
-            v["details"] = serde_json::json!(d.into());
-        };
-        Self::err_value(v)
+        if let Some(code) = code {
+            v["code"] = serde_json::json!(code);
+        }
+        if let Some(details) = details {
+            v["details"] = details;
+        }
+        if let Some(hint) = hint {
+            v["hint"] = serde_json::json!(hint);
+        }
+        if let Some(retryable) = retryable {
+            v["retryable"] = serde_json::json!(retryable);
+        }
+        v
+    }
+
+    fn err_with<S: Into<String>>(
+        msg: S,
+        details: Option<Value>,
+        hint: Option<String>,
+        code: Option<&'static str>,
+        retryable: Option<bool>,
+    ) -> Result<CallToolResult, ErrorData> {
+        Self::err_value(Self::err_payload(msg, details, hint, code, retryable))
+    }
+
+    fn truncate_body(body: &str, limit: usize) -> String {
+        let mut chars = body.chars();
+        let snippet: String = chars.by_ref().take(limit).collect();
+        if chars.next().is_some() {
+            format!("{snippet}... [truncated]")
+        } else {
+            snippet
+        }
+    }
+
+    fn parse_api_message(body: &str) -> Option<String> {
+        let value: Value = serde_json::from_str(body).ok()?;
+        if let Some(msg) = value.get("message").and_then(|v| v.as_str()) {
+            return Some(msg.to_string());
+        }
+        if let Some(msg) = value.get("error").and_then(|v| v.as_str()) {
+            return Some(msg.to_string());
+        }
+        None
+    }
+
+    fn http_error_hint(status: StatusCode) -> Option<&'static str> {
+        match status {
+            StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => Some(
+                "Check tool inputs and IDs. Use list_* tools to fetch valid UUIDs.",
+            ),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Some(
+                "Backend rejected the request. Ensure the backend is running locally and access is allowed.",
+            ),
+            StatusCode::NOT_FOUND => {
+                Some("Resource not found. Verify IDs via list_* tools or get_context.")
+            }
+            StatusCode::CONFLICT => Some(
+                "Conflict detected. Check for existing resources or adjust input values.",
+            ),
+            StatusCode::TOO_MANY_REQUESTS => {
+                Some("Rate limited. Wait a moment and retry the request.")
+            }
+            StatusCode::INTERNAL_SERVER_ERROR
+            | StatusCode::BAD_GATEWAY
+            | StatusCode::SERVICE_UNAVAILABLE
+            | StatusCode::GATEWAY_TIMEOUT => Some(
+                "Backend is unhealthy or unavailable. Start/restart the backend and retry.",
+            ),
+            _ => None,
+        }
+    }
+
+    fn http_error(
+        status: StatusCode,
+        body: &str,
+        method: &str,
+        url: &str,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut details = serde_json::Map::new();
+        details.insert("status".to_string(), serde_json::json!(status.as_u16()));
+        if let Some(reason) = status.canonical_reason() {
+            details.insert("status_text".to_string(), serde_json::json!(reason));
+        }
+        details.insert("method".to_string(), serde_json::json!(method));
+        details.insert("url".to_string(), serde_json::json!(url));
+
+        let body_snippet = Self::truncate_body(body, 1000);
+        if !body_snippet.is_empty() {
+            details.insert("body_snippet".to_string(), serde_json::json!(body_snippet));
+        }
+        if let Some(api_message) = Self::parse_api_message(body) {
+            details.insert("api_message".to_string(), serde_json::json!(api_message));
+        }
+
+        let retryable = matches!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR
+                | StatusCode::BAD_GATEWAY
+                | StatusCode::SERVICE_UNAVAILABLE
+                | StatusCode::GATEWAY_TIMEOUT
+                | StatusCode::TOO_MANY_REQUESTS
+        );
+
+        Self::err_with(
+            "VK API returned error status",
+            Some(Value::Object(details)),
+            Self::http_error_hint(status).map(|hint| hint.to_string()),
+            Some("backend_http_error"),
+            Some(retryable),
+        )
     }
 
     async fn send_json<T: DeserializeOwned>(
         &self,
         rb: reqwest::RequestBuilder,
+        method: &'static str,
+        url: &str,
     ) -> Result<T, CallToolResult> {
-        let resp = rb
-            .send()
-            .await
-            .map_err(|e| Self::err("Failed to connect to VK API", Some(&e.to_string())).unwrap())?;
+        let resp = rb.send().await.map_err(|e| {
+            Self::err_with(
+                "Failed to connect to VK API",
+                Some(serde_json::json!({
+                    "error": e.to_string(),
+                    "method": method,
+                    "url": url,
+                })),
+                Some(
+                    "Ensure the Vibe Kanban backend is running and reachable (VIBE_BACKEND_URL/BACKEND_PORT)."
+                        .to_string(),
+                ),
+                Some("backend_unreachable"),
+                Some(true),
+            )
+            .unwrap()
+        })?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            return Err(
-                Self::err(format!("VK API returned error status: {}", status), None).unwrap(),
-            );
+        let status = resp.status();
+        let resp_url = resp.url().to_string();
+        let body = resp.text().await.map_err(|e| {
+            Self::err_with(
+                "Failed to read VK API response body",
+                Some(serde_json::json!({
+                    "error": e.to_string(),
+                    "status": status.as_u16(),
+                    "method": method,
+                    "url": resp_url,
+                })),
+                Some("Retry the request or check backend logs.".to_string()),
+                Some("backend_read_error"),
+                Some(true),
+            )
+            .unwrap()
+        })?;
+
+        if !status.is_success() {
+            return Err(Self::http_error(status, &body, method, &resp_url).unwrap());
         }
 
-        let api_response = resp.json::<ApiResponseEnvelope<T>>().await.map_err(|e| {
-            Self::err("Failed to parse VK API response", Some(&e.to_string())).unwrap()
+        let api_response: ApiResponseEnvelope<T> = serde_json::from_str(&body).map_err(|e| {
+            Self::err_with(
+                "Failed to parse VK API response",
+                Some(serde_json::json!({
+                    "error": e.to_string(),
+                    "method": method,
+                    "url": resp_url,
+                    "body_snippet": Self::truncate_body(&body, 1000),
+                })),
+                Some("The backend returned invalid JSON. Check backend logs.".to_string()),
+                Some("backend_invalid_response"),
+                Some(false),
+            )
+            .unwrap()
         })?;
 
         if !api_response.success {
             let msg = api_response.message.as_deref().unwrap_or("Unknown error");
-            return Err(Self::err("VK API returned error", Some(msg)).unwrap());
+            return Err(
+                Self::err_with(
+                    "VK API returned error",
+                    Some(serde_json::json!({
+                        "message": msg,
+                        "method": method,
+                        "url": resp_url,
+                    })),
+                    Some("Check request inputs or call list_* tools to refresh IDs.".to_string()),
+                    Some("backend_error"),
+                    None,
+                )
+                .unwrap(),
+            );
         }
 
-        api_response
-            .data
-            .ok_or_else(|| Self::err("VK API response missing data field", None).unwrap())
+        api_response.data.ok_or_else(|| {
+            Self::err_with(
+                "VK API response missing data field",
+                Some(serde_json::json!({
+                    "method": method,
+                    "url": resp_url,
+                })),
+                Some("Check backend logs or retry.".to_string()),
+                Some("backend_missing_data"),
+                Some(false),
+            )
+            .unwrap()
+        })
     }
 
     fn url(&self, path: &str) -> String {
@@ -645,9 +826,15 @@ impl TaskServer {
             Some(attempt_id) => attempt_id,
             None => {
                 return Err(
-                    Self::err(
-                        "session_id or attempt_id is required".to_string(),
-                        None::<String>,
+                    Self::err_with(
+                        "session_id or attempt_id is required",
+                        None,
+                        Some(
+                            "Provide attempt_id from list_task_attempts or session_id from get_context."
+                                .to_string(),
+                        ),
+                        Some("missing_required"),
+                        None,
                     )
                     .unwrap(),
                 );
@@ -655,17 +842,22 @@ impl TaskServer {
         };
 
         let url = self.url(&format!("/api/sessions?workspace_id={}", attempt_id));
-        let sessions: Vec<Session> = match self.send_json(self.client.get(&url)).await {
-            Ok(sessions) => sessions,
-            Err(e) => return Err(e),
-        };
+        let sessions: Vec<Session> =
+            match self.send_json(self.client.get(&url), "GET", &url).await {
+                Ok(sessions) => sessions,
+                Err(e) => return Err(e),
+            };
 
         let latest = sessions.into_iter().max_by_key(|session| session.created_at);
         let Some(latest) = latest else {
             return Err(
-                Self::err(
-                    "No sessions found for attempt".to_string(),
-                    Some(attempt_id.to_string()),
+                Self::err_with(
+                    "No sessions found for attempt",
+                    Some(serde_json::json!({ "attempt_id": attempt_id.to_string() })),
+                    Some("Call list_task_attempts to confirm attempts or use get_context."
+                        .to_string()),
+                    Some("not_found"),
+                    None,
                 )
                 .unwrap(),
             );
@@ -683,7 +875,7 @@ impl TaskServer {
             task_id
         ));
 
-        match self.send_json(self.client.get(&url)).await {
+        match self.send_json(self.client.get(&url), "GET", &url).await {
             Ok(attempts) => Ok(attempts),
             Err(e) => Err(e),
         }
@@ -700,7 +892,7 @@ impl TaskServer {
         let url = self.url("/api/task-attempts/latest-summaries");
         let payload = TaskAttemptSummariesRequest { task_ids };
         let summaries: Vec<TaskAttemptSummaryEntry> =
-            match self.send_json(self.client.post(&url).json(&payload)).await {
+            match self.send_json(self.client.post(&url).json(&payload), "POST", &url).await {
                 Ok(summaries) => summaries,
                 Err(e) => return Err(e),
             };
@@ -831,12 +1023,24 @@ impl TaskServer {
     )]
     async fn create_task(
         &self,
-        Parameters(CreateTaskRequest {
+        VkParameters(CreateTaskRequest {
             project_id,
             title,
             description,
-        }): Parameters<CreateTaskRequest>,
+        }): VkParameters<CreateTaskRequest>,
     ) -> Result<CallToolResult, ErrorData> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Self::err_with(
+                "Title must not be empty.",
+                None,
+                Some("Provide a task title.".to_string()),
+                Some("missing_required"),
+                None,
+            );
+        }
+        let title = title.to_string();
+
         // Expand @tagname references in description
         let expanded_description = match description {
             Some(desc) => Some(self.expand_tags(&desc).await),
@@ -854,6 +1058,8 @@ impl TaskServer {
                         title,
                         expanded_description,
                     )),
+                "POST",
+                &url,
             )
             .await
         {
@@ -869,7 +1075,8 @@ impl TaskServer {
     #[tool(description = "List all the available projects")]
     async fn list_projects(&self) -> Result<CallToolResult, ErrorData> {
         let url = self.url("/api/projects");
-        let projects: Vec<Project> = match self.send_json(self.client.get(&url)).await {
+        let projects: Vec<Project> = match self.send_json(self.client.get(&url), "GET", &url).await
+        {
             Ok(ps) => ps,
             Err(e) => return Ok(e),
         };
@@ -890,10 +1097,10 @@ impl TaskServer {
     #[tool(description = "List all repositories for a project. `project_id` is required!")]
     async fn list_repos(
         &self,
-        Parameters(ListReposRequest { project_id }): Parameters<ListReposRequest>,
+        VkParameters(ListReposRequest { project_id }): VkParameters<ListReposRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let url = self.url(&format!("/api/projects/{}/repositories", project_id));
-        let repos: Vec<Repo> = match self.send_json(self.client.get(&url)).await {
+        let repos: Vec<Repo> = match self.send_json(self.client.get(&url), "GET", &url).await {
             Ok(rs) => rs,
             Err(e) => return Ok(e),
         };
@@ -920,20 +1127,31 @@ impl TaskServer {
     )]
     async fn list_tasks(
         &self,
-        Parameters(ListTasksRequest {
+        VkParameters(ListTasksRequest {
             project_id,
             status,
             limit,
-        }): Parameters<ListTasksRequest>,
+        }): VkParameters<ListTasksRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let status_filter = if let Some(ref status_str) = status {
-            match TaskStatus::from_str(status_str) {
-                Ok(s) => Some(s),
-                Err(_) => {
-                    return Self::err(
-                        "Invalid status filter. Valid values: 'todo', 'inprogress', 'inreview', 'done', 'cancelled'".to_string(),
-                        Some(status_str.to_string()),
-                    );
+            let trimmed = status_str.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                match TaskStatus::from_str(trimmed) {
+                    Ok(s) => Some(s),
+                    Err(_) => {
+                        return Self::err_with(
+                            "Invalid status filter",
+                            Some(serde_json::json!({ "value": trimmed })),
+                            Some(
+                                "Valid values: todo, inprogress, inreview, done, cancelled."
+                                    .to_string(),
+                            ),
+                            Some("invalid_argument"),
+                            None,
+                        );
+                    }
                 }
             }
         } else {
@@ -942,7 +1160,7 @@ impl TaskServer {
 
         let url = self.url(&format!("/api/tasks?project_id={}", project_id));
         let all_tasks: Vec<TaskWithAttemptStatus> =
-            match self.send_json(self.client.get(&url)).await {
+            match self.send_json(self.client.get(&url), "GET", &url).await {
                 Ok(t) => t,
                 Err(e) => return Ok(e),
             };
@@ -969,12 +1187,17 @@ impl TaskServer {
             task_summaries.push(TaskSummary::from_task_with_status(task, attempt_summary));
         }
 
+        let applied_status = status
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+
         let response = ListTasksResponse {
             count: task_summaries.len(),
             tasks: task_summaries,
             project_id: project_id.to_string(),
             applied_filters: ListTasksFilters {
-                status: status.clone(),
+                status: applied_status,
                 limit: task_limit as i32,
             },
         };
@@ -987,7 +1210,7 @@ impl TaskServer {
     )]
     async fn list_task_attempts(
         &self,
-        Parameters(ListTaskAttemptsRequest { task_id }): Parameters<ListTaskAttemptsRequest>,
+        VkParameters(ListTaskAttemptsRequest { task_id }): VkParameters<ListTaskAttemptsRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let mut attempts = match self.fetch_attempts_with_latest_session(task_id).await {
             Ok(attempts) => attempts,
@@ -1018,32 +1241,47 @@ impl TaskServer {
     )]
     async fn start_task_attempt(
         &self,
-        Parameters(StartTaskAttemptRequest {
+        VkParameters(StartTaskAttemptRequest {
             task_id,
             executor,
             variant,
             repos,
-        }): Parameters<StartTaskAttemptRequest>,
+        }): VkParameters<StartTaskAttemptRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         if repos.is_empty() {
-            return Self::err(
-                "At least one repository must be specified.".to_string(),
-                None::<String>,
+            return Self::err_with(
+                "At least one repository must be specified.",
+                None,
+                Some("Call list_repos to get repo_id and target_branch.".to_string()),
+                Some("missing_required"),
+                None,
             );
         }
 
         let executor_trimmed = executor.trim();
         if executor_trimmed.is_empty() {
-            return Self::err("Executor must not be empty.".to_string(), None::<String>);
+            return Self::err_with(
+                "Executor must not be empty.",
+                None,
+                Some("Provide a supported executor (e.g., CLAUDE_CODE).".to_string()),
+                Some("missing_required"),
+                None,
+            );
         }
 
         let normalized_executor = executor_trimmed.replace('-', "_").to_ascii_uppercase();
         let base_executor = match BaseCodingAgent::from_str(&normalized_executor) {
             Ok(exec) => exec,
             Err(_) => {
-                return Self::err(
+                return Self::err_with(
                     format!("Unknown executor '{executor_trimmed}'."),
-                    None::<String>,
+                    Some(serde_json::json!({ "value": executor_trimmed })),
+                    Some(format!(
+                        "Valid executors: {}.",
+                        CodingAgent::VARIANTS.join(", ")
+                    )),
+                    Some("invalid_argument"),
+                    None,
                 );
             }
         };
@@ -1062,13 +1300,26 @@ impl TaskServer {
             variant,
         };
 
-        let workspace_repos: Vec<WorkspaceRepoInput> = repos
-            .into_iter()
-            .map(|r| WorkspaceRepoInput {
-                repo_id: r.repo_id,
-                target_branch: r.target_branch,
-            })
-            .collect();
+        let mut workspace_repos = Vec::with_capacity(repos.len());
+        for (index, repo) in repos.into_iter().enumerate() {
+            let target_branch = repo.target_branch.trim();
+            if target_branch.is_empty() {
+                return Self::err_with(
+                    "Target branch must not be empty.",
+                    Some(serde_json::json!({
+                        "field": format!("repos[{index}].target_branch")
+                    })),
+                    Some("Provide a branch name like `main` or `master`.".to_string()),
+                    Some("invalid_argument"),
+                    None,
+                );
+            }
+
+            workspace_repos.push(WorkspaceRepoInput {
+                repo_id: repo.repo_id,
+                target_branch: target_branch.to_string(),
+            });
+        }
 
         let payload = CreateTaskAttemptBody {
             task_id,
@@ -1077,7 +1328,8 @@ impl TaskServer {
         };
 
         let url = self.url("/api/task-attempts");
-        let workspace: Workspace = match self.send_json(self.client.post(&url).json(&payload)).await
+        let workspace: Workspace =
+            match self.send_json(self.client.post(&url).json(&payload), "POST", &url).await
         {
             Ok(workspace) => workspace,
             Err(e) => return Ok(e),
@@ -1096,13 +1348,13 @@ impl TaskServer {
     )]
     async fn follow_up(
         &self,
-        Parameters(FollowUpRequest {
+        VkParameters(FollowUpRequest {
             session_id,
             attempt_id,
             prompt,
             action,
             variant,
-        }): Parameters<FollowUpRequest>,
+        }): VkParameters<FollowUpRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let session_id = match self.resolve_session_id(session_id, attempt_id).await {
             Ok(session_id) => session_id,
@@ -1114,7 +1366,13 @@ impl TaskServer {
                 let prompt = prompt.unwrap_or_default();
                 let trimmed = prompt.trim();
                 if trimmed.is_empty() {
-                    return Self::err("Prompt must not be empty.".to_string(), None::<String>);
+                    return Self::err_with(
+                        "Prompt must not be empty.",
+                        None,
+                        Some("Provide a prompt string for send/queue actions.".to_string()),
+                        Some("missing_required"),
+                        None,
+                    );
                 }
                 Some(trimmed.to_string())
             }
@@ -1151,7 +1409,8 @@ impl TaskServer {
 
                 let url = self.url(&format!("/api/sessions/{}/follow-up", session_id));
                 let execution_process: ExecutionProcess =
-                    match self.send_json(self.client.post(&url).json(&payload)).await {
+                    match self.send_json(self.client.post(&url).json(&payload), "POST", &url).await
+                    {
                         Ok(process) => process,
                         Err(e) => return Ok(e),
                     };
@@ -1176,7 +1435,8 @@ impl TaskServer {
 
                 let url = self.url(&format!("/api/sessions/{}/queue", session_id));
                 let status: QueueStatus =
-                    match self.send_json(self.client.post(&url).json(&payload)).await {
+                    match self.send_json(self.client.post(&url).json(&payload), "POST", &url).await
+                    {
                         Ok(status) => status,
                         Err(e) => return Ok(e),
                     };
@@ -1186,7 +1446,7 @@ impl TaskServer {
             FollowUpAction::Cancel => {
                 let url = self.url(&format!("/api/sessions/{}/queue", session_id));
                 let status: QueueStatus =
-                    match self.send_json(self.client.delete(&url)).await {
+                    match self.send_json(self.client.delete(&url), "DELETE", &url).await {
                         Ok(status) => status,
                         Err(e) => return Ok(e),
                     };
@@ -1201,21 +1461,32 @@ impl TaskServer {
     )]
     async fn update_task(
         &self,
-        Parameters(UpdateTaskRequest {
+        VkParameters(UpdateTaskRequest {
             task_id,
             title,
             description,
             status,
-        }): Parameters<UpdateTaskRequest>,
+        }): VkParameters<UpdateTaskRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let status = if let Some(ref status_str) = status {
-            match TaskStatus::from_str(status_str) {
-                Ok(s) => Some(s),
-                Err(_) => {
-                    return Self::err(
-                        "Invalid status filter. Valid values: 'todo', 'inprogress', 'inreview', 'done', 'cancelled'".to_string(),
-                        Some(status_str.to_string()),
-                    );
+            let trimmed = status_str.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                match TaskStatus::from_str(trimmed) {
+                    Ok(s) => Some(s),
+                    Err(_) => {
+                        return Self::err_with(
+                            "Invalid status value",
+                            Some(serde_json::json!({ "value": trimmed })),
+                            Some(
+                                "Valid values: todo, inprogress, inreview, done, cancelled."
+                                    .to_string(),
+                            ),
+                            Some("invalid_argument"),
+                            None,
+                        );
+                    }
                 }
             }
         } else {
@@ -1236,7 +1507,9 @@ impl TaskServer {
             image_ids: None,
         };
         let url = self.url(&format!("/api/tasks/{}", task_id));
-        let updated_task: Task = match self.send_json(self.client.put(&url).json(&payload)).await {
+        let updated_task: Task =
+            match self.send_json(self.client.put(&url).json(&payload), "PUT", &url).await
+        {
             Ok(t) => t,
             Err(e) => return Ok(e),
         };
@@ -1251,11 +1524,11 @@ impl TaskServer {
     )]
     async fn delete_task(
         &self,
-        Parameters(DeleteTaskRequest { task_id }): Parameters<DeleteTaskRequest>,
+        VkParameters(DeleteTaskRequest { task_id }): VkParameters<DeleteTaskRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let url = self.url(&format!("/api/tasks/{}", task_id));
         if let Err(e) = self
-            .send_json::<serde_json::Value>(self.client.delete(&url))
+            .send_json::<serde_json::Value>(self.client.delete(&url), "DELETE", &url)
             .await
         {
             return Ok(e);
@@ -1273,10 +1546,10 @@ impl TaskServer {
     )]
     async fn get_task(
         &self,
-        Parameters(GetTaskRequest { task_id }): Parameters<GetTaskRequest>,
+        VkParameters(GetTaskRequest { task_id }): VkParameters<GetTaskRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let url = self.url(&format!("/api/tasks/{}", task_id));
-        let task: Task = match self.send_json(self.client.get(&url)).await {
+        let task: Task = match self.send_json(self.client.get(&url), "GET", &url).await {
             Ok(t) => t,
             Err(e) => return Ok(e),
         };
@@ -1291,7 +1564,7 @@ impl TaskServer {
 #[tool_handler]
 impl ServerHandler for TaskServer {
     fn get_info(&self) -> ServerInfo {
-        let mut instruction = "A task and project management server. Use list tools to discover ids, then perform create/update/start/follow-up actions. TOOLS: 'list_projects', 'list_repos', 'list_tasks', 'list_task_attempts', 'get_task', 'create_task', 'update_task', 'delete_task', 'start_task_attempt', 'follow_up'. Use `list_tasks` to get task ids and latest attempt/session summaries. Use `list_task_attempts` to inspect attempts and get attempt_id/session_id for follow-up. The `follow_up` tool accepts either attempt_id (preferred) or session_id. attempt_id refers to the task attempt workspace id.".to_string();
+        let mut instruction = "A task and project management server. Use list tools to discover ids, then perform create/update/start/follow-up actions. TOOLS: 'list_projects', 'list_repos', 'list_tasks', 'list_task_attempts', 'get_task', 'create_task', 'update_task', 'delete_task', 'start_task_attempt', 'follow_up'. Use `list_tasks` to get task ids and latest attempt/session summaries. Use `list_task_attempts` to inspect attempts and get attempt_id/session_id for follow-up. The `follow_up` tool accepts either attempt_id (preferred) or session_id. attempt_id refers to the task attempt workspace id. Tool errors are returned as JSON with fields like error, hint, code, and retryable; invalid parameter errors include JSON-RPC error data with path/hint.".to_string();
         if self.context.is_some() {
             let context_instruction = "Use 'get_context' to fetch project/task/attempt metadata for the active Vibe Kanban workspace session when available.";
             instruction = format!("{} {}", context_instruction, instruction);
