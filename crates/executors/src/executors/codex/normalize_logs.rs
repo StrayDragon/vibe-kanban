@@ -1048,6 +1048,12 @@ fn normalize_codex_stderr_logs(msg_store: Arc<MsgStore>, entry_index_provider: E
                 content: strip_ansi_escapes::strip_str(&content),
                 metadata: None,
             }))
+            .transform_lines(Box::new(|lines| {
+                lines.retain(|line| {
+                    // codex-core 0.84 logs this at ERROR even when it's benign.
+                    !line.contains("codex_core::codex: needs_follow_up:")
+                });
+            }))
             .time_gap(std::time::Duration::from_secs(2))
             .index_provider(entry_index_provider)
             .build();
