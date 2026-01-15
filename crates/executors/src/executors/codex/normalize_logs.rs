@@ -36,8 +36,7 @@ use crate::{
     logs::{
         ActionType, CommandExitStatus, CommandRunResult, FileChange, NormalizedEntry,
         NormalizedEntryError, NormalizedEntryType, TodoItem, ToolResult, ToolResultValueType,
-        ToolStatus,
-        stderr_processor::normalize_stderr_logs,
+        ToolStatus, plain_text_processor::PlainTextLogProcessor,
         utils::{
             ConversationPatch, EntryIndexProvider,
             patch::{add_normalized_entry, replace_normalized_entry, upsert_normalized_entry},
@@ -359,7 +358,7 @@ fn format_todo_status(status: &StepStatus) -> String {
 
 pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
     let entry_index = EntryIndexProvider::start_from(&msg_store);
-    normalize_stderr_logs(msg_store.clone(), entry_index.clone());
+    normalize_codex_stderr_logs(msg_store.clone(), entry_index.clone());
 
     let worktree_path_str = worktree_path.to_string_lossy().to_string();
     tokio::spawn(async move {
@@ -1033,6 +1032,29 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                 | EventMsg::ElicitationRequest(..)
                 | EventMsg::TurnComplete(..) => {}
                 _ => {}
+            }
+        }
+    });
+}
+
+fn normalize_codex_stderr_logs(msg_store: Arc<MsgStore>, entry_index_provider: EntryIndexProvider) {
+    tokio::spawn(async move {
+        let mut stderr = msg_store.stderr_chunked_stream();
+
+        let mut processor = PlainTextLogProcessor::builder()
+            .normalized_entry_producer(Box::new(|content: String| NormalizedEntry {
+                timestamp: None,
+                entry_type: NormalizedEntryType::SystemMessage,
+                content: strip_ansi_escapes::strip_str(&content),
+                metadata: None,
+            }))
+            .time_gap(std::time::Duration::from_secs(2))
+            .index_provider(entry_index_provider)
+            .build();
+
+        while let Some(Ok(chunk)) = stderr.next().await {
+            for patch in processor.process(chunk) {
+                msg_store.push_patch(patch);
             }
         }
     });
