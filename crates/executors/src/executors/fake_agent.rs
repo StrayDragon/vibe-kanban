@@ -45,6 +45,7 @@ use crate::{
 
 const FAKE_AGENT_CONFIG_ENV: &str = "VIBE_FAKE_AGENT_CONFIG";
 const FAKE_AGENT_PATH_ENV: &str = "VIBE_FAKE_AGENT_PATH";
+const COMMAND_PREFIXES: [&str; 3] = ["help", "?", "("];
 
 fn default_cadence_ms() -> u64 {
     120
@@ -311,6 +312,36 @@ pub enum FakeAgentStep {
     WriteFile { path: PathBuf, content: String },
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CommandMode<'a> {
+    body: &'a str,
+    paren_delimiters: bool,
+}
+
+#[derive(Debug, Clone)]
+enum FakeCommand {
+    Help,
+    Exec { approvals: Option<bool> },
+    Patch { approvals: Option<bool> },
+    Mcp,
+    WebSearch,
+    Reasoning { text: Option<String> },
+    Message { text: Option<String> },
+    Warning { text: Option<String> },
+    StreamError { text: Option<String> },
+    Errors,
+    Session,
+    Background { text: Option<String> },
+    Sleep { ms: u64 },
+    Emit { value: serde_json::Value },
+    Notify { value: serde_json::Value },
+    Approve {
+        call_id: String,
+        tool_name: String,
+        status: workspace_utils::approvals::ApprovalStatus,
+    },
+}
+
 pub fn run_fake_agent() -> Result<(), FakeAgentError> {
     let raw = env::var(FAKE_AGENT_CONFIG_ENV).map_err(|_| FakeAgentError::MissingConfig)?;
     let mut config: FakeAgentRuntimeConfig = serde_json::from_str(&raw)?;
@@ -333,6 +364,10 @@ pub fn generate_fake_agent_steps(
             steps.insert(0, FakeAgentStep::Emit(line));
         }
         return Ok(steps);
+    }
+
+    if let Some(mode) = command_mode_body(&config.prompt) {
+        return generate_command_steps(config, cwd, mode);
     }
 
     generate_random_steps(config, cwd)
@@ -375,6 +410,294 @@ fn normalize_runtime_config(config: &mut FakeAgentRuntimeConfig) {
     if config.message_chunk_max < config.message_chunk_min {
         config.message_chunk_max = config.message_chunk_min;
     }
+}
+
+fn command_mode_body(prompt: &str) -> Option<CommandMode<'_>> {
+    let trimmed = prompt.trim_start();
+    for prefix in COMMAND_PREFIXES {
+        if !trimmed.starts_with(prefix) {
+            continue;
+        }
+        let rest = &trimmed[prefix.len()..];
+        if prefix == "?" {
+            return Some(CommandMode {
+                body: trim_command_body(rest),
+                paren_delimiters: false,
+            });
+        }
+        if prefix == "(" {
+            return Some(CommandMode {
+                body: trim_command_body(rest),
+                paren_delimiters: true,
+            });
+        }
+        let boundary = rest.chars().next().map_or(true, is_command_boundary);
+        if boundary {
+            return Some(CommandMode {
+                body: trim_command_body(rest),
+                paren_delimiters: false,
+            });
+        }
+    }
+    None
+}
+
+fn is_command_boundary(ch: char) -> bool {
+    ch.is_whitespace() || ch == ';' || ch == ':'
+}
+
+fn trim_command_body(body: &str) -> &str {
+    body.trim_start_matches(|ch: char| ch.is_whitespace() || ch == ';' || ch == ':')
+}
+
+fn split_command_segments(body: &str, paren_delimiters: bool) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut brace_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for ch in body.chars() {
+        if in_string {
+            current.push(ch);
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => {
+                in_string = true;
+                current.push(ch);
+            }
+            '{' => {
+                brace_depth += 1;
+                current.push(ch);
+            }
+            '}' => {
+                if brace_depth > 0 {
+                    brace_depth -= 1;
+                }
+                current.push(ch);
+            }
+            '[' => {
+                bracket_depth += 1;
+                current.push(ch);
+            }
+            ']' => {
+                if bracket_depth > 0 {
+                    bracket_depth -= 1;
+                }
+                current.push(ch);
+            }
+            ';' | '\n' if brace_depth == 0 && bracket_depth == 0 => {
+                let trimmed = current.trim();
+                if !trimmed.is_empty() {
+                    segments.push(trimmed.to_string());
+                }
+                current.clear();
+            }
+            '(' | ')' if paren_delimiters && brace_depth == 0 && bracket_depth == 0 => {
+                let trimmed = current.trim();
+                if !trimmed.is_empty() {
+                    segments.push(trimmed.to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        segments.push(trimmed.to_string());
+    }
+    segments
+}
+
+fn parse_command_sequence(
+    body: &str,
+    paren_delimiters: bool,
+) -> Result<Vec<FakeCommand>, FakeAgentError> {
+    let body = body.trim();
+    if body.is_empty() {
+        return Ok(vec![FakeCommand::Help]);
+    }
+    let mut commands = Vec::new();
+    for segment in split_command_segments(body, paren_delimiters) {
+        let parsed = parse_command_segment(&segment)?;
+        commands.push(parsed);
+    }
+    if commands.is_empty() {
+        commands.push(FakeCommand::Help);
+    }
+    Ok(commands)
+}
+
+fn parse_command_segment(segment: &str) -> Result<FakeCommand, FakeAgentError> {
+    let trimmed = segment.trim();
+    if trimmed.is_empty() {
+        return Ok(FakeCommand::Help);
+    }
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let name = parts.next().unwrap_or_default();
+    let rest = parts.next().unwrap_or("").trim();
+    let command = name.to_ascii_lowercase();
+    match command.as_str() {
+        "help" | "?" => Ok(FakeCommand::Help),
+        "exec" | "exec_command" => Ok(FakeCommand::Exec {
+            approvals: parse_approvals_flag(rest),
+        }),
+        "patch" | "apply_patch" => Ok(FakeCommand::Patch {
+            approvals: parse_approvals_flag(rest),
+        }),
+        "mcp" => Ok(FakeCommand::Mcp),
+        "web" | "web_search" | "search" => Ok(FakeCommand::WebSearch),
+        "reasoning" => Ok(FakeCommand::Reasoning {
+            text: if rest.is_empty() {
+                None
+            } else {
+                Some(rest.to_string())
+            },
+        }),
+        "message" | "msg" | "talk" => Ok(FakeCommand::Message {
+            text: if rest.is_empty() {
+                None
+            } else {
+                Some(rest.to_string())
+            },
+        }),
+        "warning" | "warn" => Ok(FakeCommand::Warning {
+            text: if rest.is_empty() {
+                None
+            } else {
+                Some(rest.to_string())
+            },
+        }),
+        "error" | "stream_error" | "stream-error" => Ok(FakeCommand::StreamError {
+            text: if rest.is_empty() {
+                None
+            } else {
+                Some(rest.to_string())
+            },
+        }),
+        "errors" => Ok(FakeCommand::Errors),
+        "session" | "session_configured" => Ok(FakeCommand::Session),
+        "background" | "bg" => Ok(FakeCommand::Background {
+            text: if rest.is_empty() {
+                None
+            } else {
+                Some(rest.to_string())
+            },
+        }),
+        "sleep" => Ok(FakeCommand::Sleep {
+            ms: parse_sleep_ms(rest)?,
+        }),
+        "emit" => {
+            if rest.is_empty() {
+                return Err(FakeAgentError::Script(
+                    "emit command requires JSON payload".to_string(),
+                ));
+            }
+            let value: serde_json::Value = serde_json::from_str(rest).map_err(|err| {
+                FakeAgentError::Script(format!("invalid emit JSON: {err}"))
+            })?;
+            Ok(FakeCommand::Emit { value })
+        }
+        "notify" => {
+            if rest.is_empty() {
+                return Err(FakeAgentError::Script(
+                    "notify command requires JSON payload".to_string(),
+                ));
+            }
+            let value: serde_json::Value = serde_json::from_str(rest).map_err(|err| {
+                FakeAgentError::Script(format!("invalid notify JSON: {err}"))
+            })?;
+            Ok(FakeCommand::Notify { value })
+        }
+        "approve" | "approval" => parse_approve_command(rest),
+        _ => Err(FakeAgentError::Script(format!(
+            "unknown fake agent command: {command}"
+        ))),
+    }
+}
+
+fn parse_approvals_flag(rest: &str) -> Option<bool> {
+    let mut result = None;
+    for token in rest.split_whitespace() {
+        let token = token.to_ascii_lowercase();
+        match token.as_str() {
+            "approvals" | "approval" | "approve" => result = Some(true),
+            "no-approvals" | "no-approval" | "no_approvals" | "no_approval" => {
+                result = Some(false)
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
+fn parse_sleep_ms(rest: &str) -> Result<u64, FakeAgentError> {
+    if rest.is_empty() {
+        return Err(FakeAgentError::Script(
+            "sleep command requires a millisecond value".to_string(),
+        ));
+    }
+    let trimmed = rest.trim();
+    let value = trimmed
+        .strip_suffix("ms")
+        .unwrap_or(trimmed)
+        .parse::<u64>()
+        .map_err(|_| FakeAgentError::Script("invalid sleep duration".to_string()))?;
+    Ok(value)
+}
+
+fn parse_approve_command(rest: &str) -> Result<FakeCommand, FakeAgentError> {
+    let mut parts = rest.split_whitespace();
+    let call_id = parts
+        .next()
+        .ok_or_else(|| FakeAgentError::Script("approve requires call_id".to_string()))?;
+    let tool_name = parts
+        .next()
+        .ok_or_else(|| FakeAgentError::Script("approve requires tool_name".to_string()))?;
+    let status_token = parts.next().unwrap_or("approved").to_ascii_lowercase();
+    let status = match status_token.as_str() {
+        "approved" | "approve" | "ok" => workspace_utils::approvals::ApprovalStatus::Approved,
+        "pending" => workspace_utils::approvals::ApprovalStatus::Pending,
+        "denied" | "deny" => {
+            let reason = parts.collect::<Vec<_>>().join(" ");
+            workspace_utils::approvals::ApprovalStatus::Denied {
+                reason: if reason.is_empty() {
+                    None
+                } else {
+                    Some(reason)
+                },
+            }
+        }
+        "timed_out" | "timedout" | "timeout" => {
+            workspace_utils::approvals::ApprovalStatus::TimedOut
+        }
+        _ => {
+            return Err(FakeAgentError::Script(format!(
+                "invalid approval status: {status_token}"
+            )))
+        }
+    };
+    Ok(FakeCommand::Approve {
+        call_id: call_id.to_string(),
+        tool_name: tool_name.to_string(),
+        status,
+    })
 }
 
 fn load_script_steps(
@@ -440,6 +763,224 @@ fn load_script_steps(
     }
 
     Ok(steps)
+}
+
+fn generate_command_steps(
+    config: &FakeAgentRuntimeConfig,
+    cwd: &Path,
+    mode: CommandMode<'_>,
+) -> Result<Vec<FakeAgentStep>, FakeAgentError> {
+    let seed = config.seed.unwrap_or_else(seed_from_time);
+    let mut rng = FakeRng::new(seed);
+    let session_id = resolve_session_id(config.session_id.as_deref(), &mut rng)?;
+    let turn_id = format!("turn-{seed:x}-{:x}", rng.next_u64());
+    let commands = parse_command_sequence(mode.body, mode.paren_delimiters)?;
+    let mut steps = Vec::new();
+
+    for command in commands {
+        match command {
+            FakeCommand::Help => {
+                let text = build_help_message();
+                steps.extend(emit_message_steps(&text, config, &mut rng)?);
+            }
+            FakeCommand::Exec { approvals } => {
+                let approvals = approvals.unwrap_or(config.tool_events.approvals);
+                steps.extend(generate_exec_command_steps(
+                    &mut rng,
+                    cwd,
+                    &turn_id,
+                    approvals,
+                )?);
+            }
+            FakeCommand::Patch { approvals } => {
+                let approvals = approvals.unwrap_or(config.tool_events.approvals);
+                steps.extend(generate_patch_steps(
+                    &mut rng,
+                    cwd,
+                    &turn_id,
+                    approvals,
+                    config.write_fake_files,
+                )?);
+            }
+            FakeCommand::Mcp => {
+                steps.extend(generate_mcp_steps(&mut rng)?);
+            }
+            FakeCommand::WebSearch => {
+                steps.extend(generate_web_steps(&mut rng)?);
+            }
+            FakeCommand::Reasoning { text } => {
+                let reasoning = text.unwrap_or_else(|| build_reasoning_text(&mut rng));
+                steps.extend(emit_reasoning_steps(&reasoning, config, &mut rng)?);
+            }
+            FakeCommand::Message { text } => {
+                let message = text.unwrap_or_else(|| "fake agent message".to_string());
+                steps.extend(emit_message_steps(&message, config, &mut rng)?);
+            }
+            FakeCommand::Warning { text } => {
+                let warning = EventMsg::Warning(WarningEvent {
+                    message: text.unwrap_or_else(|| "fake agent warning".to_string()),
+                });
+                steps.push(FakeAgentStep::Emit(event_line(warning)?));
+            }
+            FakeCommand::StreamError { text } => {
+                let stream_error = EventMsg::StreamError(StreamErrorEvent {
+                    message: text.unwrap_or_else(|| "fake agent stream error".to_string()),
+                    codex_error_info: None,
+                    additional_details: None,
+                });
+                steps.push(FakeAgentStep::Emit(event_line(stream_error)?));
+            }
+            FakeCommand::Errors => {
+                let warning = EventMsg::Warning(WarningEvent {
+                    message: "fake agent warning".to_string(),
+                });
+                steps.push(FakeAgentStep::Emit(event_line(warning)?));
+                let stream_error = EventMsg::StreamError(StreamErrorEvent {
+                    message: "fake agent stream error".to_string(),
+                    codex_error_info: None,
+                    additional_details: None,
+                });
+                steps.push(FakeAgentStep::Emit(event_line(stream_error)?));
+            }
+            FakeCommand::Session => {
+                let session_event = build_session_configured_event_with_id(&session_id, cwd)?;
+                steps.push(FakeAgentStep::Emit(event_line(session_event)?));
+            }
+            FakeCommand::Background { text } => {
+                let message = text.unwrap_or_else(|| {
+                    format!("fake agent session {session_id} completed")
+                });
+                let background = EventMsg::BackgroundEvent(BackgroundEventEvent { message });
+                steps.push(FakeAgentStep::Emit(event_line(background)?));
+            }
+            FakeCommand::Sleep { ms } => {
+                steps.push(FakeAgentStep::Sleep(Duration::from_millis(ms)));
+            }
+            FakeCommand::Emit { value } => {
+                let event: EventMsg = serde_json::from_value(value).map_err(|err| {
+                    FakeAgentError::Script(format!("invalid EventMsg JSON: {err}"))
+                })?;
+                steps.push(FakeAgentStep::Emit(event_line(event)?));
+            }
+            FakeCommand::Notify { value } => {
+                let raw = serde_json::to_string(&value).map_err(|err| {
+                    FakeAgentError::Script(format!("invalid notify JSON: {err}"))
+                })?;
+                steps.push(FakeAgentStep::Emit(raw));
+            }
+            FakeCommand::Approve {
+                call_id,
+                tool_name,
+                status,
+            } => {
+                let approval = Approval::approval_response(call_id, tool_name, status);
+                steps.push(FakeAgentStep::Emit(approval.raw()));
+            }
+        }
+    }
+
+    if !script_has_session_configured(&steps) {
+        let session_event = build_session_configured_event_with_id(&session_id, cwd)?;
+        let line = event_line(session_event)?;
+        steps.insert(0, FakeAgentStep::Emit(line));
+    }
+
+    append_fake_write_step_if_needed(&mut steps, cwd, config.write_fake_files);
+    Ok(steps)
+}
+
+fn append_fake_write_step_if_needed(
+    steps: &mut Vec<FakeAgentStep>,
+    cwd: &Path,
+    write_fake_files: bool,
+) {
+    if !write_fake_files {
+        return;
+    }
+    if steps
+        .iter()
+        .any(|step| matches!(step, FakeAgentStep::WriteFile { .. }))
+    {
+        return;
+    }
+    for step in steps.iter() {
+        if let FakeAgentStep::Emit(line) = step
+            && let Some(path) = extract_fake_patch_path(line, cwd)
+        {
+            let content = format!(
+                "fake agent wrote {}\n",
+                path.file_name().and_then(|n| n.to_str()).unwrap_or("file")
+            );
+            steps.push(FakeAgentStep::WriteFile { path, content });
+            break;
+        }
+    }
+}
+
+fn emit_reasoning_steps(
+    text: &str,
+    config: &FakeAgentRuntimeConfig,
+    rng: &mut FakeRng,
+) -> Result<Vec<FakeAgentStep>, FakeAgentError> {
+    let mut steps = Vec::new();
+    for chunk in chunk_text(
+        text,
+        config.message_chunk_min,
+        config.message_chunk_max,
+        rng,
+    ) {
+        let event = EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta: chunk });
+        steps.push(FakeAgentStep::Emit(event_line(event)?));
+    }
+    Ok(steps)
+}
+
+fn emit_message_steps(
+    text: &str,
+    config: &FakeAgentRuntimeConfig,
+    rng: &mut FakeRng,
+) -> Result<Vec<FakeAgentStep>, FakeAgentError> {
+    let mut steps = Vec::new();
+    for chunk in chunk_text(
+        text,
+        config.message_chunk_min,
+        config.message_chunk_max,
+        rng,
+    ) {
+        let event = EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta: chunk });
+        steps.push(FakeAgentStep::Emit(event_line(event)?));
+    }
+    let final_event = EventMsg::AgentMessage(AgentMessageEvent {
+        message: text.to_string(),
+    });
+    steps.push(FakeAgentStep::Emit(event_line(final_event)?));
+    Ok(steps)
+}
+
+fn build_help_message() -> String {
+    [
+        "Fake agent command mode (prefix: help, ?, or '(')",
+        "Commands:",
+        "  exec [approvals|no-approvals]",
+        "  patch [approvals|no-approvals]",
+        "  mcp",
+        "  web|web_search",
+        "  reasoning [text]",
+        "  message [text] (alias: talk)",
+        "  warning [text]",
+        "  stream_error [text]",
+        "  errors",
+        "  session",
+        "  background [text]",
+        "  sleep <ms>",
+        "  emit <EventMsg JSON>",
+        "  notify <JSON-RPC JSON>",
+        "  approve <call_id> <tool_name> [approved|denied|timed_out] [reason]",
+        "Separators: newline, ';', or '(' and ')' when using the '(' prefix",
+        "Example with '(' prefix: (exec (mcp (message done)",
+        "The '(' prefix allows '(' and ')' to split commands, not to nest commands.",
+    ]
+    .join("\n")
 }
 
 fn parse_approval_step(value: serde_json::Value) -> Result<Approval, FakeAgentError> {
@@ -1039,5 +1580,75 @@ mod tests {
         } else {
             panic!("expected SessionConfigured event");
         }
+    }
+
+    #[test]
+    fn command_mode_prefix_detection() {
+        assert_eq!(
+            command_mode_body("help exec").unwrap().body.trim(),
+            "exec"
+        );
+        assert_eq!(command_mode_body("?exec").unwrap().body.trim(), "exec");
+        assert_eq!(command_mode_body("(help").unwrap().body.trim(), "help");
+        assert!(command_mode_body("please help exec").is_none());
+    }
+
+    #[test]
+    fn command_mode_paren_sequence() {
+        let commands = parse_command_sequence("help (talk 3", true).expect("commands");
+        assert!(matches!(commands.first(), Some(FakeCommand::Help)));
+        assert!(matches!(
+            commands.get(1),
+            Some(FakeCommand::Message { .. })
+        ));
+    }
+
+    #[test]
+    fn command_mode_orders_commands() {
+        let config = FakeAgentRuntimeConfig {
+            prompt: "help exec; mcp".to_string(),
+            session_id: Some(Uuid::from_u128(11).to_string()),
+            seed: Some(9),
+            cadence_ms: 0,
+            message_chunk_min: 4,
+            message_chunk_max: 8,
+            tool_events: FakeToolEvents::default(),
+            write_fake_files: false,
+            include_reasoning: false,
+            scenario_path: None,
+        };
+        let cwd = std::env::temp_dir();
+        let steps = generate_fake_agent_steps(&config, &cwd).expect("steps");
+        let mut exec_index = None;
+        let mut mcp_index = None;
+        let mut saw_session = false;
+        let mut index = 0usize;
+
+        for line in emit_lines(&steps) {
+            let Ok(notification) = serde_json::from_str::<JSONRPCNotification>(&line) else {
+                continue;
+            };
+            let Some(params) = notification.params else {
+                continue;
+            };
+            let Some(msg) = params.get("msg") else {
+                continue;
+            };
+            let Ok(event) = serde_json::from_value::<EventMsg>(msg.clone()) else {
+                continue;
+            };
+            match event {
+                EventMsg::SessionConfigured(_) => saw_session = true,
+                EventMsg::ExecCommandBegin(_) => exec_index = Some(index),
+                EventMsg::McpToolCallBegin(_) => mcp_index = Some(index),
+                _ => {}
+            }
+            index += 1;
+        }
+
+        assert!(saw_session);
+        assert!(exec_index.is_some());
+        assert!(mcp_index.is_some());
+        assert!(exec_index.unwrap() < mcp_index.unwrap());
     }
 }
