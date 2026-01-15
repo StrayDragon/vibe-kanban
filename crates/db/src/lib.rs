@@ -25,7 +25,11 @@ impl DBService {
 
         if db_path.exists() {
             let mut check_options = ConnectOptions::new(database_url.clone());
-            check_options.sqlx_logging(false);
+            check_options.sqlx_logging(false).map_sqlx_sqlite_opts(|opts| {
+                opts.pragma("journal_mode", "WAL")
+                    .pragma("synchronous", "NORMAL")
+                    .busy_timeout(Duration::from_secs(30))
+            });
             let check_pool = Database::connect(check_options).await?;
             let has_migrations = check_pool
                 .query_one_raw(Statement::from_string(
@@ -46,7 +50,12 @@ impl DBService {
         options
             .max_connections(5)
             .connect_timeout(Duration::from_secs(30))
-            .sqlx_logging(false);
+            .sqlx_logging(false)
+            .map_sqlx_sqlite_opts(|opts| {
+                opts.pragma("journal_mode", "WAL")
+                    .pragma("synchronous", "NORMAL")
+                    .busy_timeout(Duration::from_secs(30))
+            });
         let pool = Database::connect(options).await?;
         db_migration::Migrator::up(&pool, None).await?;
         Ok(DBService { pool })
