@@ -27,7 +27,7 @@ use services::services::queued_message::{QueueStatus, QueuedMessage};
 use strum::VariantNames;
 use uuid::Uuid;
 
-use crate::mcp::params::VkParameters;
+use crate::mcp::params::Parameters;
 use crate::routes::{
     containers::ContainerQuery,
     task_attempts::{CreateTaskAttemptBody, WorkspaceRepoInput},
@@ -1024,11 +1024,11 @@ impl TaskServer {
     )]
     async fn create_task(
         &self,
-        VkParameters(CreateTaskRequest {
+        Parameters(CreateTaskRequest {
             project_id,
             title,
             description,
-        }): VkParameters<CreateTaskRequest>,
+        }): Parameters<CreateTaskRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let title = title.trim();
         if title.is_empty() {
@@ -1098,7 +1098,7 @@ impl TaskServer {
     #[tool(description = "List all repositories for a project. `project_id` is required!")]
     async fn list_repos(
         &self,
-        VkParameters(ListReposRequest { project_id }): VkParameters<ListReposRequest>,
+        Parameters(ListReposRequest { project_id }): Parameters<ListReposRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let url = self.url(&format!("/api/projects/{}/repositories", project_id));
         let repos: Vec<Repo> = match self.send_json(self.client.get(&url), "GET", &url).await {
@@ -1128,11 +1128,11 @@ impl TaskServer {
     )]
     async fn list_tasks(
         &self,
-        VkParameters(ListTasksRequest {
+        Parameters(ListTasksRequest {
             project_id,
             status,
             limit,
-        }): VkParameters<ListTasksRequest>,
+        }): Parameters<ListTasksRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let status_filter = if let Some(ref status_str) = status {
             let trimmed = status_str.trim();
@@ -1211,7 +1211,7 @@ impl TaskServer {
     )]
     async fn list_task_attempts(
         &self,
-        VkParameters(ListTaskAttemptsRequest { task_id }): VkParameters<ListTaskAttemptsRequest>,
+        Parameters(ListTaskAttemptsRequest { task_id }): Parameters<ListTaskAttemptsRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let mut attempts = match self.fetch_attempts_with_latest_session(task_id).await {
             Ok(attempts) => attempts,
@@ -1242,12 +1242,12 @@ impl TaskServer {
     )]
     async fn start_task_attempt(
         &self,
-        VkParameters(StartTaskAttemptRequest {
+        Parameters(StartTaskAttemptRequest {
             task_id,
             executor,
             variant,
             repos,
-        }): VkParameters<StartTaskAttemptRequest>,
+        }): Parameters<StartTaskAttemptRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         if repos.is_empty() {
             return Self::err_with(
@@ -1349,13 +1349,13 @@ impl TaskServer {
     )]
     async fn follow_up(
         &self,
-        VkParameters(FollowUpRequest {
+        Parameters(FollowUpRequest {
             session_id,
             attempt_id,
             prompt,
             action,
             variant,
-        }): VkParameters<FollowUpRequest>,
+        }): Parameters<FollowUpRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let session_id = match self.resolve_session_id(session_id, attempt_id).await {
             Ok(session_id) => session_id,
@@ -1462,12 +1462,12 @@ impl TaskServer {
     )]
     async fn update_task(
         &self,
-        VkParameters(UpdateTaskRequest {
+        Parameters(UpdateTaskRequest {
             task_id,
             title,
             description,
             status,
-        }): VkParameters<UpdateTaskRequest>,
+        }): Parameters<UpdateTaskRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let status = if let Some(ref status_str) = status {
             let trimmed = status_str.trim();
@@ -1525,7 +1525,7 @@ impl TaskServer {
     )]
     async fn delete_task(
         &self,
-        VkParameters(DeleteTaskRequest { task_id }): VkParameters<DeleteTaskRequest>,
+        Parameters(DeleteTaskRequest { task_id }): Parameters<DeleteTaskRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let url = self.url(&format!("/api/tasks/{}", task_id));
         if let Err(e) = self
@@ -1547,7 +1547,7 @@ impl TaskServer {
     )]
     async fn get_task(
         &self,
-        VkParameters(GetTaskRequest { task_id }): VkParameters<GetTaskRequest>,
+        Parameters(GetTaskRequest { task_id }): Parameters<GetTaskRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let url = self.url(&format!("/api/tasks/{}", task_id));
         let task: Task = match self.send_json(self.client.get(&url), "GET", &url).await {
