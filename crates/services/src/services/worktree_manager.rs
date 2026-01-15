@@ -104,17 +104,19 @@ impl WorktreeManager {
         };
 
         // Acquire the lock for this specific worktree path
-        let _guard = lock.lock().await;
+        let guard = lock.lock().await;
 
-        // Check if worktree already exists and is properly set up
-        if Self::is_worktree_properly_set_up(repo_path, worktree_path).await? {
+        let result = if Self::is_worktree_properly_set_up(repo_path, worktree_path).await? {
             trace!("Worktree already properly set up at path: {}", path_str);
-            return Ok(());
-        }
+            Ok(())
+        } else {
+            info!("Worktree needs recreation at path: {}", path_str);
+            Self::recreate_worktree_internal(repo_path, branch_name, worktree_path).await
+        };
 
-        // If worktree doesn't exist or isn't properly set up, recreate it
-        info!("Worktree needs recreation at path: {}", path_str);
-        Self::recreate_worktree_internal(repo_path, branch_name, worktree_path).await
+        drop(guard);
+        Self::maybe_remove_worktree_lock(&path_str, &lock);
+        result
     }
 
     /// Internal worktree recreation function (always recreates)
@@ -422,7 +424,7 @@ impl WorktreeManager {
                 .clone()
         };
 
-        let _guard = lock.lock().await;
+        let guard = lock.lock().await;
 
         // Try to determine the git repo path if not provided
         let resolved_repo_path = if let Some(repo_path) = &worktree.git_repo_path {
@@ -441,6 +443,9 @@ impl WorktreeManager {
             );
             Self::simple_worktree_cleanup(&worktree.worktree_path).await?;
         }
+
+        drop(guard);
+        Self::maybe_remove_worktree_lock(&path_str, &lock);
 
         Ok(())
     }
@@ -517,6 +522,13 @@ impl WorktreeManager {
     /// Get the base directory for vibe-kanban worktrees
     pub fn get_worktree_base_dir() -> std::path::PathBuf {
         utils::path::get_vibe_kanban_temp_dir().join("worktrees")
+    }
+
+    fn maybe_remove_worktree_lock(path_str: &str, lock: &Arc<tokio::sync::Mutex<()>>) {
+        let mut locks = WORKTREE_CREATION_LOCKS.lock().unwrap();
+        if Arc::strong_count(lock) == 2 {
+            locks.remove(path_str);
+        }
     }
 
     pub async fn cleanup_suspected_worktree(path: &Path) -> Result<bool, WorktreeError> {

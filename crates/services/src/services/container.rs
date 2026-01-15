@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Error as AnyhowError, anyhow};
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
-use dashmap::DashSet;
+use moka::sync::Cache;
 use db::{
     DBService,
     models::{
@@ -55,6 +55,7 @@ use utils::{
 use uuid::Uuid;
 
 use crate::services::{
+    cache_budget::{CacheBudgetConfig, cache_budgets},
     git::{GitService, GitServiceError},
     notification::NotificationService,
     workspace_manager::WorkspaceError as WorkspaceManagerError,
@@ -62,7 +63,31 @@ use crate::services::{
 };
 pub type ContainerRef = String;
 
-static LOG_ENTRY_BACKFILL_COMPLETE: Lazy<DashSet<String>> = Lazy::new(DashSet::new);
+static LOG_ENTRY_BACKFILL_CACHE: Lazy<Cache<String, ()>> = Lazy::new(|| {
+    let cache = build_log_backfill_cache(cache_budgets());
+    cache
+});
+
+fn build_log_backfill_cache(budgets: &CacheBudgetConfig) -> Cache<String, ()> {
+    let mut builder = Cache::builder()
+        .max_capacity(budgets.log_backfill_completion_max_entries as u64);
+    if !budgets.log_backfill_completion_ttl.is_zero() {
+        builder = builder.time_to_live(budgets.log_backfill_completion_ttl);
+    }
+    tracing::info!(
+        cache = "log_backfill_completion",
+        max_entries = budgets.log_backfill_completion_max_entries,
+        ttl_secs = budgets.log_backfill_completion_ttl.as_secs(),
+        "Cache budget"
+    );
+    builder.build()
+}
+
+pub fn log_backfill_completion_cache_len() -> u64 {
+    LOG_ENTRY_BACKFILL_CACHE.entry_count()
+}
+
+const DEFAULT_LOG_BACKFILL_CONCURRENCY: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LogPersistenceMode {
@@ -86,6 +111,14 @@ impl LogPersistenceConfig {
     }
 }
 
+#[derive(Debug)]
+struct BackfillProgress {
+    processed: usize,
+    entries: usize,
+    bytes: i64,
+    next_bytes_report: i64,
+}
+
 fn parse_log_persistence_mode_env() -> Option<LogPersistenceMode> {
     let value = std::env::var("VK_LOG_PERSISTENCE_MODE").ok()?;
     let value = value.trim().to_ascii_lowercase();
@@ -102,6 +135,25 @@ fn parse_log_persistence_mode_env() -> Option<LogPersistenceMode> {
             );
             None
         }
+    }
+}
+
+fn log_backfill_concurrency() -> usize {
+    match std::env::var("VK_LOG_BACKFILL_CONCURRENCY") {
+        Ok(value) => match value.trim().parse::<usize>() {
+            Ok(0) => {
+                tracing::warn!("VK_LOG_BACKFILL_CONCURRENCY set to 0. Using minimum value 1.");
+                1
+            }
+            Ok(parsed) => parsed,
+            Err(err) => {
+                tracing::warn!(
+                    "Invalid VK_LOG_BACKFILL_CONCURRENCY='{value}': {err}. Using default {DEFAULT_LOG_BACKFILL_CONCURRENCY}."
+                );
+                DEFAULT_LOG_BACKFILL_CONCURRENCY
+            }
+        },
+        Err(_) => DEFAULT_LOG_BACKFILL_CONCURRENCY,
     }
 }
 
@@ -225,7 +277,17 @@ pub trait ContainerService {
         // Never finalize setup scripts without a next_action (parallel mode).
         // In sequential mode, setup scripts have next_action pointing to coding agent,
         // so they won't finalize anyway (handled by next_action.is_none() check below).
-        let action = ctx.execution_process.executor_action().unwrap();
+        let action = match ctx.execution_process.executor_action() {
+            Ok(action) => action,
+            Err(err) => {
+                tracing::error!(
+                    "Failed to parse executor action for execution {}: {}",
+                    ctx.execution_process.id,
+                    err
+                );
+                return true;
+            }
+        };
         if matches!(
             ctx.execution_process.run_reason,
             ExecutionProcessRunReason::SetupScript
@@ -485,7 +547,7 @@ pub trait ContainerService {
         Ok(())
     }
 
-    /// Backfill execution log entries at startup (blocking, console logs only).
+    /// Backfill execution log entries at startup (background task, console logs only).
     async fn backfill_log_entries_startup(&self) -> Result<(), ContainerError> {
         const LOG_EVERY_PROCESSES: usize = 25;
         const LOG_EVERY_BYTES: i64 = 100 * 1024 * 1024;
@@ -496,56 +558,73 @@ pub trait ContainerService {
             return Ok(());
         }
 
+        let concurrency = log_backfill_concurrency();
         let total_bytes: i64 = summaries.iter().map(|s| s.total_bytes).sum();
         tracing::info!(
-            "log-history backfill starting: processes={}, total_bytes={}, mode=startup",
+            "log-history backfill starting: processes={}, total_bytes={}, mode=background, concurrency={}",
             summaries.len(),
-            total_bytes
+            total_bytes,
+            concurrency
         );
 
         let start = Instant::now();
-        let mut processed = 0usize;
-        let mut entries = 0usize;
-        let mut bytes = 0i64;
-        let mut next_bytes_report = LOG_EVERY_BYTES;
+        let progress = Arc::new(tokio::sync::Mutex::new(BackfillProgress {
+            processed: 0,
+            entries: 0,
+            bytes: 0,
+            next_bytes_report: LOG_EVERY_BYTES,
+        }));
 
-        for summary in summaries {
-            processed += 1;
-            bytes = bytes.saturating_add(summary.total_bytes);
+        futures::stream::iter(summaries)
+            .for_each_concurrent(concurrency, |summary| {
+                let progress = progress.clone();
+                async move {
+                    let count = match self
+                        .backfill_log_entries_for_execution(summary.execution_id)
+                        .await
+                    {
+                        Ok(count) => count,
+                        Err(err) => {
+                            tracing::warn!(
+                                "log-history backfill error: execution_id={}, error={}",
+                                summary.execution_id,
+                                err
+                            );
+                            0
+                        }
+                    };
 
-            match self
-                .backfill_log_entries_for_execution(summary.execution_id)
-                .await
-            {
-                Ok(count) => entries = entries.saturating_add(count),
-                Err(err) => {
-                    tracing::warn!(
-                        "log-history backfill error: execution_id={}, error={}",
-                        summary.execution_id,
-                        err
-                    );
+                    let mut progress = progress.lock().await;
+                    progress.processed = progress.processed.saturating_add(1);
+                    progress.entries = progress.entries.saturating_add(count);
+                    progress.bytes = progress.bytes.saturating_add(summary.total_bytes);
+
+                    if progress.processed.is_multiple_of(LOG_EVERY_PROCESSES)
+                        || progress.bytes >= progress.next_bytes_report
+                    {
+                        tracing::info!(
+                            "log-history backfill progress: processed={}, entries={}, bytes={}, elapsed_ms={}",
+                            progress.processed,
+                            progress.entries,
+                            progress.bytes,
+                            start.elapsed().as_millis()
+                        );
+                        while progress.bytes >= progress.next_bytes_report {
+                            progress.next_bytes_report =
+                                progress.next_bytes_report.saturating_add(LOG_EVERY_BYTES);
+                        }
+                    }
                 }
-            }
+            })
+            .await;
 
-            if processed.is_multiple_of(LOG_EVERY_PROCESSES) || bytes >= next_bytes_report {
-                tracing::info!(
-                    "log-history backfill progress: processed={}, entries={}, bytes={}, elapsed_ms={}",
-                    processed,
-                    entries,
-                    bytes,
-                    start.elapsed().as_millis()
-                );
-                while bytes >= next_bytes_report {
-                    next_bytes_report = next_bytes_report.saturating_add(LOG_EVERY_BYTES);
-                }
-            }
-        }
+        let progress = progress.lock().await;
 
         tracing::info!(
             "log-history backfill complete: processes={}, entries={}, bytes={}, elapsed_ms={}",
-            processed,
-            entries,
-            bytes,
+            progress.processed,
+            progress.entries,
+            progress.bytes,
             start.elapsed().as_millis()
         );
 
@@ -606,12 +685,12 @@ pub trait ContainerService {
         channel: LogEntryChannel,
     ) -> Result<usize, ContainerError> {
         let cache_key = format!("{execution_id}:{channel}");
-        if LOG_ENTRY_BACKFILL_COMPLETE.contains(&cache_key) {
+        if LOG_ENTRY_BACKFILL_CACHE.contains_key(&cache_key) {
             return Ok(0);
         }
 
         if !ExecutionProcessLogs::has_any(&self.db().pool, execution_id).await? {
-            LOG_ENTRY_BACKFILL_COMPLETE.insert(cache_key);
+            LOG_ENTRY_BACKFILL_CACHE.insert(cache_key.clone(), ());
             return Ok(0);
         }
 
@@ -627,7 +706,7 @@ pub trait ContainerService {
         };
 
         let Some((expected_count, expected_min, expected_max)) = entry_stats(&entries) else {
-            LOG_ENTRY_BACKFILL_COMPLETE.insert(cache_key);
+            LOG_ENTRY_BACKFILL_CACHE.insert(cache_key.clone(), ());
             return Ok(0);
         };
 
@@ -641,14 +720,14 @@ pub trait ContainerService {
         };
 
         if !needs_backfill {
-            LOG_ENTRY_BACKFILL_COMPLETE.insert(cache_key);
+            LOG_ENTRY_BACKFILL_CACHE.insert(cache_key.clone(), ());
             return Ok(0);
         }
 
         ExecutionProcessLogEntry::upsert_entries(&self.db().pool, execution_id, channel, &entries)
             .await?;
 
-        LOG_ENTRY_BACKFILL_COMPLETE.insert(cache_key);
+        LOG_ENTRY_BACKFILL_CACHE.insert(cache_key, ());
         Ok(entries.len())
     }
 
@@ -1972,6 +2051,39 @@ pub trait ContainerService {
 
         tracing::debug!("Started next action: {:?}", next_action);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn log_backfill_cache_respects_max_entries() {
+        let mut budgets = CacheBudgetConfig::default();
+        budgets.log_backfill_completion_max_entries = 1;
+        budgets.log_backfill_completion_ttl = Duration::from_secs(60);
+
+        let cache = build_log_backfill_cache(&budgets);
+        cache.insert("first".to_string(), ());
+        cache.insert("second".to_string(), ());
+
+        assert!(cache.entry_count() <= 1);
+    }
+
+    #[tokio::test]
+    async fn log_backfill_cache_expires_entries() {
+        let mut budgets = CacheBudgetConfig::default();
+        budgets.log_backfill_completion_max_entries = 10;
+        budgets.log_backfill_completion_ttl = Duration::from_millis(10);
+
+        let cache = build_log_backfill_cache(&budgets);
+        let key = "expiring".to_string();
+        cache.insert(key.clone(), ());
+
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        assert!(cache.get(&key).is_none());
     }
 }
 

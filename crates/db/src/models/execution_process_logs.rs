@@ -42,25 +42,46 @@ impl ExecutionProcessLogs {
     pub async fn list_execution_ids_with_bytes<C: ConnectionTrait>(
         db: &C,
     ) -> Result<Vec<ExecutionProcessLogSummary>, DbErr> {
-        let records = execution_process_log::Entity::find().all(db).await?;
+        let records: Vec<(i64, i64, DateTime<Utc>)> = execution_process_log::Entity::find()
+            .select_only()
+            .column(execution_process_log::Column::ExecutionProcessId)
+            .column(execution_process_log::Column::ByteSize)
+            .column(execution_process_log::Column::InsertedAt)
+            .into_tuple()
+            .all(db)
+            .await?;
 
         let mut totals: HashMap<i64, (i64, DateTime<Utc>)> = HashMap::new();
-        for record in records {
-            let inserted_at: DateTime<Utc> = record.inserted_at.into();
+        for (execution_process_id, byte_size, inserted_at) in records {
             let entry = totals
-                .entry(record.execution_process_id)
+                .entry(execution_process_id)
                 .or_insert((0, inserted_at));
-            entry.0 += record.byte_size;
+            entry.0 += byte_size;
             if inserted_at < entry.1 {
                 entry.1 = inserted_at;
             }
         }
 
+        if totals.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let execution_ids: Vec<i64> = totals.keys().copied().collect();
+        let id_rows: Vec<(i64, Uuid)> = execution_process::Entity::find()
+            .select_only()
+            .column(execution_process::Column::Id)
+            .column(execution_process::Column::Uuid)
+            .filter(execution_process::Column::Id.is_in(execution_ids))
+            .into_tuple()
+            .all(db)
+            .await?;
+        let id_to_uuid: HashMap<i64, Uuid> = id_rows.into_iter().collect();
+
         let mut summaries = Vec::with_capacity(totals.len());
         for (execution_id, (total_bytes, earliest)) in totals {
-            if let Some(uuid) = ids::execution_process_uuid_by_id(db, execution_id).await? {
+            if let Some(uuid) = id_to_uuid.get(&execution_id) {
                 summaries.push((earliest, ExecutionProcessLogSummary {
-                    execution_id: uuid,
+                    execution_id: *uuid,
                     total_bytes,
                 }));
             }

@@ -17,7 +17,8 @@
     "generate-types": "cargo run --bin generate_types",
     "generate-types:check": "cargo run --bin generate_types -- --check",
     "prepare-db": "node scripts/prepare-db.js",
-    "prepare-db:check": "node scripts/prepare-db.js --check"
+    "prepare-db:check": "node scripts/prepare-db.js --check",
+    "remote:prepare-db:check": "node scripts/prepare-db.js --check"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",

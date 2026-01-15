@@ -132,7 +132,14 @@ describe('useConversationHistory', () => {
       expect(latestEntries.length).toBeGreaterThan(initialEntries.length);
     });
 
-    expect(fetchMock.mock.calls[10][0]).toContain('cursor=21');
+    const fetchCalls = fetchMock.mock.calls;
+    const lastCall =
+      fetchCalls.length > 0
+        ? fetchCalls[fetchCalls.length - 1]?.[0] ?? ''
+        : '';
+    expect(lastCall).toContain(
+      `cursor=${pages[0].entries[0].entry_index.toString()}`
+    );
   });
 
   it('flags historyTruncated when server reports partial history', async () => {
@@ -315,6 +322,6 @@ describe('useConversationHistory', () => {
 
     expect(
       fetchMock.mock.calls[fetchMock.mock.calls.length - 1]?.[0]
-    ).toContain(processes[2].id);
+    ).toContain(processes[processes.length - 2].id);
   });
 });

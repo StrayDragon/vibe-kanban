@@ -1,4 +1,4 @@
-use std::future::IntoFuture;
+use std::future::{Future, IntoFuture};
 
 use anyhow::{self, Error as AnyhowError};
 use deployment::{Deployment, DeploymentError};
@@ -24,6 +24,13 @@ pub enum VibeKanbanError {
     Deployment(#[from] DeploymentError),
     #[error(transparent)]
     Other(#[from] AnyhowError),
+}
+
+fn spawn_background<F>(task: F) -> tokio::task::JoinHandle<()>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    tokio::spawn(task)
 }
 
 #[tokio::main]
@@ -60,16 +67,19 @@ async fn main() -> Result<(), VibeKanbanError> {
         .backfill_repo_names()
         .await
         .map_err(DeploymentError::from)?;
-    deployment
-        .container()
-        .backfill_log_entries_startup()
-        .await
-        .map_err(DeploymentError::from)?;
-    deployment
-        .container()
-        .cleanup_legacy_jsonl_logs()
-        .await
-        .map_err(DeploymentError::from)?;
+    let deployment_for_logs = deployment.clone();
+    spawn_background(async move {
+        if let Err(err) = deployment_for_logs
+            .container()
+            .backfill_log_entries_startup()
+            .await
+        {
+            tracing::warn!("Failed to backfill legacy log entries: {}", err);
+        }
+        if let Err(err) = deployment_for_logs.container().cleanup_legacy_jsonl_logs().await {
+            tracing::warn!("Failed to cleanup legacy JSONL logs: {}", err);
+        }
+    });
     deployment.spawn_pr_monitor_service().await;
     // Pre-warm file search cache for most active projects
     let deployment_for_cache = deployment.clone();
@@ -164,6 +174,27 @@ async fn main() -> Result<(), VibeKanbanError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::spawn_background;
+    use std::time::Duration;
+    use tokio::sync::oneshot;
+
+    #[tokio::test]
+    async fn spawn_background_returns_immediately() {
+        let (tx, rx) = oneshot::channel::<()>();
+
+        let start = std::time::Instant::now();
+        let handle = spawn_background(async move {
+            let _ = rx.await;
+        });
+        assert!(start.elapsed() < Duration::from_millis(50));
+
+        let _ = tx.send(());
+        let _ = handle.await;
+    }
 }
 
 pub async fn perform_cleanup_actions(deployment: &DeploymentImpl) {

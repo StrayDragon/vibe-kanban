@@ -116,15 +116,14 @@ const isUserMessagePatch = (patch: PatchType) =>
   patch.type === 'NORMALIZED_ENTRY' &&
   patch.content.entry_type.type === 'user_message';
 
-const isUserMessageWithKey = (patch: PatchTypeWithKey) =>
-  patch.type === 'NORMALIZED_ENTRY' &&
-  patch.content.entry_type.type === 'user_message';
+const isSyntheticEntry = (entry: PatchTypeWithKey) =>
+  entry.type === 'NORMALIZED_ENTRY' &&
+  (entry.content.entry_type.type === 'user_message' ||
+    entry.content.entry_type.type === 'next_action' ||
+    entry.content.entry_type.type === 'loading');
 
 const countEntriesForLimit = (entries: PatchTypeWithKey[]) =>
-  entries.reduce(
-    (count, entry) => count + (isUserMessageWithKey(entry) ? 0 : 1),
-    0
-  );
+  entries.reduce((count, entry) => count + (isSyntheticEntry(entry) ? 0 : 1), 0);
 
 const mapIndexedEntries = (
   entries: IndexedLogEntry[],

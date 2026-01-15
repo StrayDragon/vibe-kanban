@@ -17,6 +17,8 @@ const DEFAULT_FILE_STATS_CACHE_MAX_REPOS: usize = 25;
 const DEFAULT_FILE_STATS_CACHE_TTL_SECS: u64 = 3600;
 const DEFAULT_APPROVALS_COMPLETED_TTL_SECS: u64 = 86400;
 const DEFAULT_QUEUED_MESSAGES_TTL_SECS: u64 = 86400;
+const DEFAULT_LOG_BACKFILL_COMPLETION_MAX_ENTRIES: usize = 10000;
+const DEFAULT_LOG_BACKFILL_COMPLETION_TTL_SECS: u64 = 86400;
 const DEFAULT_CACHE_WARN_AT_RATIO: f64 = 0.9;
 const DEFAULT_CACHE_WARN_SAMPLE_SECS: u64 = 300;
 
@@ -31,6 +33,8 @@ pub struct CacheBudgetConfig {
     pub file_stats_cache_ttl: Duration,
     pub approvals_completed_ttl: Duration,
     pub queued_messages_ttl: Duration,
+    pub log_backfill_completion_max_entries: usize,
+    pub log_backfill_completion_ttl: Duration,
     pub cache_warn_at_ratio: f64,
     pub cache_warn_sample: Duration,
 }
@@ -47,6 +51,10 @@ impl Default for CacheBudgetConfig {
             file_stats_cache_ttl: Duration::from_secs(DEFAULT_FILE_STATS_CACHE_TTL_SECS),
             approvals_completed_ttl: Duration::from_secs(DEFAULT_APPROVALS_COMPLETED_TTL_SECS),
             queued_messages_ttl: Duration::from_secs(DEFAULT_QUEUED_MESSAGES_TTL_SECS),
+            log_backfill_completion_max_entries: DEFAULT_LOG_BACKFILL_COMPLETION_MAX_ENTRIES,
+            log_backfill_completion_ttl: Duration::from_secs(
+                DEFAULT_LOG_BACKFILL_COMPLETION_TTL_SECS,
+            ),
             cache_warn_at_ratio: DEFAULT_CACHE_WARN_AT_RATIO,
             cache_warn_sample: Duration::from_secs(DEFAULT_CACHE_WARN_SAMPLE_SECS),
         }
@@ -82,6 +90,11 @@ impl CacheBudgetConfig {
         let file_stats_cache_max_repos = read_env_usize(
             "VK_FILE_STATS_CACHE_MAX_REPOS",
             defaults.file_stats_cache_max_repos,
+            &get_env,
+        );
+        let log_backfill_completion_max_entries = read_env_usize(
+            "VK_LOG_BACKFILL_COMPLETION_MAX_ENTRIES",
+            defaults.log_backfill_completion_max_entries,
             &get_env,
         );
         let cache_warn_at_ratio = clamp_ratio(read_env_f64(
@@ -134,6 +147,16 @@ impl CacheBudgetConfig {
             queued_messages_ttl: read_env_duration(
                 "VK_QUEUED_MESSAGES_TTL_SECS",
                 defaults.queued_messages_ttl,
+                &get_env,
+            ),
+            log_backfill_completion_max_entries: normalize_max(
+                log_backfill_completion_max_entries,
+                "VK_LOG_BACKFILL_COMPLETION_MAX_ENTRIES",
+                defaults.log_backfill_completion_max_entries,
+            ),
+            log_backfill_completion_ttl: read_env_duration(
+                "VK_LOG_BACKFILL_COMPLETION_TTL_SECS",
+                defaults.log_backfill_completion_ttl,
                 &get_env,
             ),
             cache_warn_at_ratio,
@@ -293,6 +316,14 @@ mod tests {
             cfg.queued_messages_ttl.as_secs(),
             DEFAULT_QUEUED_MESSAGES_TTL_SECS
         );
+        assert_eq!(
+            cfg.log_backfill_completion_max_entries,
+            DEFAULT_LOG_BACKFILL_COMPLETION_MAX_ENTRIES
+        );
+        assert_eq!(
+            cfg.log_backfill_completion_ttl.as_secs(),
+            DEFAULT_LOG_BACKFILL_COMPLETION_TTL_SECS
+        );
         assert_eq!(cfg.cache_warn_at_ratio, DEFAULT_CACHE_WARN_AT_RATIO);
         assert_eq!(
             cfg.cache_warn_sample.as_secs(),
@@ -307,6 +338,8 @@ mod tests {
         envs.insert("VK_FILE_SEARCH_MAX_FILES", "100".to_string());
         envs.insert("VK_FILE_SEARCH_WATCHERS_MAX", "0".to_string());
         envs.insert("VK_FILE_STATS_CACHE_TTL_SECS", "120".to_string());
+        envs.insert("VK_LOG_BACKFILL_COMPLETION_MAX_ENTRIES", "0".to_string());
+        envs.insert("VK_LOG_BACKFILL_COMPLETION_TTL_SECS", "45".to_string());
         envs.insert("VK_CACHE_WARN_AT_RATIO", "0.5".to_string());
 
         let cfg = CacheBudgetConfig::from_env_with(|key| envs.get(key).cloned());
@@ -315,6 +348,8 @@ mod tests {
         assert_eq!(cfg.file_search_max_files, 100);
         assert_eq!(cfg.file_search_watchers_max, 1);
         assert_eq!(cfg.file_stats_cache_ttl.as_secs(), 120);
+        assert_eq!(cfg.log_backfill_completion_max_entries, 1);
+        assert_eq!(cfg.log_backfill_completion_ttl.as_secs(), 45);
         assert_eq!(cfg.cache_warn_at_ratio, 0.5);
     }
 }

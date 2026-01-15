@@ -8,7 +8,7 @@ use services::services::{
     approvals::Approvals,
     cache_budget::cache_budgets,
     config::{Config, load_config_from_file, save_config_to_file},
-    container::ContainerService,
+    container::{ContainerService, log_backfill_completion_cache_len},
     events::EventService,
     file_ranker::file_stats_cache_len,
     file_search_cache::FileSearchCache,
@@ -188,6 +188,7 @@ impl LocalDeployment {
         let file_stats_entries = file_stats_cache_len();
         let approvals_completed = self.approvals.completed_len();
         let queued_messages = self.queued_message_service.queue_len();
+        let log_backfill_entries = log_backfill_completion_cache_len();
 
         tracing::info!(
             cache = "file_search_cache",
@@ -220,6 +221,13 @@ impl LocalDeployment {
             cache = "queued_messages",
             ttl_secs = budgets.queued_messages_ttl.as_secs(),
             current_entries = queued_messages,
+            "Cache budget"
+        );
+        tracing::info!(
+            cache = "log_backfill_completion",
+            max_entries = budgets.log_backfill_completion_max_entries,
+            ttl_secs = budgets.log_backfill_completion_ttl.as_secs(),
+            current_entries = log_backfill_entries,
             "Cache budget"
         );
         tracing::info!(
