@@ -17,8 +17,8 @@ use codex_protocol::{
         ErrorEvent, EventMsg, ExecApprovalRequestEvent, ExecCommandBeginEvent, ExecCommandEndEvent,
         ExecCommandOutputDeltaEvent, ExecOutputStream, FileChange as CodexProtoFileChange,
         McpInvocation, McpToolCallBeginEvent, McpToolCallEndEvent, PatchApplyBeginEvent,
-        PatchApplyEndEvent, StreamErrorEvent, TokenUsageInfo, ViewImageToolCallEvent, WarningEvent,
-        WebSearchBeginEvent, WebSearchEndEvent,
+        PatchApplyEndEvent, StreamErrorEvent, ThreadRolledBackEvent, TokenUsageInfo,
+        ViewImageToolCallEvent, WarningEvent, WebSearchBeginEvent, WebSearchEndEvent,
     },
 };
 use futures::StreamExt;
@@ -652,10 +652,30 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                         },
                     );
                 }
+                EventMsg::ThreadRolledBack(ThreadRolledBackEvent { num_turns }) => {
+                    add_normalized_entry(
+                        &msg_store,
+                        &entry_index,
+                        NormalizedEntry {
+                            timestamp: None,
+                            entry_type: NormalizedEntryType::SystemMessage,
+                            content: format!("Thread rolled back ({num_turns} turns)"),
+                            metadata: None,
+                        },
+                    );
+                }
                 EventMsg::StreamError(StreamErrorEvent {
                     message,
                     codex_error_info,
+                    additional_details,
                 }) => {
+                    let mut content = format!("Stream error: {message}");
+                    if let Some(details) = additional_details {
+                        content.push_str(&format!(" Details: {details}"));
+                    }
+                    if let Some(info) = codex_error_info {
+                        content.push_str(&format!(" {info:?}"));
+                    }
                     add_normalized_entry(
                         &msg_store,
                         &entry_index,
@@ -664,7 +684,7 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                             entry_type: NormalizedEntryType::ErrorMessage {
                                 error_type: NormalizedEntryError::Other,
                             },
-                            content: format!("Stream error: {message} {codex_error_info:?}"),
+                            content,
                             metadata: None,
                         },
                     );
@@ -988,7 +1008,7 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                 }
                 EventMsg::AgentReasoningRawContent(..)
                 | EventMsg::AgentReasoningRawContentDelta(..)
-                | EventMsg::TaskStarted(..)
+                | EventMsg::TurnStarted(..)
                 | EventMsg::UserMessage(..)
                 | EventMsg::TurnDiff(..)
                 | EventMsg::GetHistoryEntryResponse(..)
@@ -1011,7 +1031,8 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                 | EventMsg::ExitedReviewMode(..)
                 | EventMsg::TerminalInteraction(..)
                 | EventMsg::ElicitationRequest(..)
-                | EventMsg::TaskComplete(..) => {}
+                | EventMsg::TurnComplete(..) => {}
+                _ => {}
             }
         }
     });
@@ -1214,7 +1235,7 @@ mod tests {
     };
     use codex_mcp_types::{CallToolResult, ContentBlock, ImageContent, TextContent};
     use codex_protocol::{
-        ConversationId,
+        ThreadId,
         plan_tool::{PlanItemArg, StepStatus, UpdatePlanArgs},
         protocol::{ExecCommandSource, FileChange as CodexProtoFileChange},
     };
@@ -2107,7 +2128,7 @@ mod tests {
         let response = JSONRPCResponse {
             id: RequestId::String("1".to_string()),
             result: serde_json::to_value(NewConversationResponse {
-                conversation_id: ConversationId::new(),
+                conversation_id: ThreadId::new(),
                 model: "gpt-4.1".to_string(),
                 reasoning_effort: Some(ReasoningEffort::High),
                 rollout_path: PathBuf::from(format!(

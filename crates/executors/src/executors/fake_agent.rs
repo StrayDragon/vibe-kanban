@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use codex_app_server_protocol::JSONRPCNotification;
 use codex_mcp_types::{CallToolResult, ContentBlock, TextContent};
 use codex_protocol::{
-    ConversationId,
+    ThreadId,
     protocol::{
         AgentMessageDeltaEvent, AgentMessageEvent, AgentReasoningDeltaEvent, AskForApproval,
         BackgroundEventEvent, EventMsg, ExecApprovalRequestEvent, ExecCommandBeginEvent,
@@ -567,6 +567,7 @@ fn generate_random_steps(
         let stream_error = EventMsg::StreamError(StreamErrorEvent {
             message: "fake agent stream error: simulated glitch".to_string(),
             codex_error_info: None,
+            additional_details: None,
         });
         steps.push(FakeAgentStep::Emit(event_line(stream_error)?));
     }
@@ -606,7 +607,7 @@ fn build_session_configured_event_with_id(
     session_id: &str,
     cwd: &Path,
 ) -> Result<EventMsg, FakeAgentError> {
-    let session_id = ConversationId::from_string(session_id)?;
+    let session_id = ThreadId::from_string(session_id)?;
     let rollout_path = cwd
         .join(".fake-agent")
         .join(format!("rollout-{session_id}.jsonl"));
@@ -627,7 +628,6 @@ fn build_session_configured_event_with_id(
             history_log_id: 0,
             history_entry_count: 0,
             initial_messages: None,
-            skill_load_outcome: None,
             rollout_path,
         },
     ))
@@ -930,7 +930,7 @@ fn resolve_session_id(
     rng: &mut FakeRng,
 ) -> Result<String, FakeAgentError> {
     if let Some(session_id) = session_id {
-        ConversationId::from_string(session_id)?;
+        ThreadId::from_string(session_id)?;
         return Ok(session_id.to_string());
     }
     let high = rng.next_u64() as u128;
