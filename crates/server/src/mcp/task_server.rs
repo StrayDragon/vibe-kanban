@@ -16,7 +16,8 @@ use rmcp::{
     ErrorData, ServerHandler,
     handler::server::tool::ToolRouter,
     model::{
-        CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+        CallToolResult, Content, Icon, Implementation, ProtocolVersion, ServerCapabilities,
+        ServerInfo,
     },
     schemars, tool, tool_handler, tool_router,
 };
@@ -1575,7 +1576,14 @@ impl ServerHandler for TaskServer {
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation {
                 name: "vibe-kanban".to_string(),
+                title: Some("Vibe Kanban MCP Server".to_string()),
                 version: "1.0.0".to_string(),
+                icons: Some(vec![Icon {
+                    src: "https://raw.githubusercontent.com/StrayDragon/vibe-kanban/main/frontend/public/vibe-kanban-logo.svg".to_string(),
+                    mime_type: Some("image/svg+xml".to_string()),
+                    sizes: Some(vec!["any".to_string()]),
+                }]),
+                website_url: Some("https://www.vibekanban.com".to_string()),
             },
             instructions: Some(instruction),
         }

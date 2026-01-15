@@ -1,6 +1,6 @@
 use rmcp::{
     ErrorData,
-    handler::server::tool::{FromToolCallContextPart, ToolCallContext},
+    handler::server::{common::FromContextPart, tool::ToolCallContext},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -39,12 +39,12 @@ fn hint_for_path(path: &str) -> Option<&'static str> {
     None
 }
 
-impl<S, P> FromToolCallContextPart<S> for VkParameters<P>
+impl<S, P> FromContextPart<ToolCallContext<'_, S>> for VkParameters<P>
 where
     P: DeserializeOwned,
 {
-    fn from_tool_call_context_part(
-        context: &mut ToolCallContext<S>,
+    fn from_context_part(
+        context: &mut ToolCallContext<'_, S>,
     ) -> Result<Self, ErrorData> {
         let arguments = context.arguments.take().unwrap_or_default();
         let value = Value::Object(arguments);
