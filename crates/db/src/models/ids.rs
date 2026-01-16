@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::entities::{
     execution_process, image, merge, project, project_repo, repo, session, shared_task, task,
-    workspace, workspace_repo,
+    task_group, workspace, workspace_repo,
 };
 
 pub async fn project_id_by_uuid<C: ConnectionTrait>(
@@ -53,6 +53,32 @@ pub async fn task_uuid_by_id<C: ConnectionTrait>(
         .select_only()
         .column(task::Column::Uuid)
         .filter(task::Column::Id.eq(id))
+        .into_tuple()
+        .one(db)
+        .await
+}
+
+pub async fn task_group_id_by_uuid<C: ConnectionTrait>(
+    db: &C,
+    uuid: Uuid,
+) -> Result<Option<i64>, DbErr> {
+    task_group::Entity::find()
+        .select_only()
+        .column(task_group::Column::Id)
+        .filter(task_group::Column::Uuid.eq(uuid))
+        .into_tuple()
+        .one(db)
+        .await
+}
+
+pub async fn task_group_uuid_by_id<C: ConnectionTrait>(
+    db: &C,
+    id: i64,
+) -> Result<Option<Uuid>, DbErr> {
+    task_group::Entity::find()
+        .select_only()
+        .column(task_group::Column::Uuid)
+        .filter(task_group::Column::Id.eq(id))
         .into_tuple()
         .one(db)
         .await

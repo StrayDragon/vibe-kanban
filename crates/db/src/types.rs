@@ -44,6 +44,31 @@ pub enum TaskStatus {
     Serialize,
     Deserialize,
     TS,
+    EnumString,
+    Display,
+    Default,
+)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+pub enum TaskKind {
+    #[default]
+    #[sea_orm(string_value = "default")]
+    Default,
+    #[sea_orm(string_value = "group")]
+    Group,
+}
+
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    EnumIter,
+    DeriveActiveEnum,
+    Serialize,
+    Deserialize,
+    TS,
 )]
 #[sea_orm(rs_type = "String", db_type = "Text")]
 #[serde(rename_all = "lowercase")]

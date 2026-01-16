@@ -10,10 +10,10 @@ use uuid::Uuid;
 use std::collections::HashMap;
 
 use super::{project::Project, workspace::Workspace};
-pub use crate::types::TaskStatus;
+pub use crate::types::{TaskKind, TaskStatus};
 
 use crate::{
-    entities::{execution_process, session, task, workspace},
+    entities::{execution_process, session, task, task_group, workspace},
     events::{
         EVENT_TASK_CREATED, EVENT_TASK_DELETED, EVENT_TASK_UPDATED, TaskEventPayload,
     },
@@ -27,6 +27,9 @@ pub struct Task {
     pub title: String,
     pub description: Option<String>,
     pub status: TaskStatus,
+    pub task_kind: TaskKind,
+    pub task_group_id: Option<Uuid>,
+    pub task_group_node_id: Option<String>,
     pub parent_workspace_id: Option<Uuid>,
     pub shared_task_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
@@ -69,6 +72,9 @@ pub struct CreateTask {
     pub title: String,
     pub description: Option<String>,
     pub status: Option<TaskStatus>,
+    pub task_kind: Option<TaskKind>,
+    pub task_group_id: Option<Uuid>,
+    pub task_group_node_id: Option<String>,
     pub parent_workspace_id: Option<Uuid>,
     pub image_ids: Option<Vec<Uuid>>,
     pub shared_task_id: Option<Uuid>,
@@ -85,6 +91,9 @@ impl CreateTask {
             title,
             description,
             status: Some(TaskStatus::Todo),
+            task_kind: None,
+            task_group_id: None,
+            task_group_node_id: None,
             parent_workspace_id: None,
             image_ids: None,
             shared_task_id: None,
@@ -103,6 +112,9 @@ impl CreateTask {
             title,
             description,
             status: Some(status),
+            task_kind: None,
+            task_group_id: None,
+            task_group_node_id: None,
             parent_workspace_id: None,
             image_ids: None,
             shared_task_id: Some(shared_task_id),
@@ -146,6 +158,13 @@ impl Task {
                 .map(Some)?,
             None => None,
         };
+        let task_group_id = match model.task_group_id {
+            Some(id) => ids::task_group_uuid_by_id(db, id)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Task group not found".to_string()))
+                .map(Some)?,
+            None => None,
+        };
 
         Ok(Self {
             id: model.uuid,
@@ -153,6 +172,9 @@ impl Task {
             title: model.title,
             description: model.description,
             status: model.status,
+            task_kind: model.task_kind,
+            task_group_id,
+            task_group_node_id: model.task_group_node_id,
             parent_workspace_id,
             shared_task_id,
             created_at: model.created_at.into(),
@@ -389,6 +411,30 @@ impl Task {
                 .map(Some)?,
             None => None,
         };
+        let task_group_id = match data.task_group_id {
+            Some(id) => {
+                let group_row_id = ids::task_group_id_by_uuid(db, id)
+                    .await?
+                    .ok_or(DbErr::RecordNotFound("Task group not found".to_string()))?;
+                if let Some(group) = task_group::Entity::find_by_id(group_row_id)
+                    .one(db)
+                    .await?
+                {
+                    if group.project_id != project_row_id {
+                        return Err(DbErr::Custom(
+                            "Task group belongs to a different project".to_string(),
+                        ));
+                    }
+                }
+                Some(group_row_id)
+            }
+            None => None,
+        };
+        let task_group_node_id = data
+            .task_group_node_id
+            .as_ref()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty());
 
         let now = Utc::now();
         let active = task::ActiveModel {
@@ -397,6 +443,9 @@ impl Task {
             title: Set(data.title.clone()),
             description: Set(data.description.clone()),
             status: Set(data.status.clone().unwrap_or_default()),
+            task_kind: Set(data.task_kind.clone().unwrap_or_default()),
+            task_group_id: Set(task_group_id),
+            task_group_node_id: Set(task_group_node_id),
             parent_workspace_id: Set(parent_workspace_id),
             shared_task_id: Set(shared_task_id),
             created_at: Set(now.into()),
@@ -437,6 +486,9 @@ impl Task {
             return Err(DbErr::RecordNotFound("Task not found".to_string()));
         }
 
+        let status_changed = record.status != status;
+        let task_group_id = record.task_group_id;
+        let task_kind = record.task_kind.clone();
         let parent_workspace_row_id = match parent_workspace_id {
             Some(id) => ids::workspace_id_by_uuid(db, id)
                 .await?
@@ -456,6 +508,23 @@ impl Task {
         let payload = serde_json::to_value(TaskEventPayload { task_id: id, project_id })
             .map_err(|err| DbErr::Custom(err.to_string()))?;
         EventOutbox::enqueue(db, EVENT_TASK_UPDATED, "task", id, payload).await?;
+
+        if status_changed
+            && let Some(task_group_id) = task_group_id
+            && task_kind != TaskKind::Group
+        {
+            if let Err(err) = super::task_group::TaskGroup::sync_entry_task_statuses_by_row_id(
+                db,
+                task_group_id,
+            )
+            .await
+            {
+                tracing::warn!(
+                    "Failed to sync task group entry status after task update: {}",
+                    err
+                );
+            }
+        }
         Self::from_model(db, updated).await
     }
 
@@ -470,6 +539,8 @@ impl Task {
             .await?
             .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
         let project_row_id = record.project_id;
+        let task_group_id = record.task_group_id;
+        let task_kind = record.task_kind.clone();
         let mut active: task::ActiveModel = record.into();
         active.status = Set(status);
         active.updated_at = Set(Utc::now().into());
@@ -480,6 +551,19 @@ impl Task {
         let payload = serde_json::to_value(TaskEventPayload { task_id: id, project_id })
             .map_err(|err| DbErr::Custom(err.to_string()))?;
         EventOutbox::enqueue(db, EVENT_TASK_UPDATED, "task", id, payload).await?;
+
+        if let Some(task_group_id) = task_group_id
+            && task_kind != TaskKind::Group
+        {
+            if let Err(err) = super::task_group::TaskGroup::sync_entry_task_statuses_by_row_id(
+                db,
+                task_group_id,
+            )
+            .await
+            {
+                tracing::warn!("Failed to sync task group entry status: {}", err);
+            }
+        }
         Ok(())
     }
 

@@ -17,6 +17,9 @@
     "foldStatusButton": "Fold statuses",
     "foldStatusLabel": "Auto-fold statuses"
   },
+  "taskGroup": {
+    "workflowMissing": "Workflow not found."
+  },
   "actions": {
     "addTask": "Add task"
   },

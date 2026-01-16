@@ -4,11 +4,13 @@ import { Link, Loader2, XCircle } from 'lucide-react';
 import type { TaskWithAttemptStatus } from 'shared/types';
 import { ActionsDropdown } from '@/components/ui/actions-dropdown';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { useNavigateWithSearch } from '@/hooks';
 import { paths } from '@/lib/paths';
 import { attemptsApi } from '@/lib/api';
 import { TaskCardHeader } from './TaskCardHeader';
 import { useTranslation } from 'react-i18next';
+import { isTaskGroupEntry } from '@/utils/taskGroup';
 
 type Task = TaskWithAttemptStatus;
 
@@ -32,6 +34,7 @@ export function TaskCard({
   const { t } = useTranslation('tasks');
   const navigate = useNavigateWithSearch();
   const [isNavigatingToParent, setIsNavigatingToParent] = useState(false);
+  const isTaskGroup = isTaskGroupEntry(task);
 
   const handleClick = useCallback(() => {
     onViewDetails(task);
@@ -112,6 +115,14 @@ export function TaskCard({
             </>
           }
         />
+        {isTaskGroup && (
+          <Badge
+            variant="outline"
+            className="w-fit text-[10px] uppercase tracking-[0.12em] text-muted-foreground border-muted-foreground/40"
+          >
+            Workflow
+          </Badge>
+        )}
         {task.description && (
           <p className="text-sm text-secondary-foreground break-words">
             {task.description.length > 130

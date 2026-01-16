@@ -73,6 +73,7 @@ import {
 import { cn } from '@/lib/utils';
 import { paths } from '@/lib/paths';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
+import { getTaskGroupId } from '@/utils/taskGroup';
 
 import type {
   RepoBranchStatus,
@@ -426,6 +427,13 @@ export function TasksOverview() {
 
   const handleViewTaskDetails = useCallback(
     (task: Task, attemptIdToShow?: string) => {
+      const taskGroupId = getTaskGroupId(task);
+      if (taskGroupId) {
+        navigateWithSearch(
+          paths.taskGroupWorkflow(task.project_id, taskGroupId)
+        );
+        return;
+      }
       if (attemptIdToShow) {
         navigateWithSearch(
           paths.overviewAttempt(task.project_id, task.id, attemptIdToShow)

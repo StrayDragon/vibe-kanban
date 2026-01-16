@@ -65,6 +65,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import { AttemptHeaderActions } from '@/components/panels/AttemptHeaderActions';
 import { TaskPanelHeaderActions } from '@/components/panels/TaskPanelHeaderActions';
+import { getTaskGroupId } from '@/utils/taskGroup';
 
 import type { TaskWithAttemptStatus, TaskStatus } from 'shared/types';
 
@@ -458,6 +459,11 @@ export function ProjectTasks() {
   const handleViewTaskDetails = useCallback(
     (task: Task, attemptIdToShow?: string) => {
       if (!projectId) return;
+      const taskGroupId = getTaskGroupId(task);
+      if (taskGroupId) {
+        navigateWithSearch(paths.taskGroupWorkflow(projectId, taskGroupId));
+        return;
+      }
 
       if (attemptIdToShow) {
         navigateWithSearch(paths.attempt(projectId, task.id, attemptIdToShow));

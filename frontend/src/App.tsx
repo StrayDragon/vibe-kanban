@@ -4,6 +4,7 @@ import { I18nextProvider } from 'react-i18next';
 import i18n from '@/i18n';
 import { Projects } from '@/pages/Projects';
 import { ProjectTasks } from '@/pages/ProjectTasks';
+import { TaskGroupWorkflow } from '@/pages/TaskGroupWorkflow';
 import { TasksOverview } from '@/pages/TasksOverview';
 import { FullAttemptLogsPage } from '@/pages/FullAttemptLogs';
 import { NormalLayout } from '@/components/layout/NormalLayout';
@@ -139,6 +140,10 @@ function AppContent() {
                 <Route
                   path="/projects/:projectId/tasks/:taskId/attempts/:attemptId"
                   element={<ProjectTasks />}
+                />
+                <Route
+                  path="/projects/:projectId/task-groups/:taskGroupId"
+                  element={<TaskGroupWorkflow />}
                 />
               </Route>
             </Routes>

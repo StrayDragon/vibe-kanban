@@ -1,9 +1,10 @@
 use sea_orm::entity::prelude::*;
+use sea_orm::JsonValue;
 
-use crate::types::{TaskKind, TaskStatus};
+use crate::types::TaskStatus;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
-#[sea_orm(table_name = "tasks")]
+#[sea_orm(table_name = "task_groups")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
@@ -12,11 +13,9 @@ pub struct Model {
     pub title: String,
     pub description: Option<String>,
     pub status: TaskStatus,
-    pub task_kind: TaskKind,
-    pub task_group_id: Option<i64>,
-    pub task_group_node_id: Option<String>,
-    pub parent_workspace_id: Option<i64>,
-    pub shared_task_id: Option<i64>,
+    pub baseline_ref: String,
+    pub schema_version: i32,
+    pub graph_json: JsonValue,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

@@ -6,7 +6,7 @@ use axum::{
 };
 use db::models::{
     execution_process::ExecutionProcess, project::Project, session::Session, tag::Tag, task::Task,
-    workspace::Workspace,
+    task_group::TaskGroup, workspace::Workspace,
 };
 use deployment::Deployment;
 use uuid::Uuid;
@@ -64,6 +64,29 @@ pub async fn load_task_middleware(
     request.extensions_mut().insert(task);
 
     // Continue with the next middleware/handler
+    Ok(next.run(request).await)
+}
+
+pub async fn load_task_group_middleware(
+    State(deployment): State<DeploymentImpl>,
+    Path(task_group_id): Path<Uuid>,
+    request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let task_group = match TaskGroup::find_by_id(&deployment.db().pool, task_group_id).await {
+        Ok(Some(task_group)) => task_group,
+        Ok(None) => {
+            tracing::warn!("TaskGroup {} not found", task_group_id);
+            return Err(StatusCode::NOT_FOUND);
+        }
+        Err(e) => {
+            tracing::error!("Failed to fetch TaskGroup {}: {}", task_group_id, e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    let mut request = request;
+    request.extensions_mut().insert(task_group);
     Ok(next.run(request).await)
 }
 

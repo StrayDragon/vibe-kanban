@@ -38,15 +38,33 @@ export type UpdateTag = { tag_name: string | null, content: string | null, };
 
 export type TaskStatus = "todo" | "inprogress" | "inreview" | "done" | "cancelled";
 
-export type Task = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, parent_workspace_id: string | null, shared_task_id: string | null, created_at: string, updated_at: string, };
+export type TaskKind = "default" | "group";
 
-export type TaskWithAttemptStatus = { has_in_progress_attempt: boolean, last_attempt_failed: boolean, executor: string, id: string, project_id: string, title: string, description: string | null, status: TaskStatus, parent_workspace_id: string | null, shared_task_id: string | null, created_at: string, updated_at: string, };
+export type Task = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, shared_task_id: string | null, created_at: string, updated_at: string, };
+
+export type TaskWithAttemptStatus = { has_in_progress_attempt: boolean, last_attempt_failed: boolean, executor: string, id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, shared_task_id: string | null, created_at: string, updated_at: string, };
 
 export type TaskRelationships = { parent_task: Task | null, current_workspace: Workspace, children: Array<Task>, };
 
-export type CreateTask = { project_id: string, title: string, description: string | null, status: TaskStatus | null, parent_workspace_id: string | null, image_ids: Array<string> | null, shared_task_id: string | null, };
+export type CreateTask = { project_id: string, title: string, description: string | null, status: TaskStatus | null, task_kind: TaskKind | null, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, image_ids: Array<string> | null, shared_task_id: string | null, };
 
 export type UpdateTask = { title: string | null, description: string | null, status: TaskStatus | null, parent_workspace_id: string | null, image_ids: Array<string> | null, };
+
+export type TaskGroup = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, baseline_ref: string, schema_version: number, graph: TaskGroupGraph, suggested_status: TaskStatus, created_at: string, updated_at: string, };
+
+export type CreateTaskGroup = { project_id: string, title: string, description: string | null, status: TaskStatus | null, baseline_ref: string, schema_version: number, graph: TaskGroupGraph, };
+
+export type UpdateTaskGroup = { title: string | null, description: string | null, status: TaskStatus | null, baseline_ref: string | null, schema_version: number | null, graph: TaskGroupGraph | null, };
+
+export type TaskGroupGraph = { nodes: Array<TaskGroupNode>, edges: Array<TaskGroupEdge>, };
+
+export type TaskGroupNode = { id: string, task_id: string, kind: TaskGroupNodeKind, phase: number, agent_role: string | null, cost_estimate: string | null, artifacts: Array<string>, instructions: string | null, requires_approval: boolean | null, layout: TaskGroupNodeLayout, status?: TaskStatus | null, };
+
+export type TaskGroupNodeLayout = { x: number, y: number, };
+
+export enum TaskGroupNodeKind { task = "task", checkpoint = "checkpoint", merge = "merge" }
+
+export type TaskGroupEdge = { id: string, from: string, to: string, data_flow: string | null, };
 
 export type DraftFollowUpData = { message: string, variant: string | null, };
 
@@ -398,6 +416,10 @@ export type CodingAgentInitialRequest = { prompt: string,
  * Executor profile specification
  */
 executor_profile_id: ExecutorProfileId, 
+/**
+ * Optional image paths (relative to the worktree root).
+ */
+image_paths: Array<string>, 
 /**
  * Optional relative path to execute the agent in (relative to container_ref).
  * If None, uses the container_ref directory directly.

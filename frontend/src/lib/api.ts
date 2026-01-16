@@ -73,6 +73,7 @@ import {
 } from 'shared/types';
 import type { WorkspaceWithSession } from '@/types/attempt';
 import { createWorkspaceWithSession } from '@/types/attempt';
+import type { TaskGroup, UpdateTaskGroup } from '@/types/task-group';
 
 export class ApiError<E = unknown> extends Error {
   public status?: number;
@@ -363,6 +364,25 @@ export const tasksApi = {
       method: 'DELETE',
     });
     return handleApiResponse<void>(response);
+  },
+};
+
+// Task Group APIs
+export const taskGroupsApi = {
+  getById: async (taskGroupId: string): Promise<TaskGroup> => {
+    const response = await makeRequest(`/api/task-groups/${taskGroupId}`);
+    return handleApiResponse<TaskGroup>(response);
+  },
+
+  update: async (
+    taskGroupId: string,
+    data: UpdateTaskGroup
+  ): Promise<TaskGroup> => {
+    const response = await makeRequest(`/api/task-groups/${taskGroupId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    return handleApiResponse<TaskGroup>(response);
   },
 };
 

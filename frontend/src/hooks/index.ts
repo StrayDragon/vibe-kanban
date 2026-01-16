@@ -23,3 +23,4 @@ export type { RepoBranchConfig } from './useRepoBranchSelection';
 export { useTaskAttempts } from './useTaskAttempts';
 export { useVariant } from './useVariant';
 export { useRetryProcess } from './useRetryProcess';
+export { useTaskGroup } from './useTaskGroup';
