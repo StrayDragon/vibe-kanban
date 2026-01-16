@@ -1,3 +1,5 @@
+#![allow(clippy::useless_conversion)]
+
 pub mod coding_agent_turn;
 pub mod event_outbox;
 pub mod ids;

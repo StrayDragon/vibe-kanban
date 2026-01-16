@@ -44,5 +44,8 @@ codex-mcp-types = { git = "https://github.com/openai/codex.git", package = "mcp-
 sha2 = "0.10"
 derivative = "2.2.0"
 
+[dev-dependencies]
+tempfile = "3.10"
+
 [target.'cfg(windows)'.dependencies]
 winsplit = "0.1.0"

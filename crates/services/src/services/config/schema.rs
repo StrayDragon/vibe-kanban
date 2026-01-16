@@ -48,20 +48,15 @@ pub struct ShowcaseState {
     pub seen_features: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, EnumString)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, EnumString, Default)]
 #[ts(use_ts_enum)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum ThemeMode {
     Light,
     Dark,
+    #[default]
     System,
-}
-
-impl Default for ThemeMode {
-    fn default() -> Self {
-        ThemeMode::System
-    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, TS, Default)]
@@ -176,12 +171,11 @@ impl SoundFile {
         let cache_dir = cache_dir();
         let cached_path = cache_dir.join(format!("sound-{filename}"));
 
-        if cached_path.exists() {
-            if let Ok(metadata) = std::fs::metadata(&cached_path)
-                && metadata.len() > 0
-            {
-                return Ok(cached_path);
-            }
+        if std::fs::metadata(&cached_path)
+            .map(|metadata| metadata.len() > 0)
+            .unwrap_or(false)
+        {
+            return Ok(cached_path);
         }
 
         let sound_data = SoundAssets::get(filename)
@@ -267,22 +261,25 @@ impl Config {
             self.git_branch_prefix = default_git_branch_prefix();
         }
 
-        if let Some(variant) = &self.executor_profile.variant {
-            if variant.trim().is_empty() {
-                self.executor_profile.variant = None;
-            }
+        if matches!(
+            self.executor_profile.variant.as_deref(),
+            Some(variant) if variant.trim().is_empty()
+        ) {
+            self.executor_profile.variant = None;
         }
 
-        if let Some(path) = self.llman_claude_code_path.as_deref() {
-            if path.trim().is_empty() {
-                self.llman_claude_code_path = None;
-            }
+        if matches!(
+            self.llman_claude_code_path.as_deref(),
+            Some(path) if path.trim().is_empty()
+        ) {
+            self.llman_claude_code_path = None;
         }
 
-        if let Some(dir) = self.workspace_dir.as_deref() {
-            if dir.trim().is_empty() {
-                self.workspace_dir = None;
-            }
+        if matches!(
+            self.workspace_dir.as_deref(),
+            Some(dir) if dir.trim().is_empty()
+        ) {
+            self.workspace_dir = None;
         }
 
         self

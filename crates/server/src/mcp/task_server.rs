@@ -917,7 +917,7 @@ impl TaskServer {
     fn summarize_attempts(attempts: &[WorkspaceWithSession]) -> TaskAttemptSummary {
         let latest = attempts
             .iter()
-            .min_by(|a, b| Self::compare_attempts_newest_first(*a, *b));
+            .min_by(|a, b| Self::compare_attempts_newest_first(a, b));
 
         let Some(latest) = latest else {
             return TaskAttemptSummary::default();

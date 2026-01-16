@@ -114,9 +114,13 @@ const TaskPanel = ({
       <NewCardContent>
         <div className="p-6 flex flex-col h-full max-h-[calc(100vh-8rem)]">
           <div className="space-y-3 overflow-y-auto flex-shrink min-h-0">
-            <WYSIWYGEditor value={titleContent} disabled />
+            <WYSIWYGEditor value={titleContent} disabled taskId={task.id} />
             {descriptionContent && (
-              <WYSIWYGEditor value={descriptionContent} disabled />
+              <WYSIWYGEditor
+                value={descriptionContent}
+                disabled
+                taskId={task.id}
+              />
             )}
           </div>
 

@@ -126,13 +126,15 @@ impl Repo {
             .exec(db)
             .await?;
 
-        if insert.last_insert_id > 0 {
-            if let Some(created) = repo::Entity::find_by_id(insert.last_insert_id)
+        let created = if insert.last_insert_id > 0 {
+            repo::Entity::find_by_id(insert.last_insert_id)
                 .one(db)
                 .await?
-            {
-                return Ok(Self::from_model(created));
-            }
+        } else {
+            None
+        };
+        if let Some(created) = created {
+            return Ok(Self::from_model(created));
         }
 
         let record = repo::Entity::find()

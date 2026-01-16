@@ -176,27 +176,6 @@ async fn main() -> Result<(), VibeKanbanError> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::spawn_background;
-    use std::time::Duration;
-    use tokio::sync::oneshot;
-
-    #[tokio::test]
-    async fn spawn_background_returns_immediately() {
-        let (tx, rx) = oneshot::channel::<()>();
-
-        let start = std::time::Instant::now();
-        let handle = spawn_background(async move {
-            let _ = rx.await;
-        });
-        assert!(start.elapsed() < Duration::from_millis(50));
-
-        let _ = tx.send(());
-        let _ = handle.await;
-    }
-}
-
 pub async fn perform_cleanup_actions(deployment: &DeploymentImpl) {
     if let Err(e) = deployment.container().kill_all_running_processes().await {
         tracing::warn!("Failed to cleanly kill running execution processes: {e}");
@@ -296,4 +275,25 @@ async fn wait_for_watch_true(mut rx: watch::Receiver<bool>) {
 async fn shutdown_deadline(rx: watch::Receiver<bool>, timeout: std::time::Duration) {
     wait_for_watch_true(rx).await;
     tokio::time::sleep(timeout).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::spawn_background;
+    use std::time::Duration;
+    use tokio::sync::oneshot;
+
+    #[tokio::test]
+    async fn spawn_background_returns_immediately() {
+        let (tx, rx) = oneshot::channel::<()>();
+
+        let start = std::time::Instant::now();
+        let handle = spawn_background(async move {
+            let _ = rx.await;
+        });
+        assert!(start.elapsed() < Duration::from_millis(50));
+
+        let _ = tx.send(());
+        let _ = handle.await;
+    }
 }

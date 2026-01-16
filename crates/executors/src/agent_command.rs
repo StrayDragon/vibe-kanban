@@ -472,12 +472,13 @@ async fn binary_candidates(
         candidates.push(preferred.to_string());
     }
 
-    if let Some(package_path) = package_path {
-        if let Some(bin_names) = read_package_bin_names(package, package_path).await {
-            for name in bin_names {
-                if !candidates.contains(&name) {
-                    candidates.push(name);
-                }
+    if let Some(bin_names) = match package_path {
+        Some(package_path) => read_package_bin_names(package, package_path).await,
+        None => None,
+    } {
+        for name in bin_names {
+            if !candidates.contains(&name) {
+                candidates.push(name);
             }
         }
     }
@@ -538,9 +539,7 @@ fn resolve_package_path(
         root.join("node_modules")
     };
     if package.starts_with('@') {
-        let mut parts = package.splitn(2, '/');
-        let scope = parts.next()?;
-        let name = parts.next()?;
+        let (scope, name) = package.split_once('/')?;
         path = path.join(scope).join(name);
     } else {
         path = path.join(package);
@@ -667,7 +666,7 @@ async fn run_command(program: &Path, args: &[&str]) -> Option<String> {
 fn parse_pnpm_list_json(raw: &str) -> Option<GlobalPackageSnapshot> {
     let value: serde_json::Value = serde_json::from_str(raw).ok()?;
     let root = match &value {
-        serde_json::Value::Array(arr) => arr.get(0)?,
+        serde_json::Value::Array(arr) => arr.first()?,
         serde_json::Value::Object(_) => &value,
         _ => return None,
     };

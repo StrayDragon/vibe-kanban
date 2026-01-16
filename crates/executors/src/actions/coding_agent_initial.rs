@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::{collections::HashMap, path::{Path, PathBuf}, sync::Arc};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,8 @@ pub struct CodingAgentInitialRequest {
     /// If None, uses the container_ref directory directly.
     #[serde(default)]
     pub working_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_paths: Option<HashMap<String, PathBuf>>,
 }
 
 impl CodingAgentInitialRequest {
@@ -53,6 +55,17 @@ impl Executable for CodingAgentInitialRequest {
             ))?;
 
         agent.use_approvals(approvals.clone());
+
+        if let crate::executors::CodingAgent::Codex(codex) = &agent {
+            return codex
+                .spawn_with_image_paths(
+                    &effective_dir,
+                    &self.prompt,
+                    self.image_paths.as_ref(),
+                    env,
+                )
+                .await;
+        }
 
         agent.spawn(&effective_dir, &self.prompt, env).await
     }

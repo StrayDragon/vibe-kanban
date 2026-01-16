@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { PatchTypeWithKey } from './useConversationHistory';
 import { useConversationHistory } from './useConversationHistory';
 import { streamLogEntries } from '@/utils/streamLogEntries';
 import type {
@@ -350,9 +351,9 @@ describe('useConversationHistory', () => {
       expect(lastCall?.[2]).toBe(false);
     });
 
-    const lastEntries =
-      onEntriesUpdated.mock.calls[onEntriesUpdated.mock.calls.length - 1]?.[0] ??
-      [];
+    const lastEntries = (onEntriesUpdated.mock.calls[
+      onEntriesUpdated.mock.calls.length - 1
+    ]?.[0] ?? []) as PatchTypeWithKey[];
     expect(
       lastEntries.some(
         (entry) =>

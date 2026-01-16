@@ -5,6 +5,7 @@ use axum::{
     extract::{Query, State},
     response::Json as ResponseJson,
 };
+use db::DbErr;
 use db::models::{
     execution_process::{ExecutionProcess, ExecutionProcessRunReason},
     merge::{Merge, MergeStatus},
@@ -151,6 +152,18 @@ async fn trigger_pr_description_follow_up(
         .as_ref()
         .filter(|dir| !dir.is_empty())
         .cloned();
+    let task = workspace
+        .parent_task(&deployment.db().pool)
+        .await?
+        .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+    let image_paths = match deployment.image().image_path_map_for_task(task.id).await {
+        Ok(map) if !map.is_empty() => Some(map),
+        Ok(_) => None,
+        Err(err) => {
+            tracing::warn!("Failed to resolve task image paths: {}", err);
+            None
+        }
+    };
 
     // Build the action type (follow-up if session exists, otherwise initial)
     let action_type = if let Some(agent_session_id) = latest_agent_session_id {
@@ -159,12 +172,14 @@ async fn trigger_pr_description_follow_up(
             session_id: agent_session_id,
             executor_profile_id: executor_profile_id.clone(),
             working_dir: working_dir.clone(),
+            image_paths: image_paths.clone(),
         })
     } else {
         ExecutorActionType::CodingAgentInitialRequest(CodingAgentInitialRequest {
             prompt,
             executor_profile_id: executor_profile_id.clone(),
             working_dir,
+            image_paths,
         })
     };
 

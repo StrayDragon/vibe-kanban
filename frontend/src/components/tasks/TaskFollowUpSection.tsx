@@ -703,6 +703,7 @@ export function TaskFollowUpSection({
                 onPasteFiles={handlePasteFiles}
                 projectId={projectId}
                 taskAttemptId={workspaceId}
+                taskId={task.id}
                 onCmdEnter={handleSubmitShortcut}
                 className="min-h-[40px]"
               />

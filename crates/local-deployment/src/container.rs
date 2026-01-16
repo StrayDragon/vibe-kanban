@@ -514,6 +514,18 @@ impl LocalContainerService {
             .as_ref()
             .filter(|dir| !dir.is_empty())
             .cloned();
+        let image_paths = match self
+            .image_service
+            .image_path_map_for_task(ctx.task.id)
+            .await
+        {
+            Ok(map) if !map.is_empty() => Some(map),
+            Ok(_) => None,
+            Err(err) => {
+                tracing::warn!("Failed to resolve task image paths: {}", err);
+                None
+            }
+        };
 
         let action_type = if let Some(agent_session_id) = latest_agent_session_id {
             ExecutorActionType::CodingAgentFollowUpRequest(CodingAgentFollowUpRequest {
@@ -521,12 +533,14 @@ impl LocalContainerService {
                 session_id: agent_session_id,
                 executor_profile_id: executor_profile_id.clone(),
                 working_dir: working_dir.clone(),
+                image_paths: image_paths.clone(),
             })
         } else {
             ExecutorActionType::CodingAgentInitialRequest(CodingAgentInitialRequest {
                 prompt,
                 executor_profile_id: executor_profile_id.clone(),
                 working_dir,
+                image_paths,
             })
         };
 
@@ -1156,6 +1170,18 @@ impl LocalContainerService {
             .as_ref()
             .filter(|dir| !dir.is_empty())
             .cloned();
+        let image_paths = match self
+            .image_service
+            .image_path_map_for_task(ctx.task.id)
+            .await
+        {
+            Ok(map) if !map.is_empty() => Some(map),
+            Ok(_) => None,
+            Err(err) => {
+                tracing::warn!("Failed to resolve task image paths: {}", err);
+                None
+            }
+        };
 
         let action_type = if let Some(agent_session_id) = latest_agent_session_id {
             ExecutorActionType::CodingAgentFollowUpRequest(CodingAgentFollowUpRequest {
@@ -1163,12 +1189,14 @@ impl LocalContainerService {
                 session_id: agent_session_id,
                 executor_profile_id: executor_profile_id.clone(),
                 working_dir: working_dir.clone(),
+                image_paths: image_paths.clone(),
             })
         } else {
             ExecutorActionType::CodingAgentInitialRequest(CodingAgentInitialRequest {
                 prompt: queued_data.message.clone(),
                 executor_profile_id: executor_profile_id.clone(),
                 working_dir,
+                image_paths,
             })
         };
 
@@ -1209,6 +1237,10 @@ impl ContainerService for LocalContainerService {
 
     fn git(&self) -> &GitService {
         &self.git
+    }
+
+    fn image_service(&self) -> &ImageService {
+        &self.image_service
     }
 
     fn notification_service(&self) -> &NotificationService {

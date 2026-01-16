@@ -126,11 +126,23 @@ impl AppServerClient {
         conversation_id: codex_protocol::ThreadId,
         message: String,
     ) -> Result<SendUserMessageResponse, ExecutorError> {
+        self.send_user_items(
+            conversation_id,
+            vec![InputItem::Text { text: message }],
+        )
+        .await
+    }
+
+    pub async fn send_user_items(
+        &self,
+        conversation_id: codex_protocol::ThreadId,
+        items: Vec<InputItem>,
+    ) -> Result<SendUserMessageResponse, ExecutorError> {
         let request = ClientRequest::SendUserMessage {
             request_id: self.next_request_id(),
             params: SendUserMessageParams {
                 conversation_id,
-                items: vec![InputItem::Text { text: message }],
+                items,
             },
         };
         self.send_request(request, "sendUserMessage").await

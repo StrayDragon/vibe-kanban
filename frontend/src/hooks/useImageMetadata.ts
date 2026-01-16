@@ -46,7 +46,10 @@ export function useImageMetadata(
           `/api/task-attempts/${taskAttemptId}/images/metadata?path=${encodeURIComponent(src)}`
         );
         const data = await res.json();
-        return data.data as ImageMetadata | null;
+        const attemptMetadata = data.data as ImageMetadata | null;
+        if (attemptMetadata?.exists || !taskId) {
+          return attemptMetadata;
+        }
       }
       if (taskId) {
         const res = await fetch(

@@ -21,11 +21,13 @@ export function RetryEditorInline({
   executionProcessId,
   initialContent,
   onCancelled,
+  taskId,
 }: {
   attempt: WorkspaceWithSession;
   executionProcessId: string;
   initialContent: string;
   onCancelled?: () => void;
+  taskId?: string;
 }) {
   const { t } = useTranslation(['common']);
   const attemptId = attempt.id;
@@ -161,6 +163,7 @@ export function RetryEditorInline({
           className={cn('min-h-[40px]', 'bg-background')}
           projectId={projectId}
           taskAttemptId={attemptId}
+          taskId={taskId}
         />
         {isSending && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-background/60">

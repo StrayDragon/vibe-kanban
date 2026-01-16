@@ -1,0 +1,3 @@
+{"type":"user_message","message":"Please review ![Demo](.vibe-images/demo.png)"}
+{"type":"view_image_tool_call","call_id":"img-1","path":".vibe-images/demo.png"}
+{"type":"agent_message","message":"Image received in test scenario."}

@@ -11,10 +11,12 @@ const UserMessage = ({
   content,
   executionProcessId,
   taskAttempt,
+  taskId,
 }: {
   content: string;
   executionProcessId?: string;
   taskAttempt?: WorkspaceWithSession;
+  taskId?: string;
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const { capabilities } = useUserSystem();
@@ -62,6 +64,7 @@ const UserMessage = ({
               executionProcessId={executionProcessId}
               initialContent={content}
               onCancelled={onCancelled}
+              taskId={taskId}
             />
           ) : (
             <WYSIWYGEditor
@@ -69,6 +72,7 @@ const UserMessage = ({
               disabled
               className="whitespace-pre-wrap break-words flex flex-col gap-1 font-light"
               taskAttemptId={taskAttempt?.id}
+              taskId={taskId}
               onEdit={canRetry ? startRetry : undefined}
             />
           )}

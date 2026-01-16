@@ -1792,6 +1792,7 @@ enum Tags {
     UpdatedAt,
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Iden)]
 enum Scratch {
     Table,

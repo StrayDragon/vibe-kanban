@@ -172,10 +172,12 @@ impl Scratch {
 
         let mut scratches = Vec::with_capacity(records.len());
         for record in records {
-            if let Some(session_id) = ids::session_uuid_by_id(db, record.session_id).await? {
-                if let Ok(scratch) = map_row(record, session_id) {
-                    scratches.push(scratch);
-                }
+            let scratch = match ids::session_uuid_by_id(db, record.session_id).await? {
+                Some(session_id) => map_row(record, session_id).ok(),
+                None => None,
+            };
+            if let Some(scratch) = scratch {
+                scratches.push(scratch);
             }
         }
 

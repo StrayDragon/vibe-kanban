@@ -9,7 +9,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use codex_app_server_protocol::NewConversationParams;
+use codex_app_server_protocol::{InputItem, NewConversationParams};
 use codex_protocol::{
     config_types::SandboxMode as CodexSandboxMode, protocol::AskForApproval as CodexAskForApproval,
 };
@@ -22,6 +22,7 @@ use strum_macros::AsRefStr;
 use tokio::process::Command;
 use ts_rs::TS;
 use workspace_utils::msg_store::MsgStore;
+use regex::Regex;
 
 use self::{
     client::{AppServerClient, LogWriter},
@@ -158,7 +159,9 @@ impl StandardCodingAgentExecutor for Codex {
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
         let command_parts = self.build_command_builder().await.build_initial()?;
-        self.spawn_inner(current_dir, prompt, command_parts, None, env)
+        let combined_prompt = self.append_prompt.combine_prompt(prompt);
+        let input_items = build_input_items(&combined_prompt, None);
+        self.spawn_inner(current_dir, input_items, command_parts, None, env)
             .await
     }
 
@@ -170,7 +173,9 @@ impl StandardCodingAgentExecutor for Codex {
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
         let command_parts = self.build_command_builder().await.build_follow_up(&[])?;
-        self.spawn_inner(current_dir, prompt, command_parts, Some(session_id), env)
+        let combined_prompt = self.append_prompt.combine_prompt(prompt);
+        let input_items = build_input_items(&combined_prompt, None);
+        self.spawn_inner(current_dir, input_items, command_parts, Some(session_id), env)
             .await
     }
 
@@ -212,6 +217,35 @@ impl StandardCodingAgentExecutor for Codex {
 }
 
 impl Codex {
+    pub async fn spawn_with_image_paths(
+        &self,
+        current_dir: &Path,
+        prompt: &str,
+        image_paths: Option<&HashMap<String, PathBuf>>,
+        env: &ExecutionEnv,
+    ) -> Result<SpawnedChild, ExecutorError> {
+        let command_parts = self.build_command_builder().await.build_initial()?;
+        let combined_prompt = self.append_prompt.combine_prompt(prompt);
+        let input_items = build_input_items(&combined_prompt, image_paths);
+        self.spawn_inner(current_dir, input_items, command_parts, None, env)
+            .await
+    }
+
+    pub async fn spawn_follow_up_with_image_paths(
+        &self,
+        current_dir: &Path,
+        prompt: &str,
+        session_id: &str,
+        image_paths: Option<&HashMap<String, PathBuf>>,
+        env: &ExecutionEnv,
+    ) -> Result<SpawnedChild, ExecutorError> {
+        let command_parts = self.build_command_builder().await.build_follow_up(&[])?;
+        let combined_prompt = self.append_prompt.combine_prompt(prompt);
+        let input_items = build_input_items(&combined_prompt, image_paths);
+        self.spawn_inner(current_dir, input_items, command_parts, Some(session_id), env)
+            .await
+    }
+
     async fn build_command_builder(&self) -> CommandBuilder {
         let resolved = agent_command_resolver()
             .resolve_with_overrides(
@@ -300,12 +334,11 @@ impl Codex {
     async fn spawn_inner(
         &self,
         current_dir: &Path,
-        prompt: &str,
+        input_items: Vec<InputItem>,
         command_parts: CommandParts,
         resume_session: Option<&str>,
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
-        let combined_prompt = self.append_prompt.combine_prompt(prompt);
         let (program_path, args) = command_parts.into_resolved().await?;
 
         let mut process = Command::new(program_path);
@@ -349,7 +382,7 @@ impl Codex {
             if let Err(err) = Self::launch_codex_app_server(
                 params,
                 resume_session,
-                combined_prompt,
+                input_items,
                 child_stdout,
                 child_stdin,
                 log_writer.clone(),
@@ -403,7 +436,7 @@ impl Codex {
     async fn launch_codex_app_server(
         conversation_params: NewConversationParams,
         resume_session: Option<String>,
-        combined_prompt: String,
+        input_items: Vec<InputItem>,
         child_stdout: tokio::process::ChildStdout,
         child_stdin: tokio::process::ChildStdin,
         log_writer: LogWriter,
@@ -429,9 +462,7 @@ impl Codex {
                 let conversation_id = response.conversation_id;
                 client.register_session(&conversation_id).await?;
                 client.add_conversation_listener(conversation_id).await?;
-                client
-                    .send_user_message(conversation_id, combined_prompt)
-                    .await?;
+                client.send_user_items(conversation_id, input_items).await?;
             }
             Some(session_id) => {
                 let (rollout_path, _forked_session_id) =
@@ -449,11 +480,125 @@ impl Codex {
                 let conversation_id = response.conversation_id;
                 client.register_session(&conversation_id).await?;
                 client.add_conversation_listener(conversation_id).await?;
-                client
-                    .send_user_message(conversation_id, combined_prompt)
-                    .await?;
+                client.send_user_items(conversation_id, input_items).await?;
             }
         }
         Ok(())
+    }
+}
+
+fn build_input_items(
+    prompt: &str,
+    image_paths: Option<&HashMap<String, PathBuf>>,
+) -> Vec<InputItem> {
+    let Some(image_paths) = image_paths else {
+        return vec![InputItem::Text {
+            text: prompt.to_string(),
+        }];
+    };
+
+    let pattern =
+        Regex::new(r"!\[[^\]]*\]\(([^)]+)\)").unwrap_or_else(|_| Regex::new("$^").unwrap());
+    let mut items = Vec::new();
+    let mut last = 0;
+
+    let push_text = |items: &mut Vec<InputItem>, text: &str| {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(InputItem::Text { text: existing }) = items.last_mut() {
+            existing.push_str(text);
+            return;
+        }
+        items.push(InputItem::Text {
+            text: text.to_string(),
+        });
+    };
+
+    for caps in pattern.captures_iter(prompt) {
+        let Some(full_match) = caps.get(0) else { continue };
+        let src = caps
+            .get(1)
+            .map(|m| m.as_str().trim())
+            .unwrap_or_default();
+        let end = full_match.end();
+        if last < end {
+            push_text(&mut items, &prompt[last..end]);
+        }
+        if let Some(path) = image_paths.get(src).filter(|path| path.exists()) {
+            items.push(InputItem::LocalImage { path: path.clone() });
+        }
+        last = end;
+    }
+
+    if last < prompt.len() {
+        push_text(&mut items, &prompt[last..]);
+    }
+
+    if items.is_empty() {
+        items.push(InputItem::Text {
+            text: prompt.to_string(),
+        });
+    }
+
+    items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_input_items;
+    use codex_app_server_protocol::InputItem;
+    use std::{collections::HashMap, path::PathBuf};
+
+    #[test]
+    fn build_input_items_interleaves_images_in_order() {
+        let temp = tempfile::NamedTempFile::new().expect("temp file");
+        let temp_path = temp.path().to_path_buf();
+        let mut map = HashMap::new();
+        map.insert(".vibe-images/a.png".to_string(), temp_path.clone());
+
+        let prompt = "Intro ![a](.vibe-images/a.png) end";
+        let items = build_input_items(prompt, Some(&map));
+
+        assert_eq!(items.len(), 3);
+        match &items[0] {
+            InputItem::Text { text } => {
+                assert!(text.contains("![a](.vibe-images/a.png)"));
+                assert!(text.contains("Intro"));
+            }
+            _ => panic!("expected text item"),
+        }
+        match &items[1] {
+            InputItem::LocalImage { path } => {
+                assert_eq!(path, &temp_path);
+            }
+            _ => panic!("expected local image item"),
+        }
+        match &items[2] {
+            InputItem::Text { text } => {
+                assert!(text.contains(" end"));
+            }
+            _ => panic!("expected trailing text item"),
+        }
+    }
+
+    #[test]
+    fn build_input_items_skips_missing_images() {
+        let mut map = HashMap::<String, PathBuf>::new();
+        map.insert(
+            ".vibe-images/missing.png".to_string(),
+            PathBuf::from("/nonexistent/missing.png"),
+        );
+
+        let prompt = "Text ![x](.vibe-images/missing.png) tail";
+        let items = build_input_items(prompt, Some(&map));
+
+        assert_eq!(items.len(), 1);
+        match &items[0] {
+            InputItem::Text { text } => {
+                assert!(text.contains("![x](.vibe-images/missing.png)"));
+            }
+            _ => panic!("expected text item"),
+        }
     }
 }

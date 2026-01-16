@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -169,6 +170,19 @@ impl ImageService {
     ) -> Result<(), ImageError> {
         let images = Image::find_by_task_id(&self.pool, task_id).await?;
         self.copy_images(worktree_path, images)
+    }
+
+    pub async fn image_path_map_for_task(
+        &self,
+        task_id: Uuid,
+    ) -> Result<HashMap<String, PathBuf>, ImageError> {
+        let images = Image::find_by_task_id(&self.pool, task_id).await?;
+        let mut map = HashMap::with_capacity(images.len());
+        for image in images {
+            let key = format!("{}/{}", utils::path::VIBE_IMAGES_DIR, image.file_path);
+            map.insert(key, self.get_absolute_path(&image));
+        }
+        Ok(map)
     }
 
     pub async fn copy_images_by_ids_to_worktree(

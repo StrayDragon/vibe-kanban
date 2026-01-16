@@ -57,16 +57,15 @@ use uuid::Uuid;
 use crate::services::{
     cache_budget::{CacheBudgetConfig, cache_budgets},
     git::{GitService, GitServiceError},
+    image::ImageService,
     notification::NotificationService,
     workspace_manager::WorkspaceError as WorkspaceManagerError,
     worktree_manager::WorktreeError,
 };
 pub type ContainerRef = String;
 
-static LOG_ENTRY_BACKFILL_CACHE: Lazy<Cache<String, ()>> = Lazy::new(|| {
-    let cache = build_log_backfill_cache(cache_budgets());
-    cache
-});
+static LOG_ENTRY_BACKFILL_CACHE: Lazy<Cache<String, ()>> =
+    Lazy::new(|| build_log_backfill_cache(cache_budgets()));
 
 fn build_log_backfill_cache(budgets: &CacheBudgetConfig) -> Cache<String, ()> {
     let mut builder = Cache::builder()
@@ -227,6 +226,8 @@ pub trait ContainerService {
     fn db(&self) -> &DBService;
 
     fn git(&self) -> &GitService;
+
+    fn image_service(&self) -> &ImageService;
 
     fn notification_service(&self) -> &NotificationService;
 
@@ -1719,6 +1720,14 @@ pub trait ContainerService {
         .await?;
 
         let prompt = task.to_prompt();
+        let image_paths = match self.image_service().image_path_map_for_task(task.id).await {
+            Ok(map) if !map.is_empty() => Some(map),
+            Ok(_) => None,
+            Err(err) => {
+                tracing::warn!("Failed to resolve task image paths: {}", err);
+                None
+            }
+        };
 
         let repos_with_setup: Vec<_> = project_repos
             .iter()
@@ -1740,6 +1749,7 @@ pub trait ContainerService {
                 prompt,
                 executor_profile_id: executor_profile_id.clone(),
                 working_dir,
+                image_paths,
             }),
             cleanup_action.map(Box::new),
         );
@@ -2054,39 +2064,6 @@ pub trait ContainerService {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    #[test]
-    fn log_backfill_cache_respects_max_entries() {
-        let mut budgets = CacheBudgetConfig::default();
-        budgets.log_backfill_completion_max_entries = 1;
-        budgets.log_backfill_completion_ttl = Duration::from_secs(60);
-
-        let cache = build_log_backfill_cache(&budgets);
-        cache.insert("first".to_string(), ());
-        cache.insert("second".to_string(), ());
-
-        assert!(cache.entry_count() <= 1);
-    }
-
-    #[tokio::test]
-    async fn log_backfill_cache_expires_entries() {
-        let mut budgets = CacheBudgetConfig::default();
-        budgets.log_backfill_completion_max_entries = 10;
-        budgets.log_backfill_completion_ttl = Duration::from_millis(10);
-
-        let cache = build_log_backfill_cache(&budgets);
-        let key = "expiring".to_string();
-        cache.insert(key.clone(), ());
-
-        tokio::time::sleep(Duration::from_millis(25)).await;
-        assert!(cache.get(&key).is_none());
-    }
-}
-
 fn extract_normalized_patch_entries(patch: &json_patch::Patch) -> Vec<LogEntryRow> {
     patch
         .iter()
@@ -2141,6 +2118,42 @@ fn entry_stats(entries: &[LogEntryRow]) -> Option<(i64, i64, i64)> {
         min_index = min_index.min(entry.entry_index);
         max_index = max_index.max(entry.entry_index);
     }
-
     Some((entries.len() as i64, min_index, max_index))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn log_backfill_cache_respects_max_entries() {
+        let budgets = CacheBudgetConfig {
+            log_backfill_completion_max_entries: 1,
+            log_backfill_completion_ttl: Duration::from_secs(60),
+            ..Default::default()
+        };
+
+        let cache = build_log_backfill_cache(&budgets);
+        cache.insert("first".to_string(), ());
+        cache.insert("second".to_string(), ());
+
+        assert!(cache.entry_count() <= 1);
+    }
+
+    #[tokio::test]
+    async fn log_backfill_cache_expires_entries() {
+        let budgets = CacheBudgetConfig {
+            log_backfill_completion_max_entries: 10,
+            log_backfill_completion_ttl: Duration::from_millis(10),
+            ..Default::default()
+        };
+
+        let cache = build_log_backfill_cache(&budgets);
+        let key = "expiring".to_string();
+        cache.insert(key.clone(), ());
+
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        assert!(cache.get(&key).is_none());
+    }
 }

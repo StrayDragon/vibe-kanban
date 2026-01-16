@@ -431,7 +431,10 @@ fn command_mode_body(prompt: &str) -> Option<CommandMode<'_>> {
                 paren_delimiters: true,
             });
         }
-        let boundary = rest.chars().next().map_or(true, is_command_boundary);
+        let boundary = match rest.chars().next() {
+            Some(ch) => is_command_boundary(ch),
+            None => true,
+        };
         if boundary {
             return Some(CommandMode {
                 body: trim_command_body(rest),
@@ -485,9 +488,7 @@ fn split_command_segments(body: &str, paren_delimiters: bool) -> Vec<String> {
                 current.push(ch);
             }
             '}' => {
-                if brace_depth > 0 {
-                    brace_depth -= 1;
-                }
+                brace_depth = brace_depth.saturating_sub(1);
                 current.push(ch);
             }
             '[' => {
@@ -495,9 +496,7 @@ fn split_command_segments(body: &str, paren_delimiters: bool) -> Vec<String> {
                 current.push(ch);
             }
             ']' => {
-                if bracket_depth > 0 {
-                    bracket_depth -= 1;
-                }
+                bracket_depth = bracket_depth.saturating_sub(1);
                 current.push(ch);
             }
             ';' | '\n' if brace_depth == 0 && bracket_depth == 0 => {

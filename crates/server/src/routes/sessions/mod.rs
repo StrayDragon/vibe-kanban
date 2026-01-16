@@ -130,6 +130,15 @@ pub async fn follow_up(
         .await?
         .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
 
+    let image_paths = match deployment.image().image_path_map_for_task(task.id).await {
+        Ok(map) if !map.is_empty() => Some(map),
+        Ok(_) => None,
+        Err(err) => {
+            tracing::warn!("Failed to resolve task image paths: {}", err);
+            None
+        }
+    };
+
     // Get parent project
     let project = task
         .parent_project(pool)
@@ -193,6 +202,7 @@ pub async fn follow_up(
             session_id: agent_session_id,
             executor_profile_id: executor_profile_id.clone(),
             working_dir: working_dir.clone(),
+            image_paths: image_paths.clone(),
         })
     } else {
         ExecutorActionType::CodingAgentInitialRequest(
@@ -200,6 +210,7 @@ pub async fn follow_up(
                 prompt,
                 executor_profile_id: executor_profile_id.clone(),
                 working_dir,
+                image_paths,
             },
         )
     };
