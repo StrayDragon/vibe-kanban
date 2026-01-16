@@ -1034,6 +1034,16 @@ export const useConversationHistory = ({
     };
   }, [attempt.id, idListKey, loadInitialEntries, emitEntries]);
 
+  // Stop showing the loading overlay when there are no processes for this attempt.
+  useEffect(() => {
+    if (executionProcessesLoading) return;
+    if (loadedInitialEntries.current) return;
+    if (executionProcesses.current.length > 0) return;
+
+    loadedInitialEntries.current = true;
+    emitEntries(displayedExecutionProcesses.current, 'initial', false);
+  }, [attempt.id, executionProcessesLoading, idListKey, emitEntries]);
+
   useEffect(() => {
     const activeProcesses = getActiveAgentProcesses();
     if (activeProcesses.length === 0) return;

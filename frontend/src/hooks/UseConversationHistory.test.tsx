@@ -324,4 +324,41 @@ describe('useConversationHistory', () => {
       fetchMock.mock.calls[fetchMock.mock.calls.length - 1]?.[0]
     ).toContain(processes[processes.length - 2].id);
   });
+
+  it('clears loading when there are no execution processes', async () => {
+    const now = new Date().toISOString();
+    mockExecutionContext.executionProcessesVisible = [];
+    mockExecutionContext.isLoading = false;
+
+    const attempt: Workspace = {
+      id: 'workspace-empty',
+      task_id: 'task-empty',
+      container_ref: null,
+      branch: 'main',
+      agent_working_dir: null,
+      setup_completed_at: null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const onEntriesUpdated = vi.fn();
+    renderHook(() => useConversationHistory({ attempt, onEntriesUpdated }));
+
+    await waitFor(() => {
+      const lastCall =
+        onEntriesUpdated.mock.calls[onEntriesUpdated.mock.calls.length - 1];
+      expect(lastCall?.[2]).toBe(false);
+    });
+
+    const lastEntries =
+      onEntriesUpdated.mock.calls[onEntriesUpdated.mock.calls.length - 1]?.[0] ??
+      [];
+    expect(
+      lastEntries.some(
+        (entry) =>
+          entry.type === 'NORMALIZED_ENTRY' &&
+          entry.content.entry_type.type === 'next_action'
+      )
+    ).toBe(true);
+  });
 });

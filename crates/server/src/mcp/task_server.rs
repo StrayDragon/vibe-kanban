@@ -1238,7 +1238,7 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "Start working on a task by creating and launching a new attempt (workspace)."
+        description = "Start working on a task by creating and launching a new attempt (workspace). This automatically sets the task status to inprogress; do not call update_task just for that. Use follow_up to send the prompt."
     )]
     async fn start_task_attempt(
         &self,
@@ -1458,7 +1458,7 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "Update an existing task/ticket's title, description, or status. `task_id` is required; `title`, `description`, and `status` are optional."
+        description = "Update an existing task/ticket's title, description, or status. `task_id` is required; `title`, `description`, and `status` are optional. Use this for changes beyond the initial inprogress transition (start_task_attempt already handles that)."
     )]
     async fn update_task(
         &self,
@@ -1565,7 +1565,7 @@ impl TaskServer {
 #[tool_handler]
 impl ServerHandler for TaskServer {
     fn get_info(&self) -> ServerInfo {
-        let mut instruction = "A task and project management server. Use list tools to discover ids, then perform create/update/start/follow-up actions. TOOLS: 'list_projects', 'list_repos', 'list_tasks', 'list_task_attempts', 'get_task', 'create_task', 'update_task', 'delete_task', 'start_task_attempt', 'follow_up'. Use `list_tasks` to get task ids and latest attempt/session summaries. Use `list_task_attempts` to inspect attempts and get attempt_id/session_id for follow-up. The `follow_up` tool accepts either attempt_id (preferred) or session_id. attempt_id refers to the task attempt workspace id. Tool errors are returned as JSON with fields like error, hint, code, and retryable; invalid parameter errors include JSON-RPC error data with path/hint.".to_string();
+        let mut instruction = "A task and project management server. Use list tools to discover ids, then perform create/update/start/follow-up actions. start_task_attempt automatically sets the task to inprogress; do not call update_task just to set inprogress. After start_task_attempt, use follow_up to send the prompt to the attempt. TOOLS: 'list_projects', 'list_repos', 'list_tasks', 'list_task_attempts', 'get_task', 'create_task', 'update_task', 'delete_task', 'start_task_attempt', 'follow_up'. Use `list_tasks` to get task ids and latest attempt/session summaries. Use `list_task_attempts` to inspect attempts and get attempt_id/session_id for follow-up. The `follow_up` tool accepts either attempt_id (preferred) or session_id. attempt_id refers to the task attempt workspace id. Tool errors are returned as JSON with fields like error, hint, code, and retryable; invalid parameter errors include JSON-RPC error data with path/hint.".to_string();
         if self.context.is_some() {
             let context_instruction = "Use 'get_context' to fetch project/task/attempt metadata for the active Vibe Kanban workspace session when available.";
             instruction = format!("{} {}", context_instruction, instruction);
