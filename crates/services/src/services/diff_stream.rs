@@ -128,6 +128,7 @@ struct DiffWatcherContext {
     base_commit: Commit,
     cumulative: Arc<AtomicUsize>,
     full_sent: Arc<std::sync::RwLock<HashSet<String>>>,
+    sent_entries: Arc<std::sync::RwLock<HashSet<String>>>,
     stats_only: bool,
     path_prefix: Option<String>,
     tx: mpsc::Sender<Result<LogMsg, io::Error>>,
@@ -151,6 +152,7 @@ impl DiffWatcherContext {
         let base_commit = self.base_commit.clone();
         let cumulative = self.cumulative.clone();
         let full_sent = self.full_sent.clone();
+        let sent_entries = self.sent_entries.clone();
         let stats_only = self.stats_only;
         let path_prefix = self.path_prefix.clone();
 
@@ -162,6 +164,7 @@ impl DiffWatcherContext {
                 &changed_paths,
                 &cumulative,
                 &full_sent,
+                &sent_entries,
                 stats_only,
                 path_prefix.as_deref(),
             )
@@ -198,6 +201,7 @@ pub async fn create(
 
     let cumulative = Arc::new(AtomicUsize::new(0));
     let full_sent = Arc::new(std::sync::RwLock::new(HashSet::<String>::new()));
+    let sent_entries = Arc::new(std::sync::RwLock::new(HashSet::<String>::new()));
 
     // Spawn a task to fetch initial diffs and set up the file watcher.
     // This allows the stream to be returned immediately while diff fetching
@@ -255,6 +259,12 @@ pub async fn create(
                 }
             }
         }
+        {
+            let mut guard = sent_entries.write().unwrap();
+            for diff in &initial_diffs {
+                guard.insert(GitService::diff_path(diff));
+            }
+        }
 
         if !send_initial_diffs(&tx_clone, initial_diffs, path_prefix_clone.as_deref()).await {
             return;
@@ -291,6 +301,7 @@ pub async fn create(
             base_commit,
             cumulative,
             full_sent,
+            sent_entries,
             stats_only,
             path_prefix,
             tx: tx_clone,
@@ -443,6 +454,7 @@ fn process_file_changes(
     changed_paths: &[String],
     cumulative_bytes: &Arc<AtomicUsize>,
     full_sent_paths: &Arc<std::sync::RwLock<HashSet<String>>>,
+    sent_entries: &Arc<std::sync::RwLock<HashSet<String>>>,
     stats_only: bool,
     path_prefix: Option<&str>,
 ) -> Result<Vec<LogMsg>, DiffStreamError> {
@@ -465,6 +477,7 @@ fn process_file_changes(
     let mut msgs = Vec::new();
     let mut files_with_diffs = HashSet::new();
 
+    let mut newly_sent = Vec::new();
     for mut diff in current_diffs {
         let raw_file_path = GitService::diff_path(&diff);
         files_with_diffs.insert(raw_file_path.clone());
@@ -480,6 +493,8 @@ fn process_file_changes(
             guard.insert(raw_file_path.clone());
         }
 
+        newly_sent.push(raw_file_path.clone());
+
         // Apply prefix for the stream message
         let prefixed_entry_index = prefix_path(raw_file_path, path_prefix);
         if let Some(old) = diff.old_path {
@@ -494,10 +509,29 @@ fn process_file_changes(
         msgs.push(LogMsg::JsonPatch(patch));
     }
 
+    if !newly_sent.is_empty() {
+        let mut guard = sent_entries.write().unwrap();
+        for path in newly_sent {
+            guard.insert(path);
+        }
+    }
+
+    let mut removed_paths = Vec::new();
     for changed_path in changed_paths {
         if !files_with_diffs.contains(changed_path) {
-            // Also prefix the removal path
-            let prefixed_path = prefix_path(changed_path.clone(), path_prefix);
+            removed_paths.push(changed_path.clone());
+        }
+    }
+
+    if !removed_paths.is_empty() {
+        let mut sent_guard = sent_entries.write().unwrap();
+        let mut full_guard = full_sent_paths.write().unwrap();
+        for path in &removed_paths {
+            if !sent_guard.remove(path) {
+                continue;
+            }
+            full_guard.remove(path);
+            let prefixed_path = prefix_path(path.clone(), path_prefix);
             let patch = ConversationPatch::remove_diff(escape_json_pointer_segment(&prefixed_path));
             msgs.push(LogMsg::JsonPatch(patch));
         }
@@ -509,6 +543,9 @@ fn process_file_changes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use git2::Oid;
+    use json_patch::PatchOperation;
+    use tempfile::TempDir;
 
     #[test]
     fn diff_preview_guard_balanced_thresholds() {
@@ -591,5 +628,85 @@ mod tests {
         assert!(diff.new_content.is_none());
         assert_eq!(diff.additions, Some(1));
         assert_eq!(diff.deletions, Some(0));
+    }
+
+    #[test]
+    fn diff_stream_skips_remove_for_unsent_paths() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path().join("repo");
+        let git = GitService::new();
+        git.initialize_repo_with_main_branch(&repo_path).unwrap();
+
+        let head = git.get_head_info(&repo_path).unwrap();
+        let base_commit = Commit::new(Oid::from_str(&head.oid).unwrap());
+
+        let cumulative = Arc::new(AtomicUsize::new(0));
+        let full_sent = Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
+        let sent_entries = Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
+
+        let messages = process_file_changes(
+            &git,
+            &repo_path,
+            &base_commit,
+            &["missing-dir".to_string()],
+            &cumulative,
+            &full_sent,
+            &sent_entries,
+            false,
+            None,
+        )
+        .unwrap();
+
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn diff_stream_removes_only_for_sent_entries() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path().join("repo");
+        let git = GitService::new();
+        git.initialize_repo_with_main_branch(&repo_path).unwrap();
+
+        let head = git.get_head_info(&repo_path).unwrap();
+        let base_commit = Commit::new(Oid::from_str(&head.oid).unwrap());
+
+        let cumulative = Arc::new(AtomicUsize::new(0));
+        let full_sent = Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
+        let sent_entries = Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
+        full_sent
+            .write()
+            .unwrap()
+            .insert("stale.txt".to_string());
+        sent_entries
+            .write()
+            .unwrap()
+            .insert("stale.txt".to_string());
+
+        let messages = process_file_changes(
+            &git,
+            &repo_path,
+            &base_commit,
+            &["stale.txt".to_string()],
+            &cumulative,
+            &full_sent,
+            &sent_entries,
+            false,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(messages.len(), 1);
+        match &messages[0] {
+            LogMsg::JsonPatch(patch) => match patch.0.first() {
+                Some(PatchOperation::Remove(op)) => {
+                    assert_eq!(op.path.to_string(), "/entries/stale.txt");
+                }
+                other => panic!("expected remove patch, got {other:?}"),
+            },
+            other => panic!("expected json patch message, got {other:?}"),
+        }
+
+        assert!(!sent_entries.read().unwrap().contains("stale.txt"));
+        assert!(!full_sent.read().unwrap().contains("stale.txt"));
     }
 }
