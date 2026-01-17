@@ -169,6 +169,10 @@ export function ProjectTasks() {
     () => (taskId ? (tasksById[taskId] ?? null) : null),
     [taskId, tasksById]
   );
+  const selectedTaskGroupId = useMemo(
+    () => (selectedTask ? getTaskGroupId(selectedTask) : null),
+    [selectedTask]
+  );
 
   const isPanelOpen = Boolean(taskId && selectedTask);
 
@@ -229,6 +233,7 @@ export function ProjectTasks() {
 
   useEffect(() => {
     if (!projectId || !taskId) return;
+    if (selectedTaskGroupId) return;
     if (!isLatest) return;
     if (isAttemptsLoading) return;
 
@@ -248,7 +253,15 @@ export function ProjectTasks() {
     latestAttemptId,
     navigate,
     navigateWithSearch,
+    selectedTaskGroupId,
   ]);
+
+  useEffect(() => {
+    if (!selectedTaskGroupId || !projectId) return;
+    navigateWithSearch(paths.taskGroupWorkflow(projectId, selectedTaskGroupId), {
+      replace: true,
+    });
+  }, [navigateWithSearch, projectId, selectedTaskGroupId]);
 
   useEffect(() => {
     if (!projectId || !taskId || isLoading) return;

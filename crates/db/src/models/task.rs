@@ -316,6 +316,27 @@ impl Task {
         Ok(tasks)
     }
 
+    pub async fn find_by_task_group_id<C: ConnectionTrait>(
+        db: &C,
+        task_group_id: Uuid,
+    ) -> Result<Vec<Self>, DbErr> {
+        let task_group_row_id = ids::task_group_id_by_uuid(db, task_group_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Task group not found".to_string()))?;
+
+        let models = task::Entity::find()
+            .filter(task::Column::TaskGroupId.eq(task_group_row_id))
+            .order_by_desc(task::Column::CreatedAt)
+            .all(db)
+            .await?;
+
+        let mut tasks = Vec::with_capacity(models.len());
+        for model in models {
+            tasks.push(Self::from_model(db, model).await?);
+        }
+        Ok(tasks)
+    }
+
     pub async fn find_all_with_attempt_status<C: ConnectionTrait>(
         db: &C,
     ) -> Result<Vec<TaskWithAttemptStatus>, DbErr> {
@@ -434,6 +455,19 @@ impl Task {
             .as_ref()
             .map(|id| id.trim().to_string())
             .filter(|id| !id.is_empty());
+        let task_kind = data.task_kind.clone().unwrap_or_default();
+        if task_kind == TaskKind::Group {
+            if task_group_id.is_none() {
+                return Err(DbErr::Custom(
+                    "Task group entry task requires task_group_id".to_string(),
+                ));
+            }
+            if task_group_node_id.is_some() {
+                return Err(DbErr::Custom(
+                    "Task group entry task cannot set task_group_node_id".to_string(),
+                ));
+            }
+        }
 
         let now = Utc::now();
         let active = task::ActiveModel {
@@ -442,7 +476,7 @@ impl Task {
             title: Set(data.title.clone()),
             description: Set(data.description.clone()),
             status: Set(data.status.clone().unwrap_or_default()),
-            task_kind: Set(data.task_kind.clone().unwrap_or_default()),
+            task_kind: Set(task_kind.clone()),
             task_group_id: Set(task_group_id),
             task_group_node_id: Set(task_group_node_id),
             parent_workspace_id: Set(parent_workspace_id),

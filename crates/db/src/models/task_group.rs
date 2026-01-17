@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use chrono::{DateTime, Utc};
+use executors::profile::ExecutorProfileId;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
     Set,
@@ -94,11 +95,9 @@ pub struct TaskGroupNode {
     pub kind: TaskGroupNodeKind,
     pub phase: i32,
     #[serde(default)]
-    pub agent_role: Option<String>,
+    pub executor_profile_id: Option<ExecutorProfileId>,
     #[serde(default)]
-    pub cost_estimate: Option<String>,
-    #[serde(default)]
-    pub artifacts: Vec<String>,
+    pub base_strategy: TaskGroupNodeBaseStrategy,
     #[serde(default)]
     pub instructions: Option<String>,
     #[serde(default)]
@@ -122,6 +121,15 @@ pub enum TaskGroupNodeKind {
     Task,
     Checkpoint,
     Merge,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, Default)]
+#[serde(rename_all = "lowercase")]
+#[ts(use_ts_enum)]
+pub enum TaskGroupNodeBaseStrategy {
+    #[default]
+    Topology,
+    Baseline,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -401,6 +409,24 @@ impl TaskGroup {
 
         let model = active.insert(db).await?;
 
+        let entry_task = crate::models::task::CreateTask {
+            project_id: data.project_id,
+            title: data.title.clone(),
+            description: data
+                .description
+                .as_ref()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+            status: None,
+            task_kind: Some(TaskKind::Group),
+            task_group_id: Some(task_group_id),
+            task_group_node_id: None,
+            parent_workspace_id: None,
+            image_ids: None,
+            shared_task_id: None,
+        };
+        let _ = crate::models::task::Task::create(db, &entry_task, Uuid::new_v4()).await?;
+
         Self::sync_task_links(db, model.id, project_row_id, &data.graph).await?;
         Self::sync_entry_task_statuses_by_row_id(db, model.id).await?;
 
@@ -643,6 +669,11 @@ impl TaskGroup {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sea_orm::Database;
+    use sea_orm_migration::MigratorTrait;
+
+    use crate::models::project::{CreateProject, Project};
+    use crate::models::task::{CreateTask, Task, TaskKind};
 
     fn base_graph() -> TaskGroupGraph {
         TaskGroupGraph {
@@ -652,9 +683,8 @@ mod tests {
                     task_id: Uuid::new_v4(),
                     kind: TaskGroupNodeKind::Task,
                     phase: 0,
-                    agent_role: None,
-                    cost_estimate: None,
-                    artifacts: Vec::new(),
+                    executor_profile_id: None,
+                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
                     instructions: None,
                     requires_approval: None,
                     layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
@@ -665,9 +695,8 @@ mod tests {
                     task_id: Uuid::new_v4(),
                     kind: TaskGroupNodeKind::Task,
                     phase: 0,
-                    agent_role: None,
-                    cost_estimate: None,
-                    artifacts: Vec::new(),
+                    executor_profile_id: None,
+                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
                     instructions: None,
                     requires_approval: None,
                     layout: TaskGroupNodeLayout { x: 1.0, y: 1.0 },
@@ -752,5 +781,232 @@ mod tests {
     fn aggregate_status_defaults_to_todo() {
         let statuses = Vec::new();
         assert_eq!(aggregate_status(&statuses), TaskStatus::Todo);
+    }
+
+    async fn setup_db() -> sea_orm::DatabaseConnection {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        db_migration::Migrator::up(&db, None).await.unwrap();
+        db
+    }
+
+    #[tokio::test]
+    async fn create_task_group_creates_entry_task() {
+        let db = setup_db().await;
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &db,
+            &CreateProject {
+                name: "Task group project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_a_id = Uuid::new_v4();
+        let task_b_id = Uuid::new_v4();
+        Task::create(
+            &db,
+            &CreateTask::from_title_description(
+                project_id,
+                "Task A".to_string(),
+                None,
+            ),
+            task_a_id,
+        )
+        .await
+        .unwrap();
+        Task::create(
+            &db,
+            &CreateTask::from_title_description(
+                project_id,
+                "Task B".to_string(),
+                None,
+            ),
+            task_b_id,
+        )
+        .await
+        .unwrap();
+
+        let graph = TaskGroupGraph {
+            nodes: vec![
+                TaskGroupNode {
+                    id: "node-a".to_string(),
+                    task_id: task_a_id,
+                    kind: TaskGroupNodeKind::Task,
+                    phase: 0,
+                    executor_profile_id: None,
+                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    instructions: None,
+                    requires_approval: None,
+                    layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+                    status: None,
+                },
+                TaskGroupNode {
+                    id: "node-b".to_string(),
+                    task_id: task_b_id,
+                    kind: TaskGroupNodeKind::Task,
+                    phase: 0,
+                    executor_profile_id: None,
+                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    instructions: None,
+                    requires_approval: None,
+                    layout: TaskGroupNodeLayout { x: 1.0, y: 1.0 },
+                    status: None,
+                },
+            ],
+            edges: Vec::new(),
+        };
+
+        let group_id = Uuid::new_v4();
+        let created = TaskGroup::create(
+            &db,
+            &CreateTaskGroup {
+                project_id,
+                title: "Workflow".to_string(),
+                description: None,
+                status: None,
+                baseline_ref: "main".to_string(),
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                graph,
+            },
+            group_id,
+        )
+        .await
+        .unwrap();
+
+        let tasks = Task::find_by_task_group_id(&db, created.id)
+            .await
+            .unwrap();
+        let entry_tasks: Vec<_> = tasks
+            .iter()
+            .filter(|task| task.task_kind == TaskKind::Group)
+            .collect();
+        assert_eq!(entry_tasks.len(), 1);
+        assert_eq!(entry_tasks[0].task_group_id, Some(created.id));
+
+        let node_tasks: Vec<_> = tasks
+            .iter()
+            .filter(|task| task.task_kind != TaskKind::Group)
+            .collect();
+        assert_eq!(node_tasks.len(), 2);
+        assert!(node_tasks
+            .iter()
+            .all(|task| task.task_group_node_id.is_some()));
+    }
+
+    #[tokio::test]
+    async fn entry_task_status_updates_from_nodes() {
+        let db = setup_db().await;
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &db,
+            &CreateProject {
+                name: "Status project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_a_id = Uuid::new_v4();
+        let task_b_id = Uuid::new_v4();
+        Task::create(
+            &db,
+            &CreateTask::from_title_description(
+                project_id,
+                "Task A".to_string(),
+                None,
+            ),
+            task_a_id,
+        )
+        .await
+        .unwrap();
+        Task::create(
+            &db,
+            &CreateTask::from_title_description(
+                project_id,
+                "Task B".to_string(),
+                None,
+            ),
+            task_b_id,
+        )
+        .await
+        .unwrap();
+
+        let graph = TaskGroupGraph {
+            nodes: vec![
+                TaskGroupNode {
+                    id: "node-a".to_string(),
+                    task_id: task_a_id,
+                    kind: TaskGroupNodeKind::Task,
+                    phase: 0,
+                    executor_profile_id: None,
+                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    instructions: None,
+                    requires_approval: None,
+                    layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+                    status: None,
+                },
+                TaskGroupNode {
+                    id: "node-b".to_string(),
+                    task_id: task_b_id,
+                    kind: TaskGroupNodeKind::Task,
+                    phase: 0,
+                    executor_profile_id: None,
+                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    instructions: None,
+                    requires_approval: None,
+                    layout: TaskGroupNodeLayout { x: 1.0, y: 1.0 },
+                    status: None,
+                },
+            ],
+            edges: Vec::new(),
+        };
+
+        let group_id = Uuid::new_v4();
+        TaskGroup::create(
+            &db,
+            &CreateTaskGroup {
+                project_id,
+                title: "Workflow".to_string(),
+                description: None,
+                status: None,
+                baseline_ref: "main".to_string(),
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                graph,
+            },
+            group_id,
+        )
+        .await
+        .unwrap();
+
+        let mut tasks = Task::find_by_task_group_id(&db, group_id)
+            .await
+            .unwrap();
+        let entry = tasks
+            .iter()
+            .find(|task| task.task_kind == TaskKind::Group)
+            .expect("entry task");
+        assert_eq!(entry.status, TaskStatus::Todo);
+
+        let node_task = tasks
+            .iter()
+            .find(|task| task.task_kind != TaskKind::Group)
+            .expect("node task");
+        Task::update_status(&db, node_task.id, TaskStatus::InProgress)
+            .await
+            .unwrap();
+
+        tasks = Task::find_by_task_group_id(&db, group_id)
+            .await
+            .unwrap();
+        let updated_entry = tasks
+            .iter()
+            .find(|task| task.task_kind == TaskKind::Group)
+            .expect("updated entry task");
+        assert_eq!(updated_entry.status, TaskStatus::InProgress);
     }
 }

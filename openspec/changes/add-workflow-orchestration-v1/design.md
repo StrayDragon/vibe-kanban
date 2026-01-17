@@ -8,6 +8,8 @@ The workflow view is a human-friendly UI for a structured TaskGroup. A TaskGroup
   - Keep node status aligned with Task status.
   - Support phases (logical batches), checkpoints, and merge nodes.
   - Expose TaskGroups through a workflow view for editing and monitoring.
+  - Keep TaskGroup creation in the primary task creation modal to minimize user habit changes.
+  - Allow node base-branch selection (default topology, optional baseline).
 - Non-Goals:
   - Conditional branching or dynamic workflows.
   - Automatic conflict resolution or auto-merge.
@@ -15,18 +17,21 @@ The workflow view is a human-friendly UI for a structured TaskGroup. A TaskGroup
 
 ## Decisions
 - Storage: Persist a first-class TaskGroup entity per Project (not embedded in Project config). Store the DAG as a JSON payload with a schema version for future migration.
-- Kanban entry: Represent a TaskGroup with an optional Task (`taskKind=group`, `taskGroupId`) to allow listing in Kanban and direct entry to the workflow view.
+- Kanban entry: Auto-create a TaskGroup entry Task (`taskKind=group`, `taskGroupId`) on TaskGroup creation so it appears in Kanban and routes to the workflow view.
+- Entry task lifecycle: Deleting a TaskGroup deletes all linked node tasks via the normal Task deletion flow, then deletes the entry task.
 - Mapping: Each node references exactly one Task; Task stores `taskGroupNodeId` when linked.
 - Dependencies: All edges are blocker edges in v1. A node can only become Ready when all predecessors are Done.
 - Node kinds: `task`, `checkpoint`, `merge` (merge is a task node used for integration and testing). Merge nodes default to no approval, but can opt in.
-- Node metadata: Include `agentRole`, `costEstimate`, `artifacts`, and optional `instructions` to capture planning intent.
+- Node configuration: Store executor profile selection (agent + configuration), base strategy, and optional `instructions`. Node title/description are sourced from the linked Task.
 - Node layout: Persist `x` and `y` coordinates for the workflow view.
-- Agent selection: If no active agent matches `agentRole`, allow manual selection before starting the task.
+- Agent selection: If the configured executor profile is unavailable, allow manual selection before starting the task.
 - Phases: Integer phase values represent logical batches; dependencies are still explicit edges.
-- Baseline: TaskGroup records a `baselineRef` (branch or commit) for consistent worktree creation.
+- Baseline: TaskGroup records a `baselineRef` (branch or commit). Node base strategy defaults to topology (most recent completed predecessor/merge output) and can be set to use `baselineRef`. If no completed predecessors exist, fall back to `baselineRef`.
+- Multi-predecessor base selection: When a node has multiple completed predecessors and uses the topology strategy, pick the most recently completed predecessor/merge output. Merge nodes are still the primary way to represent explicit fan-in.
 - Naming: TaskGroup stores `title` and optional `description` for display even when no entry task exists.
 - Status: TaskGroup stores `status` (TaskStatus values) and is user-controlled; node progress does not auto-update this field. The system provides a derived `suggestedStatus` for UI display.
 - Interruption UX: Mirror the existing Task page actions (Stop + Force Stop). Stop always calls the non-force endpoint; if graceful interrupt is unavailable, the backend falls back to force kill without extra UI mode labels.
+- Creation UI: The create modal uses tabs to switch between Task and TaskGroup creation; TaskGroup creation omits executor/auto-start fields.
 
 ## Schema Sketch
 ```json
@@ -45,9 +50,8 @@ The workflow view is a human-friendly UI for a structured TaskGroup. A TaskGroup
       "taskId": "task_a",
       "kind": "task",
       "phase": 1,
-      "agentRole": "Backend-Agent",
-      "costEstimate": "2h",
-      "artifacts": ["api-spec.md"],
+      "executorProfileId": {"executor": "CLAUDE_CODE", "variant": null},
+      "baseStrategy": "topology",
       "instructions": "Implement API endpoints per spec",
       "layout": {"x": 120, "y": 240}
     },
@@ -115,9 +119,8 @@ classDiagram
     +string taskId
     +string kind
     +number phase
-    +string agentRole
-    +string costEstimate
-    +string[] artifacts
+    +object executorProfileId
+    +string baseStrategy
     +string instructions
     +object layout
   }
@@ -172,6 +175,7 @@ Derived fields (API):
 - Add nullable `task_group_id` and `task_group_node_id` to tasks; add `task_kind` with default `default`.
 - Backfill is not required; existing tasks remain `default` with null group fields.
 - Add indexes on `task_group_id` and `task_group_node_id` for lookup.
+- Add a partial unique index on `tasks(task_group_id)` when `task_kind = 'group'` (Postgres) and an equivalent unique index on SQLite via raw SQL.
 
 ## Discovery Findings: Interruption & Hooks (current executors)
 - Claude Code: supports hook configuration via `get_hooks()` (PreToolUse callbacks for approvals) and exposes `interrupt_sender` for graceful interrupt before kill. (`crates/executors/src/executors/claude.rs`)
@@ -192,4 +196,4 @@ Sources: `https://reactflow.dev/learn`, `https://reactflow.dev/learn/advanced-us
 
 ## Open Questions
 - Should phase ordering be enforced (no edges from higher phase to lower phase)?
-- Do we need per-edge artifacts (input/output) beyond a single `dataFlow` label?
+- Should we model task-group nodes as explicit Task subtasks beyond the existing node linkage?

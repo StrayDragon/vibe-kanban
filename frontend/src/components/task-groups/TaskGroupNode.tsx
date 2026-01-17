@@ -1,9 +1,10 @@
 import { memo } from 'react';
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 import { cn } from '@/lib/utils';
+import { ProfileVariantBadge } from '@/components/common/ProfileVariantBadge';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
-import type { TaskStatus } from 'shared/types';
-import type { TaskGroupNodeKind } from '@/types/task-group';
+import type { TaskStatus, ExecutorProfileId } from 'shared/types';
+import type { TaskGroupNodeBaseStrategy, TaskGroupNodeKind } from '@/types/task-group';
 
 export type TaskGroupNodeData = {
   title: string;
@@ -11,9 +12,9 @@ export type TaskGroupNodeData = {
   kind: TaskGroupNodeKind;
   taskId?: string;
   phase?: number;
-  agentRole?: string;
-  costEstimate?: string;
-  artifacts?: string[];
+  executorProfileId?: ExecutorProfileId | null;
+  baseStrategy?: TaskGroupNodeBaseStrategy;
+  requiresApproval?: boolean;
 };
 
 export type TaskGroupFlowNode = Node<TaskGroupNodeData, 'taskGroup'>;
@@ -22,6 +23,11 @@ const KIND_LABELS: Record<TaskGroupNodeKind, string> = {
   task: 'Task',
   checkpoint: 'Checkpoint',
   merge: 'Merge',
+};
+
+const BASE_STRATEGY_LABELS: Record<TaskGroupNodeBaseStrategy, string> = {
+  topology: 'Topology',
+  baseline: 'Baseline',
 };
 
 const TaskGroupNode = ({ data, selected }: NodeProps<TaskGroupFlowNode>) => {
@@ -60,16 +66,22 @@ const TaskGroupNode = ({ data, selected }: NodeProps<TaskGroupFlowNode>) => {
         )}
       </div>
 
-      {(data.agentRole || data.costEstimate) && (
-        <div className="mt-2 text-[11px] text-muted-foreground truncate">
-          {data.agentRole ?? 'Unassigned'}
-          {data.costEstimate ? ` · ${data.costEstimate}` : ''}
+      {data.executorProfileId && (
+        <ProfileVariantBadge
+          profileVariant={data.executorProfileId}
+          className="mt-2 block text-[11px] truncate"
+        />
+      )}
+
+      {data.baseStrategy && (
+        <div className="mt-1 text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+          {BASE_STRATEGY_LABELS[data.baseStrategy]} base
         </div>
       )}
 
-      {data.artifacts && data.artifacts.length > 0 && (
-        <div className="mt-2 text-[10px] text-muted-foreground truncate">
-          {data.artifacts.join(', ')}
+      {data.requiresApproval && (
+        <div className="mt-2 text-[10px] text-muted-foreground uppercase tracking-[0.08em]">
+          Approval required
         </div>
       )}
     </div>

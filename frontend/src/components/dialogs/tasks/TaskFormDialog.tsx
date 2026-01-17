@@ -4,6 +4,7 @@ import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { defineModal } from '@/lib/modals';
 import { useDropzone } from 'react-dropzone';
 import { useForm, useStore } from '@tanstack/react-form';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Image as ImageIcon } from 'lucide-react';
 import {
   Dialog,
@@ -31,6 +32,7 @@ import RepoBranchSelector from '@/components/tasks/RepoBranchSelector';
 import { ExecutorProfileSelector } from '@/components/settings';
 import { useUserSystem } from '@/components/ConfigProvider';
 import {
+  useNavigateWithSearch,
   useTaskImages,
   useImageUpload,
   useTaskMutations,
@@ -45,10 +47,14 @@ import {
 } from '@/keyboard';
 import { useHotkeysContext } from 'react-hotkeys-hook';
 import { cn } from '@/lib/utils';
+import { taskGroupsApi } from '@/lib/api';
+import { paths } from '@/lib/paths';
+import { taskKeys } from '@/hooks/useTask';
 import type {
   TaskStatus,
   ExecutorProfileId,
   ImageResponse,
+  CreateTaskGroup,
 } from 'shared/types';
 
 interface Task {
@@ -74,6 +80,8 @@ export type TaskFormDialogProps =
 
 type RepoBranch = { repoId: string; branch: string };
 
+type CreateKind = 'task' | 'taskGroup';
+
 type TaskFormValues = {
   title: string;
   description: string;
@@ -81,13 +89,18 @@ type TaskFormValues = {
   executorProfileId: ExecutorProfileId | null;
   repoBranches: RepoBranch[];
   autoStart: boolean;
+  baselineRef: string;
 };
 
 const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
   const { mode, projectId } = props;
   const editMode = mode === 'edit';
+  const isCreateMode = mode === 'create';
+  const [createKind, setCreateKind] = useState<CreateKind>('task');
   const modal = useModal();
   const { t } = useTranslation(['tasks', 'common']);
+  const queryClient = useQueryClient();
+  const navigateWithSearch = useNavigateWithSearch();
   const { createTask, createAndStart, updateTask } =
     useTaskMutations(projectId);
   const { system, profiles, loading: userSystemLoading } = useUserSystem();
@@ -101,6 +114,12 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
   );
   const [showDiscardWarning, setShowDiscardWarning] = useState(false);
   const forceCreateOnlyRef = useRef(false);
+
+  useEffect(() => {
+    if (!isCreateMode) {
+      setCreateKind('task');
+    }
+  }, [isCreateMode]);
 
   const { data: taskImages } = useTaskImages(
     editMode ? props.task.id : undefined
@@ -116,12 +135,30 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
       initialBranch,
       enabled: modal.visible && projectRepos.length > 0,
     });
+  const isTaskGroupCreate = isCreateMode && createKind === 'taskGroup';
 
   const defaultRepoBranches = useMemo((): RepoBranch[] => {
     return repoBranchConfigs
       .filter((c) => c.targetBranch !== null)
       .map((c) => ({ repoId: c.repoId, branch: c.targetBranch! }));
   }, [repoBranchConfigs]);
+
+  const defaultBaselineRef = useMemo(() => {
+    return repoBranchConfigs[0]?.targetBranch ?? 'main';
+  }, [repoBranchConfigs]);
+
+  const createTaskGroup = useMutation({
+    mutationFn: (data: CreateTaskGroup) => taskGroupsApi.create(data),
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: taskKeys.all });
+      if (projectId) {
+        navigateWithSearch(paths.taskGroupWorkflow(projectId, created.id));
+      }
+    },
+    onError: (err) => {
+      console.error('Failed to create task group:', err);
+    },
+  });
 
   // Get default form values based on mode
   const defaultValues = useMemo((): TaskFormValues => {
@@ -136,6 +173,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: false,
+          baselineRef: defaultBaselineRef,
         };
 
       case 'duplicate':
@@ -146,6 +184,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: true,
+          baselineRef: defaultBaselineRef,
         };
 
       case 'subtask':
@@ -158,9 +197,16 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: true,
+          baselineRef: defaultBaselineRef,
         };
     }
-  }, [mode, props, system.config?.executor_profile, defaultRepoBranches]);
+  }, [
+    mode,
+    props,
+    system.config?.executor_profile,
+    defaultRepoBranches,
+    defaultBaselineRef,
+  ]);
 
   // Form submission handler
   const handleSubmit = async ({ value }: { value: TaskFormValues }) => {
@@ -178,6 +224,26 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
         },
         { onSuccess: () => modal.remove() }
       );
+    } else if (isTaskGroupCreate) {
+      const baselineRef =
+        value.baselineRef.trim().length > 0
+          ? value.baselineRef.trim()
+          : defaultBaselineRef;
+      const payload: CreateTaskGroup = {
+        project_id: projectId,
+        title: value.title,
+        description: value.description.trim().length
+          ? value.description
+          : null,
+        status: null,
+        baseline_ref: baselineRef,
+        schema_version: 1,
+        graph: { nodes: [], edges: [] },
+      };
+
+      await createTaskGroup.mutateAsync(payload, {
+        onSuccess: () => modal.remove(),
+      });
     } else {
       const imageIds =
         newlyUploadedImageIds.length > 0 ? newlyUploadedImageIds : null;
@@ -216,6 +282,10 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
 
   const validator = (value: TaskFormValues): string | undefined => {
     if (!value.title.trim().length) return 'need title';
+    if (isTaskGroupCreate) {
+      if (!value.baselineRef.trim().length) return 'need baseline';
+      return;
+    }
     if (value.autoStart && !forceCreateOnlyRef.current) {
       if (!value.executorProfileId) return 'need executor profile';
       if (
@@ -242,6 +312,23 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
   const isSubmitting = useStore(form.store, (state) => state.isSubmitting);
   const isDirty = useStore(form.store, (state) => state.isDirty);
   const canSubmit = useStore(form.store, (state) => state.canSubmit);
+  const baselineRefValue = useStore(
+    form.store,
+    (state) => state.values.baselineRef
+  );
+
+  useEffect(() => {
+    if (editMode || !isTaskGroupCreate) return;
+    if (!baselineRefValue.trim().length) {
+      form.setFieldValue('baselineRef', defaultBaselineRef);
+    }
+  }, [
+    baselineRefValue,
+    defaultBaselineRef,
+    editMode,
+    form,
+    isTaskGroupCreate,
+  ]);
 
   // Load images for edit mode
   useEffect(() => {
@@ -425,6 +512,39 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
             </div>
           )}
 
+          {isCreateMode && (
+            <div className="flex items-center gap-2 px-1" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={createKind === 'task'}
+                onClick={() => setCreateKind('task')}
+                className={cn(
+                  'rounded-md border px-3 py-1.5 text-sm font-medium transition-colors',
+                  createKind === 'task'
+                    ? 'bg-foreground text-background border-transparent'
+                    : 'text-muted-foreground border-border hover:text-foreground'
+                )}
+              >
+                {t('taskFormDialog.tabs.task')}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={createKind === 'taskGroup'}
+                onClick={() => setCreateKind('taskGroup')}
+                className={cn(
+                  'rounded-md border px-3 py-1.5 text-sm font-medium transition-colors',
+                  createKind === 'taskGroup'
+                    ? 'bg-foreground text-background border-transparent'
+                    : 'text-muted-foreground border-border hover:text-foreground'
+                )}
+              >
+                {t('taskFormDialog.tabs.taskGroup')}
+              </button>
+            </div>
+          )}
+
           {/* Title */}
           <div className="flex-none px-4 py-2 border border-1 border-border">
             <form.Field name="title">
@@ -506,8 +626,32 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
             )}
           </div>
 
+          {isTaskGroupCreate && (
+            <div className="flex-none px-4 py-3 border border-1 border-border">
+              <form.Field name="baselineRef">
+                {(field) => (
+                  <div className="space-y-2">
+                    <Label
+                      htmlFor="task-group-baseline"
+                      className="text-sm font-medium"
+                    >
+                      {t('taskFormDialog.baselineLabel')}
+                    </Label>
+                    <Input
+                      id="task-group-baseline"
+                      value={field.state.value}
+                      onChange={(e) => field.handleChange(e.target.value)}
+                      placeholder={t('taskFormDialog.baselinePlaceholder')}
+                      disabled={isSubmitting}
+                    />
+                  </div>
+                )}
+              </form.Field>
+            </div>
+          )}
+
           {/* Create mode dropdowns */}
-          {!editMode && (
+          {!editMode && !isTaskGroupCreate && (
             <form.Field name="autoStart" mode="array">
               {(autoStartField) => {
                 const isSingleRepo = repoBranchConfigs.length === 1;
@@ -632,7 +776,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
 
             {/* Autostart switch */}
             <div className="flex items-center gap-3">
-              {!editMode && (
+              {!editMode && !isTaskGroupCreate && (
                 <form.Field name="autoStart">
                   {(field) => (
                     <div className="flex items-center gap-2">
@@ -670,11 +814,15 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                     ? isSubmitting
                       ? t('taskFormDialog.updating')
                       : t('taskFormDialog.updateTask')
-                    : isSubmitting
-                      ? values.autoStart
-                        ? t('taskFormDialog.starting')
-                        : t('taskFormDialog.creating')
-                      : t('taskFormDialog.create');
+                    : isTaskGroupCreate
+                      ? isSubmitting
+                        ? t('taskFormDialog.creating')
+                        : t('taskFormDialog.createTaskGroup')
+                      : isSubmitting
+                        ? values.autoStart
+                          ? t('taskFormDialog.starting')
+                          : t('taskFormDialog.creating')
+                        : t('taskFormDialog.create');
 
                   return (
                     <Button onClick={form.handleSubmit} disabled={!canSubmit}>

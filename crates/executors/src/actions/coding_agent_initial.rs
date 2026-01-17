@@ -23,7 +23,7 @@ pub struct CodingAgentInitialRequest {
     /// If None, uses the container_ref directory directly.
     #[serde(default)]
     pub working_dir: Option<String>,
-    /// Optional image path map keyed by prompt image references.
+    /// Optional image path map keyed by prompt image src.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_paths: Option<HashMap<String, PathBuf>>,
 }

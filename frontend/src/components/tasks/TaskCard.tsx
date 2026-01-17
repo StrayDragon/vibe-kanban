@@ -10,7 +10,7 @@ import { paths } from '@/lib/paths';
 import { attemptsApi } from '@/lib/api';
 import { TaskCardHeader } from './TaskCardHeader';
 import { useTranslation } from 'react-i18next';
-import { isTaskGroupEntry } from '@/utils/taskGroup';
+import { getTaskGroupId, isTaskGroupEntry } from '@/utils/taskGroup';
 
 type Task = TaskWithAttemptStatus;
 
@@ -21,6 +21,9 @@ interface TaskCardProps {
   onViewDetails: (task: Task) => void;
   isOpen?: boolean;
   projectId: string;
+  groupSummary?: {
+    subtaskCount: number;
+  };
 }
 
 export function TaskCard({
@@ -30,11 +33,19 @@ export function TaskCard({
   onViewDetails,
   isOpen,
   projectId,
+  groupSummary,
 }: TaskCardProps) {
   const { t } = useTranslation('tasks');
   const navigate = useNavigateWithSearch();
   const [isNavigatingToParent, setIsNavigatingToParent] = useState(false);
   const isTaskGroup = isTaskGroupEntry(task);
+  const taskGroupId = getTaskGroupId(task);
+  const isGroupedTask = Boolean(taskGroupId) && !isTaskGroup;
+  const typeLabel = isTaskGroup
+    ? 'Task Group'
+    : isGroupedTask
+      ? 'Subtask'
+      : 'Task';
 
   const handleClick = useCallback(() => {
     onViewDetails(task);
@@ -63,6 +74,15 @@ export function TaskCard({
     [task.parent_workspace_id, projectId, navigate, isNavigatingToParent]
   );
 
+  const handleOpenTaskGroup = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (!taskGroupId) return;
+      navigate(paths.taskGroupWorkflow(projectId, taskGroupId));
+    },
+    [navigate, projectId, taskGroupId]
+  );
+
   const localRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -87,6 +107,7 @@ export function TaskCard({
       onClick={handleClick}
       isOpen={isOpen}
       forwardedRef={localRef}
+      dragDisabled={isTaskGroup}
     >
       <div className="flex flex-col gap-2">
         <TaskCardHeader
@@ -115,13 +136,29 @@ export function TaskCard({
             </>
           }
         />
-        {isTaskGroup && (
-          <Badge
-            variant="outline"
-            className="w-fit text-[10px] uppercase tracking-[0.12em] text-muted-foreground border-muted-foreground/40"
+        <Badge
+          variant="outline"
+          className="w-fit text-[10px] uppercase tracking-[0.12em] text-muted-foreground border-muted-foreground/40"
+        >
+          {typeLabel}
+        </Badge>
+        {groupSummary && groupSummary.subtaskCount > 0 && (
+          <div className="text-xs text-muted-foreground">
+            {t('taskGroupSubtaskCount', { count: groupSummary.subtaskCount })}
+          </div>
+        )}
+        {isGroupedTask && (
+          <Button
+            variant="link"
+            size="xs"
+            className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground"
+            onClick={handleOpenTaskGroup}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            title={t('openTaskGroup')}
           >
-            Workflow
-          </Badge>
+            {t('openTaskGroup')}
+          </Button>
         )}
         {task.description && (
           <p className="text-sm text-secondary-foreground break-words">

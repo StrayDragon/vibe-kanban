@@ -23,6 +23,7 @@ pub mod tags;
 pub mod task_attempts;
 pub mod tasks;
 pub mod task_groups;
+pub(crate) mod task_deletion;
 
 pub fn router(deployment: DeploymentImpl) -> IntoMakeService<Router> {
     // Create routers with different middleware layers

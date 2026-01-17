@@ -11,6 +11,7 @@ import {
   CreateAndStartTaskRequest,
   CreateTaskAttemptBody,
   CreateTag,
+  CreateTaskGroup,
   DirectoryListResponse,
   DirectoryEntry,
   ExecutionProcess,
@@ -369,6 +370,14 @@ export const tasksApi = {
 
 // Task Group APIs
 export const taskGroupsApi = {
+  create: async (data: CreateTaskGroup): Promise<TaskGroup> => {
+    const response = await makeRequest(`/api/task-groups`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return handleApiResponse<TaskGroup>(response);
+  },
+
   getById: async (taskGroupId: string): Promise<TaskGroup> => {
     const response = await makeRequest(`/api/task-groups/${taskGroupId}`);
     return handleApiResponse<TaskGroup>(response);

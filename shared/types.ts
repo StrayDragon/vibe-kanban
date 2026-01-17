@@ -58,11 +58,13 @@ export type UpdateTaskGroup = { title: string | null, description: string | null
 
 export type TaskGroupGraph = { nodes: Array<TaskGroupNode>, edges: Array<TaskGroupEdge>, };
 
-export type TaskGroupNode = { id: string, task_id: string, kind: TaskGroupNodeKind, phase: number, agent_role: string | null, cost_estimate: string | null, artifacts: Array<string>, instructions: string | null, requires_approval: boolean | null, layout: TaskGroupNodeLayout, status?: TaskStatus | null, };
+export type TaskGroupNode = { id: string, task_id: string, kind: TaskGroupNodeKind, phase: number, executor_profile_id: ExecutorProfileId | null, base_strategy: TaskGroupNodeBaseStrategy, instructions: string | null, requires_approval: boolean | null, layout: TaskGroupNodeLayout, status?: TaskStatus | null, };
 
 export type TaskGroupNodeLayout = { x: number, y: number, };
 
 export enum TaskGroupNodeKind { task = "task", checkpoint = "checkpoint", merge = "merge" }
+
+export enum TaskGroupNodeBaseStrategy { topology = "topology", baseline = "baseline" }
 
 export type TaskGroupEdge = { id: string, from: string, to: string, data_flow: string | null, };
 
@@ -422,7 +424,7 @@ executor_profile_id: ExecutorProfileId,
  */
 working_dir: string | null, 
 /**
- * Optional image path map keyed by prompt image references.
+ * Optional image path map keyed by prompt image src.
  */
 image_paths?: { [key in string]?: string } | null, };
 

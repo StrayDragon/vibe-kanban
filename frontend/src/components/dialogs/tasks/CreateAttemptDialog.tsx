@@ -20,6 +20,7 @@ import {
   useRepoBranchSelection,
   useProjectRepos,
 } from '@/hooks';
+import { useTaskGroup } from '@/hooks/useTaskGroup';
 import { useTaskAttemptsWithSessions } from '@/hooks/useTaskAttempts';
 import { useProject } from '@/contexts/ProjectContext';
 import { useUserSystem } from '@/components/ConfigProvider';
@@ -29,6 +30,23 @@ import { defineModal } from '@/lib/modals';
 import type { ExecutorProfileId, BaseCodingAgent } from 'shared/types';
 import { useKeySubmitTask, Scope } from '@/keyboard';
 import { useCliDependencyPreflight } from '@/hooks/useCliDependencyPreflight';
+import type {
+  TaskGroupGraphNode,
+  TaskGroupNodeBaseStrategy,
+} from '@/types/task-group';
+
+const getNodeTaskId = (node: TaskGroupGraphNode): string | undefined =>
+  node.task_id ?? node.taskId;
+
+const getNodeExecutorProfileId = (
+  node: TaskGroupGraphNode
+): ExecutorProfileId | null =>
+  node.executor_profile_id ?? node.executorProfileId ?? null;
+
+const getNodeBaseStrategy = (
+  node: TaskGroupGraphNode
+): TaskGroupNodeBaseStrategy =>
+  node.base_strategy ?? node.baseStrategy ?? 'topology';
 
 export interface CreateAttemptDialogProps {
   taskId: string;
@@ -61,6 +79,10 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
     const { data: task, isLoading: isLoadingTask } = useTask(taskId, {
       enabled: modal.visible,
     });
+    const taskGroupId = task?.task_group_id ?? null;
+    const { data: taskGroup } = useTaskGroup(taskGroupId ?? undefined, {
+      enabled: modal.visible && !!taskGroupId,
+    });
 
     const parentAttemptId = task?.parent_workspace_id ?? undefined;
     const { data: parentAttempt, isLoading: isLoadingParent } = useAttempt(
@@ -71,6 +93,31 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
     const { data: projectRepos = [], isLoading: isLoadingRepos } =
       useProjectRepos(projectId, { enabled: modal.visible });
 
+    const taskGroupGraph = taskGroup?.graph ?? taskGroup?.graph_json;
+    const taskGroupNode = useMemo(() => {
+      if (!taskGroupGraph || !task) return null;
+      return taskGroupGraph.nodes.find(
+        (node) => getNodeTaskId(node) === task.id
+      );
+    }, [taskGroupGraph, task]);
+
+    const nodeExecutorProfile = taskGroupNode
+      ? getNodeExecutorProfileId(taskGroupNode)
+      : null;
+    const nodeBaseStrategy = taskGroupNode
+      ? getNodeBaseStrategy(taskGroupNode)
+      : 'topology';
+    const baselineRef = taskGroup?.baseline_ref ?? null;
+    const hasBaselineRef = Boolean(baselineRef && baselineRef.trim().length > 0);
+    const isTaskGroupNode = Boolean(
+      task?.task_group_id && task?.task_group_node_id
+    );
+    const usesBaselineRef =
+      isTaskGroupNode && nodeBaseStrategy === 'baseline' && hasBaselineRef;
+    const usesTopologyBase =
+      isTaskGroupNode && nodeBaseStrategy === 'topology';
+    const usesFixedBase = isTaskGroupNode && (usesBaselineRef || usesTopologyBase);
+
     const {
       configs: repoBranchConfigs,
       isLoading: isLoadingBranches,
@@ -79,8 +126,8 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
       reset: resetBranchSelection,
     } = useRepoBranchSelection({
       repos: projectRepos,
-      initialBranch: parentAttempt?.branch,
-      enabled: modal.visible && projectRepos.length > 0,
+      initialBranch: usesFixedBase ? baselineRef ?? undefined : parentAttempt?.branch,
+      enabled: modal.visible && projectRepos.length > 0 && !usesFixedBase,
     });
 
     const latestAttempt = useMemo(() => {
@@ -100,6 +147,9 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
     }, [modal.visible, resetBranchSelection]);
 
     const defaultProfile: ExecutorProfileId | null = useMemo(() => {
+      if (nodeExecutorProfile) {
+        return nodeExecutorProfile;
+      }
       if (latestAttempt?.session?.executor) {
         const lastExec = latestAttempt.session.executor as BaseCodingAgent;
         // If the last attempt used the same executor as the user's current preference,
@@ -117,9 +167,12 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
         };
       }
       return config?.executor_profile ?? null;
-    }, [latestAttempt?.session?.executor, config?.executor_profile]);
+    }, [nodeExecutorProfile, latestAttempt?.session?.executor, config?.executor_profile]);
 
-    const effectiveProfile = userSelectedProfile ?? defaultProfile;
+    const isNodeProfileLocked = Boolean(nodeExecutorProfile);
+    const effectiveProfile = isNodeProfileLocked
+      ? nodeExecutorProfile
+      : userSelectedProfile ?? defaultProfile;
 
     const selectedAgent = effectiveProfile?.executor ?? null;
     const { data: cliPreflight, isLoading: preflightLoading } =
@@ -127,14 +180,14 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
 
     const isLoadingInitial =
       isLoadingRepos ||
-      isLoadingBranches ||
+      (!usesFixedBase && isLoadingBranches) ||
       isLoadingAttempts ||
       isLoadingTask ||
       isLoadingParent;
 
-    const allBranchesSelected = repoBranchConfigs.every(
-      (c) => c.targetBranch !== null
-    );
+    const allBranchesSelected = usesFixedBase
+      ? projectRepos.length > 0
+      : repoBranchConfigs.every((c) => c.targetBranch !== null);
 
     const canCreate = Boolean(
       effectiveProfile &&
@@ -152,7 +205,12 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
       )
         return;
       try {
-        const repos = getWorkspaceRepoInputs();
+        const repos = usesFixedBase
+          ? projectRepos.map((repo) => ({
+              repo_id: repo.id,
+              target_branch: baselineRef!.trim(),
+            }))
+          : getWorkspaceRepoInputs();
 
         await createAttempt({
           profile: effectiveProfile,
@@ -193,7 +251,13 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
                   selectedProfile={effectiveProfile}
                   onProfileSelect={setUserSelectedProfile}
                   showLabel={true}
+                  disabled={isNodeProfileLocked}
                 />
+                {isNodeProfileLocked && (
+                  <div className="text-xs text-muted-foreground">
+                    Profile is set by the workflow node.
+                  </div>
+                )}
               </div>
             )}
 
@@ -220,12 +284,35 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
               </Alert>
             )}
 
-            <RepoBranchSelector
-              configs={repoBranchConfigs}
-              onBranchChange={setRepoBranch}
-              isLoading={isLoadingBranches}
-              className="space-y-2"
-            />
+            {usesTopologyBase ? (
+              <div className="space-y-1 text-xs text-muted-foreground">
+                <div className="font-medium text-foreground">Base branch</div>
+                <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                  Derived from upstream nodes
+                </div>
+                {hasBaselineRef && (
+                  <div className="text-[11px] text-muted-foreground">
+                    Fallback: {baselineRef}
+                  </div>
+                )}
+              </div>
+            ) : usesBaselineRef ? (
+              <div className="space-y-1 text-xs text-muted-foreground">
+                <div className="font-medium text-foreground">
+                  {t('taskFormDialog.baselineLabel', 'Baseline branch')}
+                </div>
+                <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                  {baselineRef}
+                </div>
+              </div>
+            ) : (
+              <RepoBranchSelector
+                configs={repoBranchConfigs}
+                onBranchChange={setRepoBranch}
+                isLoading={isLoadingBranches}
+                className="space-y-2"
+              />
+            )}
 
             {error && (
               <div className="text-sm text-destructive">

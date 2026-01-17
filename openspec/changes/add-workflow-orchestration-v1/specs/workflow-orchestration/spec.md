@@ -39,19 +39,82 @@ The system SHALL compute a read-only `suggestedStatus` based on node states usin
 - **WHEN** a user applies the suggested status
 - **THEN** the TaskGroup status is updated to the suggested value
 
-### Requirement: Task group baseline usage
-The system SHALL use `baselineRef` when creating task worktrees from task group nodes.
+### Requirement: Task group node base branch selection
+The system SHALL allow each TaskGroup node to choose a base branch strategy for worktree creation:
+- `topology` (default): use the most recent completed predecessor/merge output. When multiple predecessors are completed, the most recently completed predecessor/merge output SHALL be selected.
+- `baseline`: use the TaskGroup `baselineRef`.
+If no completed predecessors exist, the system SHALL fall back to `baselineRef`.
 
-#### Scenario: Start task from task group baseline
-- **WHEN** a user starts a task group node that creates a task worktree
+#### Scenario: Start task using topology base
+- **WHEN** a node with base strategy `topology` is started and has a completed predecessor
+- **THEN** the worktree is created from the predecessor/merge output
+
+#### Scenario: Multiple predecessors choose most recent output
+- **WHEN** a node with base strategy `topology` is started and multiple predecessors are Done
+- **THEN** the worktree is created from the most recently completed predecessor/merge output
+
+#### Scenario: Topology falls back to baseline
+- **WHEN** a node with base strategy `topology` is started and no predecessors are completed
+- **THEN** the worktree is created from the TaskGroup `baselineRef`
+
+#### Scenario: Start task using baseline base
+- **WHEN** a node with base strategy `baseline` is started
 - **THEN** the worktree is created from the task group `baselineRef`
 
+### Requirement: Task group baseline defaults
+The system SHALL prefill `baselineRef` with the Project default branch in TaskGroup creation and allow the user to edit it.
+
+#### Scenario: Prefill baselineRef on create
+- **WHEN** a user opens TaskGroup creation
+- **THEN** the baseline field defaults to the Project's default branch
+
 ### Requirement: Task group entry task
-The system SHALL allow a Task with `taskKind=group` to reference a TaskGroup via `taskGroupId`. Task group entry tasks SHALL appear in the Kanban with a distinct marker and open the workflow view when selected.
+The system SHALL create exactly one Task with `taskKind=group` per TaskGroup. The entry Task SHALL reference the TaskGroup via `taskGroupId`, appear in the Kanban with a distinct marker, and open the workflow view when selected.
+
+#### Scenario: Create task group creates entry task
+- **WHEN** a user creates a task group
+- **THEN** the system creates a single entry task linked to the TaskGroup
+
+#### Scenario: Entry task uniqueness
+- **WHEN** an entry task already exists for a TaskGroup
+- **THEN** the system rejects creation of another `taskKind=group` task for the same TaskGroup
 
 #### Scenario: Open task group from Kanban
 - **WHEN** a user selects a task group entry task in the Kanban
 - **THEN** the workflow view opens for the linked `taskGroupId`
+
+### Requirement: Kanban task type badges
+Kanban cards SHALL display a type badge that distinguishes `task`, `task group`, and TaskGroup `subtask` nodes.
+
+#### Scenario: Task group entry badge
+- **WHEN** a TaskGroup entry task appears in the Kanban
+- **THEN** the card shows a `task group` badge
+
+#### Scenario: Subtask badge
+- **WHEN** a Task belongs to a TaskGroup node
+- **THEN** the card shows a `subtask` badge
+
+#### Scenario: Regular task badge
+- **WHEN** a Task is not linked to any TaskGroup
+- **THEN** the card shows a `task` badge
+
+### Requirement: Task group navigation affordances
+Tasks linked to a TaskGroup SHALL expose a direct UI affordance to open the TaskGroup workflow view.
+
+#### Scenario: Navigate from a subtask card
+- **WHEN** a user views a TaskGroup subtask card in the Kanban
+- **THEN** the card provides a quick way to open the TaskGroup workflow
+
+### Requirement: Kanban task group hierarchy
+Kanban columns SHALL visually group tasks that share a TaskGroup and indicate hierarchy between the TaskGroup entry and its subtasks.
+
+#### Scenario: Grouped tasks in a column
+- **WHEN** multiple tasks in a column share a TaskGroup
+- **THEN** they are grouped under a TaskGroup header with hierarchical styling for subtasks
+
+#### Scenario: Ungrouped tasks remain flat
+- **WHEN** a task is not part of any TaskGroup
+- **THEN** it appears outside any TaskGroup grouping
 
 ### Requirement: Task kind defaults
 The system SHALL support `taskKind` values `default` and `group`. Tasks without a `taskKind` value SHALL be treated as `default`.
@@ -59,6 +122,17 @@ The system SHALL support `taskKind` values `default` and `group`. Tasks without 
 #### Scenario: Backward-compatible task kind
 - **WHEN** a legacy task without `taskKind` is loaded
 - **THEN** it is treated as a `default` task
+
+### Requirement: Entry task validation
+Tasks with `taskKind=group` SHALL require `taskGroupId` and SHALL NOT set `taskGroupNodeId`.
+
+#### Scenario: Reject entry task without TaskGroup
+- **WHEN** a task is created or updated with `taskKind=group` and no `taskGroupId`
+- **THEN** the system rejects the change
+
+#### Scenario: Reject entry task node linkage
+- **WHEN** a task is created or updated with `taskKind=group` and a `taskGroupNodeId`
+- **THEN** the system rejects the change
 
 ### Requirement: Task-group node linkage
 Each TaskGroup node SHALL reference exactly one Task, and a Task SHALL store `taskGroupNodeId` when linked to a TaskGroup node. A Task MAY belong to at most one TaskGroup node.
@@ -81,25 +155,25 @@ Each TaskGroup node SHALL store layout coordinates (`x`, `y`) for the workflow v
 - **WHEN** a user moves a node in the workflow view
 - **THEN** the node layout coordinates are saved and restored on reload
 
-### Requirement: Node metadata for planning
-Each TaskGroup node SHALL support metadata for planning and visibility, including `agentRole`, `costEstimate`, `artifacts`, and optional `instructions`.
+### Requirement: Node configuration metadata
+Each TaskGroup node SHALL expose configuration aligned with Task creation, including executor profile selection (agent + configuration), optional node instructions, and base branch strategy. Node title and description SHALL be sourced from the linked Task.
 
-#### Scenario: View node metadata
+#### Scenario: View node configuration
 - **WHEN** a user views a task group node
-- **THEN** the workflow view displays its status, agent role, cost estimate, and artifacts
+- **THEN** the workflow view displays the task title/description and node configuration (executor profile, base strategy, instructions)
 
-### Requirement: Agent role assignment
-Task group nodes SHALL allow an `agentRole` used to select a matching active agent profile when starting the task.
+### Requirement: Executor profile assignment
+Task group nodes SHALL allow an `executorProfileId` used to preselect the agent and configuration when starting the task.
 
-#### Scenario: Start task with agent role
-- **WHEN** a node with an `agentRole` is started
-- **THEN** the task is assigned to a matching active agent profile
+#### Scenario: Start task with executor profile
+- **WHEN** a node with an `executorProfileId` is started
+- **THEN** the attempt defaults to the configured agent and configuration
 
-### Requirement: Agent role fallback
-If no active agent profile matches the node `agentRole`, the system SHALL allow manual selection before starting the task.
+### Requirement: Executor profile fallback
+If the configured `executorProfileId` is unavailable, the system SHALL allow manual selection before starting the task.
 
 #### Scenario: Manual agent selection
-- **WHEN** a node is started with an `agentRole` that has no active match
+- **WHEN** a node is started and the configured `executorProfileId` is unavailable
 - **THEN** the user is prompted to choose an available agent profile
 
 ### Requirement: Graph validation
@@ -200,12 +274,30 @@ Task group entry tasks SHALL NOT create execution attempts. Starting an entry ta
 - **WHEN** a user attempts to start an entry task
 - **THEN** the system redirects to the workflow view without creating an attempt
 
+### Requirement: Task group deletion cascades tasks
+Deleting a TaskGroup SHALL delete all linked node Tasks using the standard Task deletion flow, then delete the entry Task. Deleting the entry Task SHALL delete the TaskGroup and linked node Tasks.
+
+#### Scenario: Delete TaskGroup cascades tasks
+- **WHEN** a user deletes a TaskGroup
+- **THEN** linked node tasks are deleted via the standard Task deletion flow and the entry task is removed
+
+#### Scenario: Delete entry task cascades TaskGroup
+- **WHEN** a user deletes a task group entry task
+- **THEN** the TaskGroup and its linked node tasks are deleted
+
 ### Requirement: Project workflow view
 The system SHALL provide a Project-scoped workflow view to create, edit, and monitor task group nodes and edges.
 
 #### Scenario: Edit workflow graph in project
 - **WHEN** a user adds or removes nodes or edges in the workflow view
 - **THEN** the stored task group graph updates and the view reflects the change
+
+### Requirement: Task group creation tabs
+The system SHALL present Task and TaskGroup creation modes as tabs in the create modal. TaskGroup creation SHALL omit executor, repo selection, and auto-start controls.
+
+#### Scenario: Switch to TaskGroup tab
+- **WHEN** a user selects the TaskGroup tab in the create modal
+- **THEN** TaskGroup fields are shown and Task execution fields are hidden
 
 ### Requirement: Node task detail view
 The workflow view SHALL display the linked Task detail (including conversation) when a node is selected.

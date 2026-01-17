@@ -349,6 +349,10 @@ export function TasksOverview() {
     () => (taskId ? (tasksById[taskId] ?? null) : null),
     [taskId, tasksById]
   );
+  const selectedTaskGroupId = useMemo(
+    () => (selectedTask ? getTaskGroupId(selectedTask) : null),
+    [selectedTask]
+  );
 
   useEffect(() => {
     if (!selectedTask) return;
@@ -361,6 +365,16 @@ export function TasksOverview() {
       return { ...prev, [key]: true };
     });
   }, [collapsedStatuses, selectedTask]);
+
+  useEffect(() => {
+    if (!selectedTask) return;
+    const taskGroupId = getTaskGroupId(selectedTask);
+    if (!taskGroupId) return;
+    navigateWithSearch(
+      paths.taskGroupWorkflow(selectedTask.project_id, taskGroupId),
+      { replace: true }
+    );
+  }, [selectedTask, navigateWithSearch]);
 
   const isPanelOpen = Boolean(taskId && selectedTask);
 
@@ -384,6 +398,7 @@ export function TasksOverview() {
 
   useEffect(() => {
     if (!projectId || !taskId) return;
+    if (selectedTaskGroupId) return;
     if (!isLatest) return;
     if (isAttemptsLoading) return;
 
@@ -400,6 +415,7 @@ export function TasksOverview() {
     isAttemptsLoading,
     latestAttemptId,
     navigateWithSearch,
+    selectedTaskGroupId,
   ]);
 
   useEffect(() => {
@@ -414,7 +430,10 @@ export function TasksOverview() {
   const isAttemptView = Boolean(attemptId);
   const isTaskView = !!taskId && !isAttemptView;
   const showNoAttemptsPanel =
-    isLatestAttemptRoute && !isAttemptsLoading && !latestAttemptId;
+    isLatestAttemptRoute &&
+    !isAttemptsLoading &&
+    !latestAttemptId &&
+    !selectedTaskGroupId;
   const { data: attempt } = useTaskAttemptWithSession(effectiveAttemptId);
   const { data: branchStatus } = useBranchStatus(attempt?.id);
 

@@ -85,6 +85,7 @@ const TaskPanel = ({
     );
   }
 
+  const isTaskGroupEntry = task.task_kind === 'group';
   const titleContent = `# ${task.title || 'Task'}`;
   const descriptionContent = task.description || '';
 
@@ -174,18 +175,20 @@ const TaskPanel = ({
                         count: displayedAttempts.length,
                       })}
                     </span>
-                    <span>
-                      <Button
-                        variant="icon"
-                        onClick={() =>
-                          CreateAttemptDialog.show({
-                            taskId: task.id,
-                          })
-                        }
-                      >
-                        <PlusIcon size={16} />
-                      </Button>
-                    </span>
+                    {!isTaskGroupEntry && (
+                      <span>
+                        <Button
+                          variant="icon"
+                          onClick={() =>
+                            CreateAttemptDialog.show({
+                              taskId: task.id,
+                            })
+                          }
+                        >
+                          <PlusIcon size={16} />
+                        </Button>
+                      </span>
+                    )}
                   </div>
                 }
               />

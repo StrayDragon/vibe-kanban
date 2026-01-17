@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use anyhow;
 use axum::{
     Extension, Json, Router,
@@ -16,7 +14,6 @@ use db::DbErr;
 use db::models::{
     image::TaskImage,
     project::{Project, ProjectError},
-    repo::Repo,
     task::{CreateTask, Task, TaskKind, TaskWithAttemptStatus, UpdateTask},
     workspace::{CreateWorkspace, Workspace},
     workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
@@ -24,16 +21,15 @@ use db::models::{
 use deployment::Deployment;
 use executors::profile::ExecutorProfileId;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
-use db::TransactionTrait;
 use serde::{Deserialize, Serialize};
-use services::services::{container::ContainerService, workspace_manager::WorkspaceManager};
+use services::services::container::ContainerService;
 use ts_rs::TS;
 use utils::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{
     DeploymentImpl, error::ApiError, middleware::load_task_middleware,
-    routes::task_attempts::WorkspaceRepoInput,
+    routes::{task_attempts::WorkspaceRepoInput, task_deletion},
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -266,101 +262,13 @@ pub async fn delete_task(
     Extension(task): Extension<Task>,
     State(deployment): State<DeploymentImpl>,
 ) -> Result<(StatusCode, ResponseJson<ApiResponse<()>>), ApiError> {
-    // Validate no running execution processes
-    if deployment
-        .container()
-        .has_running_processes(task.id)
-        .await?
-    {
-        return Err(ApiError::Conflict("Task has running execution processes. Please wait for them to complete or stop them first.".to_string()));
-    }
+    task_deletion::delete_task_with_cleanup(
+        &deployment,
+        task,
+        task_deletion::DeleteTaskMode::CascadeGroup,
+    )
+    .await?;
 
-    let pool = &deployment.db().pool;
-
-    // Gather task attempts data needed for background cleanup
-    let attempts = Workspace::fetch_all(pool, Some(task.id))
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to fetch task attempts for task {}: {}", task.id, e);
-            ApiError::Workspace(e)
-        })?;
-
-    let repositories = WorkspaceRepo::find_unique_repos_for_task(pool, task.id).await?;
-
-    // Collect workspace directories that need cleanup
-    let workspace_dirs: Vec<PathBuf> = attempts
-        .iter()
-        .filter_map(|attempt| attempt.container_ref.as_ref().map(PathBuf::from))
-        .collect();
-
-    // Use a transaction to ensure atomicity: either all operations succeed or all are rolled back
-    let tx = pool.begin().await?;
-
-    // Nullify parent_workspace_id for all child tasks before deletion
-    // This breaks parent-child relationships to avoid foreign key constraint violations
-    let mut total_children_affected = 0u64;
-    for attempt in &attempts {
-        let children_affected =
-            Task::nullify_children_by_workspace_id(&tx, attempt.id).await?;
-        total_children_affected += children_affected;
-    }
-
-    // Delete task from database (FK CASCADE will handle task_attempts)
-    let rows_affected = Task::delete(&tx, task.id).await?;
-
-    if rows_affected == 0 {
-        return Err(ApiError::Database(DbErr::RecordNotFound(
-            "Task not found".to_string(),
-        )));
-    }
-
-    // Commit the transaction - if this fails, all changes are rolled back
-    tx.commit().await?;
-
-    if total_children_affected > 0 {
-        tracing::info!(
-            "Nullified {} child task references before deleting task {}",
-            total_children_affected,
-            task.id
-        );
-    }
-
-    let task_id = task.id;
-    let pool = pool.clone();
-    tokio::spawn(async move {
-        tracing::info!(
-            "Starting background cleanup for task {} ({} workspaces, {} repos)",
-            task_id,
-            workspace_dirs.len(),
-            repositories.len()
-        );
-
-        for workspace_dir in &workspace_dirs {
-            if let Err(e) = WorkspaceManager::cleanup_workspace(workspace_dir, &repositories).await
-            {
-                tracing::error!(
-                    "Background workspace cleanup failed for task {} at {}: {}",
-                    task_id,
-                    workspace_dir.display(),
-                    e
-                );
-            }
-        }
-
-        match Repo::delete_orphaned(&pool).await {
-            Ok(count) if count > 0 => {
-                tracing::info!("Deleted {} orphaned repo records", count);
-            }
-            Err(e) => {
-                tracing::error!("Failed to delete orphaned repos: {}", e);
-            }
-            _ => {}
-        }
-
-        tracing::info!("Background cleanup completed for task {}", task_id);
-    });
-
-    // Return 202 Accepted to indicate deletion was scheduled
     Ok((StatusCode::ACCEPTED, ResponseJson(ApiResponse::success(()))))
 }
 

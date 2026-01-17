@@ -2,6 +2,7 @@ use sea_orm_migration::prelude::*;
 
 mod m20250101000000_baseline;
 mod m20250215000000_task_groups;
+mod m20250220000000_task_group_entry_unique;
 
 pub struct Migrator;
 
@@ -11,6 +12,7 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20250101000000_baseline::Migration),
             Box::new(m20250215000000_task_groups::Migration),
+            Box::new(m20250220000000_task_group_entry_unique::Migration),
         ]
     }
 }

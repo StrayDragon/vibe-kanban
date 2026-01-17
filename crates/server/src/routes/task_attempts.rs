@@ -28,6 +28,9 @@ use db::models::{
     repo::{Repo, RepoError},
     session::{CreateSession, Session},
     task::{Task, TaskKind, TaskRelationships, TaskStatus},
+    task_group::{
+        TaskGroup, TaskGroupError, TaskGroupGraph, TaskGroupNode, TaskGroupNodeBaseStrategy,
+    },
     workspace::{CreateWorkspace, Workspace, WorkspaceError},
     workspace_repo::{CreateWorkspaceRepo, RepoWithTargetBranch, WorkspaceRepo},
 };
@@ -47,7 +50,7 @@ use services::services::{
     git::{ConflictOp, GitCliError, GitMergeOptions, GitServiceError},
     github::GitHubService,
 };
-use db::DbErr;
+use db::{DbErr, DbPool};
 use ts_rs::TS;
 use utils::response::ApiResponse;
 use uuid::Uuid;
@@ -235,12 +238,169 @@ pub struct RunAgentSetupRequest {
 #[derive(Debug, Serialize, TS)]
 pub struct RunAgentSetupResponse {}
 
+fn map_task_group_error(err: TaskGroupError) -> ApiError {
+    match err {
+        TaskGroupError::Database(db_err) => ApiError::Database(db_err),
+        _ => ApiError::BadRequest(err.to_string()),
+    }
+}
+
+fn map_workspace_error(err: WorkspaceError) -> ApiError {
+    match err {
+        WorkspaceError::Database(db_err) => ApiError::Database(db_err),
+        _ => ApiError::BadRequest(err.to_string()),
+    }
+}
+
+fn find_task_group_node<'a>(
+    graph: &'a TaskGroupGraph,
+    node_id: &str,
+) -> Result<&'a TaskGroupNode, ApiError> {
+    let node_key = node_id.trim();
+    if node_key.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Task group node id cannot be empty".to_string(),
+        ));
+    }
+
+    graph
+        .nodes
+        .iter()
+        .find(|node| node.id.trim() == node_key)
+        .ok_or_else(|| ApiError::BadRequest("Task group node not found in graph".to_string()))
+}
+
+fn resolve_executor_profile_id(
+    task_group_node: &TaskGroupNode,
+    fallback: ExecutorProfileId,
+) -> ExecutorProfileId {
+    task_group_node
+        .executor_profile_id
+        .clone()
+        .unwrap_or(fallback)
+}
+
+async fn resolve_topology_base_branches(
+    pool: &DbPool,
+    graph: &TaskGroupGraph,
+    node_id: &str,
+) -> Result<Option<HashMap<Uuid, String>>, ApiError> {
+    let node_key = node_id.trim();
+    if node_key.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Task group node id cannot be empty".to_string(),
+        ));
+    }
+
+    let mut selected_workspace: Option<(Uuid, chrono::DateTime<chrono::Utc>)> = None;
+
+    for edge in &graph.edges {
+        if edge.to.trim() != node_key {
+            continue;
+        }
+        let from = edge.from.trim();
+        if from.is_empty() {
+            continue;
+        }
+        let predecessor = graph.nodes.iter().find(|node| node.id.trim() == from);
+        let Some(predecessor) = predecessor else { continue };
+        if predecessor.status.clone().unwrap_or(TaskStatus::Todo) != TaskStatus::Done {
+            continue;
+        }
+
+        let workspaces = Workspace::fetch_all(pool, Some(predecessor.task_id))
+            .await
+            .map_err(map_workspace_error)?;
+        let Some(workspace) = workspaces.first() else { continue };
+
+        let created_at = workspace.created_at;
+        let replace = selected_workspace
+            .as_ref()
+            .map(|(existing_id, existing_at)| {
+                if created_at == *existing_at {
+                    workspace.id < *existing_id
+                } else {
+                    created_at > *existing_at
+                }
+            })
+            .unwrap_or(true);
+        if replace {
+            selected_workspace = Some((workspace.id, created_at));
+        }
+    }
+
+    let Some((workspace_id, _)) = selected_workspace else {
+        return Ok(None);
+    };
+
+    let repos = WorkspaceRepo::find_by_workspace_id(pool, workspace_id)
+        .await
+        .map_err(ApiError::Database)?;
+    if repos.is_empty() {
+        return Ok(None);
+    }
+
+    let mut base_branches = HashMap::with_capacity(repos.len());
+    for repo in repos {
+        base_branches.insert(repo.repo_id, repo.target_branch);
+    }
+
+    Ok(Some(base_branches))
+}
+
+fn blocked_predecessors(
+    graph: &TaskGroupGraph,
+    node_id: &str,
+) -> Result<Vec<String>, ApiError> {
+    let node_key = node_id.trim();
+    if node_key.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Task group node id cannot be empty".to_string(),
+        ));
+    }
+
+    let node_statuses: HashMap<String, TaskStatus> = graph
+        .nodes
+        .iter()
+        .map(|node| {
+            (
+                node.id.trim().to_string(),
+                node.status.clone().unwrap_or(TaskStatus::Todo),
+            )
+        })
+        .collect();
+
+    if !node_statuses.contains_key(node_key) {
+        return Err(ApiError::BadRequest(
+            "Task group node not found in graph".to_string(),
+        ));
+    }
+
+    let mut blocked = Vec::new();
+    for edge in &graph.edges {
+        if edge.to.trim() != node_key {
+            continue;
+        }
+        let from = edge.from.trim();
+        if from.is_empty() {
+            continue;
+        }
+        match node_statuses.get(from) {
+            Some(status) if *status != TaskStatus::Done => blocked.push(from.to_string()),
+            None => blocked.push(from.to_string()),
+            _ => {}
+        }
+    }
+
+    Ok(blocked)
+}
+
 #[axum::debug_handler]
 pub async fn create_task_attempt(
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<CreateTaskAttemptBody>,
 ) -> Result<ResponseJson<ApiResponse<Workspace>>, ApiError> {
-    let executor_profile_id = payload.executor_profile_id.clone();
+    let mut executor_profile_id = payload.executor_profile_id.clone();
 
     if payload.repos.is_empty() {
         return Err(ApiError::BadRequest(
@@ -256,6 +416,47 @@ pub async fn create_task_attempt(
         return Err(ApiError::BadRequest(
             "Task group entry tasks cannot create attempts".to_string(),
         ));
+    }
+
+    let mut baseline_ref: Option<String> = None;
+    let mut topology_branches: Option<HashMap<Uuid, String>> = None;
+    if let (Some(task_group_id), Some(node_id)) =
+        (task.task_group_id, task.task_group_node_id.as_ref())
+    {
+        let task_group = TaskGroup::find_by_id(pool, task_group_id)
+            .await
+            .map_err(map_task_group_error)?
+            .ok_or_else(|| ApiError::BadRequest("Task group not found".to_string()))?;
+
+        let blocked = blocked_predecessors(&task_group.graph, node_id)?;
+        if !blocked.is_empty() {
+            return Err(ApiError::Conflict(format!(
+                "Task is blocked by incomplete predecessors: {}",
+                blocked.join(", ")
+            )));
+        }
+
+        let task_group_node = find_task_group_node(&task_group.graph, node_id)?;
+        executor_profile_id = resolve_executor_profile_id(task_group_node, executor_profile_id);
+
+        match &task_group_node.base_strategy {
+            TaskGroupNodeBaseStrategy::Baseline => {
+                let trimmed = task_group.baseline_ref.trim();
+                if !trimmed.is_empty() {
+                    baseline_ref = Some(trimmed.to_string());
+                }
+            }
+            TaskGroupNodeBaseStrategy::Topology => {
+                topology_branches =
+                    resolve_topology_base_branches(pool, &task_group.graph, node_id).await?;
+                if topology_branches.is_none() {
+                    let trimmed = task_group.baseline_ref.trim();
+                    if !trimmed.is_empty() {
+                        baseline_ref = Some(trimmed.to_string());
+                    }
+                }
+            }
+        }
     }
 
     let project = task
@@ -289,9 +490,17 @@ pub async fn create_task_attempt(
     let workspace_repos: Vec<CreateWorkspaceRepo> = payload
         .repos
         .iter()
-        .map(|r| CreateWorkspaceRepo {
-            repo_id: r.repo_id,
-            target_branch: r.target_branch.clone(),
+        .map(|r| {
+            let target_branch = topology_branches
+                .as_ref()
+                .and_then(|branches| branches.get(&r.repo_id))
+                .cloned()
+                .or_else(|| baseline_ref.clone())
+                .unwrap_or_else(|| r.target_branch.clone());
+            CreateWorkspaceRepo {
+                repo_id: r.repo_id,
+                target_branch,
+            }
         })
         .collect();
 
@@ -1577,4 +1786,308 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         .nest("/{id}/images", images::router(deployment));
 
     Router::new().nest("/task-attempts", task_attempts_router)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        blocked_predecessors, resolve_executor_profile_id, resolve_topology_base_branches,
+    };
+    use crate::error::ApiError;
+    use db::models::{
+        project::{CreateProject, Project},
+        repo::Repo,
+        task::{CreateTask, Task, TaskStatus},
+        task_group::{
+            TaskGroupEdge, TaskGroupGraph, TaskGroupNode, TaskGroupNodeBaseStrategy,
+            TaskGroupNodeKind, TaskGroupNodeLayout,
+        },
+        workspace::{CreateWorkspace, Workspace},
+        workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
+    };
+    use db_migration::Migrator;
+    use executors::{executors::BaseCodingAgent, profile::ExecutorProfileId};
+    use sea_orm::Database;
+    use sea_orm_migration::MigratorTrait;
+    use std::path::Path;
+    use tokio::time::{sleep, Duration};
+    use uuid::Uuid;
+
+    fn node(id: &str, status: TaskStatus) -> TaskGroupNode {
+        TaskGroupNode {
+            id: id.to_string(),
+            task_id: Uuid::new_v4(),
+            kind: TaskGroupNodeKind::Task,
+            phase: 0,
+            executor_profile_id: None,
+            base_strategy: TaskGroupNodeBaseStrategy::Topology,
+            instructions: None,
+            requires_approval: None,
+            layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+            status: Some(status),
+        }
+    }
+
+    fn node_with_task(id: &str, task_id: Uuid, status: TaskStatus) -> TaskGroupNode {
+        TaskGroupNode {
+            id: id.to_string(),
+            task_id,
+            kind: TaskGroupNodeKind::Task,
+            phase: 0,
+            executor_profile_id: None,
+            base_strategy: TaskGroupNodeBaseStrategy::Topology,
+            instructions: None,
+            requires_approval: None,
+            layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+            status: Some(status),
+        }
+    }
+
+    fn node_with_executor(id: &str, executor_profile_id: Option<ExecutorProfileId>) -> TaskGroupNode {
+        TaskGroupNode {
+            id: id.to_string(),
+            task_id: Uuid::new_v4(),
+            kind: TaskGroupNodeKind::Task,
+            phase: 0,
+            executor_profile_id,
+            base_strategy: TaskGroupNodeBaseStrategy::Topology,
+            instructions: None,
+            requires_approval: None,
+            layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+            status: Some(TaskStatus::Todo),
+        }
+    }
+
+    async fn setup_db() -> sea_orm::DatabaseConnection {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        Migrator::up(&db, None).await.unwrap();
+        db
+    }
+
+    async fn create_task(db: &sea_orm::DatabaseConnection, project_id: Uuid, title: &str) -> Uuid {
+        let task_id = Uuid::new_v4();
+        Task::create(
+            db,
+            &CreateTask::from_title_description(project_id, title.to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+        task_id
+    }
+
+    async fn create_workspace_with_repo(
+        db: &sea_orm::DatabaseConnection,
+        task_id: Uuid,
+        repo_id: Uuid,
+        workspace_branch: &str,
+        target_branch: &str,
+    ) -> Workspace {
+        let workspace = Workspace::create(
+            db,
+            &CreateWorkspace {
+                branch: workspace_branch.to_string(),
+                agent_working_dir: None,
+            },
+            Uuid::new_v4(),
+            task_id,
+        )
+        .await
+        .unwrap();
+        WorkspaceRepo::create_many(
+            db,
+            workspace.id,
+            &[CreateWorkspaceRepo {
+                repo_id,
+                target_branch: target_branch.to_string(),
+            }],
+        )
+        .await
+        .unwrap();
+        workspace
+    }
+
+    #[test]
+    fn blocked_predecessors_allows_ready_node() {
+        let graph = TaskGroupGraph {
+            nodes: vec![node("a", TaskStatus::Done), node("b", TaskStatus::Todo)],
+            edges: vec![TaskGroupEdge {
+                id: "edge-a-b".to_string(),
+                from: "a".to_string(),
+                to: "b".to_string(),
+                data_flow: None,
+            }],
+        };
+
+        let blocked = blocked_predecessors(&graph, "b").unwrap();
+        assert!(blocked.is_empty());
+    }
+
+    #[test]
+    fn blocked_predecessors_reports_incomplete_nodes() {
+        let graph = TaskGroupGraph {
+            nodes: vec![
+                node("a", TaskStatus::InProgress),
+                node("b", TaskStatus::Todo),
+            ],
+            edges: vec![TaskGroupEdge {
+                id: "edge-a-b".to_string(),
+                from: "a".to_string(),
+                to: "b".to_string(),
+                data_flow: None,
+            }],
+        };
+
+        let blocked = blocked_predecessors(&graph, "b").unwrap();
+        assert_eq!(blocked, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn blocked_predecessors_requires_existing_node() {
+        let graph = TaskGroupGraph {
+            nodes: vec![node("a", TaskStatus::Done)],
+            edges: Vec::new(),
+        };
+
+        let err = blocked_predecessors(&graph, "missing").unwrap_err();
+        assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[test]
+    fn resolve_executor_profile_id_prefers_node_override() {
+        let fallback = ExecutorProfileId::new(BaseCodingAgent::ClaudeCode);
+        let override_id =
+            ExecutorProfileId::with_variant(BaseCodingAgent::FakeAgent, "TEST".to_string());
+        let node = node_with_executor("override", Some(override_id.clone()));
+
+        let resolved = resolve_executor_profile_id(&node, fallback);
+        assert_eq!(resolved, override_id);
+    }
+
+    #[test]
+    fn resolve_executor_profile_id_uses_fallback_when_empty() {
+        let fallback = ExecutorProfileId::new(BaseCodingAgent::Codex);
+        let node = node_with_executor("fallback", None);
+
+        let resolved = resolve_executor_profile_id(&node, fallback.clone());
+        assert_eq!(resolved, fallback);
+    }
+
+    #[tokio::test]
+    async fn resolve_topology_base_branches_picks_latest_predecessor() {
+        let db = setup_db().await;
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &db,
+            &CreateProject {
+                name: "Topology project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let repo = Repo::find_or_create(&db, Path::new("/tmp/topology-repo"), "Topology")
+            .await
+            .unwrap();
+        let task_a_id = create_task(&db, project_id, "Task A").await;
+        let task_b_id = create_task(&db, project_id, "Task B").await;
+        let task_c_id = create_task(&db, project_id, "Task C").await;
+
+        create_workspace_with_repo(
+            &db,
+            task_a_id,
+            repo.id,
+            "work-a",
+            "base-a",
+        )
+        .await;
+        sleep(Duration::from_millis(2)).await;
+        create_workspace_with_repo(
+            &db,
+            task_b_id,
+            repo.id,
+            "work-b",
+            "base-b",
+        )
+        .await;
+
+        let graph = TaskGroupGraph {
+            nodes: vec![
+                node_with_task("a", task_a_id, TaskStatus::Done),
+                node_with_task("b", task_b_id, TaskStatus::Done),
+                node_with_task("c", task_c_id, TaskStatus::Todo),
+            ],
+            edges: vec![
+                TaskGroupEdge {
+                    id: "edge-a-c".to_string(),
+                    from: "a".to_string(),
+                    to: "c".to_string(),
+                    data_flow: None,
+                },
+                TaskGroupEdge {
+                    id: "edge-b-c".to_string(),
+                    from: "b".to_string(),
+                    to: "c".to_string(),
+                    data_flow: None,
+                },
+            ],
+        };
+
+        let branches = resolve_topology_base_branches(&db, &graph, "c")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(branches.get(&repo.id).map(String::as_str), Some("base-b"));
+    }
+
+    #[tokio::test]
+    async fn resolve_topology_base_branches_skips_incomplete_predecessors() {
+        let db = setup_db().await;
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &db,
+            &CreateProject {
+                name: "Topology skipped".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let repo = Repo::find_or_create(&db, Path::new("/tmp/topology-repo-skip"), "Skip")
+            .await
+            .unwrap();
+        let task_a_id = create_task(&db, project_id, "Task A").await;
+        let task_b_id = create_task(&db, project_id, "Task B").await;
+
+        create_workspace_with_repo(
+            &db,
+            task_a_id,
+            repo.id,
+            "work-a",
+            "base-a",
+        )
+        .await;
+
+        let graph = TaskGroupGraph {
+            nodes: vec![
+                node_with_task("a", task_a_id, TaskStatus::Todo),
+                node_with_task("b", task_b_id, TaskStatus::Todo),
+            ],
+            edges: vec![TaskGroupEdge {
+                id: "edge-a-b".to_string(),
+                from: "a".to_string(),
+                to: "b".to_string(),
+                data_flow: None,
+            }],
+        };
+
+        let branches = resolve_topology_base_branches(&db, &graph, "b")
+            .await
+            .unwrap();
+        assert!(branches.is_none());
+    }
 }

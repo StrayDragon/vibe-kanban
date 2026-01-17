@@ -41,6 +41,7 @@ fn generate_types_content() -> String {
         db::models::task_group::TaskGroupNode::decl(),
         db::models::task_group::TaskGroupNodeLayout::decl(),
         db::models::task_group::TaskGroupNodeKind::decl(),
+        db::models::task_group::TaskGroupNodeBaseStrategy::decl(),
         db::models::task_group::TaskGroupEdge::decl(),
         db::models::scratch::DraftFollowUpData::decl(),
         db::models::scratch::ScratchPayload::decl(),

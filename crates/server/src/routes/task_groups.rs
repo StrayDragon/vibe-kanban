@@ -10,9 +10,13 @@ use utils::response::ApiResponse;
 use uuid::Uuid;
 
 use db::models::task_group::{CreateTaskGroup, TaskGroup, TaskGroupError, UpdateTaskGroup};
+use db::TransactionTrait;
 use deployment::Deployment;
 
-use crate::{DeploymentImpl, error::ApiError, middleware::load_task_group_middleware};
+use crate::{
+    DeploymentImpl, error::ApiError, middleware::load_task_group_middleware,
+    routes::task_deletion,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct TaskGroupQuery {
@@ -63,9 +67,11 @@ pub async fn create_task_group(
     Json(payload): Json<CreateTaskGroup>,
 ) -> Result<ResponseJson<ApiResponse<TaskGroup>>, ApiError> {
     let id = Uuid::new_v4();
-    let task_group = TaskGroup::create(&deployment.db().pool, &payload, id)
+    let tx = deployment.db().pool.begin().await?;
+    let task_group = TaskGroup::create(&tx, &payload, id)
         .await
         .map_err(map_task_group_error)?;
+    tx.commit().await?;
 
     Ok(ResponseJson(ApiResponse::success(task_group)))
 }
@@ -75,9 +81,11 @@ pub async fn update_task_group(
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<UpdateTaskGroup>,
 ) -> Result<ResponseJson<ApiResponse<TaskGroup>>, ApiError> {
-    let task_group = TaskGroup::update(&deployment.db().pool, existing.id, &payload)
+    let tx = deployment.db().pool.begin().await?;
+    let task_group = TaskGroup::update(&tx, existing.id, &payload)
         .await
         .map_err(map_task_group_error)?;
+    tx.commit().await?;
 
     Ok(ResponseJson(ApiResponse::success(task_group)))
 }
@@ -86,12 +94,7 @@ pub async fn delete_task_group(
     Extension(existing): Extension<TaskGroup>,
     State(deployment): State<DeploymentImpl>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
-    let rows = TaskGroup::delete(&deployment.db().pool, existing.id)
-        .await
-        .map_err(map_task_group_error)?;
-    if rows == 0 {
-        return Err(ApiError::BadRequest("Task group not found".to_string()));
-    }
+    task_deletion::delete_task_group_with_cleanup(&deployment, existing, None).await?;
     Ok(ResponseJson(ApiResponse::success(())))
 }
 

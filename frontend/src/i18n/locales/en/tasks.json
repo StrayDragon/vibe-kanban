@@ -170,6 +170,9 @@
     "closePanel": "Close panel"
   },
   "navigateToParent": "Navigate to parent task attempt",
+  "openTaskGroup": "Open task group",
+  "taskGroupSubtaskCount_one": "{{count}} subtask",
+  "taskGroupSubtaskCount_other": "{{count}} subtasks",
   "toolbar": {
     "actions": "Actions",
     "noAttempts": "No attempts yet",
@@ -506,8 +509,14 @@
   "taskFormDialog": {
     "createTitle": "Create New Task",
     "editTitle": "Edit Task",
+    "tabs": {
+      "task": "Create Task",
+      "taskGroup": "Create Task Group"
+    },
     "titlePlaceholder": "Task title...",
     "descriptionPlaceholder": "Add more details (optional). Type @ to search files.",
+    "baselineLabel": "Baseline branch",
+    "baselinePlaceholder": "e.g. main",
     "statusLabel": "Status",
     "statusOptions": {
       "todo": "To Do",
@@ -523,6 +532,7 @@
     "updateTask": "Update Task",
     "starting": "Starting...",
     "creating": "Creating...",
+    "createTaskGroup": "Create Task Group",
     "create": "Create",
     "discardDialog": {
       "title": "Discard unsaved changes?",

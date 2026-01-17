@@ -180,6 +180,9 @@
     "closePanel": "关闭面板"
   },
   "navigateToParent": "导航到父任务尝试",
+  "openTaskGroup": "打开任务组",
+  "taskGroupSubtaskCount_one": "{{count}} 个子任务",
+  "taskGroupSubtaskCount_other": "{{count}} 个子任务",
   "toolbar": {
     "actions": "操作",
     "noAttempts": "还没有尝试",
@@ -503,8 +506,14 @@
   "taskFormDialog": {
     "createTitle": "创建新任务",
     "editTitle": "编辑任务",
+    "tabs": {
+      "task": "创建任务",
+      "taskGroup": "创建任务组"
+    },
     "titlePlaceholder": "任务标题",
     "descriptionPlaceholder": "添加更多详情（可选）。输入 @ 搜索文件。",
+    "baselineLabel": "基线分支",
+    "baselinePlaceholder": "例如 main",
     "statusLabel": "状态",
     "statusOptions": {
       "todo": "待办",
@@ -520,6 +529,7 @@
     "updateTask": "更新任务",
     "starting": "开始中...",
     "creating": "创建中...",
+    "createTaskGroup": "创建任务组",
     "create": "创建",
     "discardDialog": {
       "title": "放弃未保存的更改？",
