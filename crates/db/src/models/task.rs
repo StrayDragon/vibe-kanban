@@ -533,7 +533,7 @@ impl Task {
         let mut active: task::ActiveModel = record.into();
         active.title = Set(title);
         active.description = Set(description);
-        active.status = Set(status);
+        active.status = Set(status.clone());
         active.parent_workspace_id = Set(parent_workspace_row_id);
         active.updated_at = Set(Utc::now().into());
 
@@ -542,19 +542,34 @@ impl Task {
             .map_err(|err| DbErr::Custom(err.to_string()))?;
         EventOutbox::enqueue(db, EVENT_TASK_UPDATED, "task", id, payload).await?;
 
-        if status_changed
-            && let Some(task_group_id) = task_group_id
-            && task_kind != TaskKind::Group
-            && let Err(err) = super::task_group::TaskGroup::sync_entry_task_statuses_by_row_id(
-                db,
-                task_group_id,
-            )
-            .await
-        {
-            tracing::warn!(
-                "Failed to sync task group entry status after task update: {}",
-                err
-            );
+        if status_changed {
+            if task_kind == TaskKind::Group {
+                if let Some(task_group_id) = task_group_id {
+                    let group_record = task_group::Entity::find_by_id(task_group_id)
+                        .one(db)
+                        .await?
+                        .ok_or(DbErr::RecordNotFound(
+                            "Task group not found".to_string(),
+                        ))?;
+                    if group_record.status != status {
+                        let mut group_active: task_group::ActiveModel = group_record.into();
+                        group_active.status = Set(status.clone());
+                        group_active.updated_at = Set(Utc::now().into());
+                        group_active.update(db).await?;
+                    }
+                }
+            } else if let Some(task_group_id) = task_group_id
+                && let Err(err) = super::task_group::TaskGroup::sync_entry_task_statuses_by_row_id(
+                    db,
+                    task_group_id,
+                )
+                .await
+            {
+                tracing::warn!(
+                    "Failed to sync task group entry status after task update: {}",
+                    err
+                );
+            }
         }
         Self::from_model(db, updated).await
     }
@@ -572,8 +587,9 @@ impl Task {
         let project_row_id = record.project_id;
         let task_group_id = record.task_group_id;
         let task_kind = record.task_kind.clone();
+        let status_changed = record.status != status;
         let mut active: task::ActiveModel = record.into();
-        active.status = Set(status);
+        active.status = Set(status.clone());
         active.updated_at = Set(Utc::now().into());
         active.update(db).await?;
         let project_id = ids::project_uuid_by_id(db, project_row_id)
@@ -583,15 +599,31 @@ impl Task {
             .map_err(|err| DbErr::Custom(err.to_string()))?;
         EventOutbox::enqueue(db, EVENT_TASK_UPDATED, "task", id, payload).await?;
 
-        if let Some(task_group_id) = task_group_id
-            && task_kind != TaskKind::Group
-            && let Err(err) = super::task_group::TaskGroup::sync_entry_task_statuses_by_row_id(
-                db,
-                task_group_id,
-            )
-            .await
-        {
-            tracing::warn!("Failed to sync task group entry status: {}", err);
+        if status_changed {
+            if task_kind == TaskKind::Group {
+                if let Some(task_group_id) = task_group_id {
+                    let group_record = task_group::Entity::find_by_id(task_group_id)
+                        .one(db)
+                        .await?
+                        .ok_or(DbErr::RecordNotFound(
+                            "Task group not found".to_string(),
+                        ))?;
+                    if group_record.status != status {
+                        let mut group_active: task_group::ActiveModel = group_record.into();
+                        group_active.status = Set(status.clone());
+                        group_active.updated_at = Set(Utc::now().into());
+                        group_active.update(db).await?;
+                    }
+                }
+            } else if let Some(task_group_id) = task_group_id
+                && let Err(err) = super::task_group::TaskGroup::sync_entry_task_statuses_by_row_id(
+                    db,
+                    task_group_id,
+                )
+                .await
+            {
+                tracing::warn!("Failed to sync task group entry status: {}", err);
+            }
         }
         Ok(())
     }

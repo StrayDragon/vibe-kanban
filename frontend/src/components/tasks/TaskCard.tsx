@@ -113,7 +113,6 @@ export function TaskCard({
       onClick={handleClick}
       isOpen={isOpen}
       forwardedRef={localRef}
-      dragDisabled={isTaskGroup}
     >
       <div className="flex flex-col gap-2">
         <TaskCardHeader

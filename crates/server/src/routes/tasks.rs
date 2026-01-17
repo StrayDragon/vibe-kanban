@@ -222,11 +222,6 @@ pub async fn update_task(
 
     Json(payload): Json<UpdateTask>,
 ) -> Result<ResponseJson<ApiResponse<Task>>, ApiError> {
-    if existing_task.task_kind == TaskKind::Group && payload.status.is_some() {
-        return Err(ApiError::BadRequest(
-            "Task group entry task status is derived from nodes".to_string(),
-        ));
-    }
     // Use existing values if not provided in update
     let title = payload.title.unwrap_or(existing_task.title);
     let description = match payload.description {

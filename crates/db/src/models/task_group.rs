@@ -444,6 +444,11 @@ impl TaskGroup {
             .await?
             .ok_or(TaskGroupError::TaskGroupNotFound)?;
 
+        let status_changed = data
+            .status
+            .as_ref()
+            .map(|value| value != &record.status)
+            .unwrap_or(false);
         if let Some(schema_version) = data.schema_version {
             validate_schema_version(schema_version)?;
         }
@@ -493,6 +498,8 @@ impl TaskGroup {
 
         if let Some(graph) = &data.graph {
             Self::sync_task_links(db, updated.id, updated.project_id, graph).await?;
+        }
+        if data.graph.is_some() || status_changed {
             Self::sync_entry_task_statuses_by_row_id(db, updated.id).await?;
         }
 
@@ -543,6 +550,7 @@ impl TaskGroup {
         let status_map = Self::build_node_status_map(db, &graph.nodes).await?;
         let (_, node_statuses) = Self::apply_node_statuses(graph, &status_map);
         let suggested_status = aggregate_status(&node_statuses);
+        let entry_status = record.status.clone();
 
         let entry_tasks = task::Entity::find()
             .filter(task::Column::TaskGroupId.eq(task_group_row_id))
@@ -551,9 +559,9 @@ impl TaskGroup {
             .await?;
 
         for task_model in entry_tasks {
-            if task_model.status != suggested_status {
+            if task_model.status != entry_status {
                 let mut active: task::ActiveModel = task_model.clone().into();
-                active.status = Set(suggested_status.clone());
+                active.status = Set(entry_status.clone());
                 active.updated_at = Set(Utc::now().into());
                 let updated = active.update(db).await?;
                 Self::enqueue_task_updated(db, &updated).await?;
@@ -897,7 +905,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn entry_task_status_updates_from_nodes() {
+    async fn entry_task_status_reflects_group_status() {
         let db = setup_db().await;
         let project_id = Uuid::new_v4();
         Project::create(
@@ -1007,6 +1015,13 @@ mod tests {
             .iter()
             .find(|task| task.task_kind == TaskKind::Group)
             .expect("updated entry task");
-        assert_eq!(updated_entry.status, TaskStatus::InProgress);
+        assert_eq!(updated_entry.status, TaskStatus::Todo);
+
+        let updated_group = TaskGroup::find_by_id(&db, group_id)
+            .await
+            .unwrap()
+            .expect("updated group");
+        assert_eq!(updated_group.status, TaskStatus::Todo);
+        assert_eq!(updated_group.suggested_status, TaskStatus::InProgress);
     }
 }
