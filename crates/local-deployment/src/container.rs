@@ -539,7 +539,6 @@ impl LocalContainerService {
             ExecutorActionType::CodingAgentInitialRequest(CodingAgentInitialRequest {
                 prompt,
                 executor_profile_id: executor_profile_id.clone(),
-                image_paths: Vec::new(),
                 working_dir,
                 image_paths,
             })
@@ -1196,7 +1195,6 @@ impl LocalContainerService {
             ExecutorActionType::CodingAgentInitialRequest(CodingAgentInitialRequest {
                 prompt: queued_data.message.clone(),
                 executor_profile_id: executor_profile_id.clone(),
-                image_paths: Vec::new(),
                 working_dir,
                 image_paths,
             })

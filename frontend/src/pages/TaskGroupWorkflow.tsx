@@ -47,7 +47,7 @@ import TaskAttemptPanel from '@/components/panels/TaskAttemptPanel';
 import WYSIWYGEditor from '@/components/ui/wysiwyg';
 import TaskGroupNode, {
   type TaskGroupFlowNode,
-} from '@/components/task-groups/task-group-node';
+} from '@/components/task-groups/TaskGroupNode';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
 import { taskGroupsApi } from '@/lib/api';
 import { paths } from '@/lib/paths';
@@ -105,9 +105,12 @@ export function TaskGroupWorkflow() {
     projectId ?? ''
   );
 
-  const graph = taskGroup?.graph ?? taskGroup?.graph_json;
-  const graphNodes = graph?.nodes ?? [];
-  const graphEdges = graph?.edges ?? [];
+  const graph = useMemo(
+    () => taskGroup?.graph ?? taskGroup?.graph_json ?? null,
+    [taskGroup?.graph, taskGroup?.graph_json]
+  );
+  const graphNodes = useMemo(() => graph?.nodes ?? [], [graph]);
+  const graphEdges = useMemo(() => graph?.edges ?? [], [graph]);
 
   const graphNodesById = useMemo(() => {
     const map = new Map<string, TaskGroupGraphNode>();
@@ -141,7 +144,7 @@ export function TaskGroupWorkflow() {
   const [statusValue, setStatusValue] = useState<TaskStatus | null>(null);
   const hasAutoSelectedRef = useRef(false);
 
-  const nodesRef = useRef(nodes);
+  const nodesRef = useRef<FlowNode[]>([]);
   useEffect(() => {
     nodesRef.current = nodes;
   }, [nodes]);
@@ -167,8 +170,10 @@ export function TaskGroupWorkflow() {
       }))
     );
 
-    setNodes((prev) => {
-      const prevMap = new Map(prev.map((node) => [node.id, node]));
+    setNodes((prev: FlowNode[]) => {
+      const prevMap = new Map<string, FlowNode>(
+        prev.map((node) => [node.id, node])
+      );
       return graphNodes.map((node, index) => {
         const prevNode = prevMap.get(node.id);
         const taskId = getNodeTaskId(node);
@@ -247,7 +252,7 @@ export function TaskGroupWorkflow() {
     if (!taskGroup) return;
     const sourceGraph = taskGroup.graph ?? taskGroup.graph_json;
     if (!sourceGraph) return;
-    const positions = new Map(
+    const positions = new Map<string, FlowNode['position']>(
       nodesRef.current.map((node) => [node.id, node.position])
     );
     const updatedGraph = {
@@ -413,8 +418,8 @@ export function TaskGroupWorkflow() {
                 nodeTypes={nodeTypes}
                 onNodesChange={handleNodesChange}
                 onEdgesChange={onEdgesChange}
-                onSelectionChange={(event) =>
-                  setSelectedNodeId(event.nodes?.[0]?.id ?? null)
+                onSelectionChange={({ nodes: selectedNodes }) =>
+                  setSelectedNodeId(selectedNodes?.[0]?.id ?? null)
                 }
                 onPaneClick={() => setSelectedNodeId(null)}
                 fitView

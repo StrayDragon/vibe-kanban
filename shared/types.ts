@@ -417,14 +417,14 @@ export type CodingAgentInitialRequest = { prompt: string,
  */
 executor_profile_id: ExecutorProfileId, 
 /**
- * Optional image paths (relative to the worktree root).
- */
-image_paths: Array<string>, 
-/**
  * Optional relative path to execute the agent in (relative to container_ref).
  * If None, uses the container_ref directory directly.
  */
-working_dir: string | null, };
+working_dir: string | null, 
+/**
+ * Optional image path map keyed by prompt image references.
+ */
+image_paths?: { [key in string]?: string } | null, };
 
 export type CodingAgentFollowUpRequest = { prompt: string, session_id: string, 
 /**
@@ -435,7 +435,7 @@ executor_profile_id: ExecutorProfileId,
  * Optional relative path to execute the agent in (relative to container_ref).
  * If None, uses the container_ref directory directly.
  */
-working_dir: string | null, };
+working_dir: string | null, image_paths?: { [key in string]?: string } | null, };
 
 export type CommandExitStatus = { "type": "exit_code", code: number, } | { "type": "success", success: boolean, };
 

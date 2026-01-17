@@ -419,12 +419,11 @@ impl Task {
                 if let Some(group) = task_group::Entity::find_by_id(group_row_id)
                     .one(db)
                     .await?
+                    && group.project_id != project_row_id
                 {
-                    if group.project_id != project_row_id {
-                        return Err(DbErr::Custom(
-                            "Task group belongs to a different project".to_string(),
-                        ));
-                    }
+                    return Err(DbErr::Custom(
+                        "Task group belongs to a different project".to_string(),
+                    ));
                 }
                 Some(group_row_id)
             }
@@ -512,18 +511,16 @@ impl Task {
         if status_changed
             && let Some(task_group_id) = task_group_id
             && task_kind != TaskKind::Group
-        {
-            if let Err(err) = super::task_group::TaskGroup::sync_entry_task_statuses_by_row_id(
+            && let Err(err) = super::task_group::TaskGroup::sync_entry_task_statuses_by_row_id(
                 db,
                 task_group_id,
             )
             .await
-            {
-                tracing::warn!(
-                    "Failed to sync task group entry status after task update: {}",
-                    err
-                );
-            }
+        {
+            tracing::warn!(
+                "Failed to sync task group entry status after task update: {}",
+                err
+            );
         }
         Self::from_model(db, updated).await
     }
@@ -554,15 +551,13 @@ impl Task {
 
         if let Some(task_group_id) = task_group_id
             && task_kind != TaskKind::Group
-        {
-            if let Err(err) = super::task_group::TaskGroup::sync_entry_task_statuses_by_row_id(
+            && let Err(err) = super::task_group::TaskGroup::sync_entry_task_statuses_by_row_id(
                 db,
                 task_group_id,
             )
             .await
-            {
-                tracing::warn!("Failed to sync task group entry status: {}", err);
-            }
+        {
+            tracing::warn!("Failed to sync task group entry status: {}", err);
         }
         Ok(())
     }

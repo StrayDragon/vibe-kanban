@@ -209,7 +209,6 @@ pub async fn follow_up(
             executors::actions::coding_agent_initial::CodingAgentInitialRequest {
                 prompt,
                 executor_profile_id: executor_profile_id.clone(),
-                image_paths: Vec::new(),
                 working_dir,
                 image_paths,
             },

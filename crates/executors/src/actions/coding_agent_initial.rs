@@ -19,13 +19,11 @@ pub struct CodingAgentInitialRequest {
     #[serde(alias = "profile_variant_label")]
     // Backwards compatability with ProfileVariantIds, esp stored in DB under ExecutorAction
     pub executor_profile_id: ExecutorProfileId,
-    /// Optional image paths (relative to the worktree root).
-    #[serde(default)]
-    pub image_paths: Vec<String>,
     /// Optional relative path to execute the agent in (relative to container_ref).
     /// If None, uses the container_ref directory directly.
     #[serde(default)]
     pub working_dir: Option<String>,
+    /// Optional image path map keyed by prompt image references.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_paths: Option<HashMap<String, PathBuf>>,
 }

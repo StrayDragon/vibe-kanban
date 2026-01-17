@@ -114,19 +114,14 @@ pub struct TaskGroupNodeLayout {
     pub y: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, Default)]
 #[serde(rename_all = "lowercase")]
 #[ts(use_ts_enum)]
 pub enum TaskGroupNodeKind {
+    #[default]
     Task,
     Checkpoint,
     Merge,
-}
-
-impl Default for TaskGroupNodeKind {
-    fn default() -> Self {
-        Self::Task
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -244,10 +239,10 @@ fn validate_graph(graph: &TaskGroupGraph) -> Result<(), TaskGroupError> {
 }
 
 fn aggregate_status(statuses: &[TaskStatus]) -> TaskStatus {
-    if statuses.iter().any(|status| *status == TaskStatus::InReview) {
+    if statuses.contains(&TaskStatus::InReview) {
         return TaskStatus::InReview;
     }
-    if statuses.iter().any(|status| *status == TaskStatus::InProgress) {
+    if statuses.contains(&TaskStatus::InProgress) {
         return TaskStatus::InProgress;
     }
     if !statuses.is_empty() && statuses.iter().all(|status| *status == TaskStatus::Done) {
