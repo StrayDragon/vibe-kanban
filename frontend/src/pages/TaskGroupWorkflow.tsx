@@ -76,6 +76,7 @@ import TaskGroupNode, {
 } from '@/components/task-groups/TaskGroupNode';
 import { useUserSystem } from '@/components/ConfigProvider';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
+import { getTaskGroupId, isTaskGroupEntry } from '@/utils/taskGroup';
 import { taskGroupsApi, tasksApi } from '@/lib/api';
 import { paths } from '@/lib/paths';
 import type {
@@ -136,6 +137,7 @@ type FlowNode = TaskGroupFlowNode;
 type FlowEdge = Edge;
 
 type NewNodeMode = 'existing' | 'new';
+type PanelView = 'chat' | 'details';
 
 export function TaskGroupWorkflow() {
   const { t } = useTranslation('tasks');
@@ -192,6 +194,21 @@ export function TaskGroupWorkflow() {
     });
   }, [tasks]);
 
+  const entryTask = useMemo(() => {
+    if (!taskGroup) return null;
+    return (
+      tasks.find(
+        (task) =>
+          isTaskGroupEntry(task) && getTaskGroupId(task) === taskGroup.id
+      ) ?? null
+    );
+  }, [taskGroup, tasks]);
+
+  const masterNodeId = useMemo(
+    () => (taskGroup ? `task-group-${taskGroup.id}-primary` : null),
+    [taskGroup]
+  );
+
   const nodeTypes = useMemo<NodeTypes>(
     () => ({ taskGroup: TaskGroupNode }),
     []
@@ -215,6 +232,7 @@ export function TaskGroupWorkflow() {
   const [edges, setEdges] = useEdgesState<FlowEdge>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeLabel, setSelectedEdgeLabel] = useState('');
+  const [panelView, setPanelView] = useState<PanelView>('chat');
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [statusValue, setStatusValue] = useState<TaskStatus | null>(null);
   const [baselineValue, setBaselineValue] = useState('');
@@ -247,6 +265,77 @@ export function TaskGroupWorkflow() {
     setBaselineValue(taskGroup.baseline_ref ?? '');
   }, [taskGroup]);
 
+  const persistGraph = useCallback(
+    async (nextGraph: TaskGroupGraph) => {
+      if (!taskGroup) return;
+      setIsPersistingGraph(true);
+      setGraphError(null);
+      try {
+        await taskGroupsApi.update(taskGroup.id, { graph: nextGraph });
+        await refetchTaskGroup();
+      } catch (error) {
+        console.error('Failed to update task group graph:', error);
+        setGraphError('Failed to save workflow changes.');
+        await refetchTaskGroup();
+      } finally {
+        setIsPersistingGraph(false);
+      }
+    },
+    [refetchTaskGroup, taskGroup]
+  );
+
+  const { debounced: persistGraphDebounced } = useDebouncedCallback(
+    persistGraph,
+    600
+  );
+
+  const updateGraphDraft = useCallback(
+    (updater: (prev: TaskGroupGraph) => TaskGroupGraph) => {
+      setGraphDraft((prev) => {
+        const base = prev ?? { nodes: [], edges: [] };
+        const next = updater(base);
+        persistGraphDebounced(next);
+        return next;
+      });
+    },
+    [persistGraphDebounced]
+  );
+
+  const updateNode = useCallback(
+    (nodeId: string, updater: (node: TaskGroupGraphNode) => TaskGroupGraphNode) => {
+      updateGraphDraft((prev) => ({
+        ...prev,
+        nodes: prev.nodes.map((node) =>
+          node.id === nodeId ? updater(node) : node
+        ),
+      }));
+    },
+    [updateGraphDraft]
+  );
+
+  const handleInlineNodeUpdate = useCallback(
+    (
+      nodeId: string,
+      updates: { kind?: TaskGroupNodeKind; phase?: number }
+    ) => {
+      updateNode(nodeId, (node) => {
+        const next = { ...node };
+        if (updates.kind) {
+          next.kind = updates.kind;
+          next.requires_approval =
+            updates.kind === 'checkpoint'
+              ? true
+              : node.requires_approval ?? node.requiresApproval ?? false;
+        }
+        if (typeof updates.phase === 'number') {
+          next.phase = updates.phase;
+        }
+        return next;
+      });
+    },
+    [updateNode]
+  );
+
   useEffect(() => {
     if (!graph) return;
 
@@ -263,7 +352,7 @@ export function TaskGroupWorkflow() {
       const prevMap = new Map<string, FlowNode>(
         prev.map((node) => [node.id, node])
       );
-      return graphNodes.map((node, index) => {
+      const nextNodes: FlowNode[] = graphNodes.map((node, index) => {
         const prevNode = prevMap.get(node.id);
         const taskId = getNodeTaskId(node);
         const task = taskId ? tasksById[taskId] : undefined;
@@ -292,17 +381,70 @@ export function TaskGroupWorkflow() {
               node.requires_approval ??
               node.requiresApproval ??
               (node.kind ?? 'task') === 'checkpoint',
+            onUpdate: (updates: {
+              kind?: TaskGroupNodeKind;
+              phase?: number;
+            }) => handleInlineNodeUpdate(node.id, updates),
           },
         };
       });
+
+      if (masterNodeId) {
+        const positions = nextNodes.map((node) => node.position);
+        const minX =
+          positions.length > 0
+            ? Math.min(...positions.map((pos) => pos.x))
+            : 0;
+        const minY =
+          positions.length > 0
+            ? Math.min(...positions.map((pos) => pos.y))
+            : 0;
+        const masterPosition = positions.length
+          ? { x: minX - 260, y: minY }
+          : { x: 0, y: 0 };
+
+        const masterNode: FlowNode = {
+            id: masterNodeId,
+            type: 'taskGroup',
+            position: masterPosition,
+            draggable: false,
+            connectable: false,
+            data: {
+              title: entryTask?.title || taskGroup?.title || 'Task Group',
+              status: entryTask?.status ?? taskGroup?.status,
+              kind: 'task',
+              taskId: entryTask?.id,
+              isMaster: true,
+            },
+          };
+
+        return [masterNode, ...nextNodes];
+      }
+
+      return nextNodes;
     });
-  }, [graph, graphEdges, graphNodes, setEdges, setNodes, tasksById]);
+  }, [
+    entryTask,
+    graph,
+    graphEdges,
+    graphNodes,
+    handleInlineNodeUpdate,
+    masterNodeId,
+    setEdges,
+    setNodes,
+    taskGroup,
+    tasksById,
+  ]);
 
   useEffect(() => {
-    if (selectedNodeId && !graphNodesById.has(selectedNodeId)) {
+    if (
+      selectedNodeId &&
+      !graphNodesById.has(selectedNodeId) &&
+      selectedNodeId !== masterNodeId
+    ) {
       setSelectedNodeId(null);
     }
-  }, [graphNodesById, selectedNodeId]);
+  }, [graphNodesById, masterNodeId, selectedNodeId]);
 
   useEffect(() => {
     if (selectedEdgeId && !graphEdges.find((edge) => edge.id === selectedEdgeId)) {
@@ -320,6 +462,16 @@ export function TaskGroupWorkflow() {
   }, [graphEdges, selectedEdgeId]);
 
   useEffect(() => {
+    if (selectedEdgeId) {
+      setPanelView('details');
+      return;
+    }
+    if (selectedNodeId) {
+      setPanelView('chat');
+    }
+  }, [selectedEdgeId, selectedNodeId]);
+
+  useEffect(() => {
     if (selectedEdgeId) return;
     if (!selectedNodeId && nodes.length > 0 && !hasAutoSelectedRef.current) {
       hasAutoSelectedRef.current = true;
@@ -327,13 +479,21 @@ export function TaskGroupWorkflow() {
     }
   }, [nodes, selectedEdgeId, selectedNodeId]);
 
-  const selectedGraphNode = selectedNodeId
-    ? graphNodesById.get(selectedNodeId)
-    : null;
+  const isMasterSelected = Boolean(
+    masterNodeId && selectedNodeId === masterNodeId
+  );
+  const selectedGraphNode =
+    selectedNodeId && !isMasterSelected
+      ? graphNodesById.get(selectedNodeId)
+      : null;
   const selectedTaskId = selectedGraphNode
     ? getNodeTaskId(selectedGraphNode)
     : undefined;
-  const selectedTask = selectedTaskId ? tasksById[selectedTaskId] : undefined;
+  const selectedTask = isMasterSelected
+    ? entryTask ?? undefined
+    : selectedTaskId
+      ? tasksById[selectedTaskId]
+      : undefined;
 
   const {
     data: selectedAttempts = [],
@@ -400,6 +560,7 @@ export function TaskGroupWorkflow() {
     };
   }, [graphNodesById, selectedEdge, tasksById]);
 
+  const isGraphNodeSelected = Boolean(selectedGraphNode);
   const selectedKind = selectedGraphNode?.kind ?? 'task';
   const selectedExecutorProfile = selectedGraphNode
     ? getNodeExecutorProfileId(selectedGraphNode)
@@ -411,8 +572,8 @@ export function TaskGroupWorkflow() {
     selectedGraphNode?.requires_approval ??
     selectedGraphNode?.requiresApproval ??
     selectedKind === 'checkpoint';
-  const isCheckpoint = selectedKind === 'checkpoint';
-  const isNodeReady = blockedBy.length === 0;
+  const isCheckpoint = isGraphNodeSelected && selectedKind === 'checkpoint';
+  const isNodeReady = isGraphNodeSelected ? blockedBy.length === 0 : true;
   const isPendingApproval = Boolean(
     selectedGraphNode && requiresApproval && isNodeReady && selectedTask?.status !== 'done'
   );
@@ -421,42 +582,6 @@ export function TaskGroupWorkflow() {
     taskGroup?.suggested_status ?? taskGroup?.suggestedStatus ?? null;
   const currentStatus = statusValue ?? taskGroup?.status ?? 'todo';
 
-  const persistGraph = useCallback(
-    async (nextGraph: TaskGroupGraph) => {
-      if (!taskGroup) return;
-      setIsPersistingGraph(true);
-      setGraphError(null);
-      try {
-        await taskGroupsApi.update(taskGroup.id, { graph: nextGraph });
-        await refetchTaskGroup();
-      } catch (error) {
-        console.error('Failed to update task group graph:', error);
-        setGraphError('Failed to save workflow changes.');
-        await refetchTaskGroup();
-      } finally {
-        setIsPersistingGraph(false);
-      }
-    },
-    [refetchTaskGroup, taskGroup]
-  );
-
-  const { debounced: persistGraphDebounced } = useDebouncedCallback(
-    persistGraph,
-    600
-  );
-
-  const updateGraphDraft = useCallback(
-    (updater: (prev: TaskGroupGraph) => TaskGroupGraph) => {
-      setGraphDraft((prev) => {
-        const base = prev ?? { nodes: [], edges: [] };
-        const next = updater(base);
-        persistGraphDebounced(next);
-        return next;
-      });
-    },
-    [persistGraphDebounced]
-  );
-
   const handleNodesChange = useCallback(
     (changes: NodeChange<FlowNode>[]) => {
       const nextNodes = applyNodeChanges(changes, nodesRef.current);
@@ -464,9 +589,13 @@ export function TaskGroupWorkflow() {
       nodesRef.current = nextNodes;
       const removedIds = changes
         .filter((change) => change.type === 'remove')
-        .map((change) => change.id);
+        .map((change) => change.id)
+        .filter((id) => graphNodesById.has(id));
       const hasPositionChange = changes.some(
-        (change) => change.type === 'position' && !change.dragging
+        (change) =>
+          change.type === 'position' &&
+          !change.dragging &&
+          graphNodesById.has(change.id)
       );
       if (removedIds.length > 0) {
         updateGraphDraft((prev) => {
@@ -483,7 +612,9 @@ export function TaskGroupWorkflow() {
       if (hasPositionChange) {
         updateGraphDraft((prev) => {
           const positions = new Map(
-            nextNodes.map((node) => [node.id, node.position])
+            nextNodes
+              .filter((node) => graphNodesById.has(node.id))
+              .map((node) => [node.id, node.position])
           );
           return {
             ...prev,
@@ -503,7 +634,7 @@ export function TaskGroupWorkflow() {
         });
       }
     },
-    [setNodes, updateGraphDraft]
+    [graphNodesById, setNodes, updateGraphDraft]
   );
 
   const handleEdgesChange = useCallback(
@@ -604,18 +735,6 @@ export function TaskGroupWorkflow() {
     [handleBaselineSave]
   );
 
-  const updateNode = useCallback(
-    (nodeId: string, updater: (node: TaskGroupGraphNode) => TaskGroupGraphNode) => {
-      updateGraphDraft((prev) => ({
-        ...prev,
-        nodes: prev.nodes.map((node) =>
-          node.id === nodeId ? updater(node) : node
-        ),
-      }));
-    },
-    [updateGraphDraft]
-  );
-
   const handleEdgeLabelChange = useCallback(
     (value: string) => {
       setSelectedEdgeLabel(value);
@@ -646,6 +765,7 @@ export function TaskGroupWorkflow() {
 
   const handleRemoveNode = useCallback(
     (nodeId: string) => {
+      if (masterNodeId && nodeId === masterNodeId) return;
       updateGraphDraft((prev) => ({
         ...prev,
         nodes: prev.nodes.filter((node) => node.id !== nodeId),
@@ -655,7 +775,7 @@ export function TaskGroupWorkflow() {
       }));
       setSelectedNodeId(null);
     },
-    [updateGraphDraft]
+    [masterNodeId, updateGraphDraft]
   );
 
   const resetNewNodeForm = useCallback(() => {
@@ -778,6 +898,24 @@ export function TaskGroupWorkflow() {
     newNodeMode === 'existing'
       ? Boolean(newNodeTaskId)
       : newNodeTitle.trim().length > 0;
+  const panelTitle =
+    panelView === 'chat'
+      ? 'Chat'
+      : selectedEdge
+        ? 'Edge details'
+        : 'Node details';
+  const selectedNodeLabel = selectedTask?.title || 'Task';
+  const selectedNodeMeta = isMasterSelected
+    ? 'Primary'
+    : `${selectedKind.replace(/^[a-z]/, (char) => char.toUpperCase())}${
+        typeof selectedGraphNode?.phase === 'number'
+          ? ` · Phase ${selectedGraphNode.phase}`
+          : ''
+      }`;
+  const canStartAttempt =
+    Boolean(selectedTask) &&
+    !isCheckpoint &&
+    (!isGraphNodeSelected || isNodeReady);
 
   return (
     <div className="min-h-full h-full flex flex-col">
@@ -934,13 +1072,150 @@ export function TaskGroupWorkflow() {
 
         <div className="w-full lg:w-[420px] min-h-0">
           <NewCard className="h-full min-h-0 border rounded-lg bg-card overflow-hidden">
-            <NewCardHeader>
-              <div className="text-sm font-semibold">
-                {selectedEdge ? 'Edge details' : 'Node details'}
-              </div>
+            <NewCardHeader
+              actions={
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="xs"
+                    variant={panelView === 'chat' ? 'default' : 'outline'}
+                    onClick={() => setPanelView('chat')}
+                    disabled={Boolean(selectedEdgeId)}
+                  >
+                    Chat
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant={panelView === 'details' ? 'default' : 'outline'}
+                    onClick={() => setPanelView('details')}
+                  >
+                    Details
+                  </Button>
+                </div>
+              }
+            >
+              <div className="text-sm font-semibold">{panelTitle}</div>
             </NewCardHeader>
             <NewCardContent className="flex-1 min-h-0">
-              {selectedEdge ? (
+              {panelView === 'chat' ? (
+                !selectedTask ? (
+                  <div className="p-4 text-sm text-muted-foreground">
+                    {isMasterSelected
+                      ? isTasksLoading
+                        ? 'Loading primary task...'
+                        : 'Primary task data is unavailable.'
+                      : 'Select a node to open chat.'}
+                  </div>
+                ) : (
+                  <div className="h-full min-h-0 flex flex-col">
+                    <div className="p-4 border-b space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold truncate">
+                            {selectedNodeLabel}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {selectedNodeMeta}
+                          </div>
+                        </div>
+                        <Badge variant="outline" className="text-[10px]">
+                          {statusLabels[selectedTask.status]}
+                        </Badge>
+                      </div>
+
+                      {isGraphNodeSelected && (
+                        <>
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                            {isPendingApproval && (
+                              <Badge variant="outline" className="text-[10px]">
+                                Pending approval
+                              </Badge>
+                            )}
+                            {isNodeReady && !isPendingApproval && (
+                              <Badge variant="outline" className="text-[10px]">
+                                Ready
+                              </Badge>
+                            )}
+                            {!isNodeReady && (
+                              <Badge variant="outline" className="text-[10px]">
+                                Blocked
+                              </Badge>
+                            )}
+                          </div>
+
+                          {!isNodeReady && blockedBy.length > 0 && (
+                            <div className="text-xs text-muted-foreground">
+                              Blocked by:{' '}
+                              {blockedBy
+                                .map(
+                                  (item) =>
+                                    `${item.label} (${statusLabels[item.status]})`
+                                )
+                                .join(', ')}
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      <div className="flex flex-wrap gap-2">
+                        {canStartAttempt && (
+                          <Button
+                            size="sm"
+                            onClick={handleStartNode}
+                            disabled={isGraphNodeSelected && !isNodeReady}
+                          >
+                            <Play className="h-4 w-4 mr-1" />
+                            Start attempt
+                          </Button>
+                        )}
+                        {isPendingApproval && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={handleApproveNode}
+                          >
+                            <Check className="h-4 w-4 mr-1" />
+                            Approve
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex-1 min-h-0">
+                      {isAttemptsLoading ? (
+                        <div className="p-4 text-sm text-muted-foreground">
+                          Loading attempts...
+                        </div>
+                      ) : latestAttempt ? (
+                        <ExecutionProcessesProvider attemptId={latestAttempt.id}>
+                          <ClickedElementsProvider attempt={latestAttempt}>
+                            <ReviewProvider attemptId={latestAttempt.id}>
+                              <TaskAttemptPanel
+                                attempt={latestAttempt}
+                                task={selectedTask}
+                              >
+                                {({ logs, followUp }) => (
+                                  <div className="h-full min-h-0 flex flex-col">
+                                    <div className="flex-1 min-h-0">{logs}</div>
+                                    <div className="min-h-0 max-h-[45%] border-t overflow-hidden bg-background">
+                                      <div className="h-full min-h-0">
+                                        {followUp}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </TaskAttemptPanel>
+                            </ReviewProvider>
+                          </ClickedElementsProvider>
+                        </ExecutionProcessesProvider>
+                      ) : (
+                        <div className="p-4 text-sm text-muted-foreground">
+                          No attempts yet for this task.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              ) : selectedEdge ? (
                 <div className="p-4 space-y-3">
                   <div className="text-xs text-muted-foreground">
                     {selectedEdgeDetails?.fromLabel ?? selectedEdge.from} →{' '}
@@ -963,7 +1238,9 @@ export function TaskGroupWorkflow() {
                 </div>
               ) : !selectedGraphNode ? (
                 <div className="p-4 text-sm text-muted-foreground">
-                  Select a node or edge to view details.
+                  {isMasterSelected
+                    ? 'Primary node is chat-only. Select a workflow node to edit details.'
+                    : 'Select a node or edge to view details.'}
                 </div>
               ) : !selectedTask ? (
                 <div className="p-4 text-sm text-muted-foreground">
@@ -973,86 +1250,18 @@ export function TaskGroupWorkflow() {
                 </div>
               ) : (
                 <div className="h-full min-h-0 flex flex-col">
-                  <div className="p-4 border-b space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold truncate">
-                          {selectedTask.title || 'Task'}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {selectedKind.replace(/^[a-z]/, (char) =>
-                            char.toUpperCase()
-                          )}
-                          {typeof selectedGraphNode.phase === 'number'
-                            ? ` · Phase ${selectedGraphNode.phase}`
-                            : ''}
-                        </div>
-                      </div>
-                      <Badge variant="outline" className="text-[10px]">
-                        {statusLabels[selectedTask.status]}
-                      </Badge>
+                  <div className="p-4 border-b flex items-center justify-between gap-2">
+                    <div className="text-sm font-semibold truncate">
+                      {selectedNodeLabel}
                     </div>
-
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      {isPendingApproval && (
-                        <Badge variant="outline" className="text-[10px]">
-                          Pending approval
-                        </Badge>
-                      )}
-                      {isNodeReady && !isPendingApproval && (
-                        <Badge variant="outline" className="text-[10px]">
-                          Ready
-                        </Badge>
-                      )}
-                      {!isNodeReady && (
-                        <Badge variant="outline" className="text-[10px]">
-                          Blocked
-                        </Badge>
-                      )}
-                    </div>
-
-                    {!isNodeReady && blockedBy.length > 0 && (
-                      <div className="text-xs text-muted-foreground">
-                        Blocked by:{' '}
-                        {blockedBy
-                          .map(
-                            (item) =>
-                              `${item.label} (${statusLabels[item.status]})`
-                          )
-                          .join(', ')}
-                      </div>
-                    )}
-
-                    <div className="flex flex-wrap gap-2">
-                      {!isCheckpoint && (
-                        <Button
-                          size="sm"
-                          onClick={handleStartNode}
-                          disabled={!isNodeReady}
-                        >
-                          <Play className="h-4 w-4 mr-1" />
-                          Start attempt
-                        </Button>
-                      )}
-                      {isPendingApproval && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={handleApproveNode}
-                        >
-                          <Check className="h-4 w-4 mr-1" />
-                          Approve
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleRemoveNode(selectedGraphNode.id)}
-                      >
-                        <Trash2 className="h-4 w-4 mr-1" />
-                        Remove node
-                      </Button>
-                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleRemoveNode(selectedGraphNode.id)}
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      Remove node
+                    </Button>
                   </div>
 
                   <div className="p-4 border-b space-y-3">
@@ -1195,40 +1404,6 @@ export function TaskGroupWorkflow() {
 
                     {descriptionContent && (
                       <WYSIWYGEditor value={descriptionContent} disabled />
-                    )}
-                  </div>
-
-                  <div className="flex-1 min-h-0">
-                    {isAttemptsLoading ? (
-                      <div className="p-4 text-sm text-muted-foreground">
-                        Loading attempts...
-                      </div>
-                    ) : latestAttempt ? (
-                      <ExecutionProcessesProvider attemptId={latestAttempt.id}>
-                        <ClickedElementsProvider attempt={latestAttempt}>
-                          <ReviewProvider attemptId={latestAttempt.id}>
-                            <TaskAttemptPanel
-                              attempt={latestAttempt}
-                              task={selectedTask}
-                            >
-                              {({ logs, followUp }) => (
-                                <div className="h-full min-h-0 flex flex-col">
-                                  <div className="flex-1 min-h-0">{logs}</div>
-                                  <div className="min-h-0 max-h-[45%] border-t overflow-hidden bg-background">
-                                    <div className="h-full min-h-0">
-                                      {followUp}
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-                            </TaskAttemptPanel>
-                          </ReviewProvider>
-                        </ClickedElementsProvider>
-                      </ExecutionProcessesProvider>
-                    ) : (
-                      <div className="p-4 text-sm text-muted-foreground">
-                        No attempts yet for this task.
-                      </div>
                     )}
                   </div>
                 </div>

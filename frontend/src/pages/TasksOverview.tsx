@@ -73,7 +73,7 @@ import {
 import { cn } from '@/lib/utils';
 import { paths } from '@/lib/paths';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
-import { getTaskGroupId } from '@/utils/taskGroup';
+import { getTaskGroupId, isTaskGroupSubtask } from '@/utils/taskGroup';
 
 import type {
   RepoBranchStatus,
@@ -469,9 +469,14 @@ export function TasksOverview() {
   const hasSearch = Boolean(searchQuery.trim());
   const normalizedSearch = searchQuery.trim().toLowerCase();
 
+  const visibleTasks = useMemo(
+    () => tasks.filter((task) => !isTaskGroupSubtask(task)),
+    [tasks]
+  );
+
   const filteredTasks = useMemo(() => {
-    if (!hasSearch) return tasks;
-    return tasks.filter((task) => {
+    if (!hasSearch) return visibleTasks;
+    return visibleTasks.filter((task) => {
       const title = task.title.toLowerCase();
       const description = task.description?.toLowerCase() ?? '';
       return (
@@ -479,7 +484,7 @@ export function TasksOverview() {
         description.includes(normalizedSearch)
       );
     });
-  }, [hasSearch, normalizedSearch, tasks]);
+  }, [hasSearch, normalizedSearch, visibleTasks]);
 
   const tasksByProject = useMemo(() => {
     const grouped: Record<string, Task[]> = {};

@@ -65,7 +65,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import { AttemptHeaderActions } from '@/components/panels/AttemptHeaderActions';
 import { TaskPanelHeaderActions } from '@/components/panels/TaskPanelHeaderActions';
-import { getTaskGroupId } from '@/utils/taskGroup';
+import { getTaskGroupId, isTaskGroupSubtask } from '@/utils/taskGroup';
 
 import type { TaskWithAttemptStatus, TaskStatus } from 'shared/types';
 
@@ -339,6 +339,9 @@ export function ProjectTasks() {
           columns[status] = [];
         }
         items.forEach((task) => {
+          if (isTaskGroupSubtask(task)) {
+            return;
+          }
           if (!matchesSearch(task.title, task.description)) {
             return;
           }

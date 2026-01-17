@@ -27,7 +27,7 @@ use db::models::{
     project_repo::ProjectRepo,
     repo::{Repo, RepoError},
     session::{CreateSession, Session},
-    task::{Task, TaskKind, TaskRelationships, TaskStatus},
+    task::{Task, TaskRelationships, TaskStatus},
     task_group::{
         TaskGroup, TaskGroupError, TaskGroupGraph, TaskGroupNode, TaskGroupNodeBaseStrategy,
     },
@@ -412,12 +412,6 @@ pub async fn create_task_attempt(
     let task = Task::find_by_id(&deployment.db().pool, payload.task_id)
         .await?
         .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
-    if task.task_kind == TaskKind::Group {
-        return Err(ApiError::BadRequest(
-            "Task group entry tasks cannot create attempts".to_string(),
-        ));
-    }
-
     let mut baseline_ref: Option<String> = None;
     let mut topology_branches: Option<HashMap<Uuid, String>> = None;
     if let (Some(task_group_id), Some(node_id)) =
