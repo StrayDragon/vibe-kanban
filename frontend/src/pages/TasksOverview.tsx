@@ -73,7 +73,11 @@ import {
 import { cn } from '@/lib/utils';
 import { paths } from '@/lib/paths';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
-import { getTaskGroupId, isTaskGroupSubtask } from '@/utils/taskGroup';
+import {
+  getTaskGroupId,
+  isTaskGroupEntry,
+  isTaskGroupSubtask,
+} from '@/utils/taskGroup';
 
 import type {
   RepoBranchStatus,
@@ -183,6 +187,14 @@ function TaskListItem({
   const ref = useRef<HTMLButtonElement | null>(null);
   const description = task.description?.trim();
   const isMuted = task.status === 'done' || task.status === 'cancelled';
+  const isTaskGroup = isTaskGroupEntry(task);
+  const taskGroupId = getTaskGroupId(task);
+  const isGroupedTask = Boolean(taskGroupId) && !isTaskGroup;
+  const typeLabel = isTaskGroup
+    ? 'Task Group'
+    : isGroupedTask
+      ? 'Subtask'
+      : 'Task';
 
   useEffect(() => {
     if (!isSelected || !ref.current) return;
@@ -214,6 +226,12 @@ function TaskListItem({
               <XCircle className="h-4 w-4 text-destructive" />
             )}
           </div>
+          <Badge
+            variant="outline"
+            className="w-fit text-[10px] uppercase tracking-[0.12em] text-muted-foreground border-muted-foreground/40"
+          >
+            {typeLabel}
+          </Badge>
           {description && (
             <p className="text-xs text-muted-foreground line-clamp-2">
               {description}
