@@ -24,6 +24,7 @@ interface TaskCardProps {
   groupSummary?: {
     subtaskCount: number;
   };
+  groupTitle?: string;
 }
 
 export function TaskCard({
@@ -34,6 +35,7 @@ export function TaskCard({
   isOpen,
   projectId,
   groupSummary,
+  groupTitle,
 }: TaskCardProps) {
   const { t } = useTranslation('tasks');
   const navigate = useNavigateWithSearch();
@@ -41,6 +43,10 @@ export function TaskCard({
   const isTaskGroup = isTaskGroupEntry(task);
   const taskGroupId = getTaskGroupId(task);
   const isGroupedTask = Boolean(taskGroupId) && !isTaskGroup;
+  const displayTitle =
+    isGroupedTask && groupTitle ? groupTitle : task.title;
+  const showSubtaskTitle =
+    isGroupedTask && groupTitle && groupTitle !== task.title;
   const typeLabel = isTaskGroup
     ? 'Task Group'
     : isGroupedTask
@@ -101,7 +107,7 @@ export function TaskCard({
     <KanbanCard
       key={task.id}
       id={task.id}
-      name={task.title}
+      name={displayTitle}
       index={index}
       parent={status}
       onClick={handleClick}
@@ -111,7 +117,7 @@ export function TaskCard({
     >
       <div className="flex flex-col gap-2">
         <TaskCardHeader
-          title={task.title}
+          title={displayTitle}
           right={
             <>
               {task.has_in_progress_attempt && (
@@ -136,6 +142,11 @@ export function TaskCard({
             </>
           }
         />
+        {showSubtaskTitle && (
+          <div className="text-xs text-muted-foreground line-clamp-2">
+            {task.title}
+          </div>
+        )}
         <Badge
           variant="outline"
           className="w-fit text-[10px] uppercase tracking-[0.12em] text-muted-foreground border-muted-foreground/40"

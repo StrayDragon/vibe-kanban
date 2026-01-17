@@ -132,6 +132,9 @@ function TaskKanbanBoard({
                   }
                   return aIsEntry ? -1 : 1;
                 });
+                const hasGroupEntry = sortedTasks.some(({ task }) =>
+                  isTaskGroupEntry(task)
+                );
                 const subtaskCount = sortedTasks.filter(
                   (entry) => !isTaskGroupEntry(entry.task)
                 ).length;
@@ -144,6 +147,8 @@ function TaskKanbanBoard({
                         const groupSummary = !isSubtask
                           ? { subtaskCount }
                           : undefined;
+                        const groupTitle =
+                          isSubtask && !hasGroupEntry ? item.title : undefined;
                         const content = (
                           <TaskCard
                             key={task.id}
@@ -154,10 +159,11 @@ function TaskKanbanBoard({
                             isOpen={selectedTaskId === task.id}
                             projectId={projectId}
                             groupSummary={groupSummary}
+                            groupTitle={groupTitle}
                           />
                         );
 
-                        if (!isSubtask) {
+                        if (!isSubtask || !hasGroupEntry) {
                           return content;
                         }
 
