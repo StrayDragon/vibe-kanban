@@ -79,6 +79,7 @@ fn build_connect_options(database_url: &str) -> Result<ConnectOptions, DbErr> {
                 Ok(())
             })
         })
+        // If Postgres (or multi-backend) is enabled later, add map_sqlx_postgres_opts too.
         .map_sqlx_sqlite_opts(|opts| {
             opts.pragma("journal_mode", "WAL")
                 .pragma("synchronous", "NORMAL")

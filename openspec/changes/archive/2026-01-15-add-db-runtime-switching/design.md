@@ -17,7 +17,7 @@ The database layer currently assumes a local SQLite file and contains logic that
 - Use `DATABASE_URL` when set; if absent, connect to the local SQLite file under the asset directory.
 - Reject non-SQLite backends until additional database support is implemented.
 - Use `ConnectOptions::after_connect` to execute `PRAGMA foreign_keys = ON` for SQLite.
-- Keep `map_sqlx_sqlite_opts` for WAL, synchronous NORMAL, and busy timeout settings.
+- Keep WAL, synchronous NORMAL, and busy timeout settings via SQLite pragmas.
 - Always run `Migrator::up` and never delete the database file based on migration metadata.
 
 ## Risks / Trade-offs
