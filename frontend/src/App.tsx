@@ -1,8 +1,13 @@
 import { useEffect } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useParams,
+} from 'react-router-dom';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '@/i18n';
-import { Projects } from '@/pages/Projects';
 import { ProjectTasks } from '@/pages/ProjectTasks';
 import { TaskGroupWorkflow } from '@/pages/TaskGroupWorkflow';
 import { TasksOverview } from '@/pages/TasksOverview';
@@ -106,9 +111,15 @@ function AppContent() {
               />
 
               <Route element={<NormalLayout />}>
-                <Route path="/" element={<Projects />} />
-                <Route path="/projects" element={<Projects />} />
-                <Route path="/projects/:projectId" element={<Projects />} />
+                <Route path="/" element={<Navigate to="/tasks" replace />} />
+                <Route
+                  path="/projects"
+                  element={<Navigate to="/tasks" replace />}
+                />
+                <Route
+                  path="/projects/:projectId"
+                  element={<ProjectRedirect />}
+                />
                 <Route path="/tasks" element={<TasksOverview />} />
                 <Route
                   path="/tasks/:projectId/:taskId"
@@ -152,6 +163,16 @@ function AppContent() {
       </ThemeProvider>
     </I18nextProvider>
   );
+}
+
+function ProjectRedirect() {
+  const { projectId } = useParams<{ projectId?: string }>();
+
+  if (!projectId) {
+    return <Navigate to="/tasks" replace />;
+  }
+
+  return <Navigate to={`/projects/${projectId}/tasks`} replace />;
 }
 
 function App() {

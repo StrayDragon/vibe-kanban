@@ -12,6 +12,8 @@ import { useProjects } from '@/hooks/useProjects';
 interface ProjectContextValue {
   projectId: string | undefined;
   project: Project | undefined;
+  projects: Project[];
+  projectsById: Record<string, Project>;
   isLoading: boolean;
   error: Error | null;
   isError: boolean;
@@ -32,18 +34,20 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
     return match ? match[2] : undefined;
   }, [location.pathname]);
 
-  const { projectsById, isLoading, error } = useProjects();
+  const { projects, projectsById, isLoading, error } = useProjects();
   const project = projectId ? projectsById[projectId] : undefined;
 
   const value = useMemo(
     () => ({
       projectId,
       project,
+      projects,
+      projectsById,
       isLoading,
       error,
       isError: !!error,
     }),
-    [projectId, project, isLoading, error]
+    [projectId, project, projects, projectsById, isLoading, error]
   );
 
   // Centralized page title management

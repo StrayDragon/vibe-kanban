@@ -60,7 +60,7 @@ export const keyBindings: KeyBinding[] = [
     action: Action.EXIT,
     keys: 'esc',
     scopes: [Scope.KANBAN],
-    description: 'Close panel or navigate to projects',
+    description: 'Close panel or return to all tasks',
     group: 'Navigation',
   },
   {

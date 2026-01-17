@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ChevronDown,
   Loader2,
+  Plus,
   SlidersHorizontal,
   XCircle,
 } from 'lucide-react';
@@ -41,9 +42,10 @@ import { PreviewPanel } from '@/components/panels/PreviewPanel';
 import { DiffsPanel } from '@/components/panels/DiffsPanel';
 import TodoPanel from '@/components/tasks/TodoPanel';
 import { CreateAttemptDialog } from '@/components/dialogs/tasks/CreateAttemptDialog';
+import { ProjectFormDialog } from '@/components/dialogs/projects/ProjectFormDialog';
 
 import { useSearch } from '@/contexts/SearchContext';
-import { useProjects } from '@/hooks/useProjects';
+import { useProject } from '@/contexts/ProjectContext';
 import { useAllTasks } from '@/hooks/useAllTasks';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useTaskAttempts } from '@/hooks/useTaskAttempts';
@@ -306,7 +308,7 @@ function DiffsPanelContainer({
 }
 
 export function TasksOverview() {
-  const { t } = useTranslation(['tasks', 'common']);
+  const { t } = useTranslation(['tasks', 'common', 'projects']);
   const { projectId, taskId, attemptId } = useParams<{
     projectId?: string;
     taskId?: string;
@@ -330,13 +332,29 @@ export function TasksOverview() {
   const [statusGroupOpenOverrides, setStatusGroupOpenOverrides] = useState<
     Record<string, boolean>
   >({});
-  const { projects, projectsById, error: projectsError } = useProjects();
+  const {
+    projects,
+    projectsById,
+    error: projectsError,
+    isLoading: projectsLoading,
+  } = useProject();
   const {
     tasks,
     tasksById,
     isLoading: tasksLoading,
     error: streamError,
   } = useAllTasks();
+
+  const handleCreateProject = useCallback(async () => {
+    try {
+      const result = await ProjectFormDialog.show({});
+      if (result && result !== 'canceled') {
+        navigateWithSearch(paths.projectTasks(result.id));
+      }
+    } catch (error) {
+      // User cancelled - do nothing
+    }
+  }, [navigateWithSearch]);
 
   useEffect(() => {
     saveCollapsedStatuses(collapsedStatuses);
@@ -575,7 +593,7 @@ export function TasksOverview() {
       if (isPanelOpen) {
         handleClosePanel();
       } else {
-        navigate('/projects');
+        navigate('/tasks');
       }
     },
     { scope: Scope.KANBAN }
@@ -668,6 +686,8 @@ export function TasksOverview() {
   );
 
   const isInitialTasksLoad = tasksLoading && tasks.length === 0;
+  const showNoProjects =
+    !projectsLoading && !projectsError && projects.length === 0;
 
   if (isInitialTasksLoad) {
     return <Loader message={t('loading')} size={32} className="py-8" />;
@@ -676,7 +696,27 @@ export function TasksOverview() {
   const hasVisibleTasks = filteredTasks.length > 0;
 
   const listContent =
-    tasks.length === 0 ? (
+    showNoProjects ? (
+      <div className="max-w-5xl mx-auto mt-8 px-6">
+        <Card>
+          <CardContent className="py-12 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-muted">
+              <Plus className="h-6 w-6" />
+            </div>
+            <h3 className="mt-4 text-lg font-semibold">
+              {t('projects:empty.title')}
+            </h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {t('projects:empty.description')}
+            </p>
+            <Button className="mt-4" onClick={handleCreateProject}>
+              <Plus className="mr-2 h-4 w-4" />
+              {t('projects:createProject')}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    ) : tasks.length === 0 ? (
       <div className="max-w-5xl mx-auto mt-8 px-6">
         <Card>
           <CardContent className="text-center py-8">

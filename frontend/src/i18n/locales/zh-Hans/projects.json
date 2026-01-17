@@ -2,6 +2,11 @@
   "title": "项目",
   "subtitle": "管理您的项目并跟踪其进度",
   "createProject": "创建项目",
+  "switcher": {
+    "label": "切换项目",
+    "placeholder": "选择项目",
+    "empty": "暂无项目"
+  },
   "linkToOrganization": "链接到远程项目",
   "loading": "加载项目中...",
   "errors": {

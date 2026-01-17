@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle } from 'lucide-react';
-import { CreateProject } from 'shared/types';
+import { CreateProject, Project } from 'shared/types';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { useProjectMutations } from '@/hooks/useProjectMutations';
 import { defineModal } from '@/lib/modals';
@@ -16,14 +16,14 @@ import { RepoPickerDialog } from '@/components/dialogs/shared/RepoPickerDialog';
 
 export interface ProjectFormDialogProps {}
 
-export type ProjectFormDialogResult = 'saved' | 'canceled';
+export type ProjectFormDialogResult = Project | 'canceled';
 
 const ProjectFormDialogImpl = NiceModal.create<ProjectFormDialogProps>(() => {
   const modal = useModal();
 
   const { createProject } = useProjectMutations({
-    onCreateSuccess: () => {
-      modal.resolve('saved' as ProjectFormDialogResult);
+    onCreateSuccess: (project: Project) => {
+      modal.resolve(project as ProjectFormDialogResult);
       modal.hide();
     },
     onCreateError: () => {},

@@ -2,6 +2,11 @@
   "title": "Projects",
   "subtitle": "Manage your projects and track their progress",
   "createProject": "Create Project",
+  "switcher": {
+    "label": "Switch project",
+    "placeholder": "Select project",
+    "empty": "No projects yet"
+  },
   "linkToOrganization": "Link to Remote Project",
   "loading": "Loading projects...",
   "errors": {

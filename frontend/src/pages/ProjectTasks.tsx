@@ -302,7 +302,7 @@ export function ProjectTasks() {
       if (isPanelOpen) {
         handleClosePanel();
       } else {
-        navigate('/projects');
+        navigate('/tasks');
       }
     },
     { scope: Scope.KANBAN }

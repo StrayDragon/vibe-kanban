@@ -1,14 +1,19 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
+  ChevronDown,
   FolderOpen,
   List,
   Settings,
@@ -24,12 +29,9 @@ import { openTaskForm } from '@/lib/openTaskForm';
 import { useProject } from '@/contexts/ProjectContext';
 import { useOpenProjectInEditor } from '@/hooks/useOpenProjectInEditor';
 import { OpenInIdeButton } from '@/components/ide/OpenInIdeButton';
-import { useProjectRepos } from '@/hooks';
-
-const INTERNAL_NAV = [
-  { label: 'All Tasks', icon: List, to: '/tasks' },
-  { label: 'Projects', icon: FolderOpen, to: '/projects' },
-];
+import { useNavigateWithSearch, useProjectRepos } from '@/hooks';
+import { ProjectFormDialog } from '@/components/dialogs/projects/ProjectFormDialog';
+import { paths } from '@/lib/paths';
 
 const EXTERNAL_LINKS = [
   {
@@ -55,17 +57,32 @@ function NavDivider() {
 }
 
 export function Navbar() {
+  const { t } = useTranslation('projects');
   const location = useLocation();
-  const { projectId, project } = useProject();
+  const { projectId, project, projects, isLoading: projectsLoading } =
+    useProject();
+  const navigateWithSearch = useNavigateWithSearch();
   const { query, setQuery, active, clear, registerInputRef } = useSearch();
   const handleOpenInEditor = useOpenProjectInEditor(project || null);
   const isOverviewRoute = location.pathname.startsWith('/tasks');
+  const isProjectTasksRoute = /^\/projects\/[^/]+\/tasks/.test(
+    location.pathname
+  );
 
   const { data: repos } = useProjectRepos(projectId);
   const isSingleRepoProject = repos?.length === 1;
   const showOpenInIde = Boolean(projectId && isSingleRepoProject);
   const showCreateTask = Boolean(projectId && !isOverviewRoute);
   const showProjectActions = showOpenInIde || showCreateTask;
+  const hasProjects = projects.length > 0;
+  const kanbanPath = projectId
+    ? paths.projectTasks(projectId)
+    : hasProjects
+      ? paths.projectTasks(projects[0].id)
+      : '/tasks';
+  const switcherLabel =
+    project?.name ??
+    (projectsLoading ? t('loading') : t('switcher.placeholder'));
 
   const setSearchBarRef = useCallback(
     (node: HTMLInputElement | null) => {
@@ -84,17 +101,73 @@ export function Navbar() {
     handleOpenInEditor();
   };
 
+  const handleCreateProject = async () => {
+    try {
+      const result = await ProjectFormDialog.show({});
+      if (result && result !== 'canceled') {
+        navigateWithSearch(paths.projectTasks(result.id));
+      }
+    } catch (error) {
+      // User cancelled - do nothing
+    }
+  };
+
   return (
     <div className="border-b bg-background">
       <div className="w-full px-3">
         <div className="flex items-center h-12 py-2">
           <div className="flex-1 flex items-center">
-            <Link to="/projects">
+            <Link to="/tasks">
               <Logo />
             </Link>
           </div>
 
           <div className="hidden sm:flex items-center gap-2">
+            {isProjectTasksRoute && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 min-w-[140px] max-w-[220px] justify-between gap-2 bg-muted px-2"
+                    aria-label={t('switcher.label')}
+                  >
+                    <span className="truncate">{switcherLabel}</span>
+                    <ChevronDown className="h-4 w-4 opacity-70" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-56">
+                  <DropdownMenuLabel>{t('switcher.label')}</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {projectsLoading && projects.length === 0 ? (
+                    <DropdownMenuItem disabled>{t('loading')}</DropdownMenuItem>
+                  ) : projects.length === 0 ? (
+                    <DropdownMenuItem disabled>
+                      {t('switcher.empty')}
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuRadioGroup
+                      value={projectId ?? ''}
+                      onValueChange={(value) => {
+                        if (!value || value === projectId) return;
+                        navigateWithSearch(paths.projectTasks(value));
+                      }}
+                    >
+                      {projects.map((item) => (
+                        <DropdownMenuRadioItem key={item.id} value={item.id}>
+                          {item.name}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleCreateProject}>
+                    <Plus className="h-4 w-4" />
+                    {t('createProject')}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
             <SearchBar
               ref={setSearchBarRef}
               className="shrink-0"
@@ -164,22 +237,74 @@ export function Navbar() {
                 </DropdownMenuTrigger>
 
                 <DropdownMenuContent align="end">
-                  {INTERNAL_NAV.map((item) => {
-                    const active = location.pathname.startsWith(item.to);
-                    const Icon = item.icon;
-                    return (
+                  <DropdownMenuItem
+                    asChild
+                    className={isOverviewRoute ? 'bg-accent' : ''}
+                  >
+                    <Link to="/tasks">
+                      <List className="mr-2 h-4 w-4" />
+                      All Tasks
+                    </Link>
+                  </DropdownMenuItem>
+                  {hasProjects ? (
+                    <DropdownMenuItem
+                      asChild
+                      className={
+                        location.pathname.startsWith('/projects')
+                          ? 'bg-accent'
+                          : ''
+                      }
+                    >
+                      <Link to={kanbanPath}>
+                        <FolderOpen className="mr-2 h-4 w-4" />
+                        Kanbans
+                      </Link>
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem disabled>
+                      <FolderOpen className="mr-2 h-4 w-4" />
+                      Kanbans
+                    </DropdownMenuItem>
+                  )}
+                  {isProjectTasksRoute && (
+                    <>
+                      <DropdownMenuSeparator className="sm:hidden" />
+                      <DropdownMenuLabel className="sm:hidden">
+                        {t('switcher.label')}
+                      </DropdownMenuLabel>
+                      {projectsLoading && projects.length === 0 ? (
+                        <DropdownMenuItem className="sm:hidden" disabled>
+                          {t('loading')}
+                        </DropdownMenuItem>
+                      ) : projects.length === 0 ? (
+                        <DropdownMenuItem className="sm:hidden" disabled>
+                          {t('switcher.empty')}
+                        </DropdownMenuItem>
+                      ) : (
+                        <DropdownMenuRadioGroup
+                          className="sm:hidden"
+                          value={projectId ?? ''}
+                          onValueChange={(value) => {
+                            if (!value || value === projectId) return;
+                            navigateWithSearch(paths.projectTasks(value));
+                          }}
+                        >
+                          {projects.map((item) => (
+                            <DropdownMenuRadioItem key={item.id} value={item.id}>
+                              {item.name}
+                            </DropdownMenuRadioItem>
+                          ))}
+                        </DropdownMenuRadioGroup>
+                      )}
                       <DropdownMenuItem
-                        key={item.to}
-                        asChild
-                        className={active ? 'bg-accent' : ''}
+                        className="sm:hidden"
+                        onClick={handleCreateProject}
                       >
-                        <Link to={item.to}>
-                          <Icon className="mr-2 h-4 w-4" />
-                          {item.label}
-                        </Link>
+                        <Plus className="h-4 w-4" />
+                        {t('createProject')}
                       </DropdownMenuItem>
-                    );
-                  })}
+                    </>
+                  )}
 
                   <DropdownMenuSeparator />
 

@@ -17,7 +17,7 @@ import { Action } from './registry';
  *
  * @example
  * // In kanban board
- * useKeyExit(() => navigateToProjects(), { scope: Scope.KANBAN });
+ * useKeyExit(() => navigateToTasks(), { scope: Scope.KANBAN });
  */
 export const useKeyExit = createSemanticHook(Action.EXIT);
 
