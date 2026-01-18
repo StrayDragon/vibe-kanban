@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {
   ChevronDown,
-  FolderOpen,
+  Kanban,
   List,
   Settings,
   BookOpen,
@@ -256,13 +256,13 @@ export function Navbar() {
                       }
                     >
                       <Link to={kanbanPath}>
-                        <FolderOpen className="mr-2 h-4 w-4" />
+                        <Kanban className="mr-2 h-4 w-4" />
                         Kanbans
                       </Link>
                     </DropdownMenuItem>
                   ) : (
                     <DropdownMenuItem disabled>
-                      <FolderOpen className="mr-2 h-4 w-4" />
+                      <Kanban className="mr-2 h-4 w-4" />
                       Kanbans
                     </DropdownMenuItem>
                   )}
