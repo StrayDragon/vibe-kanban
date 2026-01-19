@@ -136,8 +136,15 @@ export function Navbar() {
         );
         const nextPath = nextProject
           ? paths.projectTasks(nextProject.id)
-          : '/tasks';
-        navigateWithSearch(nextPath);
+          : paths.overview();
+        const nextUrl = new URL(nextPath, window.location.origin);
+        if (!nextUrl.search && window.location.search) {
+          nextUrl.search = window.location.search;
+        }
+        if (!nextUrl.hash && window.location.hash) {
+          nextUrl.hash = window.location.hash;
+        }
+        window.location.assign(nextUrl.toString());
       }
     } catch (error) {
       console.error('Failed to delete project:', error);
