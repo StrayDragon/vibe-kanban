@@ -11,7 +11,7 @@ import {
   getLanguageLabel,
   hasCodeFence,
   hashText,
-  translateMyMemory,
+  translateViaApi,
   type TranslationDisplayMode,
 } from '@/utils/translation';
 
@@ -100,7 +100,7 @@ const TranslatableContent = ({
     });
 
     try {
-      const translatedText = await translateMyMemory(
+      const translatedText = await translateViaApi(
         content,
         sourceLang,
         targetLang

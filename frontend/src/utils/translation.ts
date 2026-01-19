@@ -1,3 +1,5 @@
+import type { ApiResponse } from 'shared/types';
+
 export type TranslationDisplayMode = 'bilingual' | 'translated_only';
 export type TranslationStatus = 'idle' | 'loading' | 'success' | 'error';
 
@@ -6,8 +8,17 @@ export type TranslationLanguage = 'en' | 'zh-CN';
 export const DEFAULT_SOURCE_LANG: TranslationLanguage = 'en';
 export const DEFAULT_TARGET_LANG: TranslationLanguage = 'zh-CN';
 
-export const MYMEMORY_ENDPOINT =
-  'https://api.mymemory.translated.net/get';
+type TranslationApiRequest = {
+  text: string;
+  source_lang: string;
+  target_lang: string;
+};
+
+type TranslationApiResult = {
+  translated_text: string;
+};
+
+const TRANSLATION_ENDPOINT = '/api/translation';
 
 export function hasCodeFence(text: string) {
   return text.includes('```');
@@ -32,30 +43,35 @@ export function getLanguageLabel(lang: string, displayLocale: string) {
   }
 }
 
-export async function translateMyMemory(
+export async function translateViaApi(
   text: string,
   sourceLang: string,
   targetLang: string
 ) {
-  const url = new URL(MYMEMORY_ENDPOINT);
-  url.searchParams.set('q', text);
-  url.searchParams.set('langpair', `${sourceLang}|${targetLang}`);
+  const response = await fetch(TRANSLATION_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text,
+      source_lang: sourceLang,
+      target_lang: targetLang,
+    } satisfies TranslationApiRequest),
+  });
 
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    throw new Error(`Translation failed (${response.status})`);
+  let payload: ApiResponse<TranslationApiResult> | null = null;
+  try {
+    payload = (await response.json()) as ApiResponse<TranslationApiResult>;
+  } catch {
+    payload = null;
   }
-  const data = (await response.json()) as {
-    responseStatus?: number;
-    responseDetails?: string;
-    responseData?: { translatedText?: string };
-  };
 
-  if (data.responseStatus && data.responseStatus !== 200) {
-    throw new Error(data.responseDetails || 'Translation failed');
+  if (!response.ok || !payload?.success) {
+    const message =
+      payload?.message ?? `Translation failed (${response.status})`;
+    throw new Error(message);
   }
 
-  const translatedText = data.responseData?.translatedText;
+  const translatedText = payload.data?.translated_text;
   if (!translatedText) {
     throw new Error('Translation unavailable');
   }

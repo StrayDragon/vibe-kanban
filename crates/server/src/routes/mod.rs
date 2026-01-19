@@ -23,6 +23,7 @@ pub mod tags;
 pub mod task_attempts;
 pub mod tasks;
 pub mod task_groups;
+pub mod translation;
 pub(crate) mod task_deletion;
 
 pub fn router(deployment: DeploymentImpl) -> IntoMakeService<Router> {
@@ -43,6 +44,7 @@ pub fn router(deployment: DeploymentImpl) -> IntoMakeService<Router> {
         .merge(approvals::router())
         .merge(scratch::router(&deployment))
         .merge(sessions::router(&deployment))
+        .merge(translation::router())
         .nest("/images", images::routes())
         .with_state(deployment);
 

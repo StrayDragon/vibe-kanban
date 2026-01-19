@@ -25,6 +25,20 @@ If you see errors like “database is locked”, start with these checks:
 
 If the DB remains locked after a crash, a full backend restart usually clears it. If it doesn’t, restore from a known-good backup.
 
+## Translation LLM configuration
+
+On-demand chat translation uses an OpenAI-compatible LLM endpoint via the backend.
+
+Required env vars (preferred):
+- `KANBAN_OPENAI_API_BASE` (e.g. `https://api.openai.com`)
+- `KANBAN_OPENAI_API_KEY`
+- `KANBAN_OPENAI_DEFAULT_MODEL` (e.g. `gpt-4o-mini`)
+
+Fallback env vars (used only if `KANBAN_` is missing):
+- `OPENAI_API_BASE`
+- `OPENAI_API_KEY`
+- `OPENAI_DEFAULT_MODEL`
+
 ## Backups
 
 Preferred approach (consistent snapshot):
@@ -48,4 +62,3 @@ Weekly:
 Monthly:
 - Review retention/cleanup knobs (e.g. legacy JSONL cleanup) and adjust to your deployment size.
 - Audit config changes and ensure the latest config migration version is applied.
-
