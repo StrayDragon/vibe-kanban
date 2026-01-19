@@ -21,6 +21,7 @@ import {
   MessageCircleQuestion,
   Menu,
   Plus,
+  X,
 } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { SearchBar } from '@/components/SearchBar';
@@ -31,7 +32,10 @@ import { useOpenProjectInEditor } from '@/hooks/useOpenProjectInEditor';
 import { OpenInIdeButton } from '@/components/ide/OpenInIdeButton';
 import { useNavigateWithSearch, useProjectRepos } from '@/hooks';
 import { ProjectFormDialog } from '@/components/dialogs/projects/ProjectFormDialog';
+import { ConfirmDialog } from '@/components/dialogs';
+import { projectsApi } from '@/lib/api';
 import { paths } from '@/lib/paths';
+import type { Project } from 'shared/types';
 
 const EXTERNAL_LINKS = [
   {
@@ -112,6 +116,67 @@ export function Navbar() {
     }
   };
 
+  const handleDeleteProject = async (projectToDelete: Project) => {
+    const result = await ConfirmDialog.show({
+      title: t('delete.confirmTitle'),
+      message: t('delete.confirmMessage', { name: projectToDelete.name }),
+      confirmText: t('common:buttons.delete'),
+      cancelText: t('common:buttons.cancel'),
+      variant: 'destructive',
+    });
+
+    if (result !== 'confirmed') return;
+
+    try {
+      await projectsApi.delete(projectToDelete.id);
+
+      if (projectId === projectToDelete.id) {
+        const nextProject = projects.find(
+          (item) => item.id !== projectToDelete.id
+        );
+        const nextPath = nextProject
+          ? paths.projectTasks(nextProject.id)
+          : '/tasks';
+        navigateWithSearch(nextPath);
+      }
+    } catch (error) {
+      console.error('Failed to delete project:', error);
+    }
+  };
+
+  const renderProjectOption = (item: Project) => (
+    <DropdownMenuRadioItem
+      key={item.id}
+      value={item.id}
+      className="gap-2 pr-1"
+      onSelect={(event) => {
+        const target = event.target as HTMLElement | null;
+        if (target?.closest('[data-project-delete]')) {
+          event.preventDefault();
+        }
+      }}
+    >
+      <span className="min-w-0 flex-1 truncate">{item.name}</span>
+      <button
+        type="button"
+        data-project-delete
+        className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          void handleDeleteProject(item);
+        }}
+        onPointerDown={(event) => {
+          event.stopPropagation();
+        }}
+        aria-label={t('common:buttons.delete')}
+        title={t('common:buttons.delete')}
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </DropdownMenuRadioItem>
+  );
+
   return (
     <div className="border-b bg-background">
       <div className="w-full px-3">
@@ -153,11 +218,7 @@ export function Navbar() {
                         navigateWithSearch(paths.projectTasks(value));
                       }}
                     >
-                      {projects.map((item) => (
-                        <DropdownMenuRadioItem key={item.id} value={item.id}>
-                          {item.name}
-                        </DropdownMenuRadioItem>
-                      ))}
+                      {projects.map(renderProjectOption)}
                     </DropdownMenuRadioGroup>
                   )}
                   <DropdownMenuSeparator />
@@ -289,11 +350,7 @@ export function Navbar() {
                             navigateWithSearch(paths.projectTasks(value));
                           }}
                         >
-                          {projects.map((item) => (
-                            <DropdownMenuRadioItem key={item.id} value={item.id}>
-                              {item.name}
-                            </DropdownMenuRadioItem>
-                          ))}
+                          {projects.map(renderProjectOption)}
                         </DropdownMenuRadioGroup>
                       )}
                       <DropdownMenuItem

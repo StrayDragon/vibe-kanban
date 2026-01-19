@@ -13,6 +13,10 @@
     "fetchFailed": "获取项目失败",
     "deleteFailed": "删除项目失败"
   },
+  "delete": {
+    "confirmTitle": "删除项目？",
+    "confirmMessage": "确定要删除“{{name}}”吗？此操作无法撤销。"
+  },
   "empty": {
     "title": "还没有项目",
     "description": "通过创建您的第一个项目开始。",

@@ -13,6 +13,10 @@
     "fetchFailed": "Failed to fetch projects",
     "deleteFailed": "Failed to delete project"
   },
+  "delete": {
+    "confirmTitle": "Delete project?",
+    "confirmMessage": "Are you sure you want to delete \"{{name}}\"? This action cannot be undone."
+  },
   "empty": {
     "title": "No projects yet",
     "description": "Get started by creating your first project.",
