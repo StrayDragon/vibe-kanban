@@ -1,8 +1,10 @@
 export type TranslationDisplayMode = 'bilingual' | 'translated_only';
 export type TranslationStatus = 'idle' | 'loading' | 'success' | 'error';
 
-export const DEFAULT_SOURCE_LANG = 'en';
-export const DEFAULT_TARGET_LANG = 'zh-CN';
+export type TranslationLanguage = 'en' | 'zh-CN';
+
+export const DEFAULT_SOURCE_LANG: TranslationLanguage = 'en';
+export const DEFAULT_TARGET_LANG: TranslationLanguage = 'zh-CN';
 
 export const MYMEMORY_ENDPOINT =
   'https://api.mymemory.translated.net/get';
