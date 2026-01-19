@@ -37,7 +37,18 @@
     "args": "参数",
     "output": "输出",
     "result": "结果",
-    "deniedByUser": "用户拒绝了 {{toolName}}"
+    "deniedByUser": "用户拒绝了 {{toolName}}",
+    "translation": {
+      "action": "翻译",
+      "loading": "翻译中...",
+      "failed": "翻译失败",
+      "retry": "重试",
+      "stale": "内容已更新。",
+      "retranslate": "重新翻译",
+      "label": "翻译为 {{language}}",
+      "showOnly": "仅显示译文",
+      "showBoth": "显示原文和译文"
+    }
   },
   "folderPicker": {
     "legend": "点击文件夹名称进行导航 • 使用操作按钮进行选择",

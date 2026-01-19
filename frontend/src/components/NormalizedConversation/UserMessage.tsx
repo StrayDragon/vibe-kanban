@@ -1,22 +1,24 @@
 import { useState } from 'react';
-import WYSIWYGEditor from '@/components/ui/wysiwyg';
 import { BaseAgentCapability } from 'shared/types';
 import type { WorkspaceWithSession } from '@/types/attempt';
 import { useUserSystem } from '@/components/ConfigProvider';
 import { useRetryUi } from '@/contexts/RetryUiContext';
 import { useAttemptExecution } from '@/hooks/useAttemptExecution';
 import { RetryEditorInline } from './RetryEditorInline';
+import TranslatableContent from './TranslatableContent';
 
 const UserMessage = ({
   content,
   executionProcessId,
   taskAttempt,
   taskId,
+  entryKey,
 }: {
   content: string;
   executionProcessId?: string;
   taskAttempt?: WorkspaceWithSession;
   taskId?: string;
+  entryKey: string;
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const { capabilities } = useUserSystem();
@@ -67,12 +69,14 @@ const UserMessage = ({
               taskId={taskId}
             />
           ) : (
-            <WYSIWYGEditor
-              value={content}
-              disabled
-              className="whitespace-pre-wrap break-words flex flex-col gap-1 font-light"
+            <TranslatableContent
+              entryKey={entryKey}
+              content={content}
+              markdown
+              contentClassName="whitespace-pre-wrap break-words flex flex-col gap-1 font-light"
               taskAttemptId={taskAttempt?.id}
               taskId={taskId}
+              canTranslate
               onEdit={canRetry ? startRetry : undefined}
             />
           )}

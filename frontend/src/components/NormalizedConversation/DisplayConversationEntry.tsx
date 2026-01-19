@@ -32,6 +32,7 @@ import RawLogText from '../common/RawLogText';
 import UserMessage from './UserMessage';
 import PendingApprovalEntry from './PendingApprovalEntry';
 import { NextActionCard } from './NextActionCard';
+import TranslatableContent from './TranslatableContent';
 import { cn } from '@/lib/utils';
 import { useRetryUi } from '@/contexts/RetryUiContext';
 
@@ -277,6 +278,8 @@ const CollapsibleEntry: React.FC<{
   taskAttemptId?: string;
   taskId?: string;
   cardClassName?: string;
+  translationKey?: string;
+  canTranslate?: boolean;
 }> = ({
   content,
   markdown,
@@ -286,23 +289,23 @@ const CollapsibleEntry: React.FC<{
   taskAttemptId,
   taskId,
   cardClassName,
+  translationKey,
+  canTranslate = false,
 }) => {
   const multiline = content.includes('\n');
   const [expanded, toggle] = useExpandable(`entry:${expansionKey}`, false);
 
   const Inner = (
     <div className={contentClassName}>
-      {markdown ? (
-        <WYSIWYGEditor
-          value={content}
-          disabled
-          className="whitespace-pre-wrap break-words"
-          taskAttemptId={taskAttemptId}
-          taskId={taskId}
-        />
-      ) : (
-        content
-      )}
+      <TranslatableContent
+        entryKey={translationKey ?? expansionKey}
+        content={content}
+        markdown={markdown}
+        contentClassName="whitespace-pre-wrap break-words"
+        taskAttemptId={taskAttemptId}
+        taskId={taskId}
+        canTranslate={canTranslate}
+      />
     </div>
   );
 
@@ -698,6 +701,7 @@ function DisplayConversationEntry({
         executionProcessId={executionProcessId}
         taskAttempt={taskAttempt}
         taskId={taskId}
+        entryKey={expansionKey}
       />
     );
   }
@@ -834,6 +838,8 @@ function DisplayConversationEntry({
           taskAttemptId={taskAttempt?.id}
           taskId={taskId}
           cardClassName={autoRetryClassName}
+          translationKey={expansionKey}
+          canTranslate={isSystem}
         />
       </div>
     );
@@ -866,12 +872,17 @@ function DisplayConversationEntry({
     <div className="px-4 py-2 text-sm">
       <div className={getContentClassName(entryType)}>
         {shouldRenderMarkdown(entryType) ? (
-          <WYSIWYGEditor
-            value={isNormalizedEntry(entry) ? entry.content : ''}
-            disabled
-            className="whitespace-pre-wrap break-words flex flex-col gap-1 font-light"
+          <TranslatableContent
+            entryKey={expansionKey}
+            content={isNormalizedEntry(entry) ? entry.content : ''}
+            markdown
+            contentClassName="whitespace-pre-wrap break-words flex flex-col gap-1 font-light"
             taskAttemptId={taskAttempt?.id}
             taskId={taskId}
+            canTranslate={
+              entryType.type === 'assistant_message' ||
+              entryType.type === 'thinking'
+            }
           />
         ) : isNormalizedEntry(entry) ? (
           entry.content

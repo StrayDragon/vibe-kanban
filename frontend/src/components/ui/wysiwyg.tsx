@@ -37,7 +37,7 @@ import { LinkNode } from '@lexical/link';
 import { EditorState } from 'lexical';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Check, Clipboard, Pencil, Trash2 } from 'lucide-react';
+import { Check, Clipboard, Languages, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { writeClipboardViaBridge } from '@/vscode/bridge';
 
 /** Markdown string representing the editor content */
@@ -65,6 +65,12 @@ type WysiwygProps = {
   onEdit?: () => void;
   /** Optional delete callback - shows delete button in read-only mode when provided */
   onDelete?: () => void;
+  /** Optional translate callback - shows translate button in read-only mode when provided */
+  onTranslate?: () => void;
+  /** Translate button state (used for loading indicator) */
+  translateState?: 'loading' | 'error' | 'success' | 'idle';
+  /** Translate button label override */
+  translateLabel?: string;
   /** Auto-focus the editor on mount */
   autoFocus?: boolean;
 };
@@ -85,6 +91,9 @@ function WYSIWYGEditor({
   localImages,
   onEdit,
   onDelete,
+  onTranslate,
+  translateState,
+  translateLabel,
   autoFocus = false,
 }: WysiwygProps) {
   // Copy button state
@@ -99,6 +108,7 @@ function WYSIWYGEditor({
       // noop – bridge handles fallback
     }
   }, [value]);
+  const isTranslating = translateState === 'loading';
 
   const initialConfig = useMemo(
     () => ({
@@ -274,6 +284,25 @@ function WYSIWYGEditor({
                 <Clipboard className="w-4 h-4 text-muted-foreground" />
               )}
             </Button>
+            {/* Translate button - only if onTranslate provided */}
+            {onTranslate && (
+              <Button
+                type="button"
+                aria-label={translateLabel ?? 'Translate'}
+                title={translateLabel ?? 'Translate'}
+                variant="icon"
+                size="icon"
+                onClick={onTranslate}
+                disabled={isTranslating}
+                className="pointer-events-auto p-2 bg-muted h-8 w-8"
+              >
+                {isTranslating ? (
+                  <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
+                ) : (
+                  <Languages className="w-4 h-4 text-muted-foreground" />
+                )}
+              </Button>
+            )}
             {/* Edit button - only if onEdit provided */}
             {onEdit && (
               <Button

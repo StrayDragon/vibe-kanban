@@ -37,7 +37,18 @@
     "args": "Args",
     "output": "Output",
     "result": "Result",
-    "deniedByUser": "{{toolName}} denied by user"
+    "deniedByUser": "{{toolName}} denied by user",
+    "translation": {
+      "action": "Translate",
+      "loading": "Translating...",
+      "failed": "Translation failed",
+      "retry": "Retry",
+      "stale": "Content changed.",
+      "retranslate": "Re-translate",
+      "label": "Translated to {{language}}",
+      "showOnly": "Show translation only",
+      "showBoth": "Show original and translation"
+    }
   },
   "folderPicker": {
     "legend": "Click folder names to navigate • Use action buttons to select",
