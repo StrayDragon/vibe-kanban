@@ -71,3 +71,38 @@ The raw log viewer MUST cap the number of retained lines and inform the user whe
 - **WHEN** the raw log buffer exceeds the configured limit
 - **THEN** older lines are dropped and the UI shows a truncation notice
 
+### Requirement: Evicted history fallback
+The system SHALL serve raw and normalized log history from persistent log entry storage when in-memory history has evicted entries for a running process.
+
+#### Scenario: Running process falls back to DB for older entries
+- **WHEN** a running process has evicted in-memory history and a client requests history before the earliest in-memory entry
+- **THEN** the response returns older entries from persistent storage and indicates whether older history remains
+
+### Requirement: History completeness indicator
+The system SHALL indicate when log history is incomplete because older entries were evicted and are not available in persistent storage.
+
+#### Scenario: Missing history flagged
+- **WHEN** in-memory history has evicted entries and persistent storage contains no older entries
+- **THEN** the history response marks the history as partial for UI display
+
+### Requirement: Lagged stream resync
+The system SHALL resynchronize entry-indexed log streams when the underlying broadcast channel reports lag, without closing the stream.
+
+#### Scenario: Lagged receiver resyncs
+- **WHEN** a log stream receiver lags behind the broadcast channel
+- **THEN** the stream emits a snapshot of current entries with their indexes and continues streaming new events
+
+### Requirement: Legacy log backfill compatibility
+The system SHALL backfill indexed raw and normalized log entries from legacy JSONL history when log entry storage is incomplete.
+
+#### Scenario: JSONL-only execution
+- **WHEN** a completed execution has JSONL history but missing log entry rows
+- **THEN** the system backfills log entries so history endpoints can serve the data
+
+### Requirement: Legacy JSONL retention cleanup
+The system SHALL remove legacy JSONL history after a configurable retention window once log entry history is persisted.
+
+#### Scenario: Cleanup after backfill window
+- **WHEN** legacy JSONL rows are older than the retention window and the execution is completed
+- **THEN** the system deletes the JSONL rows without affecting log entry history retrieval
+
