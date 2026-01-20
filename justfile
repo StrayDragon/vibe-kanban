@@ -15,7 +15,7 @@ db-prepare:
 db-prepare-check:
     pnpm run prepare-db:check
 
-frontend-build:
+frontend-build: install
     pnpm -C frontend build
 
 backend-build: # db-prepare
