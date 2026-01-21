@@ -582,6 +582,18 @@ export const useConversationHistory = ({
     ]
   );
 
+  // Reset state when attempt changes
+  useEffect(() => {
+    displayedExecutionProcesses.current = {};
+    loadedInitialEntries.current = false;
+    streamingProcessIdsRef.current.clear();
+    pendingHistoricLoadIdsRef.current.clear();
+    entryLimitRef.current = CONVERSATION_CACHE_LIMIT;
+    knownProcessIdsRef.current.clear();
+    hasSeededProcessIdsRef.current = false;
+    emitEntries(displayedExecutionProcesses.current, 'initial', true);
+  }, [attempt.id, emitEntries]);
+
   const getLiveExecutionProcess = (
     executionProcessId: string
   ): ExecutionProcess | undefined => {
@@ -1155,18 +1167,6 @@ export const useConversationHistory = ({
       });
     }
   }, [attempt.id, idListKey, executionProcessesRaw]);
-
-  // Reset state when attempt changes
-  useEffect(() => {
-    displayedExecutionProcesses.current = {};
-    loadedInitialEntries.current = false;
-    streamingProcessIdsRef.current.clear();
-    pendingHistoricLoadIdsRef.current.clear();
-    entryLimitRef.current = CONVERSATION_CACHE_LIMIT;
-    knownProcessIdsRef.current.clear();
-    hasSeededProcessIdsRef.current = false;
-    emitEntries(displayedExecutionProcesses.current, 'initial', true);
-  }, [attempt.id, emitEntries]);
 
   return {
     loadOlderHistory,

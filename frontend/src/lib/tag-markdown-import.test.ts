@@ -1,0 +1,60 @@
+import { describe, expect, it } from 'vitest';
+import { parseTagMarkdown } from './tag-markdown-import';
+
+describe('parseTagMarkdown', () => {
+  it('parses headings and captures content between headings', () => {
+    const input = [
+      '# @first',
+      'First line',
+      'Second line',
+      '## @second',
+      'Second content',
+      '',
+      'Trailing line',
+    ].join('\n');
+
+    expect(parseTagMarkdown(input)).toEqual([
+      {
+        tagName: 'first',
+        content: ['First line', 'Second line'].join('\n'),
+      },
+      {
+        tagName: 'second',
+        content: ['Second content', '', 'Trailing line'].join('\n'),
+      },
+    ]);
+  });
+
+  it('ignores headings without @tag syntax', () => {
+    const input = ['# Heading', 'Body', '## @tag', 'Content'].join('\n');
+
+    expect(parseTagMarkdown(input)).toEqual([
+      {
+        tagName: 'tag',
+        content: 'Content',
+      },
+    ]);
+  });
+
+  it('dedupes by keeping the last occurrence and ordering by last appearance', () => {
+    const input = [
+      '# @first',
+      'Old content',
+      '## @second',
+      'Second content',
+      '### @first',
+      'New content',
+    ].join('\n');
+
+    expect(parseTagMarkdown(input)).toEqual([
+      {
+        tagName: 'second',
+        content: 'Second content',
+      },
+      {
+        tagName: 'first',
+        content: 'New content',
+      },
+    ]);
+  });
+});

@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
-import { Plus, Edit2, Trash2, Loader2 } from 'lucide-react';
+import { Plus, Edit2, Trash2, Loader2, Upload } from 'lucide-react';
 import { tagsApi } from '@/lib/api';
 import { TagEditDialog } from '@/components/dialogs/tasks/TagEditDialog';
+import { TagBulkImportDialog } from '@/components/dialogs/tasks/TagBulkImportDialog';
 import type { Tag } from 'shared/types';
 
 export function TagManager() {
@@ -44,6 +45,20 @@ export function TagManager() {
     [fetchTags]
   );
 
+  const handleBulkImport = useCallback(async () => {
+    try {
+      const result = await TagBulkImportDialog.show({
+        existingTags: tags,
+      });
+
+      if (result === 'imported') {
+        await fetchTags();
+      }
+    } catch (error) {
+      // User cancelled - do nothing
+    }
+  }, [fetchTags, tags]);
+
   const handleDelete = useCallback(
     async (tag: Tag) => {
       if (
@@ -80,10 +95,16 @@ export function TagManager() {
         <h3 className="text-lg font-semibold">
           {t('settings.general.tags.manager.title')}
         </h3>
-        <Button onClick={() => handleOpenDialog()} size="sm">
-          <Plus className="h-4 w-4 mr-2" />
-          {t('settings.general.tags.manager.addTag')}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={handleBulkImport}>
+            <Upload className="h-4 w-4 mr-2" />
+            {t('settings.general.tags.manager.bulkImport')}
+          </Button>
+          <Button onClick={() => handleOpenDialog()} size="sm">
+            <Plus className="h-4 w-4 mr-2" />
+            {t('settings.general.tags.manager.addTag')}
+          </Button>
+        </div>
       </div>
 
       {tags.length === 0 ? (

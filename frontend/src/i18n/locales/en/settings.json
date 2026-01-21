@@ -189,6 +189,7 @@
         "manager": {
           "title": "Task Tags",
           "addTag": "Add Tag",
+          "bulkImport": "Bulk Add Tags",
           "noTags": "No tags yet. Create reusable text snippets for common task descriptions. Use @tag_name in any task.",
           "table": {
             "tagName": "Tag Name",
@@ -200,6 +201,38 @@
             "deleteTag": "Delete tag"
           },
           "deleteConfirm": "Are you sure you want to delete the tag \"{{tagName}}\"?"
+        },
+        "bulkImport": {
+          "title": "Bulk Add Tags",
+          "upload": {
+            "label": "Markdown file",
+            "hint": "Headings (# to ######) like \"# @tag_name\" define tags. Content between headings becomes the tag content."
+          },
+          "preview": {
+            "count": "Found {{count}} tags",
+            "file": "File: {{fileName}}",
+            "duplicates": "{{count}} existing tags will require confirmation."
+          },
+          "duplicates": {
+            "title": "Confirm updates",
+            "hint": "Confirm each existing tag that will be updated.",
+            "existing": "Existing content",
+            "confirm": "Confirm update",
+            "existingLabel": "Existing",
+            "newLabel": "New"
+          },
+          "errors": {
+            "noTags": "No tags found in the file. Use headings like \"# @tag_name\".",
+            "readFailed": "Failed to read the file.",
+            "emptyContent": "These tags have empty content: {{tags}}",
+            "importFailed": "Failed to import tags."
+          },
+          "buttons": {
+            "cancel": "Cancel",
+            "back": "Back",
+            "import": "Import",
+            "confirm": "Confirm updates"
+          }
         },
         "dialog": {
           "createTitle": "Create Tag",

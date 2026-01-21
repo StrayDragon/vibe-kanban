@@ -189,6 +189,7 @@
         "manager": {
           "title": "任务标签",
           "addTag": "添加标签",
+          "bulkImport": "批量添加标签",
           "noTags": "还没有标签。为常见任务描述创建可重用的文本片段。在任何任务中使用 @tag_name。",
           "table": {
             "tagName": "标签名称",
@@ -200,6 +201,38 @@
             "deleteTag": "删除标签"
           },
           "deleteConfirm": "您确定要删除标签 {{tagName}} 吗？"
+        },
+        "bulkImport": {
+          "title": "批量添加标签",
+          "upload": {
+            "label": "Markdown 文件",
+            "hint": "使用 # 到 ###### 的标题并以 \"# @tag_name\" 格式定义标签，标题之间的内容会作为标签内容。"
+          },
+          "preview": {
+            "count": "解析到 {{count}} 个标签",
+            "file": "文件：{{fileName}}",
+            "duplicates": "{{count}} 个已有标签需要确认更新。"
+          },
+          "duplicates": {
+            "title": "确认更新",
+            "hint": "请逐个确认将要更新的标签。",
+            "existing": "已有内容",
+            "confirm": "确认更新",
+            "existingLabel": "已有",
+            "newLabel": "新增"
+          },
+          "errors": {
+            "noTags": "文件中未找到标签，请使用类似 \"# @tag_name\" 的标题。",
+            "readFailed": "读取文件失败。",
+            "emptyContent": "以下标签内容为空：{{tags}}",
+            "importFailed": "导入标签失败。"
+          },
+          "buttons": {
+            "cancel": "取消",
+            "back": "返回",
+            "import": "导入",
+            "confirm": "确认更新"
+          }
         },
         "dialog": {
           "createTitle": "创建标签",
