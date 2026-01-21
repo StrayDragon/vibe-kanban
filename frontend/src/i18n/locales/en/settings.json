@@ -211,7 +211,12 @@
           "preview": {
             "count": "Found {{count}} tags",
             "file": "File: {{fileName}}",
-            "duplicates": "{{count}} existing tags will require confirmation."
+            "duplicates": "{{count}} existing tags will require confirmation.",
+            "selected": "{{selected}} selected / {{total}} total",
+            "selectLabel": "Select",
+            "selectAll": "Select all",
+            "deselectAll": "Deselect all",
+            "existingBadge": "Existing"
           },
           "duplicates": {
             "title": "Confirm updates",

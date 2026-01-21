@@ -36,6 +36,23 @@ describe('parseTagMarkdown', () => {
     ]);
   });
 
+  it('strips markdown code fence markers from content', () => {
+    const input = [
+      '# @snippet',
+      '```md',
+      'Keep this line',
+      '```',
+      'After fence',
+    ].join('\n');
+
+    expect(parseTagMarkdown(input)).toEqual([
+      {
+        tagName: 'snippet',
+        content: ['Keep this line', 'After fence'].join('\n'),
+      },
+    ]);
+  });
+
   it('dedupes by keeping the last occurrence and ordering by last appearance', () => {
     const input = [
       '# @first',

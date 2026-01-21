@@ -211,7 +211,12 @@
           "preview": {
             "count": "解析到 {{count}} 个标签",
             "file": "文件：{{fileName}}",
-            "duplicates": "{{count}} 个已有标签需要确认更新。"
+            "duplicates": "{{count}} 个已有标签需要确认更新。",
+            "selected": "已选择 {{selected}} / {{total}}",
+            "selectLabel": "选择",
+            "selectAll": "全选",
+            "deselectAll": "取消全选",
+            "existingBadge": "已存在"
           },
           "duplicates": {
             "title": "确认更新",

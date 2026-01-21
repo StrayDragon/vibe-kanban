@@ -5,6 +5,9 @@ export type ParsedTagEntry = {
 
 const headingRegex = /^#{1,6}\s+@([^\s#]+)\s*(?:$|.*)$/;
 
+const stripCodeFenceLines = (lines: string[]) =>
+  lines.filter((line) => !line.trim().startsWith('```'));
+
 export function parseTagMarkdown(input: string): ParsedTagEntry[] {
   const lines = input.split(/\r?\n/);
   const entries: ParsedTagEntry[] = [];
@@ -13,9 +16,10 @@ export function parseTagMarkdown(input: string): ParsedTagEntry[] {
 
   const flush = () => {
     if (!current) return;
+    const cleanedLines = stripCodeFenceLines(current.contentLines);
     entries.push({
       tagName: current.tagName,
-      content: current.contentLines.join('\n').trim(),
+      content: cleanedLines.join('\n').trim(),
     });
   };
 

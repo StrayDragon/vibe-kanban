@@ -11,6 +11,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Alert } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -46,6 +47,9 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
     const [fileName, setFileName] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [importing, setImporting] = useState(false);
+    const [selectedEntries, setSelectedEntries] = useState<Set<string>>(
+      new Set()
+    );
     const [confirmedUpdates, setConfirmedUpdates] = useState<Set<string>>(
       new Set()
     );
@@ -57,6 +61,11 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
       });
       return map;
     }, [existingTags]);
+
+    const selectedEntriesList = useMemo(
+      () => entries.filter((entry) => selectedEntries.has(entry.tagName)),
+      [entries, selectedEntries]
+    );
 
     const duplicateEntries = useMemo<DuplicateEntry[]>(() => {
       return entries
@@ -72,9 +81,17 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
         .filter((entry): entry is DuplicateEntry => entry !== null);
     }, [entries, existingTagMap]);
 
+    const selectedDuplicateEntries = useMemo(
+      () =>
+        duplicateEntries.filter((entry) =>
+          selectedEntries.has(entry.tagName)
+        ),
+      [duplicateEntries, selectedEntries]
+    );
+
     const emptyContentEntries = useMemo(
-      () => entries.filter((entry) => !entry.content.trim()),
-      [entries]
+      () => selectedEntriesList.filter((entry) => !entry.content.trim()),
+      [selectedEntriesList]
     );
 
     const resetState = useCallback(() => {
@@ -83,6 +100,7 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
       setFileName(null);
       setError(null);
       setImporting(false);
+      setSelectedEntries(new Set());
       setConfirmedUpdates(new Set());
     }, []);
 
@@ -107,11 +125,13 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
           if (parsed.length === 0) {
             setError(t('settings.general.tags.bulkImport.errors.noTags'));
             setEntries([]);
+            setSelectedEntries(new Set());
             setStage('upload');
             return;
           }
 
           setEntries(parsed);
+          setSelectedEntries(new Set(parsed.map((entry) => entry.tagName)));
           setStage('preview');
         } catch (err) {
           setError(
@@ -142,11 +162,37 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
       });
     };
 
-    const canImport = emptyContentEntries.length === 0 && entries.length > 0;
+    const toggleSelection = (tagName: string) => {
+      setSelectedEntries((prev) => {
+        const next = new Set(prev);
+        if (next.has(tagName)) {
+          next.delete(tagName);
+        } else {
+          next.add(tagName);
+        }
+        return next;
+      });
+    };
+
+    const selectAll = () => {
+      setSelectedEntries(new Set(entries.map((entry) => entry.tagName)));
+    };
+
+    const deselectAll = () => {
+      setSelectedEntries(new Set());
+    };
+
+    const isAllSelected =
+      entries.length > 0 && selectedEntries.size === entries.length;
+
+    const canImport =
+      emptyContentEntries.length === 0 && selectedEntriesList.length > 0;
 
     const allDuplicatesConfirmed =
-      duplicateEntries.length === 0 ||
-      duplicateEntries.every((entry) => confirmedUpdates.has(entry.tagName));
+      selectedDuplicateEntries.length === 0 ||
+      selectedDuplicateEntries.every((entry) =>
+        confirmedUpdates.has(entry.tagName)
+      );
 
     const handleImport = async () => {
       if (!canImport) return;
@@ -155,7 +201,7 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
       setError(null);
 
       try {
-        const requests = entries.map((entry) => {
+        const requests = selectedEntriesList.map((entry) => {
           const existing = existingTagMap.get(entry.tagName);
           if (existing) {
             return tagsApi.update(existing.id, {
@@ -184,7 +230,7 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
 
     const handlePreviewConfirm = () => {
       if (!canImport) return;
-      if (duplicateEntries.length > 0) {
+      if (selectedDuplicateEntries.length > 0) {
         setConfirmedUpdates(new Set());
         setStage('confirm-duplicates');
         return;
@@ -218,6 +264,11 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
           <table className="w-full">
             <thead className="border-b bg-muted/50 sticky top-0">
               <tr>
+                <th className="p-2 w-10">
+                  <span className="sr-only">
+                    {t('settings.general.tags.bulkImport.preview.selectLabel')}
+                  </span>
+                </th>
                 <th className="text-left p-2 text-sm font-medium">
                   {t('settings.general.tags.manager.table.tagName')}
                 </th>
@@ -227,24 +278,53 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
               </tr>
             </thead>
             <tbody>
-              {entries.map((entry) => (
-                <tr
-                  key={entry.tagName}
-                  className="border-b hover:bg-muted/30 transition-colors"
-                >
-                  <td className="p-2 text-sm font-medium">@{entry.tagName}</td>
-                  <td className="p-2 text-sm">
-                    <div
-                      className="max-w-[420px] truncate"
-                      title={entry.content}
-                    >
-                      {entry.content || (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {entries.map((entry) => {
+                const isExisting = existingTagMap.has(entry.tagName);
+                const isSelected = selectedEntries.has(entry.tagName);
+                return (
+                  <tr
+                    key={entry.tagName}
+                    className={
+                      isExisting
+                        ? 'border-b bg-amber-500/10 hover:bg-amber-500/15 transition-colors'
+                        : 'border-b hover:bg-muted/30 transition-colors'
+                    }
+                  >
+                    <td className="p-2 align-top">
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => toggleSelection(entry.tagName)}
+                        className="mt-0.5"
+                      />
+                    </td>
+                    <td className="p-2 text-sm font-medium">
+                      <div className="flex items-center gap-2">
+                        <span>@{entry.tagName}</span>
+                        {isExisting && (
+                          <Badge
+                            variant="outline"
+                            className="border-amber-300 bg-amber-50 text-amber-700"
+                          >
+                            {t(
+                              'settings.general.tags.bulkImport.preview.existingBadge'
+                            )}
+                          </Badge>
+                        )}
+                      </div>
+                    </td>
+                    <td className="p-2 text-sm">
+                      <div
+                        className="max-w-[420px] truncate"
+                        title={entry.content}
+                      >
+                        {entry.content || (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -266,13 +346,30 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
               })}
             </p>
           )}
-          {duplicateEntries.length > 0 && (
+          {selectedDuplicateEntries.length > 0 && (
             <p className="text-xs text-amber-600">
               {t('settings.general.tags.bulkImport.preview.duplicates', {
-                count: duplicateEntries.length,
+                count: selectedDuplicateEntries.length,
               })}
             </p>
           )}
+        </div>
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">
+            {t('settings.general.tags.bulkImport.preview.selected', {
+              selected: selectedEntriesList.length,
+              total: entries.length,
+            })}
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={isAllSelected ? deselectAll : selectAll}
+          >
+            {isAllSelected
+              ? t('settings.general.tags.bulkImport.preview.deselectAll')
+              : t('settings.general.tags.bulkImport.preview.selectAll')}
+          </Button>
         </div>
         {renderPreviewTable()}
         {emptyContentEntries.length > 0 && (
@@ -299,7 +396,7 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
           </p>
         </div>
         <div className="space-y-3 max-h-[360px] overflow-auto">
-          {duplicateEntries.map((entry) => (
+          {selectedDuplicateEntries.map((entry) => (
             <div
               key={entry.tagName}
               className="border rounded-lg p-3 space-y-2"
