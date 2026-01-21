@@ -260,16 +260,14 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
 
     const renderPreviewTable = () => (
       <div className="border rounded-lg overflow-hidden">
-        <div className="max-h-[320px] overflow-auto">
-          <table className="w-full">
+        <div className="max-h-[320px] overflow-y-auto overflow-x-hidden">
+          <table className="w-full table-fixed">
             <thead className="border-b bg-muted/50 sticky top-0">
               <tr>
-                <th className="p-2 w-10">
-                  <span className="sr-only">
-                    {t('settings.general.tags.bulkImport.preview.selectLabel')}
-                  </span>
+                <th className="text-left p-2 text-xs font-medium w-12">
+                  {t('settings.general.tags.bulkImport.preview.selectLabel')}
                 </th>
-                <th className="text-left p-2 text-sm font-medium">
+                <th className="text-left p-2 text-sm font-medium w-[240px]">
                   {t('settings.general.tags.manager.table.tagName')}
                 </th>
                 <th className="text-left p-2 text-sm font-medium">
@@ -294,12 +292,16 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
                       <Checkbox
                         checked={isSelected}
                         onCheckedChange={() => toggleSelection(entry.tagName)}
-                        className="mt-0.5"
+                        className={
+                          isSelected
+                            ? 'mt-0.5 border-primary'
+                            : 'mt-0.5 border-muted-foreground/60'
+                        }
                       />
                     </td>
                     <td className="p-2 text-sm font-medium">
                       <div className="flex items-center gap-2">
-                        <span>@{entry.tagName}</span>
+                        <span className="break-all">@{entry.tagName}</span>
                         {isExisting && (
                           <Badge
                             variant="outline"
@@ -314,7 +316,7 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
                     </td>
                     <td className="p-2 text-sm">
                       <div
-                        className="max-w-[420px] truncate"
+                        className="truncate"
                         title={entry.content}
                       >
                         {entry.content || (
@@ -414,6 +416,11 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
                     onCheckedChange={() =>
                       toggleDuplicateConfirmation(entry.tagName)
                     }
+                    className={
+                      confirmedUpdates.has(entry.tagName)
+                        ? 'border-primary'
+                        : 'border-muted-foreground/60'
+                    }
                   />
                   <span className="text-xs">
                     {t('settings.general.tags.bulkImport.duplicates.confirm')}
@@ -450,8 +457,12 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
     );
 
     return (
-      <Dialog open={modal.visible} onOpenChange={handleOpenChange}>
-        <DialogContent className="sm:max-w-[860px]">
+      <Dialog
+        open={modal.visible}
+        onOpenChange={handleOpenChange}
+        className="w-[95vw] sm:max-w-[980px]"
+      >
+        <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Upload className="h-5 w-5" />

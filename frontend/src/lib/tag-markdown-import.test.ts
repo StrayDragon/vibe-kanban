@@ -43,12 +43,13 @@ describe('parseTagMarkdown', () => {
       'Keep this line',
       '```',
       'After fence',
+      'Inline ``` fence',
     ].join('\n');
 
     expect(parseTagMarkdown(input)).toEqual([
       {
         tagName: 'snippet',
-        content: ['Keep this line', 'After fence'].join('\n'),
+        content: ['Keep this line', 'After fence', 'Inline  fence'].join('\n'),
       },
     ]);
   });
