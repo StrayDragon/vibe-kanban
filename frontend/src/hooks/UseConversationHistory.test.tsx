@@ -331,7 +331,7 @@ describe('useConversationHistory', () => {
   it('clears loading when there are no execution processes', async () => {
     const now = new Date().toISOString();
     mockExecutionContext.executionProcessesVisible = [];
-    mockExecutionContext.isLoading = false;
+    mockExecutionContext.isLoading = true;
 
     const attempt: Workspace = {
       id: 'workspace-empty',
@@ -345,9 +345,16 @@ describe('useConversationHistory', () => {
     };
 
     const onEntriesUpdated = vi.fn();
-    renderHook(() => useConversationHistory({ attempt, onEntriesUpdated }));
+    const { rerender } = renderHook(() =>
+      useConversationHistory({ attempt, onEntriesUpdated })
+    );
+
+    const initialCalls = onEntriesUpdated.mock.calls.length;
+    mockExecutionContext.isLoading = false;
+    rerender();
 
     await waitFor(() => {
+      expect(onEntriesUpdated.mock.calls.length).toBeGreaterThan(initialCalls);
       const lastCall =
         onEntriesUpdated.mock.calls[onEntriesUpdated.mock.calls.length - 1];
       expect(lastCall?.[2]).toBe(false);
@@ -363,5 +370,101 @@ describe('useConversationHistory', () => {
           entry.content.entry_type.type === 'next_action'
       )
     ).toBe(true);
+  });
+
+  it('emits empty state after execution processes are removed', async () => {
+    const now = new Date().toISOString();
+    const executionProcess: ExecutionProcess = {
+      id: 'process-remove',
+      session_id: 'session-remove',
+      run_reason: 'codingagent',
+      executor_action: {
+        typ: {
+          type: 'CodingAgentInitialRequest',
+          prompt: 'hello',
+          executor_profile_id: {
+            executor: BaseCodingAgent.CODEX,
+            variant: null,
+          },
+          image_paths: {},
+          working_dir: null,
+        },
+        next_action: null,
+      },
+      status: ExecutionProcessStatus.completed,
+      exit_code: null,
+      dropped: false,
+      started_at: now,
+      completed_at: now,
+      created_at: now,
+      updated_at: now,
+    };
+
+    mockExecutionContext.executionProcessesVisible = [executionProcess];
+    mockExecutionContext.isLoading = false;
+
+    const normalizedEntry: PatchType = {
+      type: 'NORMALIZED_ENTRY',
+      content: {
+        entry_type: { type: 'assistant_message' },
+        content: 'hi',
+        metadata: null,
+        timestamp: null,
+      },
+    };
+
+    const page: LogHistoryPage = {
+      entries: [{ entry_index: 1n, entry: normalizedEntry }],
+      next_cursor: null,
+      has_more: false,
+      history_truncated: false,
+    };
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => makeApiResponse(page),
+    });
+
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const attempt: Workspace = {
+      id: 'workspace-remove',
+      task_id: 'task-remove',
+      container_ref: null,
+      branch: 'main',
+      agent_working_dir: null,
+      setup_completed_at: null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const onEntriesUpdated = vi.fn();
+    const { rerender } = renderHook(() =>
+      useConversationHistory({ attempt, onEntriesUpdated })
+    );
+
+    await waitFor(() => {
+      const lastCall =
+        onEntriesUpdated.mock.calls[onEntriesUpdated.mock.calls.length - 1];
+      expect(lastCall?.[2]).toBe(false);
+      expect(lastCall?.[0]?.length ?? 0).toBeGreaterThan(0);
+    });
+
+    mockExecutionContext.executionProcessesVisible = [];
+    rerender();
+
+    await waitFor(() => {
+      const lastCall =
+        onEntriesUpdated.mock.calls[onEntriesUpdated.mock.calls.length - 1];
+      const lastEntries: PatchType[] = lastCall?.[0] ?? [];
+      expect(lastCall?.[2]).toBe(false);
+      expect(
+        lastEntries.some(
+          (entry) =>
+            entry.type === 'NORMALIZED_ENTRY' &&
+            entry.content.entry_type.type === 'next_action'
+        )
+      ).toBe(true);
+    });
   });
 });

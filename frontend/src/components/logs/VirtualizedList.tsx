@@ -303,9 +303,7 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     setEntries(newEntries);
     pendingScrollActionRef.current = pendingScrollAction;
 
-    if (loading) {
-      setLoading(newLoading);
-    }
+    setLoading((prev) => (prev === newLoading ? prev : newLoading));
   };
 
   const { loadOlderHistory, hasMoreHistory, loadingOlder, historyTruncated } =
