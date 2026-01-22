@@ -10,7 +10,7 @@ use axum::{
     response::{IntoResponse, Json as ResponseJson},
     routing::{delete, get, post, put},
 };
-use db::DbErr;
+use db::{DbErr, TransactionTrait};
 use db::models::{
     image::TaskImage,
     project::{Project, ProjectError},
@@ -152,21 +152,22 @@ pub async fn create_task_and_start(
     let pool = &deployment.db().pool;
 
     let task_id = Uuid::new_v4();
-    let task = Task::create(pool, &payload.task, task_id).await?;
-
-    if let Some(image_ids) = &payload.task.image_ids {
-        TaskImage::associate_many_dedup(pool, task.id, image_ids).await?;
-    }
-
-    let project = Project::find_by_id(pool, task.project_id)
-        .await?
-        .ok_or(ProjectError::ProjectNotFound)?;
-
     let attempt_id = Uuid::new_v4();
     let git_branch_name = deployment
         .container()
-        .git_branch_from_workspace(&attempt_id, &task.title)
+        .git_branch_from_workspace(&attempt_id, &payload.task.title)
         .await;
+
+    let tx = pool.begin().await?;
+    let task = Task::create(&tx, &payload.task, task_id).await?;
+
+    if let Some(image_ids) = &payload.task.image_ids {
+        TaskImage::associate_many_dedup(&tx, task.id, image_ids).await?;
+    }
+
+    let project = Project::find_by_id(&tx, task.project_id)
+        .await?
+        .ok_or(ProjectError::ProjectNotFound)?;
 
     let agent_working_dir = project
         .default_agent_working_dir
@@ -175,7 +176,7 @@ pub async fn create_task_and_start(
         .cloned();
 
     let workspace = Workspace::create(
-        pool,
+        &tx,
         &CreateWorkspace {
             branch: git_branch_name,
             agent_working_dir,
@@ -193,14 +194,33 @@ pub async fn create_task_and_start(
             target_branch: r.target_branch.clone(),
         })
         .collect();
-    WorkspaceRepo::create_many(&deployment.db().pool, workspace.id, &workspace_repos).await?;
+    WorkspaceRepo::create_many(&tx, workspace.id, &workspace_repos).await?;
+    tx.commit().await?;
 
-    let is_attempt_running = deployment
+    if let Err(err) = deployment
         .container()
         .start_workspace(&workspace, payload.executor_profile_id.clone())
         .await
-        .inspect_err(|err| tracing::error!("Failed to start task attempt: {}", err))
-        .is_ok();
+    {
+        tracing::error!(
+            task_id = %task.id,
+            workspace_id = %workspace.id,
+            error = %err,
+            "Failed to start task attempt"
+        );
+        if let Err(cleanup_err) =
+            cleanup_failed_task_start(&deployment, &task, &workspace).await
+        {
+            tracing::error!(
+                task_id = %task.id,
+                workspace_id = %workspace.id,
+                error = %cleanup_err,
+                "Failed to cleanup task after start failure"
+            );
+        }
+        return Err(ApiError::from(err));
+    }
+
     let task = Task::find_by_id(pool, task.id)
         .await?
         .ok_or(ApiError::Database(DbErr::RecordNotFound(
@@ -210,10 +230,41 @@ pub async fn create_task_and_start(
     tracing::info!("Started attempt for task {}", task.id);
     Ok(ResponseJson(ApiResponse::success(TaskWithAttemptStatus {
         task,
-        has_in_progress_attempt: is_attempt_running,
+        has_in_progress_attempt: true,
         last_attempt_failed: false,
         executor: payload.executor_profile_id.executor.to_string(),
     })))
+}
+
+async fn cleanup_failed_task_start(
+    deployment: &DeploymentImpl,
+    task: &Task,
+    workspace: &Workspace,
+) -> Result<(), ApiError> {
+    let pool = &deployment.db().pool;
+    let workspace_for_cleanup = Workspace::find_by_id(pool, workspace.id)
+        .await?
+        .unwrap_or_else(|| workspace.clone());
+
+    if let Err(err) = deployment.container().delete(&workspace_for_cleanup).await {
+        tracing::error!(
+            task_id = %task.id,
+            workspace_id = %workspace.id,
+            error = %err,
+            "Failed to delete workspace worktree after start failure"
+        );
+    }
+
+    let rows = Task::delete(pool, task.id).await?;
+    if rows == 0 {
+        tracing::warn!(
+            task_id = %task.id,
+            workspace_id = %workspace.id,
+            "Task cleanup skipped because task no longer exists"
+        );
+    }
+
+    Ok(())
 }
 
 pub async fn update_task(

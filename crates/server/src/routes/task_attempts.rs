@@ -50,7 +50,7 @@ use services::services::{
     git::{ConflictOp, GitCliError, GitMergeOptions, GitServiceError},
     github::GitHubService,
 };
-use db::{DbErr, DbPool};
+use db::{DbErr, DbPool, TransactionTrait};
 use ts_rs::TS;
 use utils::response::ApiResponse;
 use uuid::Uuid;
@@ -412,6 +412,7 @@ pub async fn create_task_attempt(
     let task = Task::find_by_id(&deployment.db().pool, payload.task_id)
         .await?
         .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+    let original_task_status = task.status.clone();
     let mut baseline_ref: Option<String> = None;
     let mut topology_branches: Option<HashMap<Uuid, String>> = None;
     if let (Some(task_group_id), Some(node_id)) =
@@ -470,8 +471,9 @@ pub async fn create_task_attempt(
         .git_branch_from_workspace(&attempt_id, &task.title)
         .await;
 
+    let tx = pool.begin().await?;
     let workspace = Workspace::create(
-        pool,
+        &tx,
         &CreateWorkspace {
             branch: git_branch_name.clone(),
             agent_working_dir,
@@ -498,23 +500,88 @@ pub async fn create_task_attempt(
         })
         .collect();
 
-    WorkspaceRepo::create_many(pool, workspace.id, &workspace_repos).await?;
-    deployment
+    WorkspaceRepo::create_many(&tx, workspace.id, &workspace_repos).await?;
+    tx.commit().await?;
+
+    if let Err(err) = deployment
         .container()
         .start_workspace(&workspace, executor_profile_id.clone())
         .await
-        .inspect_err(|err| {
+    {
+        tracing::error!(
+            task_id = %task.id,
+            workspace_id = %workspace.id,
+            error = %err,
+            "Failed to start task attempt"
+        );
+        if let Err(cleanup_err) = cleanup_failed_attempt_start(
+            &deployment,
+            &task,
+            &workspace,
+            &original_task_status,
+        )
+        .await
+        {
             tracing::error!(
-                "Failed to start task attempt {} for task {}: {}",
-                workspace.id,
-                task.id,
-                err
+                task_id = %task.id,
+                workspace_id = %workspace.id,
+                error = %cleanup_err,
+                "Failed to cleanup attempt after start failure"
             );
-        })?;
+        }
+        return Err(ApiError::from(err));
+    }
 
     tracing::info!("Created and started attempt {} for task {}", workspace.id, task.id);
 
     Ok(ResponseJson(ApiResponse::success(workspace)))
+}
+
+async fn cleanup_failed_attempt_start(
+    deployment: &DeploymentImpl,
+    task: &Task,
+    workspace: &Workspace,
+    original_task_status: &TaskStatus,
+) -> Result<(), ApiError> {
+    let pool = &deployment.db().pool;
+    let workspace_for_cleanup = Workspace::find_by_id(pool, workspace.id)
+        .await?
+        .unwrap_or_else(|| workspace.clone());
+
+    if let Err(err) = deployment.container().delete(&workspace_for_cleanup).await {
+        tracing::error!(
+            task_id = %task.id,
+            workspace_id = %workspace.id,
+            error = %err,
+            "Failed to delete workspace worktree after start failure"
+        );
+    }
+
+    let rows = Workspace::delete(pool, workspace.id).await?;
+    if rows == 0 {
+        tracing::warn!(
+            task_id = %task.id,
+            workspace_id = %workspace.id,
+            "Workspace cleanup skipped because workspace no longer exists"
+        );
+    }
+
+    if let Ok(Some(current_task)) = Task::find_by_id(pool, task.id).await {
+        if current_task.status != *original_task_status {
+            if let Err(err) =
+                Task::update_status(pool, task.id, original_task_status.clone()).await
+            {
+                tracing::error!(
+                    task_id = %task.id,
+                    workspace_id = %workspace.id,
+                    error = %err,
+                    "Failed to restore task status after start failure"
+                );
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[axum::debug_handler]
@@ -1787,9 +1854,15 @@ mod tests {
     use super::{
         blocked_predecessors, resolve_executor_profile_id, resolve_topology_base_branches,
     };
+    use axum::{Json, extract::State};
+    use crate::{
+        DeploymentImpl,
+        routes::tasks::{CreateAndStartTaskRequest, create_task_and_start},
+    };
     use crate::error::ApiError;
     use db::models::{
         project::{CreateProject, Project},
+        project_repo::{CreateProjectRepo, ProjectRepo},
         repo::Repo,
         task::{CreateTask, Task, TaskStatus},
         task_group::{
@@ -1800,10 +1873,16 @@ mod tests {
         workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
     };
     use db_migration::Migrator;
+    use deployment::Deployment;
     use executors::{executors::BaseCodingAgent, profile::ExecutorProfileId};
     use sea_orm::Database;
     use sea_orm_migration::MigratorTrait;
-    use std::path::Path;
+    use services::services::{git::GitService, workspace_manager::WorkspaceManager};
+    use std::{
+        collections::HashSet,
+        path::Path,
+        sync::{Mutex, OnceLock},
+    };
     use tokio::time::{sleep, Duration};
     use uuid::Uuid;
 
@@ -1899,6 +1978,22 @@ mod tests {
         .await
         .unwrap();
         workspace
+    }
+
+    fn test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn list_dir_names(path: &Path) -> HashSet<String> {
+        std::fs::read_dir(path)
+            .map(|entries| {
+                entries
+                    .filter_map(|entry| entry.ok())
+                    .filter_map(|entry| entry.file_name().into_string().ok())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     #[test]
@@ -2083,5 +2178,119 @@ mod tests {
             .await
             .unwrap();
         assert!(branches.is_none());
+    }
+
+    #[tokio::test]
+    async fn start_failure_cleans_up_records_for_attempt_and_create_start() {
+        let _guard = test_lock().lock().unwrap();
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        std::env::set_var("VIBE_ASSET_DIR", &temp_root);
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        std::env::set_var("DATABASE_URL", db_url);
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let repo_path = temp_root.join("repo");
+        GitService::new()
+            .initialize_repo_with_main_branch(&repo_path)
+            .unwrap();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &deployment.db().pool,
+            &CreateProject {
+                name: "Start failure project".to_string(),
+                repositories: vec![CreateProjectRepo {
+                    display_name: "Repo".to_string(),
+                    git_repo_path: repo_path.to_string_lossy().to_string(),
+                }],
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let project_repos =
+            ProjectRepo::find_by_project_id(&deployment.db().pool, project_id)
+                .await
+                .unwrap();
+        let repo_id = project_repos.first().unwrap().repo_id;
+
+        let worktree_base = WorkspaceManager::get_workspace_base_dir();
+        std::fs::create_dir_all(&worktree_base).unwrap();
+        let baseline_dirs = list_dir_names(&worktree_base);
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &deployment.db().pool,
+            &CreateTask::from_title_description(
+                project_id,
+                "Attempt failure task".to_string(),
+                None,
+            ),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let attempt_payload = CreateTaskAttemptBody {
+            task_id,
+            executor_profile_id: ExecutorProfileId::new(BaseCodingAgent::FakeAgent),
+            repos: vec![WorkspaceRepoInput {
+                repo_id,
+                target_branch: "main".to_string(),
+            }],
+        };
+
+        let attempt_result =
+            create_task_attempt(State(deployment.clone()), Json(attempt_payload)).await;
+        assert!(attempt_result.is_err());
+
+        let workspaces =
+            Workspace::fetch_all(&deployment.db().pool, Some(task_id)).await.unwrap();
+        assert!(workspaces.is_empty());
+
+        let task_after = Task::find_by_id(&deployment.db().pool, task_id)
+            .await
+            .unwrap()
+            .expect("task should remain");
+        assert_eq!(task_after.status, TaskStatus::Todo);
+
+        let after_attempt_dirs = list_dir_names(&worktree_base);
+        assert_eq!(baseline_dirs, after_attempt_dirs);
+
+        let create_start_payload = CreateAndStartTaskRequest {
+            task: CreateTask::from_title_description(
+                project_id,
+                "Create start failure task".to_string(),
+                None,
+            ),
+            executor_profile_id: ExecutorProfileId::new(BaseCodingAgent::FakeAgent),
+            repos: vec![WorkspaceRepoInput {
+                repo_id,
+                target_branch: "main".to_string(),
+            }],
+        };
+
+        let create_start_result =
+            create_task_and_start(State(deployment.clone()), Json(create_start_payload)).await;
+        assert!(create_start_result.is_err());
+
+        let tasks =
+            Task::find_by_project_id_with_attempt_status(&deployment.db().pool, project_id)
+                .await
+                .unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].task.id, task_id);
+
+        let after_create_start_dirs = list_dir_names(&worktree_base);
+        assert_eq!(baseline_dirs, after_create_start_dirs);
+
+        drop(deployment);
+        std::env::remove_var("DATABASE_URL");
+        std::env::remove_var("VIBE_ASSET_DIR");
+        let _ = std::fs::remove_dir_all(&temp_root);
     }
 }

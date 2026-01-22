@@ -15,7 +15,10 @@ use super::{
 };
 use crate::{
     entities::{session, task, workspace},
-    events::{EVENT_WORKSPACE_CREATED, EVENT_WORKSPACE_UPDATED, WorkspaceEventPayload},
+    events::{
+        EVENT_WORKSPACE_CREATED, EVENT_WORKSPACE_DELETED, EVENT_WORKSPACE_UPDATED,
+        WorkspaceEventPayload,
+    },
     models::{event_outbox::EventOutbox, ids},
 };
 
@@ -265,6 +268,45 @@ impl Workspace {
         )
         .await?;
         Ok(())
+    }
+
+    pub async fn delete<C: ConnectionTrait>(
+        db: &C,
+        workspace_id: Uuid,
+    ) -> Result<u64, DbErr> {
+        let record = workspace::Entity::find()
+            .filter(workspace::Column::Uuid.eq(workspace_id))
+            .one(db)
+            .await?;
+
+        let Some(record) = record else {
+            return Ok(0);
+        };
+
+        let task_id = ids::task_uuid_by_id(db, record.task_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+
+        let result = workspace::Entity::delete_many()
+            .filter(workspace::Column::Uuid.eq(workspace_id))
+            .exec(db)
+            .await?;
+
+        if result.rows_affected > 0 {
+            let payload =
+                serde_json::to_value(WorkspaceEventPayload { workspace_id, task_id })
+                    .map_err(|err| DbErr::Custom(err.to_string()))?;
+            EventOutbox::enqueue(
+                db,
+                EVENT_WORKSPACE_DELETED,
+                "workspace",
+                workspace_id,
+                payload,
+            )
+            .await?;
+        }
+
+        Ok(result.rows_affected)
     }
 
     pub async fn find_by_id<C: ConnectionTrait>(
