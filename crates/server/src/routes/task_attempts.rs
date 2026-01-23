@@ -557,6 +557,58 @@ async fn cleanup_failed_attempt_start(
         );
     }
 
+    if let Ok(Some(current_task)) = Task::find_by_id(pool, task.id).await {
+        if current_task.status != *original_task_status
+            && matches!(
+                current_task.status,
+                TaskStatus::InProgress | TaskStatus::InReview
+            )
+        {
+            match Task::has_running_attempts(pool, task.id).await {
+                Ok(false) => {
+                    let should_restore = match Task::latest_attempt_workspace_id(pool, task.id)
+                        .await
+                    {
+                        Ok(Some(latest_workspace_id)) => latest_workspace_id == workspace.id,
+                        Ok(None) => true,
+                        Err(err) => {
+                            tracing::error!(
+                                task_id = %task.id,
+                                workspace_id = %workspace.id,
+                                error = %err,
+                                "Failed to resolve latest attempt workspace after start failure"
+                            );
+                            false
+                        }
+                    };
+
+                    if should_restore {
+                        if let Err(err) =
+                            Task::update_status(pool, task.id, original_task_status.clone())
+                                .await
+                        {
+                            tracing::error!(
+                                task_id = %task.id,
+                                workspace_id = %workspace.id,
+                                error = %err,
+                                "Failed to restore task status after start failure"
+                            );
+                        }
+                    }
+                }
+                Ok(true) => {}
+                Err(err) => {
+                    tracing::error!(
+                        task_id = %task.id,
+                        workspace_id = %workspace.id,
+                        error = %err,
+                        "Failed to check running attempts after start failure"
+                    );
+                }
+            }
+        }
+    }
+
     let rows = Workspace::delete(pool, workspace.id).await?;
     if rows == 0 {
         tracing::warn!(
@@ -564,21 +616,6 @@ async fn cleanup_failed_attempt_start(
             workspace_id = %workspace.id,
             "Workspace cleanup skipped because workspace no longer exists"
         );
-    }
-
-    if let Ok(Some(current_task)) = Task::find_by_id(pool, task.id).await {
-        if current_task.status != *original_task_status {
-            if let Err(err) =
-                Task::update_status(pool, task.id, original_task_status.clone()).await
-            {
-                tracing::error!(
-                    task_id = %task.id,
-                    workspace_id = %workspace.id,
-                    error = %err,
-                    "Failed to restore task status after start failure"
-                );
-            }
-        }
     }
 
     Ok(())
@@ -1852,7 +1889,9 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
 #[cfg(test)]
 mod tests {
     use super::{
-        blocked_predecessors, resolve_executor_profile_id, resolve_topology_base_branches,
+        CreateTaskAttemptBody, WorkspaceRepoInput, blocked_predecessors,
+        cleanup_failed_attempt_start, create_task_attempt, resolve_executor_profile_id,
+        resolve_topology_base_branches,
     };
     use axum::{Json, extract::State};
     use crate::{
@@ -1861,9 +1900,14 @@ mod tests {
     };
     use crate::error::ApiError;
     use db::models::{
+        execution_process::{
+            CreateExecutionProcess, ExecutionProcess, ExecutionProcessRunReason,
+            ExecutionProcessStatus,
+        },
         project::{CreateProject, Project},
         project_repo::{CreateProjectRepo, ProjectRepo},
         repo::Repo,
+        session::{CreateSession, Session},
         task::{CreateTask, Task, TaskStatus},
         task_group::{
             TaskGroupEdge, TaskGroupGraph, TaskGroupNode, TaskGroupNodeBaseStrategy,
@@ -1874,14 +1918,21 @@ mod tests {
     };
     use db_migration::Migrator;
     use deployment::Deployment;
-    use executors::{executors::BaseCodingAgent, profile::ExecutorProfileId};
+    use executors::{
+        actions::{
+            ExecutorAction, ExecutorActionType,
+            script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
+        },
+        executors::BaseCodingAgent,
+        profile::ExecutorProfileId,
+    };
     use sea_orm::Database;
     use sea_orm_migration::MigratorTrait;
     use services::services::{git::GitService, workspace_manager::WorkspaceManager};
     use std::{
         collections::HashSet,
         path::Path,
-        sync::{Mutex, OnceLock},
+        sync::{Mutex, MutexGuard, OnceLock},
     };
     use tokio::time::{sleep, Duration};
     use uuid::Uuid;
@@ -1983,6 +2034,46 @@ mod tests {
     fn test_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct TestEnvGuard {
+        _lock: MutexGuard<'static, ()>,
+        prev_database_url: Option<String>,
+        prev_asset_dir: Option<String>,
+    }
+
+    impl TestEnvGuard {
+        fn new(temp_root: &Path, db_url: String) -> Self {
+            let lock = test_lock().lock().unwrap();
+            let prev_database_url = std::env::var("DATABASE_URL").ok();
+            let prev_asset_dir = std::env::var("VIBE_ASSET_DIR").ok();
+            // SAFETY: serialized test guard prevents concurrent env mutation.
+            unsafe {
+                std::env::set_var("VIBE_ASSET_DIR", temp_root);
+                std::env::set_var("DATABASE_URL", db_url);
+            }
+            Self {
+                _lock: lock,
+                prev_database_url,
+                prev_asset_dir,
+            }
+        }
+    }
+
+    impl Drop for TestEnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: serialized test guard prevents concurrent env mutation.
+            unsafe {
+                match &self.prev_database_url {
+                    Some(value) => std::env::set_var("DATABASE_URL", value),
+                    None => std::env::remove_var("DATABASE_URL"),
+                }
+                match &self.prev_asset_dir {
+                    Some(value) => std::env::set_var("VIBE_ASSET_DIR", value),
+                    None => std::env::remove_var("VIBE_ASSET_DIR"),
+                }
+            }
+        }
     }
 
     fn list_dir_names(path: &Path) -> HashSet<String> {
@@ -2182,14 +2273,12 @@ mod tests {
 
     #[tokio::test]
     async fn start_failure_cleans_up_records_for_attempt_and_create_start() {
-        let _guard = test_lock().lock().unwrap();
         let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&temp_root).unwrap();
-        std::env::set_var("VIBE_ASSET_DIR", &temp_root);
 
         let db_path = temp_root.join("db.sqlite");
         let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        std::env::set_var("DATABASE_URL", db_url);
+        let env_guard = TestEnvGuard::new(&temp_root, db_url);
 
         let deployment = DeploymentImpl::new().await.unwrap();
         let repo_path = temp_root.join("repo");
@@ -2212,11 +2301,13 @@ mod tests {
         .await
         .unwrap();
 
-        let project_repos =
-            ProjectRepo::find_by_project_id(&deployment.db().pool, project_id)
-                .await
-                .unwrap();
-        let repo_id = project_repos.first().unwrap().repo_id;
+        let repo = Repo::find_or_create(&deployment.db().pool, &repo_path, "Repo")
+            .await
+            .unwrap();
+        ProjectRepo::create(&deployment.db().pool, project_id, repo.id)
+            .await
+            .unwrap();
+        let repo_id = repo.id;
 
         let worktree_base = WorkspaceManager::get_workspace_base_dir();
         std::fs::create_dir_all(&worktree_base).unwrap();
@@ -2289,8 +2380,248 @@ mod tests {
         assert_eq!(baseline_dirs, after_create_start_dirs);
 
         drop(deployment);
-        std::env::remove_var("DATABASE_URL");
-        std::env::remove_var("VIBE_ASSET_DIR");
+        drop(env_guard);
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn cleanup_skips_status_restore_when_running_attempt_exists() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &deployment.db().pool,
+            &CreateProject {
+                name: "Running attempt project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        let task = Task::create(
+            &deployment.db().pool,
+            &CreateTask::from_title_description(
+                project_id,
+                "Running attempt task".to_string(),
+                None,
+            ),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let running_workspace = Workspace::create(
+            &deployment.db().pool,
+            &CreateWorkspace {
+                branch: "running".to_string(),
+                agent_working_dir: None,
+            },
+            Uuid::new_v4(),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let session = Session::create(
+            &deployment.db().pool,
+            &CreateSession { executor: None },
+            Uuid::new_v4(),
+            running_workspace.id,
+        )
+        .await
+        .unwrap();
+
+        let action = ExecutorAction::new(
+            ExecutorActionType::ScriptRequest(ScriptRequest {
+                script: "true".to_string(),
+                language: ScriptRequestLanguage::Bash,
+                context: ScriptContext::SetupScript,
+                working_dir: None,
+            }),
+            None,
+        );
+
+        ExecutionProcess::create(
+            &deployment.db().pool,
+            &CreateExecutionProcess {
+                session_id: session.id,
+                executor_action: action,
+                run_reason: ExecutionProcessRunReason::SetupScript,
+            },
+            Uuid::new_v4(),
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let failed_workspace = Workspace::create(
+            &deployment.db().pool,
+            &CreateWorkspace {
+                branch: "failed".to_string(),
+                agent_working_dir: None,
+            },
+            Uuid::new_v4(),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        Task::update_status(&deployment.db().pool, task_id, TaskStatus::InReview)
+            .await
+            .unwrap();
+
+        cleanup_failed_attempt_start(
+            &deployment,
+            &task,
+            &failed_workspace,
+            &TaskStatus::Todo,
+        )
+        .await
+        .unwrap();
+
+        let task_after = Task::find_by_id(&deployment.db().pool, task_id)
+            .await
+            .unwrap()
+            .expect("task should remain");
+        assert_eq!(task_after.status, TaskStatus::InReview);
+
+        drop(deployment);
+        drop(env_guard);
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn cleanup_skips_status_restore_when_latest_attempt_differs() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &deployment.db().pool,
+            &CreateProject {
+                name: "Completed attempt project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        let task = Task::create(
+            &deployment.db().pool,
+            &CreateTask::from_title_description(
+                project_id,
+                "Completed attempt task".to_string(),
+                None,
+            ),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let completed_workspace = Workspace::create(
+            &deployment.db().pool,
+            &CreateWorkspace {
+                branch: "completed".to_string(),
+                agent_working_dir: None,
+            },
+            Uuid::new_v4(),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let session = Session::create(
+            &deployment.db().pool,
+            &CreateSession { executor: None },
+            Uuid::new_v4(),
+            completed_workspace.id,
+        )
+        .await
+        .unwrap();
+
+        let action = ExecutorAction::new(
+            ExecutorActionType::ScriptRequest(ScriptRequest {
+                script: "true".to_string(),
+                language: ScriptRequestLanguage::Bash,
+                context: ScriptContext::SetupScript,
+                working_dir: None,
+            }),
+            None,
+        );
+
+        let process_id = Uuid::new_v4();
+        ExecutionProcess::create(
+            &deployment.db().pool,
+            &CreateExecutionProcess {
+                session_id: session.id,
+                executor_action: action,
+                run_reason: ExecutionProcessRunReason::SetupScript,
+            },
+            process_id,
+            &[],
+        )
+        .await
+        .unwrap();
+        ExecutionProcess::update_completion(
+            &deployment.db().pool,
+            process_id,
+            ExecutionProcessStatus::Completed,
+            Some(0),
+        )
+        .await
+        .unwrap();
+
+        let failed_workspace = Workspace::create(
+            &deployment.db().pool,
+            &CreateWorkspace {
+                branch: "failed".to_string(),
+                agent_working_dir: None,
+            },
+            Uuid::new_v4(),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        Task::update_status(&deployment.db().pool, task_id, TaskStatus::InReview)
+            .await
+            .unwrap();
+
+        cleanup_failed_attempt_start(
+            &deployment,
+            &task,
+            &failed_workspace,
+            &TaskStatus::Todo,
+        )
+        .await
+        .unwrap();
+
+        let task_after = Task::find_by_id(&deployment.db().pool, task_id)
+            .await
+            .unwrap()
+            .expect("task should remain");
+        assert_eq!(task_after.status, TaskStatus::InReview);
+
+        drop(deployment);
+        drop(env_guard);
         let _ = std::fs::remove_dir_all(&temp_root);
     }
 }

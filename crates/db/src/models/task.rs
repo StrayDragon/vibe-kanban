@@ -3,7 +3,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, Set,
 };
-use sea_orm::sea_query::{Expr, ExprTrait, JoinType, Order, Query};
+use sea_orm::sea_query::{Alias, Expr, ExprTrait, JoinType, Order, Query};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
@@ -276,6 +276,96 @@ impl Task {
             .unwrap_or_default();
 
         Ok((has_in_progress_attempt, last_attempt_failed, executor))
+    }
+
+    pub async fn has_running_attempts<C: ConnectionTrait>(
+        db: &C,
+        task_id: Uuid,
+    ) -> Result<bool, DbErr> {
+        let task_row_id = ids::task_id_by_uuid(db, task_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+        let run_reasons = vec![
+            crate::types::ExecutionProcessRunReason::SetupScript,
+            crate::types::ExecutionProcessRunReason::CleanupScript,
+            crate::types::ExecutionProcessRunReason::CodingAgent,
+        ];
+
+        let in_progress_query = Query::select()
+            .expr(Expr::val(1))
+            .from(execution_process::Entity)
+            .join(
+                JoinType::InnerJoin,
+                session::Entity,
+                Expr::col((session::Entity, session::Column::Id))
+                    .equals((execution_process::Entity, execution_process::Column::SessionId)),
+            )
+            .join(
+                JoinType::InnerJoin,
+                workspace::Entity,
+                Expr::col((workspace::Entity, workspace::Column::Id))
+                    .equals((session::Entity, session::Column::WorkspaceId)),
+            )
+            .and_where(Expr::col((workspace::Entity, workspace::Column::TaskId)).eq(task_row_id))
+            .and_where(
+                Expr::col((execution_process::Entity, execution_process::Column::Status))
+                    .eq(crate::types::ExecutionProcessStatus::Running),
+            )
+            .and_where(
+                Expr::col((execution_process::Entity, execution_process::Column::RunReason))
+                    .is_in(run_reasons),
+            )
+            .limit(1)
+            .to_owned();
+
+        Ok(db.query_one(&in_progress_query).await?.is_some())
+    }
+
+    pub async fn latest_attempt_workspace_id<C: ConnectionTrait>(
+        db: &C,
+        task_id: Uuid,
+    ) -> Result<Option<Uuid>, DbErr> {
+        let task_row_id = ids::task_id_by_uuid(db, task_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+        let run_reasons = vec![
+            crate::types::ExecutionProcessRunReason::SetupScript,
+            crate::types::ExecutionProcessRunReason::CleanupScript,
+            crate::types::ExecutionProcessRunReason::CodingAgent,
+        ];
+
+        let latest_query = Query::select().expr_as(
+            Expr::col((workspace::Entity, workspace::Column::Uuid)),
+            Alias::new("workspace_uuid"),
+        )
+            .from(execution_process::Entity)
+            .join(
+                JoinType::InnerJoin,
+                session::Entity,
+                Expr::col((session::Entity, session::Column::Id))
+                    .equals((execution_process::Entity, execution_process::Column::SessionId)),
+            )
+            .join(
+                JoinType::InnerJoin,
+                workspace::Entity,
+                Expr::col((workspace::Entity, workspace::Column::Id))
+                    .equals((session::Entity, session::Column::WorkspaceId)),
+            )
+            .and_where(Expr::col((workspace::Entity, workspace::Column::TaskId)).eq(task_row_id))
+            .and_where(
+                Expr::col((execution_process::Entity, execution_process::Column::RunReason))
+                    .is_in(run_reasons),
+            )
+            .order_by((execution_process::Entity, execution_process::Column::CreatedAt), Order::Desc)
+            .limit(1)
+            .to_owned();
+
+        let latest_workspace_id = db
+            .query_one(&latest_query)
+            .await?
+            .and_then(|row| row.try_get("", "workspace_uuid").ok());
+
+        Ok(latest_workspace_id)
     }
 
     pub async fn parent_project<C: ConnectionTrait>(
