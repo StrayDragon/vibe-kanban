@@ -54,3 +54,4 @@ dotenv = "0.15"
 db-migration = { path = "../db/migration" }
 sea-orm = { version = "2.0.0-rc.28", features = ["runtime-tokio-rustls", "sqlx-sqlite"] }
 sea-orm-migration = { version = "2.0.0-rc.28", features = ["runtime-tokio-rustls", "sqlx-sqlite"] }
+tower = { version = "0.5", features = ["util"] }

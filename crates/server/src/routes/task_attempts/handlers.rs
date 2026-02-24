@@ -2080,6 +2080,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_start_repo_failure_rolls_back_transaction() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &deployment.db().pool,
+            &CreateProject {
+                name: "Rollback project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let repo_id = Uuid::new_v4();
+        let create_start_payload = CreateAndStartTaskRequest {
+            task: CreateTask::from_title_description(
+                project_id,
+                "Create start rollback task".to_string(),
+                None,
+            ),
+            executor_profile_id: ExecutorProfileId::new(BaseCodingAgent::FakeAgent),
+            repos: vec![WorkspaceRepoInput {
+                repo_id,
+                target_branch: "main".to_string(),
+            }],
+        };
+
+        let result =
+            create_task_and_start(State(deployment.clone()), Json(create_start_payload)).await;
+        assert!(result.is_err());
+
+        let tasks = Task::find_by_project_id_with_attempt_status(&deployment.db().pool, project_id)
+            .await
+            .unwrap();
+        assert!(tasks.is_empty());
+
+        let workspaces = Workspace::fetch_all(&deployment.db().pool, None)
+            .await
+            .unwrap();
+        assert!(workspaces.is_empty());
+
+        drop(deployment);
+        drop(env_guard);
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
     async fn rename_branch_returns_non_200_with_error_data() {
         let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&temp_root).unwrap();
