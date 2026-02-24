@@ -27,8 +27,8 @@ import RepoSelector from '@/components/tasks/RepoSelector';
 import { RebaseDialog } from '@/components/dialogs/tasks/RebaseDialog';
 import { CreatePRDialog } from '@/components/dialogs/tasks/CreatePRDialog';
 import { useTranslation } from 'react-i18next';
-import { useAttemptRepo } from '@/hooks/useAttemptRepo';
-import { useGitOperations } from '@/hooks/useGitOperations';
+import { useAttemptRepo } from '@/hooks/task-attempts/useAttemptRepo';
+import { useGitOperations } from '@/hooks/task-attempts/useGitOperations';
 import { useRepoBranches } from '@/hooks';
 
 interface GitOperationsProps {

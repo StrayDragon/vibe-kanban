@@ -89,10 +89,7 @@ impl Image {
         Ok(record.map(Self::from_model))
     }
 
-    pub async fn find_by_id<C: ConnectionTrait>(
-        db: &C,
-        id: Uuid,
-    ) -> Result<Option<Self>, DbErr> {
+    pub async fn find_by_id<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<Option<Self>, DbErr> {
         let record = image::Entity::find()
             .filter(image::Column::Uuid.eq(id))
             .one(db)
@@ -143,9 +140,7 @@ impl Image {
         Ok(())
     }
 
-    pub async fn find_orphaned_images<C: ConnectionTrait>(
-        db: &C,
-    ) -> Result<Vec<Self>, DbErr> {
+    pub async fn find_orphaned_images<C: ConnectionTrait>(db: &C) -> Result<Vec<Self>, DbErr> {
         let linked_ids: Vec<i64> = task_image::Entity::find()
             .select_only()
             .column(task_image::Column::ImageId)
@@ -208,10 +203,7 @@ impl TaskImage {
         Ok(())
     }
 
-    pub async fn delete_by_task_id<C: ConnectionTrait>(
-        db: &C,
-        task_id: Uuid,
-    ) -> Result<(), DbErr> {
+    pub async fn delete_by_task_id<C: ConnectionTrait>(db: &C, task_id: Uuid) -> Result<(), DbErr> {
         let task_row_id = match ids::task_id_by_uuid(db, task_id).await? {
             Some(id) => id,
             None => return Ok(()),

@@ -1,6 +1,6 @@
 import { renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { useSsePollingInterval } from './useSsePollingInterval';
+import { useSsePollingInterval } from './utils/useSsePollingInterval';
 
 let isConnected = false;
 let isVisible = true;
@@ -9,7 +9,7 @@ vi.mock('@/contexts/EventStreamContext', () => ({
   useEventStream: () => ({ isConnected, error: null }),
 }));
 
-vi.mock('@/hooks/useDocumentVisibility', () => ({
+vi.mock('@/hooks/utils/useDocumentVisibility', () => ({
   useDocumentVisibility: () => isVisible,
 }));
 

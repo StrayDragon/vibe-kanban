@@ -32,10 +32,7 @@ pub async fn project_uuid_by_id<C: ConnectionTrait>(
         .await
 }
 
-pub async fn task_id_by_uuid<C: ConnectionTrait>(
-    db: &C,
-    uuid: Uuid,
-) -> Result<Option<i64>, DbErr> {
+pub async fn task_id_by_uuid<C: ConnectionTrait>(db: &C, uuid: Uuid) -> Result<Option<i64>, DbErr> {
     task::Entity::find()
         .select_only()
         .column(task::Column::Id)
@@ -45,10 +42,7 @@ pub async fn task_id_by_uuid<C: ConnectionTrait>(
         .await
 }
 
-pub async fn task_uuid_by_id<C: ConnectionTrait>(
-    db: &C,
-    id: i64,
-) -> Result<Option<Uuid>, DbErr> {
+pub async fn task_uuid_by_id<C: ConnectionTrait>(db: &C, id: i64) -> Result<Option<Uuid>, DbErr> {
     task::Entity::find()
         .select_only()
         .column(task::Column::Uuid)
@@ -162,10 +156,7 @@ pub async fn execution_process_uuid_by_id<C: ConnectionTrait>(
         .await
 }
 
-pub async fn repo_id_by_uuid<C: ConnectionTrait>(
-    db: &C,
-    uuid: Uuid,
-) -> Result<Option<i64>, DbErr> {
+pub async fn repo_id_by_uuid<C: ConnectionTrait>(db: &C, uuid: Uuid) -> Result<Option<i64>, DbErr> {
     repo::Entity::find()
         .select_only()
         .column(repo::Column::Id)
@@ -175,10 +166,7 @@ pub async fn repo_id_by_uuid<C: ConnectionTrait>(
         .await
 }
 
-pub async fn repo_uuid_by_id<C: ConnectionTrait>(
-    db: &C,
-    id: i64,
-) -> Result<Option<Uuid>, DbErr> {
+pub async fn repo_uuid_by_id<C: ConnectionTrait>(db: &C, id: i64) -> Result<Option<Uuid>, DbErr> {
     repo::Entity::find()
         .select_only()
         .column(repo::Column::Uuid)
@@ -227,10 +215,7 @@ pub async fn image_id_by_uuid<C: ConnectionTrait>(
         .await
 }
 
-pub async fn image_uuid_by_id<C: ConnectionTrait>(
-    db: &C,
-    id: i64,
-) -> Result<Option<Uuid>, DbErr> {
+pub async fn image_uuid_by_id<C: ConnectionTrait>(db: &C, id: i64) -> Result<Option<Uuid>, DbErr> {
     image::Entity::find()
         .select_only()
         .column(image::Column::Uuid)
@@ -279,10 +264,7 @@ pub async fn merge_id_by_uuid<C: ConnectionTrait>(
         .await
 }
 
-pub async fn merge_uuid_by_id<C: ConnectionTrait>(
-    db: &C,
-    id: i64,
-) -> Result<Option<Uuid>, DbErr> {
+pub async fn merge_uuid_by_id<C: ConnectionTrait>(db: &C, id: i64) -> Result<Option<Uuid>, DbErr> {
     merge::Entity::find()
         .select_only()
         .column(merge::Column::Uuid)
@@ -297,12 +279,11 @@ mod tests {
     use sea_orm::Database;
     use sea_orm_migration::MigratorTrait;
 
+    use super::*;
     use crate::models::{
         project::{CreateProject, Project},
         task::{CreateTask, Task},
     };
-
-    use super::*;
 
     async fn setup_db() -> sea_orm::DatabaseConnection {
         let db = Database::connect("sqlite::memory:").await.unwrap();
@@ -339,11 +320,7 @@ mod tests {
         let task_id = Uuid::new_v4();
         let task = Task::create(
             &db,
-            &CreateTask::from_title_description(
-                project_id,
-                "Test task".to_string(),
-                None,
-            ),
+            &CreateTask::from_title_description(project_id, "Test task".to_string(), None),
             task_id,
         )
         .await

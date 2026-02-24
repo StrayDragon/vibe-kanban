@@ -3,17 +3,20 @@ use std::path::PathBuf;
 use axum::{
     Extension, Json,
     extract::{Query, State},
+    http::StatusCode,
     response::Json as ResponseJson,
 };
-use db::DbErr;
-use db::models::{
-    execution_process::{ExecutionProcess, ExecutionProcessRunReason},
-    merge::{Merge, MergeStatus},
-    repo::{Repo, RepoError},
-    session::{CreateSession, Session},
-    task::{Task, TaskStatus},
-    workspace::{Workspace, WorkspaceError},
-    workspace_repo::WorkspaceRepo,
+use db::{
+    DbErr,
+    models::{
+        execution_process::{ExecutionProcess, ExecutionProcessRunReason},
+        merge::{Merge, MergeStatus},
+        repo::{Repo, RepoError},
+        session::{CreateSession, Session},
+        task::{Task, TaskStatus},
+        workspace::{Workspace, WorkspaceError},
+        workspace_repo::WorkspaceRepo,
+    },
 };
 use deployment::Deployment;
 use executors::actions::{
@@ -202,7 +205,7 @@ pub async fn create_github_pr(
     Extension(workspace): Extension<Workspace>,
     State(deployment): State<DeploymentImpl>,
     Json(request): Json<CreateGitHubPrRequest>,
-) -> Result<ResponseJson<ApiResponse<String, CreatePrError>>, ApiError> {
+) -> Result<(StatusCode, ResponseJson<ApiResponse<String, CreatePrError>>), ApiError> {
     let pool = &deployment.db().pool;
 
     let workspace_repo =
@@ -233,21 +236,30 @@ pub async fn create_github_pr(
         .check_remote_branch_exists(&repo_path, &target_branch)
     {
         Ok(false) => {
-            return Ok(ResponseJson(ApiResponse::error_with_data(
-                CreatePrError::TargetBranchNotFound {
-                    branch: target_branch.clone(),
-                },
-            )));
+            return Ok((
+                StatusCode::NOT_FOUND,
+                ResponseJson(ApiResponse::error_with_data(
+                    CreatePrError::TargetBranchNotFound {
+                        branch: target_branch.clone(),
+                    },
+                )),
+            ));
         }
         Err(GitServiceError::GitCLI(GitCliError::AuthFailed(_))) => {
-            return Ok(ResponseJson(ApiResponse::error_with_data(
-                CreatePrError::GitCliNotLoggedIn,
-            )));
+            return Ok((
+                StatusCode::UNAUTHORIZED,
+                ResponseJson(ApiResponse::error_with_data(
+                    CreatePrError::GitCliNotLoggedIn,
+                )),
+            ));
         }
         Err(GitServiceError::GitCLI(GitCliError::NotAvailable)) => {
-            return Ok(ResponseJson(ApiResponse::error_with_data(
-                CreatePrError::GitCliNotInstalled,
-            )));
+            return Ok((
+                StatusCode::BAD_REQUEST,
+                ResponseJson(ApiResponse::error_with_data(
+                    CreatePrError::GitCliNotInstalled,
+                )),
+            ));
         }
         Err(e) => return Err(ApiError::GitService(e)),
         Ok(true) => {}
@@ -261,14 +273,20 @@ pub async fn create_github_pr(
         tracing::error!("Failed to push branch to GitHub: {}", e);
         match e {
             GitServiceError::GitCLI(GitCliError::AuthFailed(_)) => {
-                return Ok(ResponseJson(ApiResponse::error_with_data(
-                    CreatePrError::GitCliNotLoggedIn,
-                )));
+                return Ok((
+                    StatusCode::UNAUTHORIZED,
+                    ResponseJson(ApiResponse::error_with_data(
+                        CreatePrError::GitCliNotLoggedIn,
+                    )),
+                ));
             }
             GitServiceError::GitCLI(GitCliError::NotAvailable) => {
-                return Ok(ResponseJson(ApiResponse::error_with_data(
-                    CreatePrError::GitCliNotInstalled,
-                )));
+                return Ok((
+                    StatusCode::BAD_REQUEST,
+                    ResponseJson(ApiResponse::error_with_data(
+                        CreatePrError::GitCliNotInstalled,
+                    )),
+                ));
             }
             _ => return Err(ApiError::GitService(e)),
         }
@@ -343,7 +361,10 @@ pub async fn create_github_pr(
                 );
             }
 
-            Ok(ResponseJson(ApiResponse::success(pr_info.url)))
+            Ok((
+                StatusCode::OK,
+                ResponseJson(ApiResponse::success(pr_info.url)),
+            ))
         }
         Err(e) => {
             tracing::error!(
@@ -352,11 +373,17 @@ pub async fn create_github_pr(
                 e
             );
             match &e {
-                GitHubServiceError::GhCliNotInstalled(_) => Ok(ResponseJson(
-                    ApiResponse::error_with_data(CreatePrError::GithubCliNotInstalled),
+                GitHubServiceError::GhCliNotInstalled(_) => Ok((
+                    StatusCode::BAD_REQUEST,
+                    ResponseJson(ApiResponse::error_with_data(
+                        CreatePrError::GithubCliNotInstalled,
+                    )),
                 )),
-                GitHubServiceError::AuthFailed(_) => Ok(ResponseJson(
-                    ApiResponse::error_with_data(CreatePrError::GithubCliNotLoggedIn),
+                GitHubServiceError::AuthFailed(_) => Ok((
+                    StatusCode::UNAUTHORIZED,
+                    ResponseJson(ApiResponse::error_with_data(
+                        CreatePrError::GithubCliNotLoggedIn,
+                    )),
                 )),
                 _ => Err(ApiError::GitHubService(e)),
             }
@@ -453,7 +480,13 @@ pub async fn get_pr_comments(
     Extension(workspace): Extension<Workspace>,
     State(deployment): State<DeploymentImpl>,
     Query(query): Query<GetPrCommentsQuery>,
-) -> Result<ResponseJson<ApiResponse<PrCommentsResponse, GetPrCommentsError>>, ApiError> {
+) -> Result<
+    (
+        StatusCode,
+        ResponseJson<ApiResponse<PrCommentsResponse, GetPrCommentsError>>,
+    ),
+    ApiError,
+> {
     let pool = &deployment.db().pool;
 
     // Look up the specific repo using the multi-repo pattern
@@ -473,9 +506,12 @@ pub async fn get_pr_comments(
     let pr_info = match merges.into_iter().next() {
         Some(Merge::Pr(pr_merge)) => pr_merge.pr_info,
         _ => {
-            return Ok(ResponseJson(ApiResponse::error_with_data(
-                GetPrCommentsError::NoPrAttached,
-            )));
+            return Ok((
+                StatusCode::CONFLICT,
+                ResponseJson(ApiResponse::error_with_data(
+                    GetPrCommentsError::NoPrAttached,
+                )),
+            ));
         }
     };
 
@@ -487,9 +523,10 @@ pub async fn get_pr_comments(
         .get_pr_comments(&repo_info, pr_info.number)
         .await
     {
-        Ok(comments) => Ok(ResponseJson(ApiResponse::success(PrCommentsResponse {
-            comments,
-        }))),
+        Ok(comments) => Ok((
+            StatusCode::OK,
+            ResponseJson(ApiResponse::success(PrCommentsResponse { comments })),
+        )),
         Err(e) => {
             tracing::error!(
                 "Failed to fetch PR comments for attempt {}, PR #{}: {}",
@@ -498,11 +535,17 @@ pub async fn get_pr_comments(
                 e
             );
             match &e {
-                GitHubServiceError::GhCliNotInstalled(_) => Ok(ResponseJson(
-                    ApiResponse::error_with_data(GetPrCommentsError::GithubCliNotInstalled),
+                GitHubServiceError::GhCliNotInstalled(_) => Ok((
+                    StatusCode::BAD_REQUEST,
+                    ResponseJson(ApiResponse::error_with_data(
+                        GetPrCommentsError::GithubCliNotInstalled,
+                    )),
                 )),
-                GitHubServiceError::AuthFailed(_) => Ok(ResponseJson(
-                    ApiResponse::error_with_data(GetPrCommentsError::GithubCliNotLoggedIn),
+                GitHubServiceError::AuthFailed(_) => Ok((
+                    StatusCode::UNAUTHORIZED,
+                    ResponseJson(ApiResponse::error_with_data(
+                        GetPrCommentsError::GithubCliNotLoggedIn,
+                    )),
                 )),
                 _ => Err(ApiError::GitHubService(e)),
             }

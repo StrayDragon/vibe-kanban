@@ -23,8 +23,11 @@ import {
 import type { TaskWithAttemptStatus, Workspace } from 'shared/types';
 import { defineModal } from '@/lib/modals';
 import { attemptsApi } from '@/lib/api';
-import { useTaskAttempts, taskAttemptKeys } from '@/hooks/useTaskAttempts';
-import { useExecutionProcesses } from '@/hooks/useExecutionProcesses';
+import {
+  useTaskAttempts,
+  taskAttemptKeys,
+} from '@/hooks/task-attempts/useTaskAttempts';
+import { useExecutionProcesses } from '@/hooks/execution-processes/useExecutionProcesses';
 
 export interface RemoveWorktreeDialogProps {
   task: TaskWithAttemptStatus;
@@ -57,8 +60,8 @@ const formatTimeAgo = (iso: string) => {
   return to(years, 'year');
 };
 
-const RemoveWorktreeDialogImpl =
-  NiceModal.create<RemoveWorktreeDialogProps>(({ task, attempt }) => {
+const RemoveWorktreeDialogImpl = NiceModal.create<RemoveWorktreeDialogProps>(
+  ({ task, attempt }) => {
     const modal = useModal();
     const { t } = useTranslation('tasks');
     const queryClient = useQueryClient();
@@ -270,7 +273,8 @@ const RemoveWorktreeDialogImpl =
         </DialogContent>
       </Dialog>
     );
-  });
+  }
+);
 
 export const RemoveWorktreeDialog = defineModal<
   RemoveWorktreeDialogProps,

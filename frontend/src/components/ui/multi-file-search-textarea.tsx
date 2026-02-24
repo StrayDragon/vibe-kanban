@@ -51,7 +51,9 @@ export function MultiFileSearchTextarea({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const searchCacheRef = useRef<Map<string, CachedFileSearchResults>>(new Map());
+  const searchCacheRef = useRef<Map<string, CachedFileSearchResults>>(
+    new Map()
+  );
   const itemRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   // Search for files when query changes
@@ -98,10 +100,12 @@ export function MultiFileSearchTextarea({
 
         // Only process if this request wasn't aborted
         if (!abortController.signal.aborted) {
-          const fileResults: FileSearchResult[] = result.results.map((item) => ({
-            ...item,
-            name: item.path.split('/').pop() || item.path,
-          }));
+          const fileResults: FileSearchResult[] = result.results.map(
+            (item) => ({
+              ...item,
+              name: item.path.split('/').pop() || item.path,
+            })
+          );
 
           // Cache the results
           searchCacheRef.current.set(searchQuery, {

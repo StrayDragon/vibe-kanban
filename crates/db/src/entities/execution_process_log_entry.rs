@@ -1,5 +1,4 @@
-use sea_orm::entity::prelude::*;
-use sea_orm::JsonValue;
+use sea_orm::{JsonValue, entity::prelude::*};
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "execution_process_log_entries")]

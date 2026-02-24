@@ -12,9 +12,8 @@ use ts_rs::TS;
 
 mod cli;
 
-pub use cli::GhCliError;
 use cli::{GhCli, PrComment, PrReviewComment};
-pub use cli::{PrCommentAuthor, ReviewCommentUser};
+pub use cli::{GhCliError, PrCommentAuthor, ReviewCommentUser};
 
 /// Unified PR comment that can be either a general comment or review comment
 #[derive(Debug, Clone, Serialize, TS)]

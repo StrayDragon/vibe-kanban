@@ -9,8 +9,9 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import type { Operation } from 'rfc6902';
 import { collectInvalidations } from '@/utils/eventInvalidation';
-import { taskAttemptKeys } from '@/hooks/useTaskAttempts';
-import { branchStatusKeys } from '@/hooks/useBranchStatus';
+import { taskAttemptKeys } from '@/hooks/task-attempts/useTaskAttempts';
+import { branchStatusKeys } from '@/hooks/task-attempts/useBranchStatus';
+import { withApiTokenQuery } from '@/api/token';
 
 type EventStreamContextType = {
   isConnected: boolean;
@@ -19,16 +20,12 @@ type EventStreamContextType = {
 
 const EventStreamContext = createContext<EventStreamContextType | null>(null);
 
-export function EventStreamProvider({
-  children,
-}: {
-  children: ReactNode;
-}) {
+export function EventStreamProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    const source = new EventSource('/api/events');
+    const source = new EventSource(withApiTokenQuery('/api/events'));
 
     source.onopen = () => {
       setIsConnected(true);

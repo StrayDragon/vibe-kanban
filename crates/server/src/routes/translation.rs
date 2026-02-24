@@ -75,7 +75,9 @@ async fn translate(
     Json(payload): Json<TranslationRequest>,
 ) -> Result<ResponseJson<ApiResponse<TranslationResponse>>, ApiError> {
     if payload.text.trim().is_empty() {
-        return Err(ApiError::BadRequest("Translation text is empty".to_string()));
+        return Err(ApiError::BadRequest(
+            "Translation text is empty".to_string(),
+        ));
     }
 
     let config = resolve_llm_config()?;
@@ -114,7 +116,11 @@ async fn translate(
             .trim()
             .to_string();
         let fallback = format!("Translation failed with status {}", status);
-        let message = if message.is_empty() { fallback } else { message };
+        let message = if message.is_empty() {
+            fallback
+        } else {
+            message
+        };
         return Err(ApiError::BadRequest(message));
     }
 

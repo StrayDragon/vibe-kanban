@@ -9,7 +9,10 @@ use db::models::{
     task::{CreateTask, Task, TaskStatus, TaskWithAttemptStatus, UpdateTask},
     workspace::{Workspace, WorkspaceContext},
 };
-use executors::{executors::{BaseCodingAgent, CodingAgent}, profile::ExecutorProfileId};
+use executors::{
+    executors::{BaseCodingAgent, CodingAgent},
+    profile::ExecutorProfileId,
+};
 use regex::Regex;
 use reqwest::StatusCode;
 use rmcp::{
@@ -27,15 +30,19 @@ use services::services::queued_message::{QueueStatus, QueuedMessage};
 use strum::VariantNames;
 use uuid::Uuid;
 
-use crate::mcp::params::Parameters;
-use crate::routes::{
-    containers::ContainerQuery,
-    task_attempts::{CreateTaskAttemptBody, WorkspaceRepoInput},
+use crate::{
+    mcp::params::Parameters,
+    routes::{
+        containers::ContainerQuery,
+        task_attempts::{CreateTaskAttemptBody, WorkspaceRepoInput},
+    },
 };
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateTaskRequest {
-    #[schemars(description = "The ID of the project to create the task in (UUID string). This is required!")]
+    #[schemars(
+        description = "The ID of the project to create the task in (UUID string). This is required!"
+    )]
     pub project_id: Uuid,
     #[schemars(description = "The title of the task")]
     pub title: String,
@@ -328,9 +335,7 @@ pub enum FollowUpAction {
 pub struct FollowUpRequest {
     #[schemars(description = "The session ID to target for the follow-up action (UUID string)")]
     pub session_id: Option<Uuid>,
-    #[schemars(
-        description = "The attempt ID whose latest session should be used (UUID string)"
-    )]
+    #[schemars(description = "The attempt ID whose latest session should be used (UUID string)")]
     pub attempt_id: Option<Uuid>,
     #[schemars(description = "The follow-up prompt for send/queue actions")]
     pub prompt: Option<String>,
@@ -646,27 +651,27 @@ impl TaskServer {
 
     fn http_error_hint(status: StatusCode) -> Option<&'static str> {
         match status {
-            StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => Some(
-                "Check tool inputs and IDs. Use list_* tools to fetch valid UUIDs.",
-            ),
+            StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => {
+                Some("Check tool inputs and IDs. Use list_* tools to fetch valid UUIDs.")
+            }
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Some(
                 "Backend rejected the request. Ensure the backend is running locally and access is allowed.",
             ),
             StatusCode::NOT_FOUND => {
                 Some("Resource not found. Verify IDs via list_* tools or get_context.")
             }
-            StatusCode::CONFLICT => Some(
-                "Conflict detected. Check for existing resources or adjust input values.",
-            ),
+            StatusCode::CONFLICT => {
+                Some("Conflict detected. Check for existing resources or adjust input values.")
+            }
             StatusCode::TOO_MANY_REQUESTS => {
                 Some("Rate limited. Wait a moment and retry the request.")
             }
             StatusCode::INTERNAL_SERVER_ERROR
             | StatusCode::BAD_GATEWAY
             | StatusCode::SERVICE_UNAVAILABLE
-            | StatusCode::GATEWAY_TIMEOUT => Some(
-                "Backend is unhealthy or unavailable. Start/restart the backend and retry.",
-            ),
+            | StatusCode::GATEWAY_TIMEOUT => {
+                Some("Backend is unhealthy or unavailable. Start/restart the backend and retry.")
+            }
             _ => None,
         }
     }
@@ -775,20 +780,18 @@ impl TaskServer {
 
         if !api_response.success {
             let msg = api_response.message.as_deref().unwrap_or("Unknown error");
-            return Err(
-                Self::err_with(
-                    "VK API returned error",
-                    Some(serde_json::json!({
-                        "message": msg,
-                        "method": method,
-                        "url": resp_url,
-                    })),
-                    Some("Check request inputs or call list_* tools to refresh IDs.".to_string()),
-                    Some("backend_error"),
-                    None,
-                )
-                .unwrap(),
-            );
+            return Err(Self::err_with(
+                "VK API returned error",
+                Some(serde_json::json!({
+                    "message": msg,
+                    "method": method,
+                    "url": resp_url,
+                })),
+                Some("Check request inputs or call list_* tools to refresh IDs.".to_string()),
+                Some("backend_error"),
+                None,
+            )
+            .unwrap());
         }
 
         api_response.data.ok_or_else(|| {
@@ -843,25 +846,24 @@ impl TaskServer {
         };
 
         let url = self.url(&format!("/api/sessions?workspace_id={}", attempt_id));
-        let sessions: Vec<Session> =
-            match self.send_json(self.client.get(&url), "GET", &url).await {
-                Ok(sessions) => sessions,
-                Err(e) => return Err(e),
-            };
+        let sessions: Vec<Session> = match self.send_json(self.client.get(&url), "GET", &url).await
+        {
+            Ok(sessions) => sessions,
+            Err(e) => return Err(e),
+        };
 
-        let latest = sessions.into_iter().max_by_key(|session| session.created_at);
+        let latest = sessions
+            .into_iter()
+            .max_by_key(|session| session.created_at);
         let Some(latest) = latest else {
-            return Err(
-                Self::err_with(
-                    "No sessions found for attempt",
-                    Some(serde_json::json!({ "attempt_id": attempt_id.to_string() })),
-                    Some("Call list_task_attempts to confirm attempts or use get_context."
-                        .to_string()),
-                    Some("not_found"),
-                    None,
-                )
-                .unwrap(),
-            );
+            return Err(Self::err_with(
+                "No sessions found for attempt",
+                Some(serde_json::json!({ "attempt_id": attempt_id.to_string() })),
+                Some("Call list_task_attempts to confirm attempts or use get_context.".to_string()),
+                Some("not_found"),
+                None,
+            )
+            .unwrap());
         };
 
         Ok(latest.id)
@@ -892,11 +894,13 @@ impl TaskServer {
 
         let url = self.url("/api/task-attempts/latest-summaries");
         let payload = TaskAttemptSummariesRequest { task_ids };
-        let summaries: Vec<TaskAttemptSummaryEntry> =
-            match self.send_json(self.client.post(&url).json(&payload), "POST", &url).await {
-                Ok(summaries) => summaries,
-                Err(e) => return Err(e),
-            };
+        let summaries: Vec<TaskAttemptSummaryEntry> = match self
+            .send_json(self.client.post(&url).json(&payload), "POST", &url)
+            .await
+        {
+            Ok(summaries) => summaries,
+            Err(e) => return Err(e),
+        };
 
         let mut by_task = std::collections::HashMap::new();
         for summary in summaries {
@@ -1220,10 +1224,8 @@ impl TaskServer {
 
         attempts.sort_by(Self::compare_attempts_newest_first);
 
-        let attempt_details: Vec<TaskAttemptDetails> = attempts
-            .iter()
-            .map(Self::attempt_details_from)
-            .collect();
+        let attempt_details: Vec<TaskAttemptDetails> =
+            attempts.iter().map(Self::attempt_details_from).collect();
         let summary = Self::summarize_attempts(&attempts);
 
         let response = ListTaskAttemptsResponse {
@@ -1329,8 +1331,9 @@ impl TaskServer {
         };
 
         let url = self.url("/api/task-attempts");
-        let workspace: Workspace =
-            match self.send_json(self.client.post(&url).json(&payload), "POST", &url).await
+        let workspace: Workspace = match self
+            .send_json(self.client.post(&url).json(&payload), "POST", &url)
+            .await
         {
             Ok(workspace) => workspace,
             Err(e) => return Ok(e),
@@ -1409,12 +1412,13 @@ impl TaskServer {
                 };
 
                 let url = self.url(&format!("/api/sessions/{}/follow-up", session_id));
-                let execution_process: ExecutionProcess =
-                    match self.send_json(self.client.post(&url).json(&payload), "POST", &url).await
-                    {
-                        Ok(process) => process,
-                        Err(e) => return Ok(e),
-                    };
+                let execution_process: ExecutionProcess = match self
+                    .send_json(self.client.post(&url).json(&payload), "POST", &url)
+                    .await
+                {
+                    Ok(process) => process,
+                    Err(e) => return Ok(e),
+                };
 
                 TaskServer::success(&FollowUpResponse::from_execution(
                     session_id,
@@ -1435,22 +1439,25 @@ impl TaskServer {
                 };
 
                 let url = self.url(&format!("/api/sessions/{}/queue", session_id));
-                let status: QueueStatus =
-                    match self.send_json(self.client.post(&url).json(&payload), "POST", &url).await
-                    {
-                        Ok(status) => status,
-                        Err(e) => return Ok(e),
-                    };
+                let status: QueueStatus = match self
+                    .send_json(self.client.post(&url).json(&payload), "POST", &url)
+                    .await
+                {
+                    Ok(status) => status,
+                    Err(e) => return Ok(e),
+                };
 
                 TaskServer::success(&FollowUpResponse::from_status(session_id, action, status))
             }
             FollowUpAction::Cancel => {
                 let url = self.url(&format!("/api/sessions/{}/queue", session_id));
-                let status: QueueStatus =
-                    match self.send_json(self.client.delete(&url), "DELETE", &url).await {
-                        Ok(status) => status,
-                        Err(e) => return Ok(e),
-                    };
+                let status: QueueStatus = match self
+                    .send_json(self.client.delete(&url), "DELETE", &url)
+                    .await
+                {
+                    Ok(status) => status,
+                    Err(e) => return Ok(e),
+                };
 
                 TaskServer::success(&FollowUpResponse::from_status(session_id, action, status))
             }
@@ -1508,8 +1515,9 @@ impl TaskServer {
             image_ids: None,
         };
         let url = self.url(&format!("/api/tasks/{}", task_id));
-        let updated_task: Task =
-            match self.send_json(self.client.put(&url).json(&payload), "PUT", &url).await
+        let updated_task: Task = match self
+            .send_json(self.client.put(&url).json(&payload), "PUT", &url)
+            .await
         {
             Ok(t) => t,
             Err(e) => return Ok(e),
@@ -1520,9 +1528,7 @@ impl TaskServer {
         TaskServer::success(&repsonse)
     }
 
-    #[tool(
-        description = "Delete a task/ticket. `task_id` is required!"
-    )]
+    #[tool(description = "Delete a task/ticket. `task_id` is required!")]
     async fn delete_task(
         &self,
         Parameters(DeleteTaskRequest { task_id }): Parameters<DeleteTaskRequest>,

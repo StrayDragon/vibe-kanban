@@ -116,16 +116,15 @@ graph TB
 
 服务器 crate 提供前端使用的 HTTP API。
 
-**结构** (`//crates/server/src/routes/`):
-- `routes/mod.rs`：组合所有路由模块的主路由器
-- `routes/projects.rs`：项目 CRUD 操作
-- `routes/task_attempts.rs`：任务尝试管理（执行、日志、PR 创建）
-- `routes/sessions/`：实时会话管理
-- `routes/config.rs`：用户配置管理
-- `routes/events.rs`：实时更新的服务器发送事件 (SSE) 端点
-- `routes/repo.rs`：仓库注册和初始化
-- `routes/filesystem.rs`：文件系统浏览和搜索
-- `routes/images.rs`：任务的截图/图片管理
+**结构**：
+- `//crates/server/src/http/mod.rs`：组装主 Router（静态前端 + `/api` nest）
+- `//crates/server/src/http/frontend.rs`：静态前端资源服务（SPA fallback + Cache-Control）
+- `//crates/server/src/routes/`：各资源的 API 路由模块（逐步目录化中）
+- `//crates/server/src/api/mod.rs`：将 `routes/*` 以 `server::api::*` 形式 re-export（便于分层/改名迁移）
+- 示例模块：
+  - `//crates/server/src/routes/projects.rs`：项目 CRUD 操作
+  - `//crates/server/src/routes/task_attempts/`：任务尝试管理（handlers/router/dto/ws + setup helpers）
+  - `//crates/server/src/routes/sessions/`：实时会话管理
 
 **中间件** (`//crates/server/src/middleware/`):
 - 请求 ID 生成
@@ -141,7 +140,8 @@ graph TB
 
 **模型** (`//crates/db/src/models/`):
 - `project.rs`：项目（仓库和任务的集合）
-- `task.rs`：具有状态的看板任务（待办、进行中、已完成、已取消等）
+- `task/`：具有状态的看板任务（待办、进行中、已完成、已取消等）
+- `task_group/`：任务组（workflow 图、节点/边、策略等）
 - `session.rs`：编码代理会话（可分支的对话上下文）
 - `execution_process.rs`：运行的代理进程（尝试）
 - `execution_process_logs.rs`：代理执行的原始日志
@@ -173,7 +173,7 @@ erDiagram
 
 业务逻辑组织为专注的服务：
 
-#### ContainerService (`container.rs`)
+#### ContainerService (`container/mod.rs`)
 **核心编排服务**，管理编码代理执行。
 
 **核心职责**：
@@ -184,7 +184,7 @@ erDiagram
 - 批准工作流集成
 - PR 创建和分支管理
 
-#### GitService (`git.rs`)
+#### GitService (`git/mod.rs`)
 `git2` 的包装器，提供高级 git 操作：
 - 分支创建、切换、重命名
 - 提交和合并操作
@@ -503,9 +503,9 @@ flowchart TD
 ```
 
 **关键文件**：
-- 前端：`//frontend/src/hooks/useAttemptCreation.ts`
-- 后端：`//crates/server/src/routes/task_attempts.rs` (create_and_start endpoint)
-- Container：`//crates/services/src/services/container.rs` (create_and_start method)
+- 前端：`//frontend/src/hooks/task-attempts/useAttemptCreation.ts`
+- 后端：`//crates/server/src/routes/task_attempts/handlers.rs` (create_task_attempt endpoint)
+- Container：`//crates/services/src/services/container/mod.rs` (create_and_start method)
 
 ### 2. 后续对话
 
@@ -520,8 +520,8 @@ flowchart TD
 ```
 
 **关键文件**：
-- 前端：`//frontend/src/hooks/useConversationHistory.ts`
-- 后端：`//crates/services/src/services/container.rs` (follow_up method)
+- 前端：`//frontend/src/hooks/execution-processes/useConversationHistory.ts`
+- 后端：`//crates/services/src/services/container/mod.rs` (follow_up method)
 - Executors：`//crates/executors/src/executors/mod.rs` (spawn_follow_up trait)
 
 ### 3. 创建拉取请求
@@ -841,16 +841,16 @@ pnpm run generate-types
 - `//crates/server/src/main.rs` - 应用入口点
 
 **任务执行**：
-- `//crates/services/src/services/container.rs` - 执行编排
+- `//crates/services/src/services/container/mod.rs` - 执行编排
 - `//crates/executors/src/executors/mod.rs` - 代理 trait
-- `//crates/server/src/routes/task_attempts.rs` - HTTP 处理器
+- `//crates/server/src/routes/task_attempts/handlers.rs` - HTTP 处理器
 
 **数据模型**：
 - `//crates/db/src/models/mod.rs` - 所有数据库模型
 - `//crates/server/src/bin/generate_types.rs` - 类型生成
 
 **前端**：
-- `//frontend/src/App.tsx` - 路由布局
+- `//frontend/src/app/AppRouter.tsx` - 路由布局
 - `//frontend/src/hooks/` - 数据获取 hooks
 - `//frontend/src/stores/` - 状态管理
 

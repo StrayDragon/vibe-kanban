@@ -1,10 +1,10 @@
 use std::future::{Future, IntoFuture};
 
 use anyhow::{self, Error as AnyhowError};
-use deployment::{Deployment, DeploymentError};
-use server::{DeploymentImpl, routes};
-use services::services::container::ContainerService;
 use db::DbErr;
+use deployment::{Deployment, DeploymentError};
+use server::{DeploymentImpl, http};
+use services::services::container::ContainerService;
 use strip_ansi_escapes::strip;
 use thiserror::Error;
 use tokio::sync::watch;
@@ -76,7 +76,11 @@ async fn main() -> Result<(), VibeKanbanError> {
         {
             tracing::warn!("Failed to backfill legacy log entries: {}", err);
         }
-        if let Err(err) = deployment_for_logs.container().cleanup_legacy_jsonl_logs().await {
+        if let Err(err) = deployment_for_logs
+            .container()
+            .cleanup_legacy_jsonl_logs()
+            .await
+        {
             tracing::warn!("Failed to cleanup legacy JSONL logs: {}", err);
         }
     });
@@ -93,7 +97,7 @@ async fn main() -> Result<(), VibeKanbanError> {
         }
     });
 
-    let app_router = routes::router(deployment.clone());
+    let app_router = http::router(deployment.clone());
 
     let port = std::env::var("BACKEND_PORT")
         .or_else(|_| std::env::var("PORT"))
@@ -135,9 +139,12 @@ async fn main() -> Result<(), VibeKanbanError> {
 
     let (shutdown_rx, force_exit_rx) = spawn_shutdown_watchers();
 
-    let server = axum::serve(listener, app_router)
-        .with_graceful_shutdown(wait_for_watch_true(shutdown_rx.clone()))
-        .into_future();
+    let server = axum::serve(
+        listener,
+        app_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(wait_for_watch_true(shutdown_rx.clone()))
+    .into_future();
     tokio::pin!(server);
 
     let serve_result = tokio::select! {
@@ -279,9 +286,11 @@ async fn shutdown_deadline(rx: watch::Receiver<bool>, timeout: std::time::Durati
 
 #[cfg(test)]
 mod tests {
-    use super::spawn_background;
     use std::time::Duration;
+
     use tokio::sync::oneshot;
+
+    use super::spawn_background;
 
     #[tokio::test]
     async fn spawn_background_returns_immediately() {

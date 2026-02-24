@@ -695,8 +695,9 @@ struct NormalizedEntryJson {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     fn store_with_broadcast_capacity(capacity: usize) -> MsgStore {
         let (sender, _) = broadcast::channel(capacity);
@@ -820,7 +821,10 @@ mod tests {
         }
 
         store.push_finished();
-        assert!(matches!(next_event(&mut stream).await, LogEntryEvent::Finished));
+        assert!(matches!(
+            next_event(&mut stream).await,
+            LogEntryEvent::Finished
+        ));
     }
 
     fn normalized_add_patch(entry_index: usize, content: &str) -> Patch {
@@ -870,6 +874,9 @@ mod tests {
         }
 
         store.push_finished();
-        assert!(matches!(next_event(&mut stream).await, LogEntryEvent::Finished));
+        assert!(matches!(
+            next_event(&mut stream).await,
+            LogEntryEvent::Finished
+        ));
     }
 }

@@ -64,8 +64,8 @@ impl CursorAgent {
                 &self.cmd,
             )
             .await;
-        let mut builder =
-            CommandBuilder::new(resolved.base_command).params(["-p", "--output-format=stream-json"]);
+        let mut builder = CommandBuilder::new(resolved.base_command)
+            .params(["-p", "--output-format=stream-json"]);
 
         if self.force.unwrap_or(false) {
             builder = builder.extend_params(["--force"]);

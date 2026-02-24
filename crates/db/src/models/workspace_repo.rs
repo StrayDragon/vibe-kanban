@@ -3,9 +3,8 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QuerySelect,
-    Set,
+    Set, sea_query::Expr,
 };
-use sea_orm::sea_query::Expr;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
@@ -195,7 +194,9 @@ impl WorkspaceRepo {
     ) -> Result<(), DbErr> {
         let record = Self::find_by_workspace_and_repo_id(db, workspace_id, repo_id)
             .await?
-            .ok_or(DbErr::RecordNotFound("Workspace repo not found".to_string()))?;
+            .ok_or(DbErr::RecordNotFound(
+                "Workspace repo not found".to_string(),
+            ))?;
 
         let workspace_row_id = ids::workspace_id_by_uuid(db, workspace_id)
             .await?
@@ -209,7 +210,9 @@ impl WorkspaceRepo {
             .filter(workspace_repo::Column::RepoId.eq(repo_row_id))
             .one(db)
             .await?
-            .ok_or(DbErr::RecordNotFound("Workspace repo not found".to_string()))?;
+            .ok_or(DbErr::RecordNotFound(
+                "Workspace repo not found".to_string(),
+            ))?;
 
         let mut active: workspace_repo::ActiveModel = model.into();
         active.target_branch = Set(new_target_branch.to_string());
@@ -226,10 +229,11 @@ impl WorkspaceRepo {
         old_branch: &str,
         new_branch: &str,
     ) -> Result<u64, DbErr> {
-        let parent_workspace_row_id = match ids::workspace_id_by_uuid(db, parent_workspace_id).await? {
-            Some(id) => id,
-            None => return Ok(0),
-        };
+        let parent_workspace_row_id =
+            match ids::workspace_id_by_uuid(db, parent_workspace_id).await? {
+                Some(id) => id,
+                None => return Ok(0),
+            };
 
         let task_ids: Vec<i64> = task::Entity::find()
             .select_only()
@@ -256,7 +260,10 @@ impl WorkspaceRepo {
         }
 
         let result = workspace_repo::Entity::update_many()
-            .col_expr(workspace_repo::Column::TargetBranch, Expr::value(new_branch.to_string()))
+            .col_expr(
+                workspace_repo::Column::TargetBranch,
+                Expr::value(new_branch.to_string()),
+            )
             .filter(workspace_repo::Column::TargetBranch.eq(old_branch))
             .filter(workspace_repo::Column::WorkspaceId.is_in(workspace_ids))
             .exec(db)
@@ -295,7 +302,10 @@ impl WorkspaceRepo {
             .await?;
 
         let mut repos = Vec::new();
-        for repo_id in repo_ids.into_iter().collect::<std::collections::HashSet<_>>() {
+        for repo_id in repo_ids
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>()
+        {
             if let Some(repo_model) = repo::Entity::find_by_id(repo_id).one(db).await? {
                 repos.push(Repo::from(repo_model));
             }

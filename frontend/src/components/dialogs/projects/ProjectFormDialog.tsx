@@ -10,7 +10,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle } from 'lucide-react';
 import { CreateProject, Project } from 'shared/types';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
-import { useProjectMutations } from '@/hooks/useProjectMutations';
+import { useProjectMutations } from '@/hooks/projects/useProjectMutations';
 import { defineModal } from '@/lib/modals';
 import { RepoPickerDialog } from '@/components/dialogs/shared/RepoPickerDialog';
 

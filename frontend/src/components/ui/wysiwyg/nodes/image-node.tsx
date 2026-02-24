@@ -6,7 +6,7 @@ import {
   useTaskId,
   useLocalImages,
 } from '../context/task-attempt-context';
-import { useImageMetadata } from '@/hooks/useImageMetadata';
+import { useImageMetadata } from '@/hooks/images/useImageMetadata';
 import { ImagePreviewDialog } from '@/components/dialogs/wysiwyg/ImagePreviewDialog';
 import { formatFileSize } from '@/lib/utils';
 import {

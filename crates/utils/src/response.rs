@@ -44,6 +44,10 @@ impl<T, E> ApiResponse<T, E> {
         self.success
     }
 
+    pub fn error_data(&self) -> Option<&E> {
+        self.error_data.as_ref()
+    }
+
     /// Consumes the response and returns the data if present.
     pub fn into_data(self) -> Option<T> {
         self.data

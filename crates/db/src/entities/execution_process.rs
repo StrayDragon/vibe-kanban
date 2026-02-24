@@ -1,5 +1,4 @@
-use sea_orm::entity::prelude::*;
-use sea_orm::JsonValue;
+use sea_orm::{JsonValue, entity::prelude::*};
 
 use crate::types::{ExecutionProcessRunReason, ExecutionProcessStatus};
 

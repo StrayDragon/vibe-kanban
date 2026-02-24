@@ -6,7 +6,7 @@ import {
   useCallback,
   ReactNode,
 } from 'react';
-import type { PatchTypeWithKey } from '@/hooks/useConversationHistory';
+import type { PatchTypeWithKey } from '@/hooks/execution-processes/useConversationHistory';
 
 interface EntriesContextType {
   entries: PatchTypeWithKey[];

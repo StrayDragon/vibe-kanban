@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { defineModal, getErrorMessage } from '@/lib/modals';
-import { useRenameBranch } from '@/hooks/useRenameBranch';
+import { useRenameBranch } from '@/hooks/task-attempts/useRenameBranch';
 
 export interface EditBranchNameDialogProps {
   attemptId: string;

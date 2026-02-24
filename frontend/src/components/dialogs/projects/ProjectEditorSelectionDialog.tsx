@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { EditorType, Project } from 'shared/types';
-import { useOpenProjectInEditor } from '@/hooks/useOpenProjectInEditor';
+import { useOpenProjectInEditor } from '@/hooks/projects/useOpenProjectInEditor';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { defineModal } from '@/lib/modals';
 

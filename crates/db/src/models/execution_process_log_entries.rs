@@ -7,10 +7,7 @@ use serde::{Deserialize, Serialize};
 use utils::log_entries::LogEntryChannel;
 use uuid::Uuid;
 
-use crate::{
-    entities::execution_process_log_entry,
-    models::ids,
-};
+use crate::{entities::execution_process_log_entry, models::ids};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionProcessLogEntry {
@@ -193,8 +190,8 @@ impl ExecutionProcessLogEntry {
                 "Execution process not found".to_string(),
             ))?;
         let channel_value = to_db_channel(channel);
-        let json_value: serde_json::Value = serde_json::from_str(entry_json)
-            .map_err(|err| DbErr::Custom(err.to_string()))?;
+        let json_value: serde_json::Value =
+            serde_json::from_str(entry_json).map_err(|err| DbErr::Custom(err.to_string()))?;
 
         let active = execution_process_log_entry::ActiveModel {
             uuid: Set(Uuid::new_v4()),

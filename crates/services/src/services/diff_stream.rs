@@ -542,10 +542,11 @@ fn process_file_changes(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use git2::Oid;
     use json_patch::PatchOperation;
     use tempfile::TempDir;
+
+    use super::*;
 
     #[test]
     fn diff_preview_guard_balanced_thresholds() {
@@ -673,10 +674,7 @@ mod tests {
         let cumulative = Arc::new(AtomicUsize::new(0));
         let full_sent = Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
         let sent_entries = Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
-        full_sent
-            .write()
-            .unwrap()
-            .insert("stale.txt".to_string());
+        full_sent.write().unwrap().insert("stale.txt".to_string());
         sent_entries
             .write()
             .unwrap()

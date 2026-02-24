@@ -126,11 +126,8 @@ impl AppServerClient {
         conversation_id: codex_protocol::ThreadId,
         message: String,
     ) -> Result<SendUserMessageResponse, ExecutorError> {
-        self.send_user_items(
-            conversation_id,
-            vec![InputItem::Text { text: message }],
-        )
-        .await
+        self.send_user_items(conversation_id, vec![InputItem::Text { text: message }])
+            .await
     }
 
     pub async fn send_user_items(
@@ -264,10 +261,7 @@ impl AppServerClient {
             .await?)
     }
 
-    pub async fn register_session(
-        &self,
-        conversation_id: &ThreadId,
-    ) -> Result<(), ExecutorError> {
+    pub async fn register_session(&self, conversation_id: &ThreadId) -> Result<(), ExecutorError> {
         {
             let mut guard = self.conversation_id.lock().await;
             guard.replace(*conversation_id);

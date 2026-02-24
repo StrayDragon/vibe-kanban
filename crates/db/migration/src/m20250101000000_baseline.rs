@@ -1,5 +1,4 @@
-use sea_orm_migration::prelude::*;
-use sea_orm_migration::sea_orm::DatabaseBackend;
+use sea_orm_migration::{prelude::*, sea_orm::DatabaseBackend};
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -9,7 +8,8 @@ impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(Projects::Table)
                     .col(pk_id_col(manager, Projects::Id))
                     .col(uuid_col(Projects::Uuid))
@@ -26,7 +26,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_projects_uuid")
                     .table(Projects::Table)
                     .col(Projects::Uuid)
@@ -37,7 +38,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_projects_remote_project_id")
                     .table(Projects::Table)
                     .col(Projects::RemoteProjectId)
@@ -48,7 +50,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(SharedTasks::Table)
                     .col(pk_id_col(manager, SharedTasks::Id))
                     .col(uuid_col(SharedTasks::Uuid))
@@ -80,7 +83,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_shared_tasks_uuid")
                     .table(SharedTasks::Table)
                     .col(SharedTasks::Uuid)
@@ -91,7 +95,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_shared_tasks_remote_project_id")
                     .table(SharedTasks::Table)
                     .col(SharedTasks::RemoteProjectId)
@@ -101,7 +106,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_shared_tasks_status")
                     .table(SharedTasks::Table)
                     .col(SharedTasks::Status)
@@ -111,7 +117,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(SharedActivityCursors::Table)
                     .col(pk_id_col(manager, SharedActivityCursors::Id))
                     .col(uuid_col(SharedActivityCursors::Uuid))
@@ -129,7 +136,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_shared_activity_cursors_uuid")
                     .table(SharedActivityCursors::Table)
                     .col(SharedActivityCursors::Uuid)
@@ -140,7 +148,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_shared_activity_cursors_remote_project_id")
                     .table(SharedActivityCursors::Table)
                     .col(SharedActivityCursors::RemoteProjectId)
@@ -151,7 +160,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(Tasks::Table)
                     .col(pk_id_col(manager, Tasks::Id))
                     .col(uuid_col(Tasks::Uuid))
@@ -188,7 +198,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_tasks_uuid")
                     .table(Tasks::Table)
                     .col(Tasks::Uuid)
@@ -199,7 +210,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_tasks_project_id")
                     .table(Tasks::Table)
                     .col(Tasks::ProjectId)
@@ -209,7 +221,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_tasks_status")
                     .table(Tasks::Table)
                     .col(Tasks::Status)
@@ -219,7 +232,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_tasks_parent_workspace_id")
                     .table(Tasks::Table)
                     .col(Tasks::ParentWorkspaceId)
@@ -229,7 +243,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(Repos::Table)
                     .col(pk_id_col(manager, Repos::Id))
                     .col(uuid_col(Repos::Uuid))
@@ -244,7 +259,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_repos_uuid")
                     .table(Repos::Table)
                     .col(Repos::Uuid)
@@ -255,7 +271,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_repos_path")
                     .table(Repos::Table)
                     .col(Repos::Path)
@@ -266,7 +283,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(ProjectRepos::Table)
                     .col(pk_id_col(manager, ProjectRepos::Id))
                     .col(uuid_col(ProjectRepos::Uuid))
@@ -303,7 +321,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_project_repos_uuid")
                     .table(ProjectRepos::Table)
                     .col(ProjectRepos::Uuid)
@@ -314,7 +333,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_project_repos_project_id")
                     .table(ProjectRepos::Table)
                     .col(ProjectRepos::ProjectId)
@@ -324,7 +344,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_project_repos_repo_id")
                     .table(ProjectRepos::Table)
                     .col(ProjectRepos::RepoId)
@@ -334,7 +355,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_project_repos_unique")
                     .table(ProjectRepos::Table)
                     .col(ProjectRepos::ProjectId)
@@ -346,7 +368,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(Images::Table)
                     .col(pk_id_col(manager, Images::Id))
                     .col(uuid_col(Images::Uuid))
@@ -363,7 +386,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_images_uuid")
                     .table(Images::Table)
                     .col(Images::Uuid)
@@ -374,7 +398,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_images_file_path")
                     .table(Images::Table)
                     .col(Images::FilePath)
@@ -385,7 +410,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_images_hash")
                     .table(Images::Table)
                     .col(Images::Hash)
@@ -396,7 +422,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(TaskImages::Table)
                     .col(pk_id_col(manager, TaskImages::Id))
                     .col(uuid_col(TaskImages::Uuid))
@@ -423,7 +450,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_task_images_uuid")
                     .table(TaskImages::Table)
                     .col(TaskImages::Uuid)
@@ -434,7 +462,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_task_images_task_id")
                     .table(TaskImages::Table)
                     .col(TaskImages::TaskId)
@@ -444,7 +473,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_task_images_image_id")
                     .table(TaskImages::Table)
                     .col(TaskImages::ImageId)
@@ -454,7 +484,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_task_images_unique")
                     .table(TaskImages::Table)
                     .col(TaskImages::TaskId)
@@ -466,7 +497,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(Tags::Table)
                     .col(pk_id_col(manager, Tags::Id))
                     .col(uuid_col(Tags::Uuid))
@@ -480,7 +512,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_tags_uuid")
                     .table(Tags::Table)
                     .col(Tags::Uuid)
@@ -491,7 +524,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_tags_tag_name")
                     .table(Tags::Table)
                     .col(Tags::TagName)
@@ -502,7 +536,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(Workspaces::Table)
                     .col(pk_id_col(manager, Workspaces::Id))
                     .col(uuid_col(Workspaces::Uuid))
@@ -526,7 +561,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_workspaces_uuid")
                     .table(Workspaces::Table)
                     .col(Workspaces::Uuid)
@@ -537,7 +573,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_workspaces_task_id")
                     .table(Workspaces::Table)
                     .col(Workspaces::TaskId)
@@ -547,7 +584,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_workspaces_container_ref")
                     .table(Workspaces::Table)
                     .col(Workspaces::ContainerRef)
@@ -557,13 +595,18 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(WorkspaceRepos::Table)
                     .col(pk_id_col(manager, WorkspaceRepos::Id))
                     .col(uuid_col(WorkspaceRepos::Uuid))
                     .col(fk_id_col(manager, WorkspaceRepos::WorkspaceId))
                     .col(fk_id_col(manager, WorkspaceRepos::RepoId))
-                    .col(ColumnDef::new(WorkspaceRepos::TargetBranch).string().not_null())
+                    .col(
+                        ColumnDef::new(WorkspaceRepos::TargetBranch)
+                            .string()
+                            .not_null(),
+                    )
                     .col(timestamp_col(WorkspaceRepos::CreatedAt))
                     .col(timestamp_col(WorkspaceRepos::UpdatedAt))
                     .foreign_key(
@@ -586,7 +629,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_workspace_repos_uuid")
                     .table(WorkspaceRepos::Table)
                     .col(WorkspaceRepos::Uuid)
@@ -597,7 +641,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_workspace_repos_workspace_id")
                     .table(WorkspaceRepos::Table)
                     .col(WorkspaceRepos::WorkspaceId)
@@ -607,7 +652,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_workspace_repos_repo_id")
                     .table(WorkspaceRepos::Table)
                     .col(WorkspaceRepos::RepoId)
@@ -617,7 +663,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_workspace_repos_unique")
                     .table(WorkspaceRepos::Table)
                     .col(WorkspaceRepos::WorkspaceId)
@@ -629,7 +676,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(Merges::Table)
                     .col(pk_id_col(manager, Merges::Id))
                     .col(uuid_col(Merges::Uuid))
@@ -664,7 +712,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_merges_uuid")
                     .table(Merges::Table)
                     .col(Merges::Uuid)
@@ -675,7 +724,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_merges_workspace_id")
                     .table(Merges::Table)
                     .col(Merges::WorkspaceId)
@@ -685,7 +735,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_merges_repo_id")
                     .table(Merges::Table)
                     .col(Merges::RepoId)
@@ -695,7 +746,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_merges_open_pr")
                     .table(Merges::Table)
                     .col(Merges::MergeType)
@@ -707,7 +759,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(Sessions::Table)
                     .col(pk_id_col(manager, Sessions::Id))
                     .col(uuid_col(Sessions::Uuid))
@@ -728,7 +781,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_sessions_uuid")
                     .table(Sessions::Table)
                     .col(Sessions::Uuid)
@@ -739,7 +793,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_sessions_workspace_id")
                     .table(Sessions::Table)
                     .col(Sessions::WorkspaceId)
@@ -749,7 +804,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_sessions_created_at")
                     .table(Sessions::Table)
                     .col(Sessions::CreatedAt)
@@ -759,7 +815,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(ExecutionProcesses::Table)
                     .col(pk_id_col(manager, ExecutionProcesses::Id))
                     .col(uuid_col(ExecutionProcesses::Uuid))
@@ -806,7 +863,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_execution_processes_uuid")
                     .table(ExecutionProcesses::Table)
                     .col(ExecutionProcesses::Uuid)
@@ -817,7 +875,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_execution_processes_session_id")
                     .table(ExecutionProcesses::Table)
                     .col(ExecutionProcesses::SessionId)
@@ -827,7 +886,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_execution_processes_status")
                     .table(ExecutionProcesses::Table)
                     .col(ExecutionProcesses::Status)
@@ -837,7 +897,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_execution_processes_run_reason")
                     .table(ExecutionProcesses::Table)
                     .col(ExecutionProcesses::RunReason)
@@ -847,7 +908,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_execution_processes_session_created_at")
                     .table(ExecutionProcesses::Table)
                     .col(ExecutionProcesses::SessionId)
@@ -858,11 +920,15 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(ExecutionProcessRepoStates::Table)
                     .col(pk_id_col(manager, ExecutionProcessRepoStates::Id))
                     .col(uuid_col(ExecutionProcessRepoStates::Uuid))
-                    .col(fk_id_col(manager, ExecutionProcessRepoStates::ExecutionProcessId))
+                    .col(fk_id_col(
+                        manager,
+                        ExecutionProcessRepoStates::ExecutionProcessId,
+                    ))
                     .col(fk_id_col(manager, ExecutionProcessRepoStates::RepoId))
                     .col(ColumnDef::new(ExecutionProcessRepoStates::BeforeHeadCommit).string())
                     .col(ColumnDef::new(ExecutionProcessRepoStates::AfterHeadCommit).string())
@@ -882,7 +948,10 @@ impl MigrationTrait for Migration {
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_execution_process_repo_states_repo_id")
-                            .from(ExecutionProcessRepoStates::Table, ExecutionProcessRepoStates::RepoId)
+                            .from(
+                                ExecutionProcessRepoStates::Table,
+                                ExecutionProcessRepoStates::RepoId,
+                            )
                             .to(Repos::Table, Repos::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
@@ -892,7 +961,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_execution_process_repo_states_uuid")
                     .table(ExecutionProcessRepoStates::Table)
                     .col(ExecutionProcessRepoStates::Uuid)
@@ -903,7 +973,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_execution_process_repo_states_process_id")
                     .table(ExecutionProcessRepoStates::Table)
                     .col(ExecutionProcessRepoStates::ExecutionProcessId)
@@ -913,7 +984,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_execution_process_repo_states_repo_id")
                     .table(ExecutionProcessRepoStates::Table)
                     .col(ExecutionProcessRepoStates::RepoId)
@@ -923,7 +995,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_execution_process_repo_states_unique")
                     .table(ExecutionProcessRepoStates::Table)
                     .col(ExecutionProcessRepoStates::ExecutionProcessId)
@@ -935,7 +1008,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(CodingAgentTurns::Table)
                     .col(pk_id_col(manager, CodingAgentTurns::Id))
                     .col(uuid_col(CodingAgentTurns::Uuid))
@@ -948,7 +1022,10 @@ impl MigrationTrait for Migration {
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_coding_agent_turns_execution_process_id")
-                            .from(CodingAgentTurns::Table, CodingAgentTurns::ExecutionProcessId)
+                            .from(
+                                CodingAgentTurns::Table,
+                                CodingAgentTurns::ExecutionProcessId,
+                            )
                             .to(ExecutionProcesses::Table, ExecutionProcesses::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
@@ -958,7 +1035,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_coding_agent_turns_uuid")
                     .table(CodingAgentTurns::Table)
                     .col(CodingAgentTurns::Uuid)
@@ -969,7 +1047,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_coding_agent_turns_execution_process_id")
                     .table(CodingAgentTurns::Table)
                     .col(CodingAgentTurns::ExecutionProcessId)
@@ -979,7 +1058,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_coding_agent_turns_agent_session_id")
                     .table(CodingAgentTurns::Table)
                     .col(CodingAgentTurns::AgentSessionId)
@@ -989,12 +1069,20 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(TaskAttemptActivities::Table)
                     .col(pk_id_col(manager, TaskAttemptActivities::Id))
                     .col(uuid_col(TaskAttemptActivities::Uuid))
-                    .col(fk_id_col(manager, TaskAttemptActivities::ExecutionProcessId))
-                    .col(ColumnDef::new(TaskAttemptActivities::Status).string_len(32).not_null())
+                    .col(fk_id_col(
+                        manager,
+                        TaskAttemptActivities::ExecutionProcessId,
+                    ))
+                    .col(
+                        ColumnDef::new(TaskAttemptActivities::Status)
+                            .string_len(32)
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(TaskAttemptActivities::Note).text())
                     .col(timestamp_col(TaskAttemptActivities::CreatedAt))
                     .foreign_key(
@@ -1013,7 +1101,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_task_attempt_activities_uuid")
                     .table(TaskAttemptActivities::Table)
                     .col(TaskAttemptActivities::Uuid)
@@ -1024,7 +1113,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_task_attempt_activities_execution_process_id")
                     .table(TaskAttemptActivities::Table)
                     .col(TaskAttemptActivities::ExecutionProcessId)
@@ -1034,7 +1124,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_task_attempt_activities_created_at")
                     .table(TaskAttemptActivities::Table)
                     .col(TaskAttemptActivities::CreatedAt)
@@ -1044,7 +1135,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(Drafts::Table)
                     .col(pk_id_col(manager, Drafts::Id))
                     .col(uuid_col(Drafts::Uuid))
@@ -1099,7 +1191,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_drafts_uuid")
                     .table(Drafts::Table)
                     .col(Drafts::Uuid)
@@ -1110,7 +1203,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_drafts_session_id")
                     .table(Drafts::Table)
                     .col(Drafts::SessionId)
@@ -1120,7 +1214,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_drafts_draft_type")
                     .table(Drafts::Table)
                     .col(Drafts::DraftType)
@@ -1130,7 +1225,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_drafts_unique")
                     .table(Drafts::Table)
                     .col(Drafts::SessionId)
@@ -1142,7 +1238,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_drafts_queued_sending")
                     .table(Drafts::Table)
                     .col(Drafts::Queued)
@@ -1153,11 +1250,15 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(ExecutionProcessLogEntries::Table)
                     .col(pk_id_col(manager, ExecutionProcessLogEntries::Id))
                     .col(uuid_col(ExecutionProcessLogEntries::Uuid))
-                    .col(fk_id_col(manager, ExecutionProcessLogEntries::ExecutionProcessId))
+                    .col(fk_id_col(
+                        manager,
+                        ExecutionProcessLogEntries::ExecutionProcessId,
+                    ))
                     .col(
                         ColumnDef::new(ExecutionProcessLogEntries::Channel)
                             .string_len(16)
@@ -1191,7 +1292,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_execution_process_log_entries_uuid")
                     .table(ExecutionProcessLogEntries::Table)
                     .col(ExecutionProcessLogEntries::Uuid)
@@ -1202,7 +1304,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_execution_process_log_entries_unique")
                     .table(ExecutionProcessLogEntries::Table)
                     .col(ExecutionProcessLogEntries::ExecutionProcessId)
@@ -1215,7 +1318,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_execution_process_log_entries_exec_channel_index")
                     .table(ExecutionProcessLogEntries::Table)
                     .col(ExecutionProcessLogEntries::ExecutionProcessId)
@@ -1227,13 +1331,18 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(ExecutionProcessLogs::Table)
                     .col(pk_id_col(manager, ExecutionProcessLogs::Id))
                     .col(uuid_col(ExecutionProcessLogs::Uuid))
                     .col(fk_id_col(manager, ExecutionProcessLogs::ExecutionProcessId))
                     .col(ColumnDef::new(ExecutionProcessLogs::Logs).text().not_null())
-                    .col(ColumnDef::new(ExecutionProcessLogs::ByteSize).big_integer().not_null())
+                    .col(
+                        ColumnDef::new(ExecutionProcessLogs::ByteSize)
+                            .big_integer()
+                            .not_null(),
+                    )
                     .col(
                         ColumnDef::new(ExecutionProcessLogs::InsertedAt)
                             .timestamp()
@@ -1243,7 +1352,10 @@ impl MigrationTrait for Migration {
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_execution_process_logs_execution_id")
-                            .from(ExecutionProcessLogs::Table, ExecutionProcessLogs::ExecutionProcessId)
+                            .from(
+                                ExecutionProcessLogs::Table,
+                                ExecutionProcessLogs::ExecutionProcessId,
+                            )
                             .to(ExecutionProcesses::Table, ExecutionProcesses::Id)
                             .on_delete(ForeignKeyAction::Cascade),
                     )
@@ -1253,7 +1365,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_execution_process_logs_uuid")
                     .table(ExecutionProcessLogs::Table)
                     .col(ExecutionProcessLogs::Uuid)
@@ -1264,7 +1377,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_execution_process_logs_execution_id")
                     .table(ExecutionProcessLogs::Table)
                     .col(ExecutionProcessLogs::ExecutionProcessId)
@@ -1274,7 +1388,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_execution_process_logs_inserted_at")
                     .table(ExecutionProcessLogs::Table)
                     .col(ExecutionProcessLogs::InsertedAt)
@@ -1284,12 +1399,17 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(Scratch::Table)
                     .col(pk_id_col(manager, Scratch::Id))
                     .col(uuid_col(Scratch::Uuid))
                     .col(fk_id_col(manager, Scratch::SessionId))
-                    .col(ColumnDef::new(Scratch::ScratchType).string_len(64).not_null())
+                    .col(
+                        ColumnDef::new(Scratch::ScratchType)
+                            .string_len(64)
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(Scratch::Payload).json().not_null())
                     .col(timestamp_col(Scratch::CreatedAt))
                     .col(timestamp_col(Scratch::UpdatedAt))
@@ -1306,7 +1426,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_scratch_uuid")
                     .table(Scratch::Table)
                     .col(Scratch::Uuid)
@@ -1317,7 +1438,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_scratch_session_id")
                     .table(Scratch::Table)
                     .col(Scratch::SessionId)
@@ -1327,7 +1449,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_scratch_session_type")
                     .table(Scratch::Table)
                     .col(Scratch::SessionId)
@@ -1339,12 +1462,21 @@ impl MigrationTrait for Migration {
 
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(EventOutbox::Table)
                     .col(pk_id_col(manager, EventOutbox::Id))
                     .col(uuid_col(EventOutbox::Uuid))
-                    .col(ColumnDef::new(EventOutbox::EventType).string_len(64).not_null())
-                    .col(ColumnDef::new(EventOutbox::EntityType).string_len(64).not_null())
+                    .col(
+                        ColumnDef::new(EventOutbox::EventType)
+                            .string_len(64)
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(EventOutbox::EntityType)
+                            .string_len(64)
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(EventOutbox::EntityUuid).uuid().not_null())
                     .col(ColumnDef::new(EventOutbox::Payload).json().not_null())
                     .col(timestamp_col(EventOutbox::CreatedAt))
@@ -1362,7 +1494,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_event_outbox_uuid")
                     .table(EventOutbox::Table)
                     .col(EventOutbox::Uuid)
@@ -1373,7 +1506,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_event_outbox_published_at")
                     .table(EventOutbox::Table)
                     .col(EventOutbox::PublishedAt)
@@ -1383,7 +1517,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_event_outbox_entity_uuid")
                     .table(EventOutbox::Table)
                     .col(EventOutbox::EntityUuid)
@@ -1411,13 +1546,21 @@ impl MigrationTrait for Migration {
             .drop_table(Table::drop().table(CodingAgentTurns::Table).to_owned())
             .await?;
         manager
-            .drop_table(Table::drop().table(ExecutionProcessRepoStates::Table).to_owned())
+            .drop_table(
+                Table::drop()
+                    .table(ExecutionProcessRepoStates::Table)
+                    .to_owned(),
+            )
             .await?;
         manager
             .drop_table(Table::drop().table(ExecutionProcessLogs::Table).to_owned())
             .await?;
         manager
-            .drop_table(Table::drop().table(ExecutionProcessLogEntries::Table).to_owned())
+            .drop_table(
+                Table::drop()
+                    .table(ExecutionProcessLogEntries::Table)
+                    .to_owned(),
+            )
             .await?;
         manager
             .drop_table(Table::drop().table(ExecutionProcesses::Table).to_owned())

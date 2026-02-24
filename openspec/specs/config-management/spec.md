@@ -36,3 +36,10 @@ The system SHALL persist configuration using the latest schema and config_versio
 - **WHEN** a Config is saved
 - **THEN** the serialized config_version equals the latest value and uses the latest field set
 
+### Requirement: Config endpoints remain stable
+The system SHALL preserve existing config endpoints and response shapes while server-side modules are reorganized.
+
+#### Scenario: Settings UI continues to load
+- **WHEN** the frontend requests `/api/info`
+- **THEN** the response still contains the expected `config` payload and required metadata
+

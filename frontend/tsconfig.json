@@ -18,6 +18,8 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
+      "@api/*": ["./src/api/*"],
+      "@app/*": ["./src/app/*"],
       "@dialogs/*": ["./src/components/dialogs/*"],
       "shared/*": ["../shared/*"]
     }

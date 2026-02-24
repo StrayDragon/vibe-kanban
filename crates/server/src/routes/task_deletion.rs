@@ -1,18 +1,20 @@
-use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::{
+    collections::{HashMap, VecDeque},
+    path::PathBuf,
+};
 
-use db::DbErr;
-use db::TransactionTrait;
-use db::models::{
-    repo::Repo,
-    task::{Task, TaskKind},
-    task_group::{TaskGroup, TaskGroupError, TaskGroupGraph},
-    workspace::Workspace,
-    workspace_repo::WorkspaceRepo,
+use db::{
+    DbErr, TransactionTrait,
+    models::{
+        repo::Repo,
+        task::{Task, TaskKind},
+        task_group::{TaskGroup, TaskGroupError, TaskGroupGraph},
+        workspace::Workspace,
+        workspace_repo::WorkspaceRepo,
+    },
 };
 use deployment::Deployment;
-use services::services::container::ContainerService;
-use services::services::workspace_manager::WorkspaceManager;
+use services::services::{container::ContainerService, workspace_manager::WorkspaceManager};
 
 use crate::{DeploymentImpl, error::ApiError};
 
@@ -73,7 +75,11 @@ pub async fn delete_task_group_with_cleanup(
     }
 
     for task_id in task_ids {
-        if deployment.container().has_running_processes(task_id).await? {
+        if deployment
+            .container()
+            .has_running_processes(task_id)
+            .await?
+        {
             return Err(ApiError::Conflict(
                 "Task group has running execution processes. Please stop them first.".to_string(),
             ));
@@ -81,10 +87,8 @@ pub async fn delete_task_group_with_cleanup(
     }
 
     let ordered_task_ids = topo_sorted_task_ids(&task_group.graph);
-    let mut tasks_by_id: HashMap<_, _> = node_tasks
-        .into_iter()
-        .map(|task| (task.id, task))
-        .collect();
+    let mut tasks_by_id: HashMap<_, _> =
+        node_tasks.into_iter().map(|task| (task.id, task)).collect();
 
     for task_id in ordered_task_ids.into_iter().rev() {
         if let Some(task) = tasks_by_id.remove(&task_id) {
@@ -138,7 +142,13 @@ fn topo_sorted_task_ids(graph: &TaskGroupGraph) -> Vec<uuid::Uuid> {
 
     let mut queue: VecDeque<String> = incoming
         .iter()
-        .filter_map(|(node_id, count)| if *count == 0 { Some(node_id.clone()) } else { None })
+        .filter_map(|(node_id, count)| {
+            if *count == 0 {
+                Some(node_id.clone())
+            } else {
+                None
+            }
+        })
         .collect();
     let mut ordered_nodes = Vec::with_capacity(incoming.len());
 
@@ -197,8 +207,7 @@ async fn delete_single_task_with_cleanup(
     let tx = pool.begin().await?;
     let mut total_children_affected = 0u64;
     for attempt in &attempts {
-        let children_affected =
-            Task::nullify_children_by_workspace_id(&tx, attempt.id).await?;
+        let children_affected = Task::nullify_children_by_workspace_id(&tx, attempt.id).await?;
         total_children_affected += children_affected;
     }
 
@@ -260,12 +269,13 @@ async fn delete_single_task_with_cleanup(
 
 #[cfg(test)]
 mod tests {
-    use super::topo_sorted_task_ids;
     use db::models::task_group::{
         TaskGroupEdge, TaskGroupGraph, TaskGroupNode, TaskGroupNodeBaseStrategy, TaskGroupNodeKind,
         TaskGroupNodeLayout,
     };
     use uuid::Uuid;
+
+    use super::topo_sorted_task_ids;
 
     fn node(id: &str) -> (TaskGroupNode, Uuid) {
         let task_id = Uuid::new_v4();

@@ -1,5 +1,8 @@
 use chrono::{DateTime, Utc};
-use sea_orm::{ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
+    Set,
+};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
@@ -66,11 +69,12 @@ impl CodingAgentTurn {
             .await?;
 
         if let Some(model) = record {
-            let execution_process_id = ids::execution_process_uuid_by_id(db, model.execution_process_id)
-                .await?
-                .ok_or(DbErr::RecordNotFound(
-                    "Execution process not found".to_string(),
-                ))?;
+            let execution_process_id =
+                ids::execution_process_uuid_by_id(db, model.execution_process_id)
+                    .await?
+                    .ok_or(DbErr::RecordNotFound(
+                        "Execution process not found".to_string(),
+                    ))?;
             return Ok(Some(Self::from_model(model, execution_process_id)));
         }
         Ok(None)
@@ -120,7 +124,9 @@ impl CodingAgentTurn {
             .filter(coding_agent_turn::Column::ExecutionProcessId.eq(execution_row_id))
             .one(db)
             .await?
-            .ok_or(DbErr::RecordNotFound("Coding agent turn not found".to_string()))?;
+            .ok_or(DbErr::RecordNotFound(
+                "Coding agent turn not found".to_string(),
+            ))?;
 
         let mut active: coding_agent_turn::ActiveModel = record.into();
         active.agent_session_id = Set(Some(agent_session_id.to_string()));
@@ -145,7 +151,9 @@ impl CodingAgentTurn {
             .filter(coding_agent_turn::Column::ExecutionProcessId.eq(execution_row_id))
             .one(db)
             .await?
-            .ok_or(DbErr::RecordNotFound("Coding agent turn not found".to_string()))?;
+            .ok_or(DbErr::RecordNotFound(
+                "Coding agent turn not found".to_string(),
+            ))?;
 
         let mut active: coding_agent_turn::ActiveModel = record.into();
         active.summary = Set(Some(summary.to_string()));

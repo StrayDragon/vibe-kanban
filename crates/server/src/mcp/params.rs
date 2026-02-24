@@ -46,9 +46,7 @@ impl<S, P> FromContextPart<ToolCallContext<'_, S>> for Parameters<P>
 where
     P: DeserializeOwned,
 {
-    fn from_context_part(
-        context: &mut ToolCallContext<'_, S>,
-    ) -> Result<Self, ErrorData> {
+    fn from_context_part(context: &mut ToolCallContext<'_, S>) -> Result<Self, ErrorData> {
         let arguments = context.arguments.take().unwrap_or_default();
         let value = Value::Object(arguments);
         let payload = serde_json::to_string(&value).unwrap_or_default();

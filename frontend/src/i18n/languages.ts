@@ -11,11 +11,7 @@ export const UI_TO_I18N = {
   ZH_HANS: 'zh-Hans',
 } as const;
 
-const SUPPORTED_UI_LANGUAGES = [
-  'BROWSER',
-  'EN',
-  'ZH_HANS',
-] as const;
+const SUPPORTED_UI_LANGUAGES = ['BROWSER', 'EN', 'ZH_HANS'] as const;
 export const SUPPORTED_I18N_CODES = Object.values(UI_TO_I18N);
 
 const FALLBACK_ENDONYMS = {

@@ -4,15 +4,17 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use db::models::{
-    execution_process::ExecutionProcessError, project::ProjectError,
-    project_repo::ProjectRepoError, repo::RepoError, scratch::ScratchError, session::SessionError,
-    workspace::WorkspaceError,
+use db::{
+    DbErr,
+    models::{
+        execution_process::ExecutionProcessError, project::ProjectError,
+        project_repo::ProjectRepoError, repo::RepoError, scratch::ScratchError,
+        session::SessionError, workspace::WorkspaceError,
+    },
 };
 use deployment::DeploymentError;
 use executors::executors::ExecutorError;
 use git2::Error as Git2Error;
-use db::DbErr;
 use services::services::{
     config::{ConfigError, EditorOpenError},
     container::ContainerError,
@@ -67,6 +69,10 @@ pub enum ApiError {
     EditorOpen(#[from] EditorOpenError),
     #[error("Unauthorized")]
     Unauthorized,
+    #[error("Not found: {0}")]
+    NotFound(String),
+    #[error("Internal server error: {0}")]
+    Internal(String),
     #[error("Bad request: {0}")]
     BadRequest(String),
     #[error("Conflict: {0}")]
@@ -90,14 +96,42 @@ impl From<Git2Error> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status_code, error_type) = match &self {
-            ApiError::Project(_) => (StatusCode::INTERNAL_SERVER_ERROR, "ProjectError"),
-            ApiError::Repo(_) => (StatusCode::INTERNAL_SERVER_ERROR, "ProjectRepoError"),
-            ApiError::Workspace(_) => (StatusCode::INTERNAL_SERVER_ERROR, "WorkspaceError"),
-            ApiError::Session(_) => (StatusCode::INTERNAL_SERVER_ERROR, "SessionError"),
-            ApiError::ScratchError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "ScratchError"),
+            ApiError::Project(err) => match err {
+                ProjectError::ProjectNotFound => (StatusCode::NOT_FOUND, "ProjectError"),
+                _ => (StatusCode::INTERNAL_SERVER_ERROR, "ProjectError"),
+            },
+            ApiError::Repo(err) => match err {
+                RepoError::NotFound => (StatusCode::NOT_FOUND, "RepoError"),
+                _ => (StatusCode::INTERNAL_SERVER_ERROR, "RepoError"),
+            },
+            ApiError::Workspace(err) => match err {
+                WorkspaceError::TaskNotFound | WorkspaceError::ProjectNotFound => {
+                    (StatusCode::NOT_FOUND, "WorkspaceError")
+                }
+                WorkspaceError::BranchNotFound(_) => (StatusCode::NOT_FOUND, "WorkspaceError"),
+                WorkspaceError::ValidationError(_) => (StatusCode::BAD_REQUEST, "WorkspaceError"),
+                _ => (StatusCode::INTERNAL_SERVER_ERROR, "WorkspaceError"),
+            },
+            ApiError::Session(err) => match err {
+                SessionError::NotFound | SessionError::WorkspaceNotFound => {
+                    (StatusCode::NOT_FOUND, "SessionError")
+                }
+                _ => (StatusCode::INTERNAL_SERVER_ERROR, "SessionError"),
+            },
+            ApiError::ScratchError(err) => match err {
+                ScratchError::TypeMismatch { .. } => (StatusCode::BAD_REQUEST, "ScratchError"),
+                ScratchError::Serde(_) => (StatusCode::BAD_REQUEST, "ScratchError"),
+                _ => (StatusCode::INTERNAL_SERVER_ERROR, "ScratchError"),
+            },
             ApiError::ExecutionProcess(err) => match err {
                 ExecutionProcessError::ExecutionProcessNotFound => {
                     (StatusCode::NOT_FOUND, "ExecutionProcessError")
+                }
+                ExecutionProcessError::InvalidExecutorAction => {
+                    (StatusCode::BAD_REQUEST, "ExecutionProcessError")
+                }
+                ExecutionProcessError::ValidationError(_) => {
+                    (StatusCode::BAD_REQUEST, "ExecutionProcessError")
                 }
                 _ => (StatusCode::INTERNAL_SERVER_ERROR, "ExecutionProcessError"),
             },
@@ -115,9 +149,15 @@ impl IntoResponse for ApiError {
             ApiError::Deployment(_) => (StatusCode::INTERNAL_SERVER_ERROR, "DeploymentError"),
             ApiError::Container(_) => (StatusCode::INTERNAL_SERVER_ERROR, "ContainerError"),
             ApiError::Executor(_) => (StatusCode::INTERNAL_SERVER_ERROR, "ExecutorError"),
-            ApiError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "DatabaseError"),
+            ApiError::Database(db_err) => match db_err {
+                DbErr::RecordNotFound(_) => (StatusCode::NOT_FOUND, "DatabaseError"),
+                _ => (StatusCode::INTERNAL_SERVER_ERROR, "DatabaseError"),
+            },
             ApiError::Worktree(_) => (StatusCode::INTERNAL_SERVER_ERROR, "WorktreeError"),
-            ApiError::Config(_) => (StatusCode::INTERNAL_SERVER_ERROR, "ConfigError"),
+            ApiError::Config(err) => match err {
+                ConfigError::ValidationError(_) => (StatusCode::BAD_REQUEST, "ConfigError"),
+                _ => (StatusCode::INTERNAL_SERVER_ERROR, "ConfigError"),
+            },
             ApiError::Image(img_err) => match img_err {
                 ImageError::InvalidFormat => (StatusCode::BAD_REQUEST, "InvalidImageFormat"),
                 ImageError::TooLarge(_, _) => (StatusCode::PAYLOAD_TOO_LARGE, "ImageTooLarge"),
@@ -133,6 +173,8 @@ impl IntoResponse for ApiError {
             },
             ApiError::Multipart(_) => (StatusCode::BAD_REQUEST, "MultipartError"),
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized"),
+            ApiError::NotFound(_) => (StatusCode::NOT_FOUND, "NotFound"),
+            ApiError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "InternalError"),
             ApiError::BadRequest(_) => (StatusCode::BAD_REQUEST, "BadRequest"),
             ApiError::Conflict(_) => (StatusCode::CONFLICT, "ConflictError"),
             ApiError::Forbidden(_) => (StatusCode::FORBIDDEN, "ForbiddenError"),
@@ -160,11 +202,22 @@ impl IntoResponse for ApiError {
             },
             ApiError::Multipart(_) => "Failed to upload file. Please ensure the file is valid and try again.".to_string(),
             ApiError::Unauthorized => "Unauthorized. Please sign in again.".to_string(),
+            ApiError::NotFound(msg) => msg.clone(),
+            ApiError::Internal(msg) => msg.clone(),
             ApiError::BadRequest(msg) => msg.clone(),
             ApiError::Conflict(msg) => msg.clone(),
             ApiError::Forbidden(msg) => msg.clone(),
             _ => format!("{}: {}", error_type, self),
         };
+
+        if status_code.is_server_error() {
+            tracing::error!(
+                status = %status_code,
+                error_type,
+                error = %self,
+                "API request failed"
+            );
+        }
         let response = ApiResponse::<()>::error(&error_message);
         (status_code, Json(response)).into_response()
     }
@@ -240,5 +293,74 @@ impl From<ProjectRepoError> for ApiError {
                 ApiError::Conflict("Repository already exists in project".to_string())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_error_maps_to_expected_http_statuses() {
+        assert_eq!(
+            ApiError::BadRequest("bad".to_string())
+                .into_response()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            ApiError::Unauthorized.into_response().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            ApiError::Forbidden("nope".to_string())
+                .into_response()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            ApiError::NotFound("missing".to_string())
+                .into_response()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            ApiError::Conflict("conflict".to_string())
+                .into_response()
+                .status(),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            ApiError::Internal("boom".to_string())
+                .into_response()
+                .status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+
+    #[test]
+    fn domain_errors_map_to_expected_http_statuses() {
+        assert_eq!(
+            ApiError::from(ProjectError::ProjectNotFound)
+                .into_response()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            ApiError::from(RepoError::NotFound).into_response().status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            ApiError::from(WorkspaceError::ValidationError("bad".to_string()))
+                .into_response()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            ApiError::from(SessionError::NotFound)
+                .into_response()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
     }
 }

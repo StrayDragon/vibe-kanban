@@ -700,8 +700,7 @@ mod tests {
     async fn setup_watcher_skips_truncated_repos() {
         let dir = tempdir().expect("tempdir");
         fs::create_dir_all(dir.path().join(".git")).expect("create .git dir");
-        fs::write(dir.path().join(".git/HEAD"), "ref: refs/heads/main\n")
-            .expect("create HEAD");
+        fs::write(dir.path().join(".git/HEAD"), "ref: refs/heads/main\n").expect("create HEAD");
 
         let cache = FileSearchCache::new();
 

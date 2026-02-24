@@ -1,11 +1,13 @@
 use chrono::{DateTime, Utc};
-use sea_orm::{ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
+    Set,
+};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
 pub use crate::types::{MergeStatus, MergeType};
-
 use crate::{entities::merge, models::ids};
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

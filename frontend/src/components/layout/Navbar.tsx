@@ -28,7 +28,7 @@ import { SearchBar } from '@/components/SearchBar';
 import { useSearch } from '@/contexts/SearchContext';
 import { openTaskForm } from '@/lib/openTaskForm';
 import { useProject } from '@/contexts/ProjectContext';
-import { useOpenProjectInEditor } from '@/hooks/useOpenProjectInEditor';
+import { useOpenProjectInEditor } from '@/hooks/projects/useOpenProjectInEditor';
 import { OpenInIdeButton } from '@/components/ide/OpenInIdeButton';
 import { useNavigateWithSearch, useProjectRepos } from '@/hooks';
 import { ProjectFormDialog } from '@/components/dialogs/projects/ProjectFormDialog';
@@ -63,8 +63,12 @@ function NavDivider() {
 export function Navbar() {
   const { t } = useTranslation('projects');
   const location = useLocation();
-  const { projectId, project, projects, isLoading: projectsLoading } =
-    useProject();
+  const {
+    projectId,
+    project,
+    projects,
+    isLoading: projectsLoading,
+  } = useProject();
   const navigateWithSearch = useNavigateWithSearch();
   const { query, setQuery, active, clear, registerInputRef } = useSearch();
   const handleOpenInEditor = useOpenProjectInEditor(project || null);

@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { EditorType } from 'shared/types';
-import { useOpenInEditor } from '@/hooks/useOpenInEditor';
+import { useOpenInEditor } from '@/hooks/task-attempts/useOpenInEditor';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { defineModal } from '@/lib/modals';
 

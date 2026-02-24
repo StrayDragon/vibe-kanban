@@ -1,15 +1,19 @@
 use chrono::{DateTime, Utc};
-use sea_orm::{ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
+    Set,
+};
+use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumDiscriminants, EnumString};
+use thiserror::Error;
 use ts_rs::TS;
 use uuid::Uuid;
 
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
-
 use crate::{
     entities::scratch,
-    events::{EVENT_SCRATCH_CREATED, EVENT_SCRATCH_DELETED, EVENT_SCRATCH_UPDATED, ScratchEventPayload},
+    events::{
+        EVENT_SCRATCH_CREATED, EVENT_SCRATCH_DELETED, EVENT_SCRATCH_UPDATED, ScratchEventPayload,
+    },
     models::{event_outbox::EventOutbox, ids},
 };
 
@@ -79,10 +83,7 @@ impl Scratch {
     }
 }
 
-fn map_row(
-    model: scratch::Model,
-    session_id: Uuid,
-) -> Result<Scratch, ScratchError> {
+fn map_row(model: scratch::Model, session_id: Uuid) -> Result<Scratch, ScratchError> {
     let payload: ScratchPayload = serde_json::from_value(model.payload)?;
     payload.validate_type(model.scratch_type.parse().map_err(|_| {
         ScratchError::TypeMismatch {
@@ -213,10 +214,7 @@ impl Scratch {
                     scratch::Column::SessionId,
                     scratch::Column::ScratchType,
                 ])
-                .update_columns([
-                    scratch::Column::Payload,
-                    scratch::Column::UpdatedAt,
-                ])
+                .update_columns([scratch::Column::Payload, scratch::Column::UpdatedAt])
                 .to_owned(),
             )
             .exec(db)

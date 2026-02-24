@@ -8,9 +8,9 @@ import {
 } from '@/components/ui/dialog';
 import { Loader } from '@/components/ui/loader';
 import GitOperations from '@/components/tasks/Toolbar/GitOperations';
-import { useTaskAttempt } from '@/hooks/useTaskAttempt';
+import { useTaskAttempt } from '@/hooks/task-attempts/useTaskAttempt';
 import { useBranchStatus, useAttemptExecution } from '@/hooks';
-import { useAttemptRepo } from '@/hooks/useAttemptRepo';
+import { useAttemptRepo } from '@/hooks/task-attempts/useAttemptRepo';
 import { ExecutionProcessesProvider } from '@/contexts/ExecutionProcessesContext';
 import {
   GitOperationsProvider,

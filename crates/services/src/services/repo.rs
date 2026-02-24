@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use db::models::repo::Repo as RepoModel;
-use db::DbErr;
+use db::{DbErr, models::repo::Repo as RepoModel};
 use thiserror::Error;
 use utils::path::expand_tilde;
 use uuid::Uuid;
@@ -80,11 +79,7 @@ impl RepoService {
         Ok(repo)
     }
 
-    pub async fn find_by_id(
-        &self,
-        pool: &db::DbPool,
-        repo_id: Uuid,
-    ) -> Result<Option<RepoModel>> {
+    pub async fn find_by_id(&self, pool: &db::DbPool, repo_id: Uuid) -> Result<Option<RepoModel>> {
         let repo = RepoModel::find_by_id(pool, repo_id).await?;
         Ok(repo)
     }

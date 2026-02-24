@@ -5,17 +5,17 @@ use axum::{
     response::Json as ResponseJson,
     routing::get,
 };
+use db::{
+    TransactionTrait,
+    models::task_group::{CreateTaskGroup, TaskGroup, TaskGroupError, UpdateTaskGroup},
+};
+use deployment::Deployment;
 use serde::Deserialize;
 use utils::response::ApiResponse;
 use uuid::Uuid;
 
-use db::models::task_group::{CreateTaskGroup, TaskGroup, TaskGroupError, UpdateTaskGroup};
-use db::TransactionTrait;
-use deployment::Deployment;
-
 use crate::{
-    DeploymentImpl, error::ApiError, middleware::load_task_group_middleware,
-    routes::task_deletion,
+    DeploymentImpl, error::ApiError, middleware::load_task_group_middleware, routes::task_deletion,
 };
 
 #[derive(Debug, Deserialize)]
@@ -100,7 +100,12 @@ pub async fn delete_task_group(
 
 pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
     let task_group_router = Router::new()
-        .route("/", get(get_task_group).put(update_task_group).delete(delete_task_group))
+        .route(
+            "/",
+            get(get_task_group)
+                .put(update_task_group)
+                .delete(delete_task_group),
+        )
         .layer(from_fn_with_state(
             deployment.clone(),
             load_task_group_middleware,

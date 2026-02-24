@@ -13,7 +13,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { MessageSquare, AlertCircle, Loader2 } from 'lucide-react';
-import { usePrComments } from '@/hooks/usePrComments';
+import { usePrComments } from '@/hooks/task-attempts/usePrComments';
 import { GitHubCommentCard } from '@/components/ui/github-comment-card';
 import type { UnifiedPrComment } from 'shared/types';
 

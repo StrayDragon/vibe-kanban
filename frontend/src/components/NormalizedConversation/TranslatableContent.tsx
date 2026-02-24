@@ -42,12 +42,8 @@ const TranslatableContent = ({
   onEdit,
 }: Props) => {
   const { t, i18n } = useTranslation('common');
-  const {
-    translations,
-    displayModes,
-    setTranslation,
-    setDisplayMode,
-  } = useTranslationStore();
+  const { translations, displayModes, setTranslation, setDisplayMode } =
+    useTranslationStore();
 
   const targetLang = DEFAULT_TARGET_LANG;
   const translationKey = useMemo(
@@ -70,7 +66,8 @@ const TranslatableContent = ({
     [i18n.language, targetLang]
   );
 
-  const shouldHideOriginal = hasTranslation && displayMode === 'translated_only';
+  const shouldHideOriginal =
+    hasTranslation && displayMode === 'translated_only';
 
   if (!markdown) {
     return <div className={contentClassName}>{content}</div>;
@@ -191,9 +188,7 @@ const TranslatableContent = ({
               onClick={() =>
                 setDisplayMode(
                   entryKey,
-                  displayMode === 'bilingual'
-                    ? 'translated_only'
-                    : 'bilingual'
+                  displayMode === 'bilingual' ? 'translated_only' : 'bilingual'
                 )
               }
             >

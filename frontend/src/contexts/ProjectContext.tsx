@@ -7,7 +7,7 @@ import {
 } from 'react';
 import { useLocation } from 'react-router-dom';
 import type { Project } from 'shared/types';
-import { useProjects } from '@/hooks/useProjects';
+import { useProjects } from '@/hooks/projects/useProjects';
 
 interface ProjectContextValue {
   projectId: string | undefined;

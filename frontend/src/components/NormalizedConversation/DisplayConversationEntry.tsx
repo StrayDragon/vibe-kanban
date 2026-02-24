@@ -470,7 +470,13 @@ const ToolCallCard: React.FC<{
   forceExpanded?: boolean;
   taskAttemptId?: string;
   taskId?: string;
-}> = ({ entry, expansionKey, forceExpanded = false, taskAttemptId, taskId }) => {
+}> = ({
+  entry,
+  expansionKey,
+  forceExpanded = false,
+  taskAttemptId,
+  taskId,
+}) => {
   const { t } = useTranslation('common');
 
   // Determine if this is a NormalizedEntry with tool_use

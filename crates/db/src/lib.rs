@@ -1,5 +1,7 @@
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use sea_orm::{
     ConnectOptions, ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement,
@@ -7,9 +9,9 @@ use sea_orm::{
 use sea_orm_migration::MigratorTrait;
 use utils::assets::asset_dir;
 
+pub mod entities;
 pub mod events;
 pub mod models;
-pub mod entities;
 pub mod types;
 
 #[derive(Clone)]
@@ -18,8 +20,7 @@ pub struct DBService {
 }
 
 pub type DbPool = DatabaseConnection;
-pub use sea_orm::DbErr;
-pub use sea_orm::TransactionTrait;
+pub use sea_orm::{DbErr, TransactionTrait};
 
 fn default_sqlite_url() -> String {
     let db_path = asset_dir().join("db.sqlite");
@@ -31,9 +32,7 @@ fn resolve_database_url() -> Result<String, DbErr> {
         Ok(url) => {
             let trimmed = url.trim();
             if trimmed.is_empty() {
-                return Err(DbErr::Custom(
-                    "DATABASE_URL is set but empty".to_string(),
-                ));
+                return Err(DbErr::Custom("DATABASE_URL is set but empty".to_string()));
             }
             // Postgres URLs (e.g. postgres://...) are rejected until supported.
             if !trimmed.starts_with("sqlite:") {
@@ -44,9 +43,7 @@ fn resolve_database_url() -> Result<String, DbErr> {
             Ok(trimmed.to_string())
         }
         Err(std::env::VarError::NotPresent) => Ok(default_sqlite_url()),
-        Err(err) => Err(DbErr::Custom(format!(
-            "Failed to read DATABASE_URL: {err}"
-        ))),
+        Err(err) => Err(DbErr::Custom(format!("Failed to read DATABASE_URL: {err}"))),
     }
 }
 
@@ -70,11 +67,8 @@ fn build_connect_options(database_url: &str) -> Result<ConnectOptions, DbErr> {
             Box::pin(async move {
                 let backend = conn.get_database_backend();
                 if backend == DatabaseBackend::Sqlite {
-                    conn.execute_raw(Statement::from_string(
-                        backend,
-                        "PRAGMA foreign_keys = ON;",
-                    ))
-                    .await?;
+                    conn.execute_raw(Statement::from_string(backend, "PRAGMA foreign_keys = ON;"))
+                        .await?;
                 }
                 Ok(())
             })

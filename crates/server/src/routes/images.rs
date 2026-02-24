@@ -9,10 +9,12 @@ use axum::{
     routing::{delete, get, post},
 };
 use chrono::{DateTime, Utc};
-use db::DbErr;
-use db::models::{
-    image::{Image, TaskImage},
-    task::Task,
+use db::{
+    DbErr,
+    models::{
+        image::{Image, TaskImage},
+        task::Task,
+    },
 };
 use deployment::Deployment;
 use serde::{Deserialize, Serialize};

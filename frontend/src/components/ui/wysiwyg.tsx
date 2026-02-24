@@ -37,7 +37,14 @@ import { LinkNode } from '@lexical/link';
 import { EditorState } from 'lexical';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Check, Clipboard, Languages, Loader2, Pencil, Trash2 } from 'lucide-react';
+import {
+  Check,
+  Clipboard,
+  Languages,
+  Loader2,
+  Pencil,
+  Trash2,
+} from 'lucide-react';
 import { writeClipboardViaBridge } from '@/vscode/bridge';
 
 /** Markdown string representing the editor content */

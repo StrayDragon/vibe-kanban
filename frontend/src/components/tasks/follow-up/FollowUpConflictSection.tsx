@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ConflictBanner } from '@/components/tasks/ConflictBanner';
-import { useOpenInEditor } from '@/hooks/useOpenInEditor';
-import { useAttemptConflicts } from '@/hooks/useAttemptConflicts';
+import { useOpenInEditor } from '@/hooks/task-attempts/useOpenInEditor';
+import { useAttemptConflicts } from '@/hooks/task-attempts/useAttemptConflicts';
 import type { RepoBranchStatus } from 'shared/types';
 
 type Props = {

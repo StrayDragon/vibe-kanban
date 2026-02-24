@@ -21,7 +21,7 @@ import { TaskWithAttemptStatus, Workspace } from 'shared/types';
 import { Loader2 } from 'lucide-react';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { useRepoBranches } from '@/hooks';
-import { useCliDependencyPreflight } from '@/hooks/useCliDependencyPreflight';
+import { useCliDependencyPreflight } from '@/hooks/config/useCliDependencyPreflight';
 import {
   GhCliHelpInstructions,
   GhCliSetupDialog,
@@ -287,7 +287,9 @@ const CreatePRDialogImpl = NiceModal.create<CreatePRDialogProps>(
                         : 'default'
                     }
                   >
-                    <AlertTitle>{t('createPrDialog.preflight.title')}</AlertTitle>
+                    <AlertTitle>
+                      {t('createPrDialog.preflight.title')}
+                    </AlertTitle>
                     <AlertDescription className="space-y-1">
                       <p>
                         {t('createPrDialog.preflight.githubLabel')}{' '}
@@ -298,7 +300,7 @@ const CreatePRDialogImpl = NiceModal.create<CreatePRDialogProps>(
                             : cliPreflight?.github_cli.type === 'not_installed'
                               ? t('createPrDialog.preflight.githubNotInstalled')
                               : cliPreflight?.github_cli.type ===
-                                    'not_authenticated'
+                                  'not_authenticated'
                                 ? t(
                                     'createPrDialog.preflight.githubNotAuthenticated'
                                   )
@@ -313,7 +315,8 @@ const CreatePRDialogImpl = NiceModal.create<CreatePRDialogProps>(
                             ? t('createPrDialog.preflight.checking')
                             : cliPreflight?.agent.type === 'LOGIN_DETECTED'
                               ? t('createPrDialog.preflight.agentReady')
-                              : cliPreflight?.agent.type === 'INSTALLATION_FOUND'
+                              : cliPreflight?.agent.type ===
+                                  'INSTALLATION_FOUND'
                                 ? t('createPrDialog.preflight.agentInstalled')
                                 : cliPreflight?.agent.type === 'NOT_FOUND'
                                   ? t('createPrDialog.preflight.agentNotFound')

@@ -43,8 +43,7 @@ export function TaskCard({
   const isTaskGroup = isTaskGroupEntry(task);
   const taskGroupId = getTaskGroupId(task);
   const isGroupedTask = Boolean(taskGroupId) && !isTaskGroup;
-  const displayTitle =
-    isGroupedTask && groupTitle ? groupTitle : task.title;
+  const displayTitle = isGroupedTask && groupTitle ? groupTitle : task.title;
   const showSubtaskTitle =
     isGroupedTask && groupTitle && groupTitle !== task.title;
   const typeLabel = isTaskGroup

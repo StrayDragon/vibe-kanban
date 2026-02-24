@@ -12,7 +12,7 @@ import {
 import { MoreHorizontal } from 'lucide-react';
 import type { TaskWithAttemptStatus } from 'shared/types';
 import type { Workspace } from 'shared/types';
-import { useOpenInEditor } from '@/hooks/useOpenInEditor';
+import { useOpenInEditor } from '@/hooks/task-attempts/useOpenInEditor';
 import { DeleteTaskConfirmationDialog } from '@/components/dialogs/tasks/DeleteTaskConfirmationDialog';
 import { ViewProcessesDialog } from '@/components/dialogs/tasks/ViewProcessesDialog';
 import { ViewRelatedTasksDialog } from '@/components/dialogs/tasks/ViewRelatedTasksDialog';
@@ -22,8 +22,8 @@ import { EditBranchNameDialog } from '@/components/dialogs/tasks/EditBranchNameD
 import { RemoveWorktreeDialog } from '@/components/dialogs/tasks/RemoveWorktreeDialog';
 import { useProject } from '@/contexts/ProjectContext';
 import { openTaskForm } from '@/lib/openTaskForm';
-import { useExecutionProcesses } from '@/hooks/useExecutionProcesses';
-import { useTaskAttempts } from '@/hooks/useTaskAttempts';
+import { useExecutionProcesses } from '@/hooks/execution-processes/useExecutionProcesses';
+import { useTaskAttempts } from '@/hooks/task-attempts/useTaskAttempts';
 
 import { useLocation, useNavigate } from 'react-router-dom';
 
@@ -62,10 +62,13 @@ export function ActionsDropdown({
     if (context !== 'task' || attempt) return [];
     return attempts.filter((attemptData) => attemptData.container_ref);
   }, [attempt, attempts, context]);
-  const hasEligibleAttempt = context === 'attempt'
-    ? Boolean(attempt?.container_ref)
-    : eligibleAttempts.length > 0;
-  const showRemoveWorktree = Boolean(enableRemoveWorktree && hasEligibleAttempt);
+  const hasEligibleAttempt =
+    context === 'attempt'
+      ? Boolean(attempt?.container_ref)
+      : eligibleAttempts.length > 0;
+  const showRemoveWorktree = Boolean(
+    enableRemoveWorktree && hasEligibleAttempt
+  );
   const showAttemptSection = hasAttemptActions || showRemoveWorktree;
   const hasRunningProcesses = executionProcesses.some(
     (process) => process.status === 'running'

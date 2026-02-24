@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader } from '@/components/ui/loader';
-import { useVideoProgress } from '@/hooks/useVideoProgress';
+import { useVideoProgress } from '@/hooks/showcase/useVideoProgress';
 import type { ShowcaseMedia } from '@/types/showcase';
 import { RefreshCw } from 'lucide-react';
 

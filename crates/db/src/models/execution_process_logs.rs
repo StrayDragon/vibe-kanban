@@ -80,10 +80,13 @@ impl ExecutionProcessLogs {
         let mut summaries = Vec::with_capacity(totals.len());
         for (execution_id, (total_bytes, earliest)) in totals {
             if let Some(uuid) = id_to_uuid.get(&execution_id) {
-                summaries.push((earliest, ExecutionProcessLogSummary {
-                    execution_id: *uuid,
-                    total_bytes,
-                }));
+                summaries.push((
+                    earliest,
+                    ExecutionProcessLogSummary {
+                        execution_id: *uuid,
+                        total_bytes,
+                    },
+                ));
             }
         }
 
@@ -114,10 +117,7 @@ impl ExecutionProcessLogs {
             .collect())
     }
 
-    pub async fn has_any<C: ConnectionTrait>(
-        db: &C,
-        execution_id: Uuid,
-    ) -> Result<bool, DbErr> {
+    pub async fn has_any<C: ConnectionTrait>(db: &C, execution_id: Uuid) -> Result<bool, DbErr> {
         let execution_row_id = ids::execution_process_id_by_uuid(db, execution_id)
             .await?
             .ok_or(DbErr::RecordNotFound(
@@ -215,22 +215,21 @@ impl ExecutionProcessLogs {
 
 #[cfg(test)]
 mod tests {
-    use sea_orm::Database;
+    use sea_orm::{ActiveModelTrait, Database};
     use sea_orm_migration::MigratorTrait;
-    use sea_orm::ActiveModelTrait;
-
     use utils::log_entries::LogEntryChannel;
 
-    use crate::models::{
-        execution_process_log_entries::ExecutionProcessLogEntry,
-        project::{CreateProject, Project},
-        session::{CreateSession, Session},
-        task::{CreateTask, Task},
-        workspace::{CreateWorkspace, Workspace},
-    };
-    use crate::types::{ExecutionProcessRunReason, ExecutionProcessStatus};
-
     use super::*;
+    use crate::{
+        models::{
+            execution_process_log_entries::ExecutionProcessLogEntry,
+            project::{CreateProject, Project},
+            session::{CreateSession, Session},
+            task::{CreateTask, Task},
+            workspace::{CreateWorkspace, Workspace},
+        },
+        types::{ExecutionProcessRunReason, ExecutionProcessStatus},
+    };
 
     async fn setup_db() -> sea_orm::DatabaseConnection {
         let db = Database::connect("sqlite::memory:").await.unwrap();
@@ -330,9 +329,13 @@ mod tests {
 
         let msg = LogMsg::Stdout("hello".to_string());
         let json_line = serde_json::to_string(&msg).unwrap();
-        ExecutionProcessLogs::append_log_line(&db, execution_with_entries, &format!("{json_line}\n"))
-            .await
-            .unwrap();
+        ExecutionProcessLogs::append_log_line(
+            &db,
+            execution_with_entries,
+            &format!("{json_line}\n"),
+        )
+        .await
+        .unwrap();
 
         let execution_without_entries = Uuid::new_v4();
         execution_process::ActiveModel {
@@ -354,9 +357,13 @@ mod tests {
         .unwrap();
 
         let json_line = serde_json::to_string(&LogMsg::Stdout("world".to_string())).unwrap();
-        ExecutionProcessLogs::append_log_line(&db, execution_without_entries, &format!("{json_line}\n"))
-            .await
-            .unwrap();
+        ExecutionProcessLogs::append_log_line(
+            &db,
+            execution_without_entries,
+            &format!("{json_line}\n"),
+        )
+        .await
+        .unwrap();
 
         let cutoff = now - chrono::Duration::days(14);
         let deleted = ExecutionProcessLogs::delete_legacy_for_completed_before(&db, cutoff)

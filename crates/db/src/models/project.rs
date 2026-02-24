@@ -4,8 +4,8 @@ use chrono::{DateTime, Utc};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, PaginatorTrait,
     QueryFilter, QueryOrder, Set,
+    sea_query::{Expr, ExprTrait, JoinType, Order, Query},
 };
-use sea_orm::sea_query::{Expr, ExprTrait, JoinType, Order, Query};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
@@ -120,7 +120,10 @@ impl Project {
                 Expr::col((workspace::Entity, workspace::Column::TaskId))
                     .equals((task::Entity, task::Column::Id)),
             )
-            .order_by((workspace::Entity, workspace::Column::UpdatedAt), Order::Desc)
+            .order_by(
+                (workspace::Entity, workspace::Column::UpdatedAt),
+                Order::Desc,
+            )
             .distinct()
             .limit(std::cmp::max(limit, 0) as u64)
             .to_owned();
@@ -155,10 +158,7 @@ impl Project {
         Ok(ordered)
     }
 
-    pub async fn find_by_id<C: ConnectionTrait>(
-        db: &C,
-        id: Uuid,
-    ) -> Result<Option<Self>, DbErr> {
+    pub async fn find_by_id<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<Option<Self>, DbErr> {
         let record = project::Entity::find()
             .filter(project::Column::Uuid.eq(id))
             .one(db)
@@ -309,14 +309,8 @@ impl Project {
                     project_id: id,
                 })
                 .map_err(|err| DbErr::Custom(err.to_string()))?;
-                EventOutbox::enqueue(
-                    db,
-                    EVENT_TASK_DELETED,
-                    "task",
-                    task_model.uuid,
-                    payload,
-                )
-                .await?;
+                EventOutbox::enqueue(db, EVENT_TASK_DELETED, "task", task_model.uuid, payload)
+                    .await?;
             }
 
             let payload = serde_json::to_value(ProjectEventPayload { project_id: id })

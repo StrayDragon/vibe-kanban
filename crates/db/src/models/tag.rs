@@ -1,5 +1,8 @@
 use chrono::{DateTime, Utc};
-use sea_orm::{ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
+    Set,
+};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
@@ -46,10 +49,7 @@ impl Tag {
         Ok(records.into_iter().map(Self::from_model).collect())
     }
 
-    pub async fn find_by_id<C: ConnectionTrait>(
-        db: &C,
-        id: Uuid,
-    ) -> Result<Option<Self>, DbErr> {
+    pub async fn find_by_id<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<Option<Self>, DbErr> {
         let record = tag::Entity::find()
             .filter(tag::Column::Uuid.eq(id))
             .one(db)

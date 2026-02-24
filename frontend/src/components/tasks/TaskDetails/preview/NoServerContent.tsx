@@ -18,8 +18,8 @@ import {
   ScriptPlaceholderContext,
 } from '@/utils/scriptPlaceholders';
 import { useUserSystem } from '@/components/ConfigProvider';
-import { useTaskMutations } from '@/hooks/useTaskMutations';
-import { useProjectMutations } from '@/hooks/useProjectMutations';
+import { useTaskMutations } from '@/hooks/tasks/useTaskMutations';
+import { useProjectMutations } from '@/hooks/projects/useProjectMutations';
 import { useProjectRepos } from '@/hooks';
 import {
   COMPANION_INSTALL_TASK_TITLE,

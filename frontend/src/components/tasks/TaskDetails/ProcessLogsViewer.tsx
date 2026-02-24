@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { AlertCircle, Loader2 } from 'lucide-react';
-import { useLogStream } from '@/hooks/useLogStream';
+import { useLogStream } from '@/hooks/execution-processes/useLogStream';
 import RawLogText from '@/components/common/RawLogText';
 import type { PatchType } from 'shared/types';
 

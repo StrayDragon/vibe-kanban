@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import { Project } from 'shared/types';
 import { useEffect, useRef } from 'react';
-import { useOpenProjectInEditor } from '@/hooks/useOpenProjectInEditor';
+import { useOpenProjectInEditor } from '@/hooks/projects/useOpenProjectInEditor';
 import { useNavigateWithSearch, useProjectRepos } from '@/hooks';
 import { projectsApi } from '@/lib/api';
 import { useTranslation } from 'react-i18next';

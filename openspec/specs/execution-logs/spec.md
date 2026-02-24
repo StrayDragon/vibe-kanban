@@ -106,3 +106,10 @@ The system SHALL remove legacy JSONL history after a configurable retention wind
 - **WHEN** legacy JSONL rows are older than the retention window and the execution is completed
 - **THEN** the system deletes the JSONL rows without affecting log entry history retrieval
 
+### Requirement: Execution logs endpoints remain stable
+The system SHALL preserve existing `/api/execution-processes/*` log endpoints while internal code is split into layered modules.
+
+#### Scenario: Logs stream remains functional
+- **WHEN** a client subscribes to the existing log WebSocket endpoint
+- **THEN** the connection succeeds and events are emitted in the expected format
+

@@ -10,8 +10,7 @@ use anyhow::anyhow;
 use async_trait::async_trait;
 use command_group::AsyncGroupChild;
 use db::{
-    DBService,
-    DbErr,
+    DBService, DbErr,
     models::{
         coding_agent_turn::CodingAgentTurn,
         execution_process::{
@@ -1711,12 +1710,11 @@ impl ContainerService for LocalContainerService {
         }
 
         if repo_inputs.is_empty() {
-            let blocked_reason =
-                if total_repos > 0 && skipped_repos == total_repos {
-                    Some("summary_failed")
-                } else {
-                    None
-                };
+            let blocked_reason = if total_repos > 0 && skipped_repos == total_repos {
+                Some("summary_failed")
+            } else {
+                None
+            };
             let blocked = blocked_reason.is_some();
             let stream = build_summary_stream(DiffSummary::default(), blocked, blocked_reason);
             return Ok(Box::pin(stream));

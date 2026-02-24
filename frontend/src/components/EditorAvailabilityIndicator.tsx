@@ -1,6 +1,6 @@
 import { Check, AlertCircle, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { EditorAvailabilityState } from '@/hooks/useEditorAvailability';
+import type { EditorAvailabilityState } from '@/hooks/config/useEditorAvailability';
 
 interface EditorAvailabilityIndicatorProps {
   availability: EditorAvailabilityState;

@@ -48,12 +48,13 @@ impl EventOutbox {
     }
 
     pub async fn mark_published<C: ConnectionTrait>(db: &C, id: i64) -> Result<(), DbErr> {
-        let record = event_outbox::Entity::find_by_id(id)
-            .one(db)
-            .await?
-            .ok_or(DbErr::RecordNotFound(
-                "Event outbox record not found".to_string(),
-            ))?;
+        let record =
+            event_outbox::Entity::find_by_id(id)
+                .one(db)
+                .await?
+                .ok_or(DbErr::RecordNotFound(
+                    "Event outbox record not found".to_string(),
+                ))?;
 
         let mut active: event_outbox::ActiveModel = record.into();
         active.published_at = Set(Some(Utc::now().into()));
@@ -66,12 +67,13 @@ impl EventOutbox {
         id: i64,
         error: &str,
     ) -> Result<(), DbErr> {
-        let record = event_outbox::Entity::find_by_id(id)
-            .one(db)
-            .await?
-            .ok_or(DbErr::RecordNotFound(
-                "Event outbox record not found".to_string(),
-            ))?;
+        let record =
+            event_outbox::Entity::find_by_id(id)
+                .one(db)
+                .await?
+                .ok_or(DbErr::RecordNotFound(
+                    "Event outbox record not found".to_string(),
+                ))?;
 
         let attempts = record.attempts + 1;
         let mut active: event_outbox::ActiveModel = record.into();
@@ -136,7 +138,9 @@ mod tests {
             .map(|entry| entry.id)
             .expect("entry two id");
 
-        EventOutbox::mark_published(&db, entry_one_id).await.unwrap();
+        EventOutbox::mark_published(&db, entry_one_id)
+            .await
+            .unwrap();
         let entries = EventOutbox::fetch_unpublished(&db, 10).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].entity_uuid, entity_uuid_two);
@@ -152,7 +156,14 @@ mod tests {
         assert_eq!(failed.attempts, 1);
         assert_eq!(failed.last_error.as_deref(), Some("boom"));
 
-        EventOutbox::mark_published(&db, entry_two_id).await.unwrap();
-        assert!(EventOutbox::fetch_unpublished(&db, 10).await.unwrap().is_empty());
+        EventOutbox::mark_published(&db, entry_two_id)
+            .await
+            .unwrap();
+        assert!(
+            EventOutbox::fetch_unpublished(&db, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }

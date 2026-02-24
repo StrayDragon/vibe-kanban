@@ -7,7 +7,7 @@ import { useEffect } from 'react';
 import { useHotkeysContext } from 'react-hotkeys-hook';
 import { useKeyExit } from '@/keyboard/hooks';
 import { Scope } from '@/keyboard/registry';
-import { usePreviousPath } from '@/hooks/usePreviousPath';
+import { usePreviousPath } from '@/hooks/utils/usePreviousPath';
 
 const settingsNavigation = [
   {

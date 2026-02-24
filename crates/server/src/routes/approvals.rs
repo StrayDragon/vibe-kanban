@@ -1,26 +1,27 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::StatusCode,
     routing::post,
 };
 use deployment::Deployment;
 use utils::approvals::{ApprovalResponse, ApprovalStatus};
 
-use crate::DeploymentImpl;
+use crate::{DeploymentImpl, error::ApiError};
 
 pub async fn respond_to_approval(
     State(deployment): State<DeploymentImpl>,
     Path(id): Path<String>,
     Json(request): Json<ApprovalResponse>,
-) -> Result<Json<ApprovalStatus>, StatusCode> {
+) -> Result<Json<ApprovalStatus>, ApiError> {
     let service = deployment.approvals();
 
     match service.respond(&deployment.db().pool, &id, request).await {
         Ok((status, _context)) => Ok(Json(status)),
         Err(e) => {
             tracing::error!("Failed to respond to approval: {:?}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            Err(ApiError::Internal(
+                "Failed to respond to approval".to_string(),
+            ))
         }
     }
 }

@@ -7,10 +7,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
-use crate::{
-    entities::execution_process_repo_state,
-    models::ids,
-};
+use crate::{entities::execution_process_repo_state, models::ids};
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ExecutionProcessRepoState {

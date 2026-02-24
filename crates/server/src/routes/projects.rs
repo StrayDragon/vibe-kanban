@@ -7,15 +7,12 @@ use axum::{
         Path, Query, State,
         ws::{WebSocket, WebSocketUpgrade},
     },
-    http::StatusCode,
     middleware::from_fn_with_state,
     response::{IntoResponse, Json as ResponseJson},
     routing::{get, post},
 };
 use db::models::{
-    project::{
-        CreateProject, Project, ProjectError, ProjectFileSearchResponse, UpdateProject,
-    },
+    project::{CreateProject, Project, ProjectError, ProjectFileSearchResponse, UpdateProject},
     project_repo::{CreateProjectRepo, ProjectRepo, UpdateProjectRepo},
     repo::Repo,
 };
@@ -95,21 +92,21 @@ pub async fn create_project(
         .await
     {
         Ok(project) => Ok(ResponseJson(ApiResponse::success(project))),
-        Err(ProjectServiceError::DuplicateGitRepoPath) => Ok(ResponseJson(ApiResponse::error(
-            "Duplicate repository path provided",
-        ))),
-        Err(ProjectServiceError::DuplicateRepositoryName) => Ok(ResponseJson(ApiResponse::error(
-            "Duplicate repository name provided",
-        ))),
-        Err(ProjectServiceError::PathNotFound(_)) => Ok(ResponseJson(ApiResponse::error(
-            "The specified path does not exist",
-        ))),
-        Err(ProjectServiceError::PathNotDirectory(_)) => Ok(ResponseJson(ApiResponse::error(
-            "The specified path is not a directory",
-        ))),
-        Err(ProjectServiceError::NotGitRepository(_)) => Ok(ResponseJson(ApiResponse::error(
-            "The specified directory is not a git repository",
-        ))),
+        Err(ProjectServiceError::DuplicateGitRepoPath) => Err(ApiError::Conflict(
+            "Duplicate repository path provided".to_string(),
+        )),
+        Err(ProjectServiceError::DuplicateRepositoryName) => Err(ApiError::Conflict(
+            "Duplicate repository name provided".to_string(),
+        )),
+        Err(ProjectServiceError::PathNotFound(_)) => Err(ApiError::BadRequest(
+            "The specified path does not exist".to_string(),
+        )),
+        Err(ProjectServiceError::PathNotDirectory(_)) => Err(ApiError::BadRequest(
+            "The specified path is not a directory".to_string(),
+        )),
+        Err(ProjectServiceError::NotGitRepository(_)) => Err(ApiError::BadRequest(
+            "The specified directory is not a git repository".to_string(),
+        )),
         Err(e) => Err(ProjectError::CreateFailed(e.to_string()).into()),
     }
 }
@@ -118,41 +115,28 @@ pub async fn update_project(
     Extension(existing_project): Extension<Project>,
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<UpdateProject>,
-) -> Result<ResponseJson<ApiResponse<Project>>, StatusCode> {
-    match deployment
+) -> Result<ResponseJson<ApiResponse<Project>>, ApiError> {
+    let project = deployment
         .project()
         .update_project(&deployment.db().pool, &existing_project, payload)
-        .await
-    {
-        Ok(project) => Ok(ResponseJson(ApiResponse::success(project))),
-        Err(e) => {
-            tracing::error!("Failed to update project: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
+        .await?;
+    Ok(ResponseJson(ApiResponse::success(project)))
 }
 
 pub async fn delete_project(
     Extension(project): Extension<Project>,
     State(deployment): State<DeploymentImpl>,
-) -> Result<ResponseJson<ApiResponse<()>>, StatusCode> {
-    match deployment
+) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
+    let rows_affected = deployment
         .project()
         .delete_project(&deployment.db().pool, project.id)
-        .await
-    {
-        Ok(rows_affected) => {
-            if rows_affected == 0 {
-                Err(StatusCode::NOT_FOUND)
-            } else {
-                Ok(ResponseJson(ApiResponse::success(())))
-            }
-        }
-        Err(e) => {
-            tracing::error!("Failed to delete project: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
+        .await?;
+
+    if rows_affected == 0 {
+        return Err(ApiError::NotFound("Project not found".to_string()));
     }
+
+    Ok(ResponseJson(ApiResponse::success(())))
 }
 
 #[derive(serde::Deserialize)]
@@ -217,40 +201,28 @@ pub async fn search_project_files(
     State(deployment): State<DeploymentImpl>,
     Extension(project): Extension<Project>,
     Query(search_query): Query<SearchQuery>,
-) -> Result<ResponseJson<ApiResponse<ProjectFileSearchResponse>>, StatusCode> {
+) -> Result<ResponseJson<ApiResponse<ProjectFileSearchResponse>>, ApiError> {
     if search_query.q.trim().is_empty() {
-        return Ok(ResponseJson(ApiResponse::error(
-            "Query parameter 'q' is required and cannot be empty",
-        )));
+        return Err(ApiError::BadRequest(
+            "Query parameter 'q' is required and cannot be empty".to_string(),
+        ));
     }
 
-    let repositories = match deployment
+    let repositories = deployment
         .project()
         .get_repositories(&deployment.db().pool, project.id)
-        .await
-    {
-        Ok(repos) => repos,
-        Err(e) => {
-            tracing::error!("Failed to get repositories: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
+        .await?;
 
-    match deployment
+    let results = deployment
         .project()
         .search_files(
             deployment.file_search_cache().as_ref(),
             &repositories,
             &search_query,
         )
-        .await
-    {
-        Ok(results) => Ok(ResponseJson(ApiResponse::success(results))),
-        Err(e) => {
-            tracing::error!("Failed to search files: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
+        .await?;
+
+    Ok(ResponseJson(ApiResponse::success(results)))
 }
 
 pub async fn get_project_repositories(
@@ -292,45 +264,45 @@ pub async fn add_project_repository(
                 "Failed to add repository to project {}: path does not exist",
                 project.id
             );
-            Ok(ResponseJson(ApiResponse::error(
-                "The specified path does not exist",
-            )))
+            Err(ApiError::BadRequest(
+                "The specified path does not exist".to_string(),
+            ))
         }
         Err(ProjectServiceError::PathNotDirectory(_)) => {
             tracing::warn!(
                 "Failed to add repository to project {}: path is not a directory",
                 project.id
             );
-            Ok(ResponseJson(ApiResponse::error(
-                "The specified path is not a directory",
-            )))
+            Err(ApiError::BadRequest(
+                "The specified path is not a directory".to_string(),
+            ))
         }
         Err(ProjectServiceError::NotGitRepository(_)) => {
             tracing::warn!(
                 "Failed to add repository to project {}: not a git repository",
                 project.id
             );
-            Ok(ResponseJson(ApiResponse::error(
-                "The specified directory is not a git repository",
-            )))
+            Err(ApiError::BadRequest(
+                "The specified directory is not a git repository".to_string(),
+            ))
         }
         Err(ProjectServiceError::DuplicateRepositoryName) => {
             tracing::warn!(
                 "Failed to add repository to project {}: duplicate repository name",
                 project.id
             );
-            Ok(ResponseJson(ApiResponse::error(
-                "A repository with this name already exists in the project",
-            )))
+            Err(ApiError::Conflict(
+                "A repository with this name already exists in the project".to_string(),
+            ))
         }
         Err(ProjectServiceError::DuplicateGitRepoPath) => {
             tracing::warn!(
                 "Failed to add repository to project {}: duplicate repository path",
                 project.id
             );
-            Ok(ResponseJson(ApiResponse::error(
-                "A repository with this path already exists in the project",
-            )))
+            Err(ApiError::Conflict(
+                "A repository with this path already exists in the project".to_string(),
+            ))
         }
         Err(e) => Err(e.into()),
     }
@@ -358,7 +330,7 @@ pub async fn delete_project_repository(
                 repo_id,
                 project_id
             );
-            Ok(ResponseJson(ApiResponse::error("Repository not found")))
+            Err(ApiError::NotFound("Repository not found".to_string()))
         }
         Err(e) => Err(e.into()),
     }
@@ -370,7 +342,7 @@ pub async fn get_project_repository(
 ) -> Result<ResponseJson<ApiResponse<ProjectRepo>>, ApiError> {
     match ProjectRepo::find_by_project_and_repo(&deployment.db().pool, project_id, repo_id).await {
         Ok(Some(project_repo)) => Ok(ResponseJson(ApiResponse::success(project_repo))),
-        Ok(None) => Err(ApiError::BadRequest(
+        Ok(None) => Err(ApiError::NotFound(
             "Repository not found in project".to_string(),
         )),
         Err(e) => Err(e.into()),
@@ -384,7 +356,7 @@ pub async fn update_project_repository(
 ) -> Result<ResponseJson<ApiResponse<ProjectRepo>>, ApiError> {
     match ProjectRepo::update(&deployment.db().pool, project_id, repo_id, &payload).await {
         Ok(project_repo) => Ok(ResponseJson(ApiResponse::success(project_repo))),
-        Err(db::models::project_repo::ProjectRepoError::NotFound) => Err(ApiError::BadRequest(
+        Err(db::models::project_repo::ProjectRepoError::NotFound) => Err(ApiError::NotFound(
             "Repository not found in project".to_string(),
         )),
         Err(e) => Err(e.into()),
@@ -420,4 +392,61 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         .nest("/{id}", project_id_router);
 
     Router::new().nest("/projects", projects_router)
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{body::to_bytes, http::StatusCode};
+    use deployment::Deployment;
+    use services::services::git::GitService;
+
+    use super::*;
+    use crate::test_support::TestEnvGuard;
+
+    #[tokio::test]
+    async fn create_project_duplicate_repo_path_returns_conflict() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let _env_guard = TestEnvGuard::new(&temp_root, db_url);
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+
+        let repo_path = temp_root.join("repo");
+        GitService::new()
+            .initialize_repo_with_main_branch(&repo_path)
+            .unwrap();
+
+        let payload = CreateProject {
+            name: "p1".to_string(),
+            repositories: vec![
+                CreateProjectRepo {
+                    display_name: "Repo".to_string(),
+                    git_repo_path: repo_path.to_string_lossy().to_string(),
+                },
+                CreateProjectRepo {
+                    display_name: "Repo-2".to_string(),
+                    git_repo_path: repo_path.to_string_lossy().to_string(),
+                },
+            ],
+        };
+
+        let err = create_project(State(deployment), Json(payload))
+            .await
+            .unwrap_err();
+
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json.get("success").and_then(|v| v.as_bool()), Some(false));
+        let message = json
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(message.contains("Duplicate"));
+    }
 }

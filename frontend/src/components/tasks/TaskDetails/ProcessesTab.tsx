@@ -11,8 +11,8 @@ import {
 } from 'lucide-react';
 import { executionProcessesApi } from '@/lib/api.ts';
 import { ProfileVariantBadge } from '@/components/common/ProfileVariantBadge.tsx';
-import { useExecutionProcesses } from '@/hooks/useExecutionProcesses';
-import { useLogStream } from '@/hooks/useLogStream';
+import { useExecutionProcesses } from '@/hooks/execution-processes/useExecutionProcesses';
+import { useLogStream } from '@/hooks/execution-processes/useLogStream';
 import { ProcessLogsViewerContent } from './ProcessLogsViewer';
 import type { ExecutionProcessStatus, ExecutionProcess } from 'shared/types';
 
@@ -71,17 +71,17 @@ function ProcessesTab({ attemptId }: ProcessesTabProps) {
   const handleCopyLogs = useCallback(async () => {
     if (logs.length === 0) return;
 
-      const text = logs.map((entry) => entry.content).join('\n');
-      try {
-        await navigator.clipboard.writeText(text);
-        setCopied(true);
-        if (copyTimeoutRef.current) {
-          clearTimeout(copyTimeoutRef.current);
-        }
-        copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
-      } catch (err) {
-        console.warn('Copy to clipboard failed:', err);
+    const text = logs.map((entry) => entry.content).join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
       }
+      copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.warn('Copy to clipboard failed:', err);
+    }
   }, [logs]);
 
   const getStatusIcon = (status: ExecutionProcessStatus) => {

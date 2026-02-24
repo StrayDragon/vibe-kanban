@@ -10,7 +10,7 @@ import { ProjectFormDialog } from '@/components/dialogs/projects/ProjectFormDial
 import { AlertCircle, Loader2, Plus } from 'lucide-react';
 import ProjectCard from '@/components/projects/ProjectCard.tsx';
 import { useKeyCreate, Scope } from '@/keyboard';
-import { useProjects } from '@/hooks/useProjects';
+import { useProjects } from '@/hooks/projects/useProjects';
 
 export function ProjectList() {
   const navigate = useNavigate();

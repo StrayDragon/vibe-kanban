@@ -1,5 +1,4 @@
-use sea_orm_migration::prelude::*;
-use sea_orm_migration::sea_orm::DatabaseBackend;
+use sea_orm_migration::{prelude::*, sea_orm::DatabaseBackend};
 
 #[derive(DeriveMigrationName)]
 pub struct Migration;
@@ -9,7 +8,8 @@ impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
             .create_table(
-                Table::create().if_not_exists()
+                Table::create()
+                    .if_not_exists()
                     .table(TaskGroups::Table)
                     .col(pk_id_col(manager, TaskGroups::Id))
                     .col(uuid_col(TaskGroups::Uuid))
@@ -45,7 +45,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_task_groups_uuid")
                     .table(TaskGroups::Table)
                     .col(TaskGroups::Uuid)
@@ -56,7 +57,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_task_groups_project_id")
                     .table(TaskGroups::Table)
                     .col(TaskGroups::ProjectId)
@@ -123,7 +125,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_tasks_task_group_id")
                     .table(Tasks::Table)
                     .col(Tasks::TaskGroupId)
@@ -133,7 +136,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_tasks_task_group_node_id")
                     .table(Tasks::Table)
                     .col(Tasks::TaskGroupNodeId)
@@ -143,7 +147,8 @@ impl MigrationTrait for Migration {
 
         manager
             .create_index(
-                Index::create().if_not_exists()
+                Index::create()
+                    .if_not_exists()
                     .name("idx_tasks_task_group_node_unique")
                     .table(Tasks::Table)
                     .col(Tasks::TaskGroupId)

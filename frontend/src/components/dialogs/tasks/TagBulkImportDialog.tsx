@@ -18,10 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Loader2, Upload } from 'lucide-react';
 import { tagsApi } from '@/lib/api';
-import {
-  parseTagMarkdown,
-  type ParsedTagEntry,
-} from '@/lib/tag-markdown-import';
+import { parseTagMarkdown, type ParsedTagEntry } from '@/lib/tagMarkdownImport';
 import type { Tag } from 'shared/types';
 
 export interface TagBulkImportDialogProps {
@@ -83,9 +80,7 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
 
     const selectedDuplicateEntries = useMemo(
       () =>
-        duplicateEntries.filter((entry) =>
-          selectedEntries.has(entry.tagName)
-        ),
+        duplicateEntries.filter((entry) => selectedEntries.has(entry.tagName)),
       [duplicateEntries, selectedEntries]
     );
 
@@ -315,10 +310,7 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
                       </div>
                     </td>
                     <td className="p-2 text-sm">
-                      <div
-                        className="truncate"
-                        title={entry.content}
-                      >
+                      <div className="truncate" title={entry.content}>
                         {entry.content || (
                           <span className="text-muted-foreground">-</span>
                         )}
@@ -440,9 +432,7 @@ const TagBulkImportDialogImpl = NiceModal.create<TagBulkImportDialogProps>(
                 </div>
                 <div className="rounded-md bg-muted/40 p-2">
                   <p className="text-[11px] uppercase text-muted-foreground">
-                    {t(
-                      'settings.general.tags.bulkImport.duplicates.newLabel'
-                    )}
+                    {t('settings.general.tags.bulkImport.duplicates.newLabel')}
                   </p>
                   <p className="text-xs whitespace-pre-wrap">
                     {entry.newContent || '-'}

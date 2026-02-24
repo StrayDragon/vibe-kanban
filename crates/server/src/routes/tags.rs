@@ -5,8 +5,10 @@ use axum::{
     response::Json as ResponseJson,
     routing::{get, put},
 };
-use db::DbErr;
-use db::models::tag::{CreateTag, Tag, UpdateTag};
+use db::{
+    DbErr,
+    models::tag::{CreateTag, Tag, UpdateTag},
+};
 use deployment::Deployment;
 use serde::Deserialize;
 use ts_rs::TS;

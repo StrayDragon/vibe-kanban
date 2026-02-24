@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { defineModal } from '@/lib/modals';
-import { useForcePush } from '@/hooks/useForcePush';
+import { useForcePush } from '@/hooks/task-attempts/useForcePush';
 import { useState } from 'react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useTranslation } from 'react-i18next';

@@ -10,7 +10,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { PlusIcon } from 'lucide-react';
 import { openTaskForm } from '@/lib/openTaskForm';
-import { useTaskRelationships } from '@/hooks/useTaskRelationships';
+import { useTaskRelationships } from '@/hooks/tasks/useTaskRelationships';
 import { DataTable, type ColumnDef } from '@/components/ui/table/data-table';
 import type { Task } from 'shared/types';
 import type { Workspace } from 'shared/types';

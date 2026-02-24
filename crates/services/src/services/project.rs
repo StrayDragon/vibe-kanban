@@ -3,16 +3,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use db::models::{
-    project::{
-        CreateProject, Project, ProjectError, ProjectFileSearchResponse, SearchMatchType,
-        SearchResult, UpdateProject,
+use db::{
+    DbErr,
+    models::{
+        project::{
+            CreateProject, Project, ProjectError, ProjectFileSearchResponse, SearchMatchType,
+            SearchResult, UpdateProject,
+        },
+        project_repo::{CreateProjectRepo, ProjectRepo},
+        repo::Repo,
     },
-    project_repo::{CreateProjectRepo, ProjectRepo},
-    repo::Repo,
 };
 use ignore::WalkBuilder;
-use db::DbErr;
 use thiserror::Error;
 use uuid::Uuid;
 

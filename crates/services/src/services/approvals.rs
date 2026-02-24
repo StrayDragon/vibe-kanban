@@ -7,9 +7,12 @@ use std::{
 };
 
 use dashmap::DashMap;
-use db::models::{
-    execution_process::ExecutionProcess,
-    task::{Task, TaskStatus},
+use db::{
+    DbErr,
+    models::{
+        execution_process::ExecutionProcess,
+        task::{Task, TaskStatus},
+    },
 };
 use executors::{
     approvals::ToolCallMetadata,
@@ -19,7 +22,6 @@ use executors::{
     },
 };
 use futures::future::{BoxFuture, FutureExt, Shared};
-use db::DbErr;
 use thiserror::Error;
 use tokio::sync::{RwLock, oneshot};
 use utils::{

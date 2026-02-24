@@ -15,6 +15,7 @@ use codex_protocol::{
 };
 use command_group::AsyncCommandGroup;
 use derivative::Derivative;
+use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,7 +23,6 @@ use strum_macros::AsRefStr;
 use tokio::process::Command;
 use ts_rs::TS;
 use workspace_utils::msg_store::MsgStore;
-use regex::Regex;
 
 use self::{
     client::{AppServerClient, LogWriter},
@@ -38,7 +38,8 @@ use crate::{
     env::ExecutionEnv,
     executors::{
         AppendPrompt, AvailabilityInfo, BaseCodingAgent, ExecutorError, ExecutorExitResult,
-        SpawnedChild, StandardCodingAgentExecutor, codex::{jsonrpc::ExitSignalSender, normalize_logs::Error},
+        SpawnedChild, StandardCodingAgentExecutor,
+        codex::{jsonrpc::ExitSignalSender, normalize_logs::Error},
     },
     stdout_dup::create_stdout_pipe_writer,
 };
@@ -175,8 +176,14 @@ impl StandardCodingAgentExecutor for Codex {
         let command_parts = self.build_command_builder().await.build_follow_up(&[])?;
         let combined_prompt = self.append_prompt.combine_prompt(prompt);
         let input_items = build_input_items(&combined_prompt, None);
-        self.spawn_inner(current_dir, input_items, command_parts, Some(session_id), env)
-            .await
+        self.spawn_inner(
+            current_dir,
+            input_items,
+            command_parts,
+            Some(session_id),
+            env,
+        )
+        .await
     }
 
     fn normalize_logs(&self, msg_store: Arc<MsgStore>, worktree_path: &Path) {
@@ -242,8 +249,14 @@ impl Codex {
         let command_parts = self.build_command_builder().await.build_follow_up(&[])?;
         let combined_prompt = self.append_prompt.combine_prompt(prompt);
         let input_items = build_input_items(&combined_prompt, image_paths);
-        self.spawn_inner(current_dir, input_items, command_parts, Some(session_id), env)
-            .await
+        self.spawn_inner(
+            current_dir,
+            input_items,
+            command_parts,
+            Some(session_id),
+            env,
+        )
+        .await
     }
 
     async fn build_command_builder(&self) -> CommandBuilder {
@@ -516,11 +529,10 @@ fn build_input_items(
     };
 
     for caps in pattern.captures_iter(prompt) {
-        let Some(full_match) = caps.get(0) else { continue };
-        let src = caps
-            .get(1)
-            .map(|m| m.as_str().trim())
-            .unwrap_or_default();
+        let Some(full_match) = caps.get(0) else {
+            continue;
+        };
+        let src = caps.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
         let end = full_match.end();
         if last < end {
             push_text(&mut items, &prompt[last..end]);
@@ -546,9 +558,11 @@ fn build_input_items(
 
 #[cfg(test)]
 mod tests {
-    use super::build_input_items;
-    use codex_app_server_protocol::InputItem;
     use std::{collections::HashMap, path::PathBuf};
+
+    use codex_app_server_protocol::InputItem;
+
+    use super::build_input_items;
 
     #[test]
     fn build_input_items_interleaves_images_in_order() {

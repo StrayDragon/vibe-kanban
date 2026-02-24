@@ -13,10 +13,7 @@ use tokio::{
 use ts_rs::TS;
 use workspace_utils::shell::resolve_executable_path;
 
-use crate::{
-    command::CmdOverrides,
-    executors::BaseCodingAgent,
-};
+use crate::{command::CmdOverrides, executors::BaseCodingAgent};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -548,11 +545,7 @@ fn resolve_package_path(
 }
 
 fn default_binary_name(package: &str) -> String {
-    package
-        .rsplit('/')
-        .next()
-        .unwrap_or(package)
-        .to_string()
+    package.rsplit('/').next().unwrap_or(package).to_string()
 }
 
 fn resolve_binary_path(candidate: &str, bin_dir: Option<&Path>) -> Option<PathBuf> {
@@ -701,13 +694,7 @@ fn parse_dependencies_snapshot(root: &serde_json::Value) -> Option<GlobalPackage
                 .get("path")
                 .and_then(|value| value.as_str())
                 .map(PathBuf::from);
-            packages.insert(
-                name.clone(),
-                GlobalPackageEntry {
-                    version,
-                    path,
-                },
-            );
+            packages.insert(name.clone(), GlobalPackageEntry { version, path });
         }
     }
 

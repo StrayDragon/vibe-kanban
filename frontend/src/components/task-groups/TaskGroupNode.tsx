@@ -12,7 +12,10 @@ import {
 } from '@/components/ui/select';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
 import type { TaskStatus, ExecutorProfileId } from 'shared/types';
-import type { TaskGroupNodeBaseStrategy, TaskGroupNodeKind } from '@/types/task-group';
+import type {
+  TaskGroupNodeBaseStrategy,
+  TaskGroupNodeKind,
+} from '@/types/task-group';
 
 export type TaskGroupNodeInlineUpdate = {
   kind?: TaskGroupNodeKind;
@@ -59,8 +62,16 @@ const TaskGroupNode = ({ data, selected }: NodeProps<TaskGroupFlowNode>) => {
     >
       {!isMaster && (
         <>
-          <Handle type="target" position={Position.Left} className="!h-2 !w-2" />
-          <Handle type="source" position={Position.Right} className="!h-2 !w-2" />
+          <Handle
+            type="target"
+            position={Position.Left}
+            className="!h-2 !w-2"
+          />
+          <Handle
+            type="source"
+            position={Position.Right}
+            className="!h-2 !w-2"
+          />
         </>
       )}
 
@@ -71,7 +82,9 @@ const TaskGroupNode = ({ data, selected }: NodeProps<TaskGroupFlowNode>) => {
           </div>
           <div className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
             {isMaster ? 'Primary' : KIND_LABELS[data.kind]}
-            {!isMaster && typeof data.phase === 'number' && ` · Phase ${data.phase}`}
+            {!isMaster &&
+              typeof data.phase === 'number' &&
+              ` · Phase ${data.phase}`}
           </div>
         </div>
         {data.status && (

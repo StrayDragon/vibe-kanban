@@ -23,17 +23,14 @@ pub async fn list_directory(
     match deployment.filesystem().list_directory(query.path).await {
         Ok(response) => Ok(ResponseJson(ApiResponse::success(response))),
         Err(FilesystemError::DirectoryDoesNotExist) => {
-            Ok(ResponseJson(ApiResponse::error("Directory does not exist")))
+            Err(ApiError::NotFound("Directory does not exist".to_string()))
         }
         Err(FilesystemError::PathIsNotDirectory) => {
-            Ok(ResponseJson(ApiResponse::error("Path is not a directory")))
+            Err(ApiError::BadRequest("Path is not a directory".to_string()))
         }
         Err(FilesystemError::Io(e)) => {
             tracing::error!("Failed to read directory: {}", e);
-            Ok(ResponseJson(ApiResponse::error(&format!(
-                "Failed to read directory: {}",
-                e
-            ))))
+            Err(ApiError::Io(e))
         }
     }
 }
@@ -56,17 +53,14 @@ pub async fn list_git_repos(
     match res {
         Ok(response) => Ok(ResponseJson(ApiResponse::success(response))),
         Err(FilesystemError::DirectoryDoesNotExist) => {
-            Ok(ResponseJson(ApiResponse::error("Directory does not exist")))
+            Err(ApiError::NotFound("Directory does not exist".to_string()))
         }
         Err(FilesystemError::PathIsNotDirectory) => {
-            Ok(ResponseJson(ApiResponse::error("Path is not a directory")))
+            Err(ApiError::BadRequest("Path is not a directory".to_string()))
         }
         Err(FilesystemError::Io(e)) => {
             tracing::error!("Failed to read directory: {}", e);
-            Ok(ResponseJson(ApiResponse::error(&format!(
-                "Failed to read directory: {}",
-                e
-            ))))
+            Err(ApiError::Io(e))
         }
     }
 }

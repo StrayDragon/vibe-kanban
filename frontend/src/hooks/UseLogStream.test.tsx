@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { useLogStream } from './useLogStream';
+import { useLogStream } from './execution-processes/useLogStream';
 import { streamLogEntries } from '@/utils/streamLogEntries';
 import type { ApiResponse, LogHistoryPage, PatchType } from 'shared/types';
 
@@ -11,7 +11,9 @@ vi.mock('@/utils/streamLogEntries', () => ({
 
 const streamLogEntriesMock = vi.mocked(streamLogEntries);
 
-const makeApiResponse = (data: LogHistoryPage): ApiResponse<LogHistoryPage> => ({
+const makeApiResponse = (
+  data: LogHistoryPage
+): ApiResponse<LogHistoryPage> => ({
   success: true,
   data,
   error_data: null,

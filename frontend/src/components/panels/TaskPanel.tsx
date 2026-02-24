@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { useProject } from '@/contexts/ProjectContext';
-import { useTaskAttemptsWithSessions } from '@/hooks/useTaskAttempts';
-import { useTaskAttemptWithSession } from '@/hooks/useTaskAttempt';
+import { useTaskAttemptsWithSessions } from '@/hooks/task-attempts/useTaskAttempts';
+import { useTaskAttemptWithSession } from '@/hooks/task-attempts/useTaskAttempt';
 import { useNavigateWithSearch } from '@/hooks';
 import { paths } from '@/lib/paths';
 import type { TaskWithAttemptStatus } from 'shared/types';

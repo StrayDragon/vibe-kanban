@@ -1,14 +1,13 @@
 use std::time::Duration;
 
 use db::{
-    DBService,
+    DBService, DbErr,
     models::{
         merge::{Merge, MergeStatus, PrMerge},
         task::{Task, TaskStatus},
         workspace::{Workspace, WorkspaceError},
     },
 };
-use db::DbErr;
 use thiserror::Error;
 use tokio::time::interval;
 use tracing::{debug, error, info};

@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, Set,
+    sea_query::{Expr, ExprTrait, Query},
 };
-use sea_orm::sea_query::{Expr, ExprTrait, Query};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
@@ -46,9 +46,7 @@ impl Repo {
 
     /// Get repos that still have the migration sentinel as their name.
     /// Used by the startup backfill to fix repo names.
-    pub async fn list_needing_name_fix<C: ConnectionTrait>(
-        db: &C,
-    ) -> Result<Vec<Self>, DbErr> {
+    pub async fn list_needing_name_fix<C: ConnectionTrait>(db: &C) -> Result<Vec<Self>, DbErr> {
         let records = repo::Entity::find()
             .filter(repo::Column::Name.eq("__NEEDS_BACKFILL__"))
             .all(db)
@@ -76,10 +74,7 @@ impl Repo {
         Ok(())
     }
 
-    pub async fn find_by_id<C: ConnectionTrait>(
-        db: &C,
-        id: Uuid,
-    ) -> Result<Option<Self>, DbErr> {
+    pub async fn find_by_id<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<Option<Self>, DbErr> {
         let record = repo::Entity::find()
             .filter(repo::Column::Uuid.eq(id))
             .one(db)
@@ -157,13 +152,12 @@ impl Repo {
                             .to_owned(),
                     )
                     .and(
-                        Expr::col((repo::Entity, repo::Column::Id))
-                            .not_in_subquery(
-                                Query::select()
-                                    .column(workspace_repo::Column::RepoId)
-                                    .from(workspace_repo::Entity)
-                                    .to_owned(),
-                            ),
+                        Expr::col((repo::Entity, repo::Column::Id)).not_in_subquery(
+                            Query::select()
+                                .column(workspace_repo::Column::RepoId)
+                                .from(workspace_repo::Entity)
+                                .to_owned(),
+                        ),
                     ),
             )
             .to_owned();

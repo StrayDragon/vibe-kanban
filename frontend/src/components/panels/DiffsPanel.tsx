@@ -1,4 +1,4 @@
-import { useDiffStream } from '@/hooks/useDiffStream';
+import { useDiffStream } from '@/hooks/task-attempts/useDiffStream';
 import { useMemo, useCallback, useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader } from '@/components/ui/loader';

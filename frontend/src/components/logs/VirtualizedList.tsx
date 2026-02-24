@@ -14,7 +14,7 @@ import {
   AddEntryType,
   PatchTypeWithKey,
   useConversationHistory,
-} from '@/hooks/useConversationHistory';
+} from '@/hooks/execution-processes/useConversationHistory';
 import { Loader2 } from 'lucide-react';
 import { TaskWithAttemptStatus } from 'shared/types';
 import type { WorkspaceWithSession } from '@/types/attempt';
@@ -154,45 +154,48 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     return remaining <= 48;
   }, []);
 
-  const captureAnchor = useCallback((targetRef: {
-    current: { key: string; offset: number; index: number } | null;
-  }) => {
-    const scroller = scrollerElementRef.current;
-    if (!scroller || entries.length === 0) return;
+  const captureAnchor = useCallback(
+    (targetRef: {
+      current: { key: string; offset: number; index: number } | null;
+    }) => {
+      const scroller = scrollerElementRef.current;
+      if (!scroller || entries.length === 0) return;
 
-    const scrollerRect = scroller.getBoundingClientRect();
-    const items = Array.from(
-      scroller.querySelectorAll<HTMLElement>('[data-index]')
-    );
+      const scrollerRect = scroller.getBoundingClientRect();
+      const items = Array.from(
+        scroller.querySelectorAll<HTMLElement>('[data-index]')
+      );
 
-    if (items.length === 0) return;
+      if (items.length === 0) return;
 
-    const visibleItems = items
-      .map((el) => ({ el, rect: el.getBoundingClientRect() }))
-      .filter(
-        ({ rect }) =>
-          rect.bottom > scrollerRect.top && rect.top < scrollerRect.bottom
-      )
-      .sort((a, b) => a.rect.top - b.rect.top);
+      const visibleItems = items
+        .map((el) => ({ el, rect: el.getBoundingClientRect() }))
+        .filter(
+          ({ rect }) =>
+            rect.bottom > scrollerRect.top && rect.top < scrollerRect.bottom
+        )
+        .sort((a, b) => a.rect.top - b.rect.top);
 
-    const anchorItem = visibleItems[0] ?? {
-      el: items[0],
-      rect: items[0].getBoundingClientRect(),
-    };
+      const anchorItem = visibleItems[0] ?? {
+        el: items[0],
+        rect: items[0].getBoundingClientRect(),
+      };
 
-    const indexAttr = anchorItem.el.getAttribute('data-index');
-    const index = indexAttr ? Number(indexAttr) : Number.NaN;
-    if (!Number.isFinite(index)) return;
+      const indexAttr = anchorItem.el.getAttribute('data-index');
+      const index = indexAttr ? Number(indexAttr) : Number.NaN;
+      if (!Number.isFinite(index)) return;
 
-    const entry = entries[index];
-    if (!entry) return;
+      const entry = entries[index];
+      if (!entry) return;
 
-    targetRef.current = {
-      key: entry.patchKey,
-      offset: anchorItem.rect.top - scrollerRect.top,
-      index,
-    };
-  }, [entries]);
+      targetRef.current = {
+        key: entry.patchKey,
+        offset: anchorItem.rect.top - scrollerRect.top,
+        index,
+      };
+    },
+    [entries]
+  );
 
   const captureHistoricAnchor = useCallback(() => {
     captureAnchor(pendingHistoricAnchorRef);
@@ -265,9 +268,7 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     } else if (shouldCaptureResizeAnchor) {
       const anchor = pendingResizeAnchorRef.current;
       const shouldPreserveAnchor =
-        anchor &&
-        minChangedIndex !== null &&
-        minChangedIndex <= anchor.index;
+        anchor && minChangedIndex !== null && minChangedIndex <= anchor.index;
 
       if (shouldPreserveAnchor) {
         pendingResizeAnchorRef.current = null;

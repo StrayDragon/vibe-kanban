@@ -7,8 +7,8 @@ mod schema;
 
 pub use editor::{EditorConfig, EditorOpenError, EditorType};
 pub use schema::{
-    Config, DiffPreviewGuardPreset, GitHubConfig, NotificationConfig, ShowcaseState, SoundFile,
-    ThemeMode, UiLanguage, CURRENT_CONFIG_VERSION,
+    AccessControlConfig, AccessControlMode, CURRENT_CONFIG_VERSION, Config, DiffPreviewGuardPreset,
+    GitHubConfig, NotificationConfig, ShowcaseState, SoundFile, ThemeMode, UiLanguage,
 };
 
 #[derive(Debug, Error)]

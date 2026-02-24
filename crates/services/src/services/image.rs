@@ -4,9 +4,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use db::models::image::{CreateImage, Image};
+use db::{
+    DbErr,
+    models::image::{CreateImage, Image},
+};
 use sha2::{Digest, Sha256};
-use db::DbErr;
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]

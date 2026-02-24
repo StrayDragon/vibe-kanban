@@ -21,12 +21,14 @@ use executors::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use services::services::config::{
-    Config, ConfigError, SoundFile,
-    editor::{EditorConfig, EditorType},
-    save_config_to_file,
+use services::services::{
+    config::{
+        Config, ConfigError, SoundFile,
+        editor::{EditorConfig, EditorType},
+        save_config_to_file,
+    },
+    github::GitHubService,
 };
-use services::services::github::GitHubService;
 use tokio::fs;
 use ts_rs::TS;
 use utils::{assets::config_path, response::ApiResponse};
@@ -94,9 +96,11 @@ async fn get_user_system_info(
     State(deployment): State<DeploymentImpl>,
 ) -> ResponseJson<ApiResponse<UserSystemInfo>> {
     let config = deployment.config().read().await;
+    let mut redacted_config = config.clone();
+    redacted_config.access_control.token = None;
 
     let user_system_info = UserSystemInfo {
-        config: config.clone(),
+        config: redacted_config,
         profiles: ExecutorConfigs::get_cached(),
         environment: Environment::new(),
         capabilities: {
@@ -118,34 +122,50 @@ async fn get_user_system_info(
 async fn update_config(
     State(deployment): State<DeploymentImpl>,
     Json(new_config): Json<Config>,
-) -> ResponseJson<ApiResponse<Config>> {
+) -> Result<ResponseJson<ApiResponse<Config>>, ApiError> {
     let config_path = config_path();
 
     // Validate git branch prefix
     if !utils::git::is_valid_branch_prefix(&new_config.git_branch_prefix) {
-        return ResponseJson(ApiResponse::error(
-            "Invalid git branch prefix. Must be a valid git branch name component without slashes.",
+        return Err(ApiError::BadRequest(
+            "Invalid git branch prefix. Must be a valid git branch name component without slashes."
+                .to_string(),
         ));
     }
 
     let new_config = new_config.normalized();
 
+    if matches!(
+        new_config.access_control.mode,
+        services::services::config::AccessControlMode::Token
+    ) && new_config
+        .access_control
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .is_none()
+    {
+        return Err(ApiError::BadRequest(
+            "accessControl.token is required when accessControl.mode=TOKEN".to_string(),
+        ));
+    }
+
     // Get old config state before updating
     let old_config = deployment.config().read().await.clone();
 
-    match save_config_to_file(&new_config, &config_path).await {
-        Ok(_) => {
-            let mut config = deployment.config().write().await;
-            *config = new_config.clone();
-            drop(config);
+    save_config_to_file(&new_config, &config_path).await?;
 
-            // Run side effects on config transitions
-            handle_config_events(&deployment, &old_config, &new_config).await;
+    let mut config = deployment.config().write().await;
+    *config = new_config.clone();
+    drop(config);
 
-            ResponseJson(ApiResponse::success(new_config))
-        }
-        Err(e) => ResponseJson(ApiResponse::error(&format!("Failed to save config: {}", e))),
-    }
+    // Run side effects on config transitions
+    handle_config_events(&deployment, &old_config, &new_config).await;
+
+    let mut response_config = new_config;
+    response_config.access_control.token = None;
+    Ok(ResponseJson(ApiResponse::success(response_config)))
 }
 
 async fn handle_config_events(deployment: &DeploymentImpl, old: &Config, new: &Config) {
@@ -199,18 +219,18 @@ async fn get_mcp_servers(
         ))?;
 
     if !coding_agent.supports_mcp() {
-        return Ok(ResponseJson(ApiResponse::error(
-            "MCP not supported by this executor",
-        )));
+        return Err(ApiError::BadRequest(
+            "MCP not supported by this executor".to_string(),
+        ));
     }
 
     // Resolve supplied config path or agent default
     let config_path = match coding_agent.default_mcp_config_path() {
         Some(path) => path,
         None => {
-            return Ok(ResponseJson(ApiResponse::error(
-                "Could not determine config file path",
-            )));
+            return Err(ApiError::BadRequest(
+                "Could not determine config file path".to_string(),
+            ));
         }
     };
 
@@ -237,28 +257,27 @@ async fn update_mcp_servers(
         ))?;
 
     if !agent.supports_mcp() {
-        return Ok(ResponseJson(ApiResponse::error(
-            "This executor does not support MCP servers",
-        )));
+        return Err(ApiError::BadRequest(
+            "This executor does not support MCP servers".to_string(),
+        ));
     }
 
     // Resolve supplied config path or agent default
     let config_path = match agent.default_mcp_config_path() {
         Some(path) => path.to_path_buf(),
         None => {
-            return Ok(ResponseJson(ApiResponse::error(
-                "Could not determine config file path",
-            )));
+            return Err(ApiError::BadRequest(
+                "Could not determine config file path".to_string(),
+            ));
         }
     };
 
     let mcpc = agent.get_mcp_config();
     match update_mcp_servers_in_config(&config_path, &mcpc, payload.servers).await {
         Ok(message) => Ok(ResponseJson(ApiResponse::success(message))),
-        Err(e) => Ok(ResponseJson(ApiResponse::error(&format!(
-            "Failed to update MCP servers: {}",
-            e
-        )))),
+        Err(e) => Err(ApiError::Internal(format!(
+            "Failed to update MCP servers: {e}"
+        ))),
     }
 }
 
@@ -414,34 +433,31 @@ async fn get_profiles(
 async fn update_profiles(
     State(_deployment): State<DeploymentImpl>,
     body: String,
-) -> ResponseJson<ApiResponse<String>> {
+) -> Result<ResponseJson<ApiResponse<String>>, ApiError> {
     // Try to parse as ExecutorProfileConfigs format
-    match serde_json::from_str::<ExecutorConfigs>(&body) {
-        Ok(executor_profiles) => {
-            // Save the profiles to file
-            match executor_profiles.save_overrides() {
-                Ok(_) => {
-                    tracing::info!("Executor profiles saved successfully");
-                    // Reload the cached profiles
-                    ExecutorConfigs::reload();
-                    ResponseJson(ApiResponse::success(
-                        "Executor profiles updated successfully".to_string(),
-                    ))
-                }
-                Err(e) => {
-                    tracing::error!("Failed to save executor profiles: {}", e);
-                    ResponseJson(ApiResponse::error(&format!(
-                        "Failed to save executor profiles: {}",
-                        e
-                    )))
-                }
-            }
+    let executor_profiles = serde_json::from_str::<ExecutorConfigs>(&body)
+        .map_err(|e| ApiError::BadRequest(format!("Invalid executor profiles format: {e}")))?;
+
+    executor_profiles.save_overrides().map_err(|e| match e {
+        executors::profile::ProfileError::Validation(msg) => ApiError::BadRequest(msg),
+        executors::profile::ProfileError::CannotDeleteExecutor { executor } => {
+            ApiError::BadRequest(format!("Built-in executor '{executor}' cannot be deleted"))
         }
-        Err(e) => ResponseJson(ApiResponse::error(&format!(
-            "Invalid executor profiles format: {}",
-            e
-        ))),
-    }
+        executors::profile::ProfileError::CannotDeleteBuiltInConfig { executor, variant } => {
+            ApiError::BadRequest(format!(
+                "Built-in configuration '{executor}:{variant}' cannot be deleted"
+            ))
+        }
+        executors::profile::ProfileError::Io(err) => ApiError::Io(err),
+        _ => ApiError::Internal(format!("Failed to save executor profiles: {e}")),
+    })?;
+
+    tracing::info!("Executor profiles saved successfully");
+    ExecutorConfigs::reload();
+
+    Ok(ResponseJson(ApiResponse::success(
+        "Executor profiles updated successfully".to_string(),
+    )))
 }
 
 #[derive(Debug, Default)]
@@ -469,18 +485,20 @@ async fn resolve_llman_path(
 
 async fn import_llman_profiles(
     State(deployment): State<DeploymentImpl>,
-) -> ResponseJson<ApiResponse<ImportLlmanProfilesResponse>> {
+) -> Result<ResponseJson<ApiResponse<ImportLlmanProfilesResponse>>, ApiError> {
     let config = deployment.config().read().await;
     let config_path =
         llman::resolve_claude_code_config_path(config.llman_claude_code_path.as_deref());
     let Some(config_path) = config_path else {
-        return ResponseJson(ApiResponse::error("Could not resolve LLMAN config path"));
+        return Err(ApiError::BadRequest(
+            "Could not resolve LLMAN config path".to_string(),
+        ));
     };
 
     let groups = match llman::read_claude_code_groups(&config_path).await {
         Ok(groups) => groups,
         Err(e) => {
-            return ResponseJson(ApiResponse::error(&format!(
+            return Err(ApiError::Internal(format!(
                 "Failed to read LLMAN config: {e}"
             )));
         }
@@ -490,19 +508,21 @@ async fn import_llman_profiles(
     let summary = apply_llman_groups_to_profiles(&mut profiles, &groups);
 
     if let Err(e) = profiles.save_overrides() {
-        return ResponseJson(ApiResponse::error(&format!(
+        return Err(ApiError::Internal(format!(
             "Failed to save executor profiles: {e}"
         )));
     }
 
     ExecutorConfigs::reload();
 
-    ResponseJson(ApiResponse::success(ImportLlmanProfilesResponse {
-        path: config_path.display().to_string(),
-        imported: summary.imported,
-        updated: summary.updated,
-        skipped: summary.skipped,
-    }))
+    Ok(ResponseJson(ApiResponse::success(
+        ImportLlmanProfilesResponse {
+            path: config_path.display().to_string(),
+            imported: summary.imported,
+            updated: summary.updated,
+            skipped: summary.skipped,
+        },
+    )))
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]
@@ -574,7 +594,9 @@ pub struct CliDependencyPreflightResponse {
     pub github_cli: GhCliPreflightStatus,
 }
 
-fn map_github_cli_preflight_status(err: &services::services::github::GitHubServiceError) -> GhCliPreflightStatus {
+fn map_github_cli_preflight_status(
+    err: &services::services::github::GitHubServiceError,
+) -> GhCliPreflightStatus {
     match err {
         services::services::github::GitHubServiceError::GhCliNotInstalled(_) => {
             GhCliPreflightStatus::NotInstalled
@@ -738,9 +760,8 @@ mod tests {
             GhCliPreflightStatus::NotInstalled
         ));
 
-        let not_authenticated = GitHubServiceError::AuthFailed(GhCliError::AuthFailed(
-            "auth failed".to_string(),
-        ));
+        let not_authenticated =
+            GitHubServiceError::AuthFailed(GhCliError::AuthFailed("auth failed".to_string()));
         assert!(matches!(
             map_github_cli_preflight_status(&not_authenticated),
             GhCliPreflightStatus::NotAuthenticated
@@ -758,8 +779,7 @@ mod tests {
     #[test]
     fn set_mcp_servers_in_config_path_rejects_empty_path() {
         let mut raw_config = serde_json::json!({});
-        let result =
-            set_mcp_servers_in_config_path(&mut raw_config, &[], &HashMap::new());
+        let result = set_mcp_servers_in_config_path(&mut raw_config, &[], &HashMap::new());
         assert!(result.is_err());
     }
 
@@ -769,7 +789,10 @@ mod tests {
             "outer": "nope"
         });
         let mut servers = HashMap::new();
-        servers.insert("local".to_string(), serde_json::json!({ "command": "tool" }));
+        servers.insert(
+            "local".to_string(),
+            serde_json::json!({ "command": "tool" }),
+        );
 
         set_mcp_servers_in_config_path(
             &mut raw_config,

@@ -4,7 +4,7 @@ use anyhow::Error as AnyhowError;
 use async_trait::async_trait;
 use axum::response::sse::Event;
 use db::{
-    DBService,
+    DBService, DbErr,
     models::{
         project::{CreateProject, Project},
         project_repo::CreateProjectRepo,
@@ -30,7 +30,6 @@ use services::services::{
     repo::RepoService,
     worktree_manager::WorktreeError,
 };
-use db::DbErr;
 use thiserror::Error;
 use tokio::sync::RwLock;
 

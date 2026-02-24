@@ -3,7 +3,7 @@ import { BaseAgentCapability } from 'shared/types';
 import type { WorkspaceWithSession } from '@/types/attempt';
 import { useUserSystem } from '@/components/ConfigProvider';
 import { useRetryUi } from '@/contexts/RetryUiContext';
-import { useAttemptExecution } from '@/hooks/useAttemptExecution';
+import { useAttemptExecution } from '@/hooks/task-attempts/useAttemptExecution';
 import { RetryEditorInline } from './RetryEditorInline';
 import TranslatableContent from './TranslatableContent';
 

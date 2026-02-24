@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { useConversationHistory } from './useConversationHistory';
+import { useConversationHistory } from './execution-processes/useConversationHistory';
 import { streamLogEntries } from '@/utils/streamLogEntries';
 import type {
   ApiResponse,
@@ -27,7 +27,9 @@ vi.mock('@/utils/streamLogEntries', () => ({
 
 const streamLogEntriesMock = vi.mocked(streamLogEntries);
 
-const makeApiResponse = (data: LogHistoryPage): ApiResponse<LogHistoryPage> => ({
+const makeApiResponse = (
+  data: LogHistoryPage
+): ApiResponse<LogHistoryPage> => ({
   success: true,
   data,
   error_data: null,
@@ -75,16 +77,19 @@ describe('useConversationHistory', () => {
       },
     };
 
-    const pages: LogHistoryPage[] = Array.from({ length: 11 }, (_, pageIndex) => {
-      const start = 201 - pageIndex * 20;
-      const entries = Array.from({ length: 20 }, (_, i) => ({
-        entry_index: BigInt(start + i),
-        entry: normalizedEntry,
-      }));
-      const next_cursor = BigInt(start);
-      const has_more = pageIndex < 10;
-      return { entries, next_cursor, has_more, history_truncated: false };
-    });
+    const pages: LogHistoryPage[] = Array.from(
+      { length: 11 },
+      (_, pageIndex) => {
+        const start = 201 - pageIndex * 20;
+        const entries = Array.from({ length: 20 }, (_, i) => ({
+          entry_index: BigInt(start + i),
+          entry: normalizedEntry,
+        }));
+        const next_cursor = BigInt(start);
+        const has_more = pageIndex < 10;
+        return { entries, next_cursor, has_more, history_truncated: false };
+      }
+    );
 
     const fetchMock = vi.fn();
     pages.forEach((page) => {
@@ -136,7 +141,7 @@ describe('useConversationHistory', () => {
     const fetchCalls = fetchMock.mock.calls;
     const lastCall =
       fetchCalls.length > 0
-        ? fetchCalls[fetchCalls.length - 1]?.[0] ?? ''
+        ? (fetchCalls[fetchCalls.length - 1]?.[0] ?? '')
         : '';
     expect(lastCall).toContain(
       `cursor=${pages[0].entries[0].entry_index.toString()}`
@@ -361,8 +366,9 @@ describe('useConversationHistory', () => {
     });
 
     const lastEntries: PatchType[] =
-      onEntriesUpdated.mock.calls[onEntriesUpdated.mock.calls.length - 1]?.[0] ??
-      [];
+      onEntriesUpdated.mock.calls[
+        onEntriesUpdated.mock.calls.length - 1
+      ]?.[0] ?? [];
     expect(
       lastEntries.some(
         (entry) =>

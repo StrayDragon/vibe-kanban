@@ -6,8 +6,8 @@ use executors::{
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, Set,
+    sea_query::{Expr, ExprTrait, JoinType, Order, Query},
 };
-use sea_orm::sea_query::{Expr, ExprTrait, JoinType, Order, Query};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -24,7 +24,6 @@ use super::{
     workspace_repo::WorkspaceRepo,
 };
 pub use crate::types::{ExecutionProcessRunReason, ExecutionProcessStatus};
-
 use crate::{
     entities::{
         coding_agent_turn, execution_process, execution_process_repo_state, repo, session, task,
@@ -142,10 +141,7 @@ impl ExecutionProcess {
     }
 
     /// Find execution process by ID
-    pub async fn find_by_id<C: ConnectionTrait>(
-        db: &C,
-        id: Uuid,
-    ) -> Result<Option<Self>, DbErr> {
+    pub async fn find_by_id<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<Option<Self>, DbErr> {
         let record = execution_process::Entity::find()
             .filter(execution_process::Column::Uuid.eq(id))
             .one(db)
@@ -197,15 +193,17 @@ impl ExecutionProcess {
                 .join(
                     JoinType::InnerJoin,
                     execution_process::Entity,
-                    Expr::col((execution_process::Entity, execution_process::Column::Id))
-                        .equals((
-                            execution_process_repo_state::Entity,
-                            execution_process_repo_state::Column::ExecutionProcessId,
-                        )),
+                    Expr::col((execution_process::Entity, execution_process::Column::Id)).equals((
+                        execution_process_repo_state::Entity,
+                        execution_process_repo_state::Column::ExecutionProcessId,
+                    )),
                 )
                 .and_where(
-                    Expr::col((execution_process::Entity, execution_process::Column::SessionId))
-                        .eq(process.session_id),
+                    Expr::col((
+                        execution_process::Entity,
+                        execution_process::Column::SessionId,
+                    ))
+                    .eq(process.session_id),
                 )
                 .and_where(
                     Expr::col((
@@ -215,10 +213,19 @@ impl ExecutionProcess {
                     .eq(state.repo_id),
                 )
                 .and_where(
-                    Expr::col((execution_process::Entity, execution_process::Column::CreatedAt))
-                        .lt(process.created_at),
+                    Expr::col((
+                        execution_process::Entity,
+                        execution_process::Column::CreatedAt,
+                    ))
+                    .lt(process.created_at),
                 )
-                .order_by((execution_process::Entity, execution_process::Column::CreatedAt), Order::Desc)
+                .order_by(
+                    (
+                        execution_process::Entity,
+                        execution_process::Column::CreatedAt,
+                    ),
+                    Order::Desc,
+                )
                 .limit(1)
                 .to_owned();
 
@@ -575,7 +582,9 @@ impl ExecutionProcess {
 
         Self::find_by_id(db, process_id)
             .await?
-            .ok_or(DbErr::RecordNotFound("Execution process not found".to_string()))
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))
     }
 
     pub async fn was_stopped<C: ConnectionTrait>(db: &C, id: Uuid) -> bool {
@@ -605,7 +614,9 @@ impl ExecutionProcess {
             .filter(execution_process::Column::Uuid.eq(id))
             .one(db)
             .await?
-            .ok_or(DbErr::RecordNotFound("Execution process not found".to_string()))?;
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
 
         let session_uuid = ids::session_uuid_by_id(db, record.session_id)
             .await?
@@ -654,7 +665,9 @@ impl ExecutionProcess {
             .filter(execution_process::Column::Uuid.eq(boundary_process_id))
             .one(db)
             .await?
-            .ok_or(DbErr::RecordNotFound("Execution process not found".to_string()))?;
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
 
         let affected = execution_process::Entity::find()
             .filter(execution_process::Column::SessionId.eq(session_row_id))
@@ -704,7 +717,9 @@ impl ExecutionProcess {
             .filter(execution_process::Column::Uuid.eq(boundary_process_id))
             .one(db)
             .await?
-            .ok_or(DbErr::RecordNotFound("Execution process not found".to_string()))?;
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
         let repo_row_id = ids::repo_id_by_uuid(db, repo_id)
             .await?
             .ok_or(DbErr::RecordNotFound("Repo not found".to_string()))?;
@@ -715,15 +730,17 @@ impl ExecutionProcess {
             .join(
                 JoinType::InnerJoin,
                 execution_process::Entity,
-                Expr::col((execution_process::Entity, execution_process::Column::Id))
-                    .equals((
-                        execution_process_repo_state::Entity,
-                        execution_process_repo_state::Column::ExecutionProcessId,
-                    )),
+                Expr::col((execution_process::Entity, execution_process::Column::Id)).equals((
+                    execution_process_repo_state::Entity,
+                    execution_process_repo_state::Column::ExecutionProcessId,
+                )),
             )
             .and_where(
-                Expr::col((execution_process::Entity, execution_process::Column::SessionId))
-                    .eq(session_row_id),
+                Expr::col((
+                    execution_process::Entity,
+                    execution_process::Column::SessionId,
+                ))
+                .eq(session_row_id),
             )
             .and_where(
                 Expr::col((
@@ -733,10 +750,19 @@ impl ExecutionProcess {
                 .eq(repo_row_id),
             )
             .and_where(
-                Expr::col((execution_process::Entity, execution_process::Column::CreatedAt))
-                    .lt(boundary.created_at),
+                Expr::col((
+                    execution_process::Entity,
+                    execution_process::Column::CreatedAt,
+                ))
+                .lt(boundary.created_at),
             )
-            .order_by((execution_process::Entity, execution_process::Column::CreatedAt), Order::Desc)
+            .order_by(
+                (
+                    execution_process::Entity,
+                    execution_process::Column::CreatedAt,
+                ),
+                Order::Desc,
+            )
             .limit(1)
             .to_owned();
 
@@ -777,9 +803,12 @@ impl ExecutionProcess {
         db: &C,
         exec_id: Uuid,
     ) -> Result<ExecutionContext, DbErr> {
-        let execution_process = Self::find_by_id(db, exec_id)
-            .await?
-            .ok_or(DbErr::RecordNotFound("Execution process not found".to_string()))?;
+        let execution_process =
+            Self::find_by_id(db, exec_id)
+                .await?
+                .ok_or(DbErr::RecordNotFound(
+                    "Execution process not found".to_string(),
+                ))?;
 
         let session = Session::find_by_id(db, execution_process.session_id)
             .await?

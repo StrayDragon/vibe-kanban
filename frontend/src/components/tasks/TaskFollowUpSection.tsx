@@ -33,8 +33,8 @@ import {
   type TaskWithAttemptStatus,
 } from 'shared/types';
 import { useBranchStatus } from '@/hooks';
-import { useAttemptRepo } from '@/hooks/useAttemptRepo';
-import { useAttemptExecution } from '@/hooks/useAttemptExecution';
+import { useAttemptRepo } from '@/hooks/task-attempts/useAttemptRepo';
+import { useAttemptExecution } from '@/hooks/task-attempts/useAttemptExecution';
 import { useUserSystem } from '@/components/ConfigProvider';
 import { cn } from '@/lib/utils';
 //
@@ -46,14 +46,14 @@ import { useHotkeysContext } from 'react-hotkeys-hook';
 import { useProject } from '@/contexts/ProjectContext';
 //
 import { VariantSelector } from '@/components/tasks/VariantSelector';
-import { useAttemptBranch } from '@/hooks/useAttemptBranch';
+import { useAttemptBranch } from '@/hooks/task-attempts/useAttemptBranch';
 import { FollowUpConflictSection } from '@/components/tasks/follow-up/FollowUpConflictSection';
 import { ClickedElementsBanner } from '@/components/tasks/ClickedElementsBanner';
 import WYSIWYGEditor from '@/components/ui/wysiwyg';
 import { useRetryUi } from '@/contexts/RetryUiContext';
-import { useFollowUpEditor } from '@/hooks/useFollowUpEditor';
-import { useFollowUpSend } from '@/hooks/useFollowUpSend';
-import { useVariant } from '@/hooks/useVariant';
+import { useFollowUpEditor } from '@/hooks/task-attempts/useFollowUpEditor';
+import { useFollowUpSend } from '@/hooks/task-attempts/useFollowUpSend';
+import { useVariant } from '@/hooks/config/useVariant';
 import type {
   DraftFollowUpData,
   ExecutorAction,
@@ -61,9 +61,9 @@ import type {
 } from 'shared/types';
 import { buildResolveConflictsInstructions } from '@/lib/conflicts';
 import { useTranslation } from 'react-i18next';
-import { useScratch } from '@/hooks/useScratch';
-import { useDebouncedCallback } from '@/hooks/useDebouncedCallback';
-import { useQueueStatus } from '@/hooks/useQueueStatus';
+import { useScratch } from '@/hooks/scratch/useScratch';
+import { useDebouncedCallback } from '@/hooks/utils/useDebouncedCallback';
+import { useQueueStatus } from '@/hooks/sessions/useQueueStatus';
 import { attemptsApi, projectsApi } from '@/lib/api';
 import { GitHubCommentsDialog } from '@/components/dialogs/tasks/GitHubCommentsDialog';
 import { ConfirmDialog } from '@/components/dialogs';
@@ -319,7 +319,12 @@ export function TaskFollowUpSection({
     if (isScratchLoading) return;
     if (isTextareaFocused) return; // Don't overwrite while user is typing
     setLocalMessage(scratchData?.message ?? '');
-  }, [isScratchLoading, scratchData?.message, isTextareaFocused, setLocalMessage]);
+  }, [
+    isScratchLoading,
+    scratchData?.message,
+    isTextareaFocused,
+    setLocalMessage,
+  ]);
 
   // Track previous process count to detect new processes
   const prevProcessCountRef = useRef(processes.length);

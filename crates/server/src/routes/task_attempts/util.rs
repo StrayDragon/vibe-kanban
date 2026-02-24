@@ -1,10 +1,13 @@
 use std::path::PathBuf;
 
-use db::models::{
-    execution_process::ExecutionProcess, execution_process_repo_state::ExecutionProcessRepoState,
-    workspace::Workspace, workspace_repo::WorkspaceRepo,
+use db::{
+    DbPool,
+    models::{
+        execution_process::ExecutionProcess,
+        execution_process_repo_state::ExecutionProcessRepoState, workspace::Workspace,
+        workspace_repo::WorkspaceRepo,
+    },
 };
-use db::DbPool;
 use deployment::Deployment;
 use services::services::{container::ContainerService, git::WorktreeResetOptions};
 use uuid::Uuid;

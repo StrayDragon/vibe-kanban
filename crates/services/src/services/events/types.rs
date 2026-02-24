@@ -1,6 +1,5 @@
 use anyhow::Error as AnyhowError;
-use db::DbErr;
-use db::models::scratch::ScratchError;
+use db::{DbErr, models::scratch::ScratchError};
 use thiserror::Error;
 
 #[derive(Debug, Error)]

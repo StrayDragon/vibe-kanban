@@ -47,10 +47,7 @@ impl Session {
         }
     }
 
-    pub async fn find_by_id<C: ConnectionTrait>(
-        db: &C,
-        id: Uuid,
-    ) -> Result<Option<Self>, DbErr> {
+    pub async fn find_by_id<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<Option<Self>, DbErr> {
         let record = session::Entity::find()
             .filter(session::Column::Uuid.eq(id))
             .one(db)

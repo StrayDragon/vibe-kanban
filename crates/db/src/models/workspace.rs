@@ -270,10 +270,7 @@ impl Workspace {
         Ok(())
     }
 
-    pub async fn delete<C: ConnectionTrait>(
-        db: &C,
-        workspace_id: Uuid,
-    ) -> Result<u64, DbErr> {
+    pub async fn delete<C: ConnectionTrait>(db: &C, workspace_id: Uuid) -> Result<u64, DbErr> {
         let record = workspace::Entity::find()
             .filter(workspace::Column::Uuid.eq(workspace_id))
             .one(db)
@@ -293,9 +290,11 @@ impl Workspace {
             .await?;
 
         if result.rows_affected > 0 {
-            let payload =
-                serde_json::to_value(WorkspaceEventPayload { workspace_id, task_id })
-                    .map_err(|err| DbErr::Custom(err.to_string()))?;
+            let payload = serde_json::to_value(WorkspaceEventPayload {
+                workspace_id,
+                task_id,
+            })
+            .map_err(|err| DbErr::Custom(err.to_string()))?;
             EventOutbox::enqueue(
                 db,
                 EVENT_WORKSPACE_DELETED,
@@ -309,10 +308,7 @@ impl Workspace {
         Ok(result.rows_affected)
     }
 
-    pub async fn find_by_id<C: ConnectionTrait>(
-        db: &C,
-        id: Uuid,
-    ) -> Result<Option<Self>, DbErr> {
+    pub async fn find_by_id<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<Option<Self>, DbErr> {
         let record = workspace::Entity::find()
             .filter(workspace::Column::Uuid.eq(id))
             .one(db)
@@ -362,12 +358,11 @@ impl Workspace {
 
             if !session_ids.is_empty() {
                 let running_exists = crate::entities::execution_process::Entity::find()
-                    .filter(crate::entities::execution_process::Column::SessionId.is_in(
-                        session_ids.clone(),
-                    ))
                     .filter(
-                        crate::entities::execution_process::Column::CompletedAt.is_null(),
+                        crate::entities::execution_process::Column::SessionId
+                            .is_in(session_ids.clone()),
                     )
+                    .filter(crate::entities::execution_process::Column::CompletedAt.is_null())
                     .one(db)
                     .await?
                     .is_some();
@@ -381,12 +376,10 @@ impl Workspace {
                 None
             } else {
                 crate::entities::execution_process::Entity::find()
-                    .filter(crate::entities::execution_process::Column::SessionId.is_in(
-                        session_ids,
-                    ))
                     .filter(
-                        crate::entities::execution_process::Column::CompletedAt.is_not_null(),
+                        crate::entities::execution_process::Column::SessionId.is_in(session_ids),
                     )
+                    .filter(crate::entities::execution_process::Column::CompletedAt.is_not_null())
                     .order_by_desc(crate::entities::execution_process::Column::CompletedAt)
                     .one(db)
                     .await?
@@ -433,8 +426,11 @@ impl Workspace {
         };
 
         let model = active.insert(db).await?;
-        let payload = serde_json::to_value(WorkspaceEventPayload { workspace_id: id, task_id })
-            .map_err(|err| DbErr::Custom(err.to_string()))?;
+        let payload = serde_json::to_value(WorkspaceEventPayload {
+            workspace_id: id,
+            task_id,
+        })
+        .map_err(|err| DbErr::Custom(err.to_string()))?;
         EventOutbox::enqueue(db, EVENT_WORKSPACE_CREATED, "workspace", id, payload).await?;
         Ok(Self::from_model(model, task_id))
     }

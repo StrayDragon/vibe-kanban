@@ -10,13 +10,15 @@ use axum::{
     response::{IntoResponse, Json as ResponseJson},
     routing::{delete, get, post, put},
 };
-use db::{DbErr, TransactionTrait};
-use db::models::{
-    image::TaskImage,
-    project::{Project, ProjectError},
-    task::{CreateTask, Task, TaskKind, TaskWithAttemptStatus, UpdateTask},
-    workspace::{CreateWorkspace, Workspace},
-    workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
+use db::{
+    DbErr, TransactionTrait,
+    models::{
+        image::TaskImage,
+        project::{Project, ProjectError},
+        task::{CreateTask, Task, TaskKind, TaskWithAttemptStatus, UpdateTask},
+        workspace::{CreateWorkspace, Workspace},
+        workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
+    },
 };
 use deployment::Deployment;
 use executors::profile::ExecutorProfileId;
@@ -28,7 +30,9 @@ use utils::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{
-    DeploymentImpl, error::ApiError, middleware::load_task_middleware,
+    DeploymentImpl,
+    error::ApiError,
+    middleware::load_task_middleware,
     routes::{task_attempts::WorkspaceRepoInput, task_deletion},
 };
 
@@ -208,9 +212,7 @@ pub async fn create_task_and_start(
             error = %err,
             "Failed to start task attempt"
         );
-        if let Err(cleanup_err) =
-            cleanup_failed_task_start(&deployment, &task, &workspace).await
-        {
+        if let Err(cleanup_err) = cleanup_failed_task_start(&deployment, &task, &workspace).await {
             tracing::error!(
                 task_id = %task.id,
                 workspace_id = %workspace.id,

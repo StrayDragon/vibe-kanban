@@ -17,11 +17,7 @@ use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use utils::log_msg::LogMsg;
 use uuid::Uuid;
 
-use super::{
-    EventService,
-    patches::execution_process_patch,
-    types::EventError,
-};
+use super::{EventService, patches::execution_process_patch, types::EventError};
 
 impl EventService {
     /// Stream raw task messages for a specific project with initial snapshot
@@ -64,85 +60,82 @@ impl EventService {
         let db_pool = self.db.pool.clone();
 
         // Get filtered event stream
-        let filtered_stream =
-            BroadcastStream::new(receiver).filter_map(move |msg_result| {
-                let db_pool = db_pool.clone();
-                async move {
-                    match msg_result {
-                        Ok(LogMsg::JsonPatch(patch)) => {
-                            let project_filter = project_id;
-                            // Filter events based on project_id
-                            if let Some(patch_op) = patch.0.first() {
-                                // Check if this is a direct task patch (new format)
-                                if patch_op.path().starts_with("/tasks/") {
-                                    match patch_op {
-                                        json_patch::PatchOperation::Add(op) => {
-                                            // Parse task data directly from value
-                                            if let Ok(task) =
-                                                serde_json::from_value::<TaskWithAttemptStatus>(
-                                                    op.value.clone(),
-                                                )
-                                                && project_filter
-                                                    .is_none_or(|id| task.project_id == id)
-                                            {
-                                                return Some(Ok(LogMsg::JsonPatch(patch)));
-                                            }
-                                        }
-                                        json_patch::PatchOperation::Replace(op) => {
-                                            // Parse task data directly from value
-                                            if let Ok(task) =
-                                                serde_json::from_value::<TaskWithAttemptStatus>(
-                                                    op.value.clone(),
-                                                )
-                                                && project_filter
-                                                    .is_none_or(|id| task.project_id == id)
-                                            {
-                                                return Some(Ok(LogMsg::JsonPatch(patch)));
-                                            }
-                                        }
-                                        json_patch::PatchOperation::Remove(_) => {
-                                            // For remove operations, we need to check project membership differently
-                                            // We could cache this information or let it pass through for now
-                                            // Since we don't have the task data, we'll allow all removals
-                                            // and let the client handle filtering
+        let filtered_stream = BroadcastStream::new(receiver).filter_map(move |msg_result| {
+            let db_pool = db_pool.clone();
+            async move {
+                match msg_result {
+                    Ok(LogMsg::JsonPatch(patch)) => {
+                        let project_filter = project_id;
+                        // Filter events based on project_id
+                        if let Some(patch_op) = patch.0.first() {
+                            // Check if this is a direct task patch (new format)
+                            if patch_op.path().starts_with("/tasks/") {
+                                match patch_op {
+                                    json_patch::PatchOperation::Add(op) => {
+                                        // Parse task data directly from value
+                                        if let Ok(task) =
+                                            serde_json::from_value::<TaskWithAttemptStatus>(
+                                                op.value.clone(),
+                                            )
+                                            && project_filter.is_none_or(|id| task.project_id == id)
+                                        {
                                             return Some(Ok(LogMsg::JsonPatch(patch)));
                                         }
-                                        _ => {}
                                     }
+                                    json_patch::PatchOperation::Replace(op) => {
+                                        // Parse task data directly from value
+                                        if let Ok(task) =
+                                            serde_json::from_value::<TaskWithAttemptStatus>(
+                                                op.value.clone(),
+                                            )
+                                            && project_filter.is_none_or(|id| task.project_id == id)
+                                        {
+                                            return Some(Ok(LogMsg::JsonPatch(patch)));
+                                        }
+                                    }
+                                    json_patch::PatchOperation::Remove(_) => {
+                                        // For remove operations, we need to check project membership differently
+                                        // We could cache this information or let it pass through for now
+                                        // Since we don't have the task data, we'll allow all removals
+                                        // and let the client handle filtering
+                                        return Some(Ok(LogMsg::JsonPatch(patch)));
+                                    }
+                                    _ => {}
                                 }
                             }
-                            None
                         }
-                        Ok(other) => Some(Ok(other)), // Pass through non-patch messages
-                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
-                            tracing::warn!(
-                                skipped = skipped,
-                                "tasks stream lagged; resyncing snapshot"
-                            );
-                            let tasks = match project_id {
-                                Some(project_id) => Task::find_by_project_id_with_attempt_status(
-                                    &db_pool, project_id,
-                                )
-                                .await,
-                                None => Task::find_all_with_attempt_status(&db_pool).await,
-                            };
+                        None
+                    }
+                    Ok(other) => Some(Ok(other)), // Pass through non-patch messages
+                    Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                        tracing::warn!(
+                            skipped = skipped,
+                            "tasks stream lagged; resyncing snapshot"
+                        );
+                        let tasks = match project_id {
+                            Some(project_id) => {
+                                Task::find_by_project_id_with_attempt_status(&db_pool, project_id)
+                                    .await
+                            }
+                            None => Task::find_all_with_attempt_status(&db_pool).await,
+                        };
 
-                            match tasks {
-                                Ok(tasks) => Some(Ok(build_tasks_snapshot(tasks))),
-                                Err(err) => {
-                                    tracing::error!(
-                                        error = %err,
-                                        "failed to resync tasks after lag"
-                                    );
-                                    Some(Err(std::io::Error::other(format!(
-                                        "failed to resync tasks after lag: {err}"
-                                    ))))
-                                }
+                        match tasks {
+                            Ok(tasks) => Some(Ok(build_tasks_snapshot(tasks))),
+                            Err(err) => {
+                                tracing::error!(
+                                    error = %err,
+                                    "failed to resync tasks after lag"
+                                );
+                                Some(Err(std::io::Error::other(format!(
+                                    "failed to resync tasks after lag: {err}"
+                                ))))
                             }
                         }
                     }
                 }
-            });
+            }
+        });
 
         // Start with initial snapshot, then live updates
         let initial_stream = futures::stream::once(async move { Ok(initial_msg) });
@@ -189,40 +182,40 @@ impl EventService {
 
         // Get filtered event stream (projects only)
         let filtered_stream = BroadcastStream::new(receiver).filter_map(move |msg_result| {
-                let db_pool = db_pool.clone();
-                async move {
-                    match msg_result {
-                        Ok(LogMsg::JsonPatch(patch)) => {
-                            if let Some(patch_op) = patch.0.first()
-                                && patch_op.path().starts_with("/projects")
-                            {
-                                return Some(Ok(LogMsg::JsonPatch(patch)));
-                            }
-                            None
+            let db_pool = db_pool.clone();
+            async move {
+                match msg_result {
+                    Ok(LogMsg::JsonPatch(patch)) => {
+                        if let Some(patch_op) = patch.0.first()
+                            && patch_op.path().starts_with("/projects")
+                        {
+                            return Some(Ok(LogMsg::JsonPatch(patch)));
                         }
-                        Ok(other) => Some(Ok(other)), // Pass through non-patch messages
-                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
-                            tracing::warn!(
-                                skipped = skipped,
-                                "projects stream lagged; resyncing snapshot"
-                            );
+                        None
+                    }
+                    Ok(other) => Some(Ok(other)), // Pass through non-patch messages
+                    Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                        tracing::warn!(
+                            skipped = skipped,
+                            "projects stream lagged; resyncing snapshot"
+                        );
 
-                            match Project::find_all(&db_pool).await {
-                                Ok(projects) => Some(Ok(build_projects_snapshot(projects))),
-                                Err(err) => {
-                                    tracing::error!(
-                                        error = %err,
-                                        "failed to resync projects after lag"
-                                    );
-                                    Some(Err(std::io::Error::other(format!(
-                                        "failed to resync projects after lag: {err}"
-                                    ))))
-                                }
+                        match Project::find_all(&db_pool).await {
+                            Ok(projects) => Some(Ok(build_projects_snapshot(projects))),
+                            Err(err) => {
+                                tracing::error!(
+                                    error = %err,
+                                    "failed to resync projects after lag"
+                                );
+                                Some(Err(std::io::Error::other(format!(
+                                    "failed to resync projects after lag: {err}"
+                                ))))
                             }
                         }
                     }
                 }
-            });
+            }
+        });
 
         // Start with initial snapshot, then live updates
         let initial_stream = futures::stream::once(async move { Ok(initial_msg) });
@@ -308,119 +301,111 @@ impl EventService {
 
         let receiver = self.msg_store.get_receiver();
 
-        let (initial_msg, session_ids) = build_execution_processes_snapshot(
-            &self.db.pool,
-            workspace_id,
-            show_soft_deleted,
-        )
-        .await?;
+        let (initial_msg, session_ids) =
+            build_execution_processes_snapshot(&self.db.pool, workspace_id, show_soft_deleted)
+                .await?;
         let session_ids = Arc::new(RwLock::new(session_ids));
 
         let db_pool = self.db.pool.clone();
 
         // Get filtered event stream
-        let filtered_stream =
-            BroadcastStream::new(receiver).filter_map(move |msg_result| {
-                let session_ids = Arc::clone(&session_ids);
-                let db_pool = db_pool.clone();
-                async move {
-                    match msg_result {
-                        Ok(LogMsg::JsonPatch(patch)) => {
-                            // Filter events based on session_id (must belong to one of the workspace's sessions)
-                            if let Some(patch_op) = patch.0.first() {
-                                // Check if this is a modern execution process patch
-                                if patch_op.path().starts_with("/execution_processes/") {
-                                    match patch_op {
-                                        json_patch::PatchOperation::Add(op) => {
-                                            // Parse execution process data directly from value
-                                            if let Ok(process) =
-                                                serde_json::from_value::<ExecutionProcess>(
-                                                    op.value.clone(),
-                                                )
-                                                && session_matches_workspace(
-                                                    &session_ids,
-                                                    &db_pool,
-                                                    workspace_id,
-                                                    process.session_id,
-                                                )
-                                                .await
-                                            {
-                                                if !show_soft_deleted && process.dropped {
-                                                    let remove_patch =
-                                                        execution_process_patch::remove(process.id);
-                                                    return Some(Ok(LogMsg::JsonPatch(
-                                                        remove_patch,
-                                                    )));
-                                                }
-                                                return Some(Ok(LogMsg::JsonPatch(patch)));
+        let filtered_stream = BroadcastStream::new(receiver).filter_map(move |msg_result| {
+            let session_ids = Arc::clone(&session_ids);
+            let db_pool = db_pool.clone();
+            async move {
+                match msg_result {
+                    Ok(LogMsg::JsonPatch(patch)) => {
+                        // Filter events based on session_id (must belong to one of the workspace's sessions)
+                        if let Some(patch_op) = patch.0.first() {
+                            // Check if this is a modern execution process patch
+                            if patch_op.path().starts_with("/execution_processes/") {
+                                match patch_op {
+                                    json_patch::PatchOperation::Add(op) => {
+                                        // Parse execution process data directly from value
+                                        if let Ok(process) =
+                                            serde_json::from_value::<ExecutionProcess>(
+                                                op.value.clone(),
+                                            )
+                                            && session_matches_workspace(
+                                                &session_ids,
+                                                &db_pool,
+                                                workspace_id,
+                                                process.session_id,
+                                            )
+                                            .await
+                                        {
+                                            if !show_soft_deleted && process.dropped {
+                                                let remove_patch =
+                                                    execution_process_patch::remove(process.id);
+                                                return Some(Ok(LogMsg::JsonPatch(remove_patch)));
                                             }
-                                        }
-                                        json_patch::PatchOperation::Replace(op) => {
-                                            // Parse execution process data directly from value
-                                            if let Ok(process) =
-                                                serde_json::from_value::<ExecutionProcess>(
-                                                    op.value.clone(),
-                                                )
-                                                && session_matches_workspace(
-                                                    &session_ids,
-                                                    &db_pool,
-                                                    workspace_id,
-                                                    process.session_id,
-                                                )
-                                                .await
-                                            {
-                                                if !show_soft_deleted && process.dropped {
-                                                    let remove_patch =
-                                                        execution_process_patch::remove(process.id);
-                                                    return Some(Ok(LogMsg::JsonPatch(
-                                                        remove_patch,
-                                                    )));
-                                                }
-                                                return Some(Ok(LogMsg::JsonPatch(patch)));
-                                            }
-                                        }
-                                        json_patch::PatchOperation::Remove(_) => {
-                                            // For remove operations, we can't verify session_id
-                                            // so we allow all removals and let the client handle filtering
                                             return Some(Ok(LogMsg::JsonPatch(patch)));
                                         }
-                                        _ => {}
                                     }
+                                    json_patch::PatchOperation::Replace(op) => {
+                                        // Parse execution process data directly from value
+                                        if let Ok(process) =
+                                            serde_json::from_value::<ExecutionProcess>(
+                                                op.value.clone(),
+                                            )
+                                            && session_matches_workspace(
+                                                &session_ids,
+                                                &db_pool,
+                                                workspace_id,
+                                                process.session_id,
+                                            )
+                                            .await
+                                        {
+                                            if !show_soft_deleted && process.dropped {
+                                                let remove_patch =
+                                                    execution_process_patch::remove(process.id);
+                                                return Some(Ok(LogMsg::JsonPatch(remove_patch)));
+                                            }
+                                            return Some(Ok(LogMsg::JsonPatch(patch)));
+                                        }
+                                    }
+                                    json_patch::PatchOperation::Remove(_) => {
+                                        // For remove operations, we can't verify session_id
+                                        // so we allow all removals and let the client handle filtering
+                                        return Some(Ok(LogMsg::JsonPatch(patch)));
+                                    }
+                                    _ => {}
                                 }
                             }
-                            None
                         }
-                        Ok(other) => Some(Ok(other)), // Pass through non-patch messages
-                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
-                            tracing::warn!(
-                                skipped = skipped,
-                                "execution process stream lagged; resyncing snapshot"
-                            );
-                            match build_execution_processes_snapshot(
-                                &db_pool,
-                                workspace_id,
-                                show_soft_deleted,
-                            )
-                            .await
-                            {
-                                Ok((snapshot, refreshed_session_ids)) => {
-                                    *session_ids.write().await = refreshed_session_ids;
-                                    Some(Ok(snapshot))
-                                }
-                                Err(err) => {
-                                    tracing::error!(
-                                        error = %err,
-                                        "failed to resync execution processes after lag"
-                                    );
-                                    Some(Err(std::io::Error::other(format!(
-                                        "failed to resync execution processes after lag: {err}"
-                                    ))))
-                                }
+                        None
+                    }
+                    Ok(other) => Some(Ok(other)), // Pass through non-patch messages
+                    Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                        tracing::warn!(
+                            skipped = skipped,
+                            "execution process stream lagged; resyncing snapshot"
+                        );
+                        match build_execution_processes_snapshot(
+                            &db_pool,
+                            workspace_id,
+                            show_soft_deleted,
+                        )
+                        .await
+                        {
+                            Ok((snapshot, refreshed_session_ids)) => {
+                                *session_ids.write().await = refreshed_session_ids;
+                                Some(Ok(snapshot))
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    error = %err,
+                                    "failed to resync execution processes after lag"
+                                );
+                                Some(Err(std::io::Error::other(format!(
+                                    "failed to resync execution processes after lag: {err}"
+                                ))))
                             }
                         }
                     }
                 }
-            });
+            }
+        });
 
         // Start with initial snapshot, then live updates
         let initial_stream = futures::stream::once(async move { Ok(initial_msg) });
@@ -471,8 +456,7 @@ impl EventService {
 
         let receiver = self.msg_store.get_receiver();
 
-        let initial_msg =
-            load_scratch_snapshot(&self.db.pool, scratch_id, scratch_type).await;
+        let initial_msg = load_scratch_snapshot(&self.db.pool, scratch_id, scratch_type).await;
 
         let db_pool = self.db.pool.clone();
         let scratch_type = *scratch_type;
@@ -480,55 +464,57 @@ impl EventService {
         let type_str = scratch_type.to_string();
 
         // Filter to only this scratch's events by matching id and payload.type in the patch value
-        let filtered_stream =
-            BroadcastStream::new(receiver).filter_map(move |msg_result| {
-                let db_pool = db_pool.clone();
-                let id_str = scratch_id.to_string();
-                let type_str = type_str.clone();
-                async move {
-                    match msg_result {
-                        Ok(LogMsg::JsonPatch(patch)) => {
-                            if let Some(op) = patch.0.first()
-                                && op.path() == "/scratch"
-                            {
-                                // Extract id and payload.type from the patch value
-                                let value = match op {
-                                    json_patch::PatchOperation::Add(a) => Some(&a.value),
-                                    json_patch::PatchOperation::Replace(r) => Some(&r.value),
-                                    json_patch::PatchOperation::Remove(_) => None,
-                                    _ => None,
-                                };
+        let filtered_stream = BroadcastStream::new(receiver).filter_map(move |msg_result| {
+            let db_pool = db_pool.clone();
+            let id_str = scratch_id.to_string();
+            let type_str = type_str.clone();
+            async move {
+                match msg_result {
+                    Ok(LogMsg::JsonPatch(patch)) => {
+                        if let Some(op) = patch.0.first()
+                            && op.path() == "/scratch"
+                        {
+                            // Extract id and payload.type from the patch value
+                            let value = match op {
+                                json_patch::PatchOperation::Add(a) => Some(&a.value),
+                                json_patch::PatchOperation::Replace(r) => Some(&r.value),
+                                json_patch::PatchOperation::Remove(_) => None,
+                                _ => None,
+                            };
 
-                                let matches = value.is_some_and(|v| {
-                                    let id_matches =
-                                        v.get("id").and_then(|v| v.as_str()) == Some(&id_str);
-                                    let type_matches = v
-                                        .get("payload")
-                                        .and_then(|p| p.get("type"))
-                                        .and_then(|t| t.as_str())
-                                        == Some(&type_str);
-                                    id_matches && type_matches
-                                });
+                            let matches = value.is_some_and(|v| {
+                                let id_matches =
+                                    v.get("id").and_then(|v| v.as_str()) == Some(&id_str);
+                                let type_matches = v
+                                    .get("payload")
+                                    .and_then(|p| p.get("type"))
+                                    .and_then(|t| t.as_str())
+                                    == Some(&type_str);
+                                id_matches && type_matches
+                            });
 
-                                if matches {
-                                    return Some(Ok(LogMsg::JsonPatch(patch)));
-                                }
+                            if matches {
+                                return Some(Ok(LogMsg::JsonPatch(patch)));
                             }
-                            None
                         }
-                        Ok(other) => Some(Ok(other)),
-                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
-                            tracing::warn!(
-                                skipped = skipped,
-                                "scratch stream lagged; resyncing snapshot"
-                            );
-                            Some(Ok(
-                                load_scratch_snapshot(&db_pool, scratch_id, &scratch_type).await,
-                            ))
-                        }
+                        None
+                    }
+                    Ok(other) => Some(Ok(other)),
+                    Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                        tracing::warn!(
+                            skipped = skipped,
+                            "scratch stream lagged; resyncing snapshot"
+                        );
+                        Some(Ok(load_scratch_snapshot(
+                            &db_pool,
+                            scratch_id,
+                            &scratch_type,
+                        )
+                        .await))
                     }
                 }
-            });
+            }
+        });
 
         let initial_stream = futures::stream::once(async move { Ok(initial_msg) });
         let combined_stream = initial_stream.chain(filtered_stream).boxed();

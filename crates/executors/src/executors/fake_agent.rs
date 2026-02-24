@@ -134,7 +134,9 @@ impl FakeAgent {
             return builder.build_initial();
         }
 
-        if let Ok(value) = env::var(FAKE_AGENT_PATH_ENV) && !value.trim().is_empty() {
+        if let Ok(value) = env::var(FAKE_AGENT_PATH_ENV)
+            && !value.trim().is_empty()
+        {
             let builder = apply_overrides(CommandBuilder::new(value), &self.cmd);
             return builder.build_initial();
         }
@@ -321,20 +323,40 @@ struct CommandMode<'a> {
 #[derive(Debug, Clone)]
 enum FakeCommand {
     Help,
-    Exec { approvals: Option<bool> },
-    Patch { approvals: Option<bool> },
+    Exec {
+        approvals: Option<bool>,
+    },
+    Patch {
+        approvals: Option<bool>,
+    },
     Mcp,
     WebSearch,
-    Reasoning { text: Option<String> },
-    Message { text: Option<String> },
-    Warning { text: Option<String> },
-    StreamError { text: Option<String> },
+    Reasoning {
+        text: Option<String>,
+    },
+    Message {
+        text: Option<String>,
+    },
+    Warning {
+        text: Option<String>,
+    },
+    StreamError {
+        text: Option<String>,
+    },
     Errors,
     Session,
-    Background { text: Option<String> },
-    Sleep { ms: u64 },
-    Emit { value: serde_json::Value },
-    Notify { value: serde_json::Value },
+    Background {
+        text: Option<String>,
+    },
+    Sleep {
+        ms: u64,
+    },
+    Emit {
+        value: serde_json::Value,
+    },
+    Notify {
+        value: serde_json::Value,
+    },
     Approve {
         call_id: String,
         tool_name: String,
@@ -608,9 +630,8 @@ fn parse_command_segment(segment: &str) -> Result<FakeCommand, FakeAgentError> {
                     "emit command requires JSON payload".to_string(),
                 ));
             }
-            let value: serde_json::Value = serde_json::from_str(rest).map_err(|err| {
-                FakeAgentError::Script(format!("invalid emit JSON: {err}"))
-            })?;
+            let value: serde_json::Value = serde_json::from_str(rest)
+                .map_err(|err| FakeAgentError::Script(format!("invalid emit JSON: {err}")))?;
             Ok(FakeCommand::Emit { value })
         }
         "notify" => {
@@ -619,9 +640,8 @@ fn parse_command_segment(segment: &str) -> Result<FakeCommand, FakeAgentError> {
                     "notify command requires JSON payload".to_string(),
                 ));
             }
-            let value: serde_json::Value = serde_json::from_str(rest).map_err(|err| {
-                FakeAgentError::Script(format!("invalid notify JSON: {err}"))
-            })?;
+            let value: serde_json::Value = serde_json::from_str(rest)
+                .map_err(|err| FakeAgentError::Script(format!("invalid notify JSON: {err}")))?;
             Ok(FakeCommand::Notify { value })
         }
         "approve" | "approval" => parse_approve_command(rest),
@@ -637,9 +657,7 @@ fn parse_approvals_flag(rest: &str) -> Option<bool> {
         let token = token.to_ascii_lowercase();
         match token.as_str() {
             "approvals" | "approval" | "approve" => result = Some(true),
-            "no-approvals" | "no-approval" | "no_approvals" | "no_approval" => {
-                result = Some(false)
-            }
+            "no-approvals" | "no-approval" | "no_approvals" | "no_approval" => result = Some(false),
             _ => {}
         }
     }
@@ -689,7 +707,7 @@ fn parse_approve_command(rest: &str) -> Result<FakeCommand, FakeAgentError> {
         _ => {
             return Err(FakeAgentError::Script(format!(
                 "invalid approval status: {status_token}"
-            )))
+            )));
         }
     };
     Ok(FakeCommand::Approve {
@@ -785,10 +803,7 @@ fn generate_command_steps(
             FakeCommand::Exec { approvals } => {
                 let approvals = approvals.unwrap_or(config.tool_events.approvals);
                 steps.extend(generate_exec_command_steps(
-                    &mut rng,
-                    cwd,
-                    &turn_id,
-                    approvals,
+                    &mut rng, cwd, &turn_id, approvals,
                 )?);
             }
             FakeCommand::Patch { approvals } => {
@@ -846,9 +861,8 @@ fn generate_command_steps(
                 steps.push(FakeAgentStep::Emit(event_line(session_event)?));
             }
             FakeCommand::Background { text } => {
-                let message = text.unwrap_or_else(|| {
-                    format!("fake agent session {session_id} completed")
-                });
+                let message =
+                    text.unwrap_or_else(|| format!("fake agent session {session_id} completed"));
                 let background = EventMsg::BackgroundEvent(BackgroundEventEvent { message });
                 steps.push(FakeAgentStep::Emit(event_line(background)?));
             }
@@ -862,9 +876,8 @@ fn generate_command_steps(
                 steps.push(FakeAgentStep::Emit(event_line(event)?));
             }
             FakeCommand::Notify { value } => {
-                let raw = serde_json::to_string(&value).map_err(|err| {
-                    FakeAgentError::Script(format!("invalid notify JSON: {err}"))
-                })?;
+                let raw = serde_json::to_string(&value)
+                    .map_err(|err| FakeAgentError::Script(format!("invalid notify JSON: {err}")))?;
                 steps.push(FakeAgentStep::Emit(raw));
             }
             FakeCommand::Approve {
@@ -1583,10 +1596,7 @@ mod tests {
 
     #[test]
     fn command_mode_prefix_detection() {
-        assert_eq!(
-            command_mode_body("help exec").unwrap().body.trim(),
-            "exec"
-        );
+        assert_eq!(command_mode_body("help exec").unwrap().body.trim(), "exec");
         assert_eq!(command_mode_body("?exec").unwrap().body.trim(), "exec");
         assert_eq!(command_mode_body("(help").unwrap().body.trim(), "help");
         assert!(command_mode_body("please help exec").is_none());
@@ -1596,10 +1606,7 @@ mod tests {
     fn command_mode_paren_sequence() {
         let commands = parse_command_sequence("help (talk 3", true).expect("commands");
         assert!(matches!(commands.first(), Some(FakeCommand::Help)));
-        assert!(matches!(
-            commands.get(1),
-            Some(FakeCommand::Message { .. })
-        ));
+        assert!(matches!(commands.get(1), Some(FakeCommand::Message { .. })));
     }
 
     #[test]

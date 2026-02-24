@@ -9,7 +9,7 @@ use utils::{assets::SoundAssets, cache_dir};
 
 use super::editor::EditorConfig;
 
-pub const CURRENT_CONFIG_VERSION: &str = "v9";
+pub const CURRENT_CONFIG_VERSION: &str = "v10";
 
 fn default_executor_profile() -> ExecutorProfileId {
     ExecutorProfileId::new(BaseCodingAgent::ClaudeCode)
@@ -65,8 +65,8 @@ pub enum ThemeMode {
 pub enum UiLanguage {
     #[default]
     Browser, // Detect from browser
-    En,      // Force English
-    ZhHans,  // Force Simplified Chinese
+    En,     // Force English
+    ZhHans, // Force Simplified Chinese
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -197,6 +197,34 @@ impl SoundFile {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS, Default)]
+#[ts(use_ts_enum)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AccessControlMode {
+    #[default]
+    Disabled,
+    Token,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(default)]
+pub struct AccessControlConfig {
+    pub mode: AccessControlMode,
+    pub token: Option<String>,
+    #[serde(alias = "allowLocalhostBypass")]
+    pub allow_localhost_bypass: bool,
+}
+
+impl Default for AccessControlConfig {
+    fn default() -> Self {
+        Self {
+            mode: AccessControlMode::Disabled,
+            token: None,
+            allow_localhost_bypass: true,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct Config {
@@ -232,6 +260,8 @@ pub struct Config {
     pub llman_claude_code_path: Option<String>,
     #[serde(alias = "diffPreviewGuard")]
     pub diff_preview_guard: DiffPreviewGuardPreset,
+    #[serde(alias = "accessControl")]
+    pub access_control: AccessControlConfig,
 }
 
 impl Config {
@@ -282,6 +312,13 @@ impl Config {
             self.workspace_dir = None;
         }
 
+        if matches!(
+            self.access_control.token.as_deref(),
+            Some(token) if token.trim().is_empty()
+        ) {
+            self.access_control.token = None;
+        }
+
         self
     }
 }
@@ -308,6 +345,7 @@ impl Default for Config {
             pr_auto_description_prompt: None,
             llman_claude_code_path: None,
             diff_preview_guard: default_diff_preview_guard(),
+            access_control: AccessControlConfig::default(),
         }
     }
 }

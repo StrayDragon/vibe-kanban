@@ -9,11 +9,11 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, Loader2, Paperclip, Send, X } from 'lucide-react';
 import { imagesApi } from '@/lib/api';
 import type { WorkspaceWithSession } from '@/types/attempt';
-import { useAttemptExecution } from '@/hooks/useAttemptExecution';
+import { useAttemptExecution } from '@/hooks/task-attempts/useAttemptExecution';
 import { useUserSystem } from '@/components/ConfigProvider';
-import { useBranchStatus } from '@/hooks/useBranchStatus';
-import { useVariant } from '@/hooks/useVariant';
-import { useRetryProcess } from '@/hooks/useRetryProcess';
+import { useBranchStatus } from '@/hooks/task-attempts/useBranchStatus';
+import { useVariant } from '@/hooks/config/useVariant';
+import { useRetryProcess } from '@/hooks/execution-processes/useRetryProcess';
 import type { ExecutorAction, ExecutorProfileId } from 'shared/types';
 
 export function RetryEditorInline({

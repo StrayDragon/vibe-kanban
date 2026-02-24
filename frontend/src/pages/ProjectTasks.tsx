@@ -14,11 +14,11 @@ import { useUserSystem } from '@/components/ConfigProvider';
 
 import { useSearch } from '@/contexts/SearchContext';
 import { useProject } from '@/contexts/ProjectContext';
-import { useTaskAttempts } from '@/hooks/useTaskAttempts';
-import { useTaskAttemptWithSession } from '@/hooks/useTaskAttempt';
-import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { useTaskAttempts } from '@/hooks/task-attempts/useTaskAttempts';
+import { useTaskAttemptWithSession } from '@/hooks/task-attempts/useTaskAttempt';
+import { useMediaQuery } from '@/hooks/utils/useMediaQuery';
 import { useBranchStatus, useAttemptExecution } from '@/hooks';
-import { useLayoutMode } from '@/hooks/useLayoutMode';
+import { useLayoutMode } from '@/hooks/utils/useLayoutMode';
 import { paths } from '@/lib/paths';
 import { ExecutionProcessesProvider } from '@/contexts/ExecutionProcessesContext';
 import { ClickedElementsProvider } from '@/contexts/ClickedElementsProvider';
@@ -45,7 +45,7 @@ import TaskKanbanBoard, {
   type KanbanColumnItem,
 } from '@/components/tasks/TaskKanbanBoard';
 import type { DragEndEvent } from '@/components/ui/shadcn-io/kanban';
-import { useProjectTasks } from '@/hooks/useProjectTasks';
+import { useProjectTasks } from '@/hooks/projects/useProjectTasks';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useHotkeysContext } from 'react-hotkeys-hook';
 import { TasksLayout, type LayoutMode } from '@/components/layout/TasksLayout';
@@ -258,9 +258,12 @@ export function ProjectTasks() {
 
   useEffect(() => {
     if (!selectedTaskGroupId || !projectId) return;
-    navigateWithSearch(paths.taskGroupWorkflow(projectId, selectedTaskGroupId), {
-      replace: true,
-    });
+    navigateWithSearch(
+      paths.taskGroupWorkflow(projectId, selectedTaskGroupId),
+      {
+        replace: true,
+      }
+    );
   }, [navigateWithSearch, projectId, selectedTaskGroupId]);
 
   useEffect(() => {

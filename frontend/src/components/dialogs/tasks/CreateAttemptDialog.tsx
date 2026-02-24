@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import RepoBranchSelector from '@/components/tasks/RepoBranchSelector';
 import { ExecutorProfileSelector } from '@/components/settings';
-import { useAttemptCreation } from '@/hooks/useAttemptCreation';
+import { useAttemptCreation } from '@/hooks/task-attempts/useAttemptCreation';
 import {
   useNavigateWithSearch,
   useTask,
@@ -20,8 +20,8 @@ import {
   useRepoBranchSelection,
   useProjectRepos,
 } from '@/hooks';
-import { useTaskGroup } from '@/hooks/useTaskGroup';
-import { useTaskAttemptsWithSessions } from '@/hooks/useTaskAttempts';
+import { useTaskGroup } from '@/hooks/task-groups/useTaskGroup';
+import { useTaskAttemptsWithSessions } from '@/hooks/task-attempts/useTaskAttempts';
 import { useProject } from '@/contexts/ProjectContext';
 import { useUserSystem } from '@/components/ConfigProvider';
 import { paths } from '@/lib/paths';
@@ -29,7 +29,7 @@ import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { defineModal } from '@/lib/modals';
 import type { ExecutorProfileId, BaseCodingAgent } from 'shared/types';
 import { useKeySubmitTask, Scope } from '@/keyboard';
-import { useCliDependencyPreflight } from '@/hooks/useCliDependencyPreflight';
+import { useCliDependencyPreflight } from '@/hooks/config/useCliDependencyPreflight';
 import type {
   TaskGroupGraphNode,
   TaskGroupNodeBaseStrategy,
@@ -108,15 +108,17 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
       ? getNodeBaseStrategy(taskGroupNode)
       : 'topology';
     const baselineRef = taskGroup?.baseline_ref ?? null;
-    const hasBaselineRef = Boolean(baselineRef && baselineRef.trim().length > 0);
+    const hasBaselineRef = Boolean(
+      baselineRef && baselineRef.trim().length > 0
+    );
     const isTaskGroupNode = Boolean(
       task?.task_group_id && task?.task_group_node_id
     );
     const usesBaselineRef =
       isTaskGroupNode && nodeBaseStrategy === 'baseline' && hasBaselineRef;
-    const usesTopologyBase =
-      isTaskGroupNode && nodeBaseStrategy === 'topology';
-    const usesFixedBase = isTaskGroupNode && (usesBaselineRef || usesTopologyBase);
+    const usesTopologyBase = isTaskGroupNode && nodeBaseStrategy === 'topology';
+    const usesFixedBase =
+      isTaskGroupNode && (usesBaselineRef || usesTopologyBase);
 
     const {
       configs: repoBranchConfigs,
@@ -126,7 +128,9 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
       reset: resetBranchSelection,
     } = useRepoBranchSelection({
       repos: projectRepos,
-      initialBranch: usesFixedBase ? baselineRef ?? undefined : parentAttempt?.branch,
+      initialBranch: usesFixedBase
+        ? (baselineRef ?? undefined)
+        : parentAttempt?.branch,
       enabled: modal.visible && projectRepos.length > 0 && !usesFixedBase,
     });
 
@@ -167,12 +171,16 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
         };
       }
       return config?.executor_profile ?? null;
-    }, [nodeExecutorProfile, latestAttempt?.session?.executor, config?.executor_profile]);
+    }, [
+      nodeExecutorProfile,
+      latestAttempt?.session?.executor,
+      config?.executor_profile,
+    ]);
 
     const isNodeProfileLocked = Boolean(nodeExecutorProfile);
     const effectiveProfile = isNodeProfileLocked
       ? nodeExecutorProfile
-      : userSelectedProfile ?? defaultProfile;
+      : (userSelectedProfile ?? defaultProfile);
 
     const selectedAgent = effectiveProfile?.executor ?? null;
     const { data: cliPreflight, isLoading: preflightLoading } =
@@ -269,7 +277,9 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
                     : 'default'
                 }
               >
-                <AlertTitle>{t('createAttemptDialog.preflight.title')}</AlertTitle>
+                <AlertTitle>
+                  {t('createAttemptDialog.preflight.title')}
+                </AlertTitle>
                 <AlertDescription>
                   {preflightLoading
                     ? t('createAttemptDialog.preflight.checking')

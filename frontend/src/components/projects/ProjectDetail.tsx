@@ -12,7 +12,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { projectsApi } from '@/lib/api';
-import { useProjects } from '@/hooks/useProjects';
+import { useProjects } from '@/hooks/projects/useProjects';
 import {
   AlertCircle,
   ArrowLeft,

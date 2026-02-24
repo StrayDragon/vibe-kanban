@@ -31,9 +31,9 @@ import { useUserSystem } from '@/components/ConfigProvider';
 import { toPrettyCase } from '@/utils/string';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { defineModal, type NoProps } from '@/lib/modals';
-import { useEditorAvailability } from '@/hooks/useEditorAvailability';
+import { useEditorAvailability } from '@/hooks/config/useEditorAvailability';
 import { EditorAvailabilityIndicator } from '@/components/EditorAvailabilityIndicator';
-import { useAgentAvailability } from '@/hooks/useAgentAvailability';
+import { useAgentAvailability } from '@/hooks/config/useAgentAvailability';
 import { AgentAvailabilityIndicator } from '@/components/AgentAvailabilityIndicator';
 
 export type OnboardingResult = {

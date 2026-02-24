@@ -49,7 +49,7 @@ import { useHotkeysContext } from 'react-hotkeys-hook';
 import { cn } from '@/lib/utils';
 import { taskGroupsApi } from '@/lib/api';
 import { paths } from '@/lib/paths';
-import { taskKeys } from '@/hooks/useTask';
+import { taskKeys } from '@/hooks/tasks/useTask';
 import type {
   TaskStatus,
   ExecutorProfileId,
@@ -232,9 +232,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
       const payload: CreateTaskGroup = {
         project_id: projectId,
         title: value.title,
-        description: value.description.trim().length
-          ? value.description
-          : null,
+        description: value.description.trim().length ? value.description : null,
         status: null,
         baseline_ref: baselineRef,
         schema_version: 1,
@@ -322,13 +320,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
     if (!baselineRefValue.trim().length) {
       form.setFieldValue('baselineRef', defaultBaselineRef);
     }
-  }, [
-    baselineRefValue,
-    defaultBaselineRef,
-    editMode,
-    form,
-    isTaskGroupCreate,
-  ]);
+  }, [baselineRefValue, defaultBaselineRef, editMode, form, isTaskGroupCreate]);
 
   // Load images for edit mode
   useEffect(() => {

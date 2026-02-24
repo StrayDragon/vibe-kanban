@@ -6,11 +6,10 @@ use db::{
     events::{
         EVENT_EXECUTION_PROCESS_CREATED, EVENT_EXECUTION_PROCESS_DELETED,
         EVENT_EXECUTION_PROCESS_UPDATED, EVENT_PROJECT_CREATED, EVENT_PROJECT_DELETED,
-        EVENT_PROJECT_UPDATED, EVENT_SCRATCH_CREATED, EVENT_SCRATCH_DELETED,
-        EVENT_SCRATCH_UPDATED, EVENT_TASK_CREATED, EVENT_TASK_DELETED, EVENT_TASK_UPDATED,
-        EVENT_WORKSPACE_CREATED, EVENT_WORKSPACE_DELETED, EVENT_WORKSPACE_UPDATED,
-        ExecutionProcessEventPayload, ProjectEventPayload, ScratchEventPayload, TaskEventPayload,
-        WorkspaceEventPayload,
+        EVENT_PROJECT_UPDATED, EVENT_SCRATCH_CREATED, EVENT_SCRATCH_DELETED, EVENT_SCRATCH_UPDATED,
+        EVENT_TASK_CREATED, EVENT_TASK_DELETED, EVENT_TASK_UPDATED, EVENT_WORKSPACE_CREATED,
+        EVENT_WORKSPACE_DELETED, EVENT_WORKSPACE_UPDATED, ExecutionProcessEventPayload,
+        ProjectEventPayload, ScratchEventPayload, TaskEventPayload, WorkspaceEventPayload,
     },
     models::{
         event_outbox::EventOutbox,
@@ -104,7 +103,10 @@ impl EventService {
         Ok(())
     }
 
-    async fn dispatch_entry(&self, entry: &db::entities::event_outbox::Model) -> Result<(), EventError> {
+    async fn dispatch_entry(
+        &self,
+        entry: &db::entities::event_outbox::Model,
+    ) -> Result<(), EventError> {
         match entry.event_type.as_str() {
             EVENT_TASK_CREATED => {
                 let payload: TaskEventPayload = serde_json::from_value(entry.payload.clone())?;
@@ -120,15 +122,18 @@ impl EventService {
             }
             EVENT_PROJECT_CREATED => {
                 let payload: ProjectEventPayload = serde_json::from_value(entry.payload.clone())?;
-                self.emit_project_patch(payload.project_id, PatchKind::Add).await?;
+                self.emit_project_patch(payload.project_id, PatchKind::Add)
+                    .await?;
             }
             EVENT_PROJECT_UPDATED => {
                 let payload: ProjectEventPayload = serde_json::from_value(entry.payload.clone())?;
-                self.emit_project_patch(payload.project_id, PatchKind::Replace).await?;
+                self.emit_project_patch(payload.project_id, PatchKind::Replace)
+                    .await?;
             }
             EVENT_PROJECT_DELETED => {
                 let payload: ProjectEventPayload = serde_json::from_value(entry.payload.clone())?;
-                self.emit_project_patch(payload.project_id, PatchKind::Remove).await?;
+                self.emit_project_patch(payload.project_id, PatchKind::Remove)
+                    .await?;
             }
             EVENT_WORKSPACE_CREATED | EVENT_WORKSPACE_UPDATED | EVENT_WORKSPACE_DELETED => {
                 let payload: WorkspaceEventPayload = serde_json::from_value(entry.payload.clone())?;
@@ -139,21 +144,24 @@ impl EventService {
                     serde_json::from_value(entry.payload.clone())?;
                 self.emit_execution_process_patch(payload.process_id, PatchKind::Add)
                     .await?;
-                self.push_task_update_for_session(payload.session_id).await?;
+                self.push_task_update_for_session(payload.session_id)
+                    .await?;
             }
             EVENT_EXECUTION_PROCESS_UPDATED => {
                 let payload: ExecutionProcessEventPayload =
                     serde_json::from_value(entry.payload.clone())?;
                 self.emit_execution_process_patch(payload.process_id, PatchKind::Replace)
                     .await?;
-                self.push_task_update_for_session(payload.session_id).await?;
+                self.push_task_update_for_session(payload.session_id)
+                    .await?;
             }
             EVENT_EXECUTION_PROCESS_DELETED => {
                 let payload: ExecutionProcessEventPayload =
                     serde_json::from_value(entry.payload.clone())?;
                 self.emit_execution_process_patch(payload.process_id, PatchKind::Remove)
                     .await?;
-                self.push_task_update_for_session(payload.session_id).await?;
+                self.push_task_update_for_session(payload.session_id)
+                    .await?;
             }
             EVENT_SCRATCH_CREATED => {
                 let payload: ScratchEventPayload = serde_json::from_value(entry.payload.clone())?;
@@ -161,7 +169,8 @@ impl EventService {
             }
             EVENT_SCRATCH_UPDATED => {
                 let payload: ScratchEventPayload = serde_json::from_value(entry.payload.clone())?;
-                self.emit_scratch_patch(&payload, PatchKind::Replace).await?;
+                self.emit_scratch_patch(&payload, PatchKind::Replace)
+                    .await?;
             }
             EVENT_SCRATCH_DELETED => {
                 let payload: ScratchEventPayload = serde_json::from_value(entry.payload.clone())?;
@@ -181,12 +190,13 @@ impl EventService {
         kind: PatchKind,
     ) -> Result<(), EventError> {
         if matches!(kind, PatchKind::Remove) {
-            self.msg_store.push_patch(task_patch::remove(payload.task_id));
+            self.msg_store
+                .push_patch(task_patch::remove(payload.task_id));
             return Ok(());
         }
 
-        let tasks = Task::find_by_project_id_with_attempt_status(&self.db.pool, payload.project_id)
-            .await?;
+        let tasks =
+            Task::find_by_project_id_with_attempt_status(&self.db.pool, payload.project_id).await?;
 
         let task = tasks.into_iter().find(|t| t.id == payload.task_id);
         match (task, kind) {
@@ -257,8 +267,10 @@ impl EventService {
         kind: PatchKind,
     ) -> Result<(), EventError> {
         if matches!(kind, PatchKind::Remove) {
-            self.msg_store
-                .push_patch(scratch_patch::remove(payload.scratch_id, &payload.scratch_type));
+            self.msg_store.push_patch(scratch_patch::remove(
+                payload.scratch_id,
+                &payload.scratch_type,
+            ));
             return Ok(());
         }
 
@@ -270,7 +282,9 @@ impl EventService {
             let patch = match kind {
                 PatchKind::Add => scratch_patch::add(&scratch),
                 PatchKind::Replace => scratch_patch::replace(&scratch),
-                PatchKind::Remove => scratch_patch::remove(payload.scratch_id, &payload.scratch_type),
+                PatchKind::Remove => {
+                    scratch_patch::remove(payload.scratch_id, &payload.scratch_type)
+                }
             };
             self.msg_store.push_patch(patch);
         }
@@ -295,7 +309,8 @@ impl EventService {
         let Some(session) = Session::find_by_id(&self.db.pool, session_id).await? else {
             return Ok(());
         };
-        let Some(workspace) = Workspace::find_by_id(&self.db.pool, session.workspace_id).await? else {
+        let Some(workspace) = Workspace::find_by_id(&self.db.pool, session.workspace_id).await?
+        else {
             return Ok(());
         };
         self.emit_task_patch_for_workspace(workspace.task_id).await

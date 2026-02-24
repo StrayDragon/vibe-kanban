@@ -1,6 +1,6 @@
 import { Circle, Check, CircleDot, ChevronUp } from 'lucide-react';
 import { useEntries } from '@/contexts/EntriesContext';
-import { usePinnedTodos } from '@/hooks/usePinnedTodos';
+import { usePinnedTodos } from '@/hooks/tasks/usePinnedTodos';
 import { Card } from '../ui/card';
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';

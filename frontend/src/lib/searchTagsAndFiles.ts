@@ -29,8 +29,8 @@ export async function searchTagsAndFiles(
     const fileResponse = await projectsApi.searchFiles(projectId, query);
     const fileSearchResults: FileSearchResult[] = fileResponse.results.map(
       (item) => ({
-      ...item,
-      name: item.path.split('/').pop() || item.path,
+        ...item,
+        name: item.path.split('/').pop() || item.path,
       })
     );
     results.push(
