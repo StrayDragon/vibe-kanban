@@ -116,6 +116,14 @@ pub async fn update_project(
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<UpdateProject>,
 ) -> Result<ResponseJson<ApiResponse<Project>>, ApiError> {
+    if payload.dev_script.is_some() || payload.dev_script_working_dir.is_some() {
+        tracing::info!(
+            project_id = %existing_project.id,
+            has_dev_script = %payload.dev_script.is_some(),
+            has_dev_script_working_dir = %payload.dev_script_working_dir.is_some(),
+            "Audit: updating project dev script settings"
+        );
+    }
     let project = deployment
         .project()
         .update_project(&deployment.db().pool, &existing_project, payload)

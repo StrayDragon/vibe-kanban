@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use db::{
@@ -46,6 +46,10 @@ pub enum ProjectServiceError {
     RepositoryNotFound,
     #[error("Git operation failed: {0}")]
     GitError(String),
+    #[error("Invalid dev script: {0}")]
+    InvalidDevScript(String),
+    #[error("Invalid dev script working directory: {0}")]
+    InvalidDevScriptWorkingDir(String),
 }
 
 pub type Result<T> = std::result::Result<T, ProjectServiceError>;
@@ -69,6 +73,57 @@ pub struct ProjectService;
 impl ProjectService {
     pub fn new() -> Self {
         Self
+    }
+
+    fn validate_dev_script_update(payload: &UpdateProject) -> Result<()> {
+        if let Some(script) = payload.dev_script.as_deref() {
+            let trimmed = script.trim();
+            if !trimmed.is_empty() {
+                let tokens: Vec<String> = shlex::split(trimmed).ok_or_else(|| {
+                    ProjectServiceError::InvalidDevScript(
+                        "Script is not valid shell-like command text".to_string(),
+                    )
+                })?;
+                if tokens.is_empty() {
+                    return Err(ProjectServiceError::InvalidDevScript(
+                        "Script must include an executable command".to_string(),
+                    ));
+                }
+                let has_forbidden = tokens.iter().any(|token| {
+                    matches!(
+                        token.as_str(),
+                        "|" | "||" | "&" | "&&" | ";" | ">" | ">>" | "<" | "<<"
+                    )
+                });
+                if has_forbidden {
+                    return Err(ProjectServiceError::InvalidDevScript(
+                        "Script must be a single command without shell operators".to_string(),
+                    ));
+                }
+            }
+        }
+
+        if let Some(working_dir) = payload.dev_script_working_dir.as_deref() {
+            let trimmed = working_dir.trim();
+            if !trimmed.is_empty() {
+                let path = Path::new(trimmed);
+                if path.is_absolute() {
+                    return Err(ProjectServiceError::InvalidDevScriptWorkingDir(
+                        "Working directory must be relative to the workspace root".to_string(),
+                    ));
+                }
+                if path
+                    .components()
+                    .any(|component| matches!(component, Component::ParentDir))
+                {
+                    return Err(ProjectServiceError::InvalidDevScriptWorkingDir(
+                        "Working directory cannot traverse outside the workspace".to_string(),
+                    ));
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn create_project(
@@ -144,6 +199,7 @@ impl ProjectService {
         existing: &Project,
         payload: UpdateProject,
     ) -> Result<Project> {
+        Self::validate_dev_script_update(&payload)?;
         let project = Project::update(pool, existing.id, &payload).await?;
 
         Ok(project)
@@ -477,5 +533,73 @@ impl ProjectService {
 
         results.truncate(10);
         Ok(results)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use db::models::project::UpdateProject;
+
+    use super::{ProjectService, ProjectServiceError};
+
+    #[test]
+    fn validate_dev_script_update_accepts_single_command() {
+        let payload = UpdateProject {
+            name: None,
+            dev_script: Some("npm run dev -- --host 127.0.0.1".to_string()),
+            dev_script_working_dir: Some("repo-a".to_string()),
+            default_agent_working_dir: None,
+        };
+
+        let result = ProjectService::validate_dev_script_update(&payload);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_dev_script_update_rejects_shell_operators() {
+        let payload = UpdateProject {
+            name: None,
+            dev_script: Some("npm run dev && rm -rf /".to_string()),
+            dev_script_working_dir: None,
+            default_agent_working_dir: None,
+        };
+
+        let result = ProjectService::validate_dev_script_update(&payload);
+        assert!(matches!(
+            result,
+            Err(ProjectServiceError::InvalidDevScript(_))
+        ));
+    }
+
+    #[test]
+    fn validate_dev_script_update_rejects_absolute_working_dir() {
+        let payload = UpdateProject {
+            name: None,
+            dev_script: Some("npm run dev".to_string()),
+            dev_script_working_dir: Some("/tmp".to_string()),
+            default_agent_working_dir: None,
+        };
+
+        let result = ProjectService::validate_dev_script_update(&payload);
+        assert!(matches!(
+            result,
+            Err(ProjectServiceError::InvalidDevScriptWorkingDir(_))
+        ));
+    }
+
+    #[test]
+    fn validate_dev_script_update_rejects_parent_traversal() {
+        let payload = UpdateProject {
+            name: None,
+            dev_script: Some("npm run dev".to_string()),
+            dev_script_working_dir: Some("../outside".to_string()),
+            default_agent_working_dir: None,
+        };
+
+        let result = ProjectService::validate_dev_script_update(&payload);
+        assert!(matches!(
+            result,
+            Err(ProjectServiceError::InvalidDevScriptWorkingDir(_))
+        ));
     }
 }

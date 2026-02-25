@@ -58,6 +58,79 @@ where
         .map_err(|err| GitServiceError::InvalidRepository(format!("Git task join failed: {err}")))?
 }
 
+fn validate_dev_server_script(script: &str) -> Result<(), ApiError> {
+    let trimmed = script.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::BadRequest(
+            "No dev server script configured for this project".to_string(),
+        ));
+    }
+
+    let parts = shlex::split(trimmed)
+        .ok_or_else(|| ApiError::BadRequest("Dev script is not valid command text".to_string()))?;
+    if parts.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Dev script command is empty".to_string(),
+        ));
+    }
+    let has_forbidden_shell_operators = parts.iter().any(|part| {
+        matches!(
+            part.as_str(),
+            "|" | "||" | "&" | "&&" | ";" | ">" | ">>" | "<" | "<<"
+        )
+    });
+    if has_forbidden_shell_operators {
+        return Err(ApiError::BadRequest(
+            "Dev script must be a single command without shell operators".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_dev_server_working_dir(
+    workspace_root: &Path,
+    configured_working_dir: Option<&str>,
+) -> Result<Option<String>, ApiError> {
+    let Some(raw_working_dir) = configured_working_dir
+        .map(str::trim)
+        .filter(|dir| !dir.is_empty())
+    else {
+        return Ok(None);
+    };
+    let relative = PathBuf::from(raw_working_dir);
+    if relative.is_absolute() {
+        return Err(ApiError::BadRequest(
+            "Dev script working directory must be relative to the workspace root".to_string(),
+        ));
+    }
+
+    let workspace_root = std::fs::canonicalize(workspace_root).map_err(ApiError::Io)?;
+    let resolved = std::fs::canonicalize(workspace_root.join(&relative)).map_err(|_| {
+        ApiError::BadRequest(
+            "Dev script working directory does not exist in the workspace".to_string(),
+        )
+    })?;
+    if !resolved.starts_with(&workspace_root) {
+        return Err(ApiError::Forbidden(
+            "Dev script working directory is outside the workspace root".to_string(),
+        ));
+    }
+    if !resolved.is_dir() {
+        return Err(ApiError::BadRequest(
+            "Dev script working directory must be a directory".to_string(),
+        ));
+    }
+
+    let relative_normalized = resolved
+        .strip_prefix(&workspace_root)
+        .map_err(|_| ApiError::Internal("Failed to normalize working directory".to_string()))?;
+    if relative_normalized.as_os_str().is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(relative_normalized.to_string_lossy().to_string()))
+}
+
 pub async fn get_task_attempts(
     State(deployment): State<DeploymentImpl>,
     Query(query): Query<TaskAttemptQuery>,
@@ -1382,12 +1455,23 @@ pub async fn start_dev_server(
             ));
         }
     };
+    validate_dev_server_script(&dev_script)?;
+    let container_ref = deployment
+        .container()
+        .ensure_container_exists(&workspace)
+        .await?;
+    let workspace_root = PathBuf::from(&container_ref);
+    let working_dir = normalize_dev_server_working_dir(
+        &workspace_root,
+        project.dev_script_working_dir.as_deref(),
+    )?;
 
-    let working_dir = project
-        .dev_script_working_dir
-        .as_ref()
-        .filter(|dir| !dir.is_empty())
-        .cloned();
+    tracing::info!(
+        project_id = %project.id,
+        workspace_id = %workspace.id,
+        has_working_dir = %working_dir.is_some(),
+        "Audit: starting dev server script execution"
+    );
 
     let executor_action = ExecutorAction::new(
         ExecutorActionType::ScriptRequest(ScriptRequest {
@@ -1758,8 +1842,9 @@ mod tests {
 
     use super::{
         CreateTaskAttemptBody, RenameBranchError, RenameBranchRequest, WorkspaceRepoInput,
-        blocked_predecessors, cleanup_failed_attempt_start, create_task_attempt, rename_branch,
-        resolve_executor_profile_id, resolve_topology_base_branches, run_git_operation,
+        blocked_predecessors, cleanup_failed_attempt_start, create_task_attempt,
+        normalize_dev_server_working_dir, rename_branch, resolve_executor_profile_id,
+        resolve_topology_base_branches, run_git_operation, validate_dev_server_script,
     };
     use crate::{
         DeploymentImpl,
@@ -2494,5 +2579,42 @@ mod tests {
         let (sleep_res, blocking_res) = tokio::join!(sleep_future, blocking_future);
         assert_eq!(sleep_res.unwrap(), 1);
         assert_eq!(blocking_res.unwrap(), 2);
+    }
+
+    #[test]
+    fn normalize_dev_server_working_dir_rejects_escape_path() {
+        let root = std::env::temp_dir().join(format!("vk-dev-root-{}", Uuid::new_v4()));
+        let outside = std::env::temp_dir().join(format!("vk-dev-outside-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("repo")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+
+        let outside_name = outside
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap();
+        let escape_path = format!("../{outside_name}");
+
+        let result = normalize_dev_server_working_dir(&root, Some(&escape_path));
+        assert!(matches!(result, Err(ApiError::Forbidden(_))));
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn normalize_dev_server_working_dir_accepts_nested_repo_path() {
+        let root = std::env::temp_dir().join(format!("vk-dev-root-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("repo-a")).unwrap();
+
+        let result = normalize_dev_server_working_dir(&root, Some("repo-a")).unwrap();
+        assert_eq!(result, Some("repo-a".to_string()));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn validate_dev_server_script_rejects_shell_operator_script() {
+        let result = validate_dev_server_script("npm run dev && rm -rf /");
+        assert!(matches!(result, Err(ApiError::BadRequest(_))));
     }
 }

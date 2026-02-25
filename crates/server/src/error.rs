@@ -250,6 +250,8 @@ impl From<ProjectServiceError> for ApiError {
             ProjectServiceError::GitError(msg) => {
                 ApiError::BadRequest(format!("Git operation failed: {}", msg))
             }
+            ProjectServiceError::InvalidDevScript(msg) => ApiError::BadRequest(msg),
+            ProjectServiceError::InvalidDevScriptWorkingDir(msg) => ApiError::BadRequest(msg),
         }
     }
 }

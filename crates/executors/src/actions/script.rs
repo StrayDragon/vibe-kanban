@@ -52,15 +52,25 @@ impl Executable for ScriptRequest {
             None => current_dir.to_path_buf(),
         };
 
-        let (shell_cmd, shell_arg) = get_shell_command();
-        let mut command = Command::new(shell_cmd);
+        let mut command = match self.context {
+            ScriptContext::DevServer => {
+                let (program, args) = parse_direct_command(&self.script)?;
+                let mut command = Command::new(program);
+                command.args(args);
+                command
+            }
+            _ => {
+                let (shell_cmd, shell_arg) = get_shell_command();
+                let mut command = Command::new(shell_cmd);
+                command.arg(shell_arg).arg(&self.script);
+                command
+            }
+        };
         command
             .kill_on_drop(true)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .arg(shell_arg)
-            .arg(&self.script)
             .current_dir(&effective_dir);
 
         // Apply environment variables
@@ -69,5 +79,69 @@ impl Executable for ScriptRequest {
         let child = command.group_spawn()?;
 
         Ok(child.into())
+    }
+}
+
+fn parse_direct_command(script: &str) -> Result<(String, Vec<String>), ExecutorError> {
+    let trimmed = script.trim();
+    if trimmed.is_empty() {
+        return Err(ExecutorError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Dev script command is empty",
+        )));
+    }
+
+    let parts = shlex::split(trimmed).ok_or_else(|| {
+        ExecutorError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Dev script is not valid command text",
+        ))
+    })?;
+    if parts.is_empty() {
+        return Err(ExecutorError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Dev script command is empty",
+        )));
+    }
+
+    let has_forbidden_shell_operators = parts.iter().any(|part| {
+        matches!(
+            part.as_str(),
+            "|" | "||" | "&" | "&&" | ";" | ">" | ">>" | "<" | "<<"
+        )
+    });
+    if has_forbidden_shell_operators {
+        return Err(ExecutorError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Dev script must be a single command without shell operators",
+        )));
+    }
+
+    let mut iter = parts.into_iter();
+    let program = iter.next().ok_or_else(|| {
+        ExecutorError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Dev script command is empty",
+        ))
+    })?;
+    let args = iter.collect();
+    Ok((program, args))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_direct_command;
+
+    #[test]
+    fn parse_direct_command_accepts_simple_command() {
+        let parsed = parse_direct_command("npm run dev -- --port 3000").unwrap();
+        assert_eq!(parsed.0, "npm");
+        assert_eq!(parsed.1, vec!["run", "dev", "--", "--port", "3000"]);
+    }
+
+    #[test]
+    fn parse_direct_command_rejects_shell_operators() {
+        let err = parse_direct_command("npm run dev && rm -rf /").unwrap_err();
+        assert!(err.to_string().contains("without shell operators"));
     }
 }
