@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const {
   taskGroupState,
@@ -130,8 +130,20 @@ vi.mock('@/lib/api', () => ({
 import { TaskGroupWorkflow } from './TaskGroupWorkflow';
 
 describe('TaskGroupWorkflow', () => {
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
   it('persists node instructions and clears blank instructions', async () => {
     taskGroupsUpdateMock.mockClear();
+    refetchTaskGroupMock.mockClear();
+    vi.useFakeTimers();
+
+    const flushMicrotasks = async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    };
 
     const taskA = {
       id: 'task-1',
@@ -175,20 +187,24 @@ describe('TaskGroupWorkflow', () => {
     fireEvent.click(screen.getByTestId('node-node-a'));
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
 
-    const textarea = screen.getByPlaceholderText('Optional node-specific guidance');
+    const textarea = screen.getByPlaceholderText(
+      'Optional node-specific guidance'
+    );
     fireEvent.change(textarea, { target: { value: 'Do the thing' } });
 
     expect((textarea as HTMLTextAreaElement).value).toBe('Do the thing');
-    await new Promise((resolve) => setTimeout(resolve, 700));
-
-    expect(taskGroupsUpdateMock).toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(700);
+    await flushMicrotasks();
+    expect(taskGroupsUpdateMock).toHaveBeenCalledTimes(1);
 
     const firstCall = taskGroupsUpdateMock.mock.calls[0];
     expect(firstCall?.[0]).toBe('tg-1');
     expect(firstCall?.[1]?.graph?.nodes?.[0]?.instructions).toBe('Do the thing');
 
     fireEvent.change(textarea, { target: { value: '   ' } });
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    await vi.advanceTimersByTimeAsync(700);
+    await flushMicrotasks();
+    expect(taskGroupsUpdateMock).toHaveBeenCalledTimes(2);
 
     const lastCall =
       taskGroupsUpdateMock.mock.calls[taskGroupsUpdateMock.mock.calls.length - 1];
