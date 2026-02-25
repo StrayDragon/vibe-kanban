@@ -378,6 +378,36 @@ describe('useConversationHistory', () => {
     ).toBe(true);
   });
 
+  it('does not clear loading early while execution processes are still loading', async () => {
+    const now = new Date().toISOString();
+    mockExecutionContext.executionProcessesVisible = [];
+    mockExecutionContext.isLoading = true;
+
+    const attempt: Workspace = {
+      id: 'workspace-empty-still-loading',
+      task_id: 'task-empty-still-loading',
+      container_ref: null,
+      branch: 'main',
+      agent_working_dir: null,
+      setup_completed_at: null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const onEntriesUpdated = vi.fn();
+    renderHook(() => useConversationHistory({ attempt, onEntriesUpdated }));
+
+    await waitFor(() => {
+      expect(onEntriesUpdated.mock.calls.length).toBeGreaterThan(0);
+    });
+
+    const hasLoadingCleared = onEntriesUpdated.mock.calls.some(
+      (call) => call?.[2] === false
+    );
+
+    expect(hasLoadingCleared).toBe(false);
+  });
+
   it('emits empty state after execution processes are removed', async () => {
     const now = new Date().toISOString();
     const executionProcess: ExecutionProcess = {

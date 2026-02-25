@@ -46,6 +46,36 @@ type PendingScrollAction =
       behavior?: 'auto' | 'smooth';
     };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const deepEqual = (a: unknown, b: unknown): boolean => {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (a === null || b === null) return a === b;
+
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!deepEqual(a[i], b[i])) return false;
+    }
+    return true;
+  }
+
+  if (isRecord(a) && isRecord(b)) {
+    const aKeys = Object.keys(a);
+    const bKeys = Object.keys(b);
+    if (aKeys.length !== bKeys.length) return false;
+    for (const key of aKeys) {
+      if (!(key in b)) return false;
+      if (!deepEqual(a[key], b[key])) return false;
+    }
+    return true;
+  }
+
+  return false;
+};
+
 const normalizedEntryEquals = (
   prevEntry: PatchTypeWithKey,
   nextEntry: PatchTypeWithKey
@@ -55,16 +85,12 @@ const normalizedEntryEquals = (
 
   if (prevEntry.content.content !== nextEntry.content.content) return false;
 
-  if (
-    JSON.stringify(prevEntry.content.entry_type) !==
-    JSON.stringify(nextEntry.content.entry_type)
-  ) {
+  if (!deepEqual(prevEntry.content.entry_type, nextEntry.content.entry_type))
     return false;
-  }
 
-  return (
-    JSON.stringify(prevEntry.content.metadata ?? null) ===
-    JSON.stringify(nextEntry.content.metadata ?? null)
+  return deepEqual(
+    (prevEntry.content.metadata ?? null) as unknown,
+    (nextEntry.content.metadata ?? null) as unknown
   );
 };
 
@@ -72,6 +98,7 @@ const areEntriesEquivalent = (
   prevEntry: PatchTypeWithKey,
   nextEntry: PatchTypeWithKey
 ) => {
+  if (prevEntry === nextEntry) return true;
   if (prevEntry.type !== nextEntry.type) return false;
 
   if (prevEntry.type === 'STDOUT' || prevEntry.type === 'STDERR') {
@@ -79,9 +106,7 @@ const areEntriesEquivalent = (
   }
 
   if (prevEntry.type === 'DIFF' && nextEntry.type === 'DIFF') {
-    return (
-      JSON.stringify(prevEntry.content) === JSON.stringify(nextEntry.content)
-    );
+    return deepEqual(prevEntry.content, nextEntry.content);
   }
 
   if (

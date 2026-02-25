@@ -357,6 +357,36 @@ fn format_todo_status(status: &StepStatus) -> String {
     .to_string()
 }
 
+fn emit_normalization_error(
+    msg_store: &Arc<MsgStore>,
+    entry_index: &EntryIndexProvider,
+    call_id: Option<&str>,
+    message: impl Into<String>,
+) {
+    let content = match call_id {
+        Some(call_id) => format!("Normalization error ({call_id}): {}", message.into()),
+        None => format!("Normalization error: {}", message.into()),
+    };
+
+    add_normalized_entry(
+        msg_store,
+        entry_index,
+        NormalizedEntry {
+            timestamp: None,
+            entry_type: NormalizedEntryType::ErrorMessage {
+                error_type: NormalizedEntryError::Other,
+            },
+            content,
+            metadata: call_id.and_then(|call_id| {
+                serde_json::to_value(ToolCallMetadata {
+                    tool_call_id: call_id.to_string(),
+                })
+                .ok()
+            }),
+        },
+    );
+}
+
 pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
     let entry_index = EntryIndexProvider::start_from(&msg_store);
     normalize_codex_stderr_logs(msg_store.clone(), entry_index.clone());
@@ -557,27 +587,24 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                     if command_text.is_empty() {
                         continue;
                     }
-                    state.commands.insert(
-                        call_id.clone(),
-                        CommandState {
-                            index: None,
-                            command: command_text,
-                            stdout: String::new(),
-                            stderr: String::new(),
-                            formatted_output: None,
-                            status: ToolStatus::Created,
-                            exit_code: None,
-                            awaiting_approval: false,
-                            call_id: call_id.clone(),
-                        },
-                    );
-                    let command_state = state.commands.get_mut(&call_id).unwrap();
+                    let mut command_state = CommandState {
+                        index: None,
+                        command: command_text,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        formatted_output: None,
+                        status: ToolStatus::Created,
+                        exit_code: None,
+                        awaiting_approval: false,
+                        call_id: call_id.clone(),
+                    };
                     let index = add_normalized_entry(
                         &msg_store,
                         &entry_index,
                         command_state.to_normalized_entry(),
                     );
-                    command_state.index = Some(index)
+                    command_state.index = Some(index);
+                    state.commands.insert(call_id, command_state);
                 }
                 EventMsg::ExecCommandOutputDelta(ExecCommandOutputDeltaEvent {
                     call_id,
@@ -594,7 +621,16 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                             ExecOutputStream::Stderr => command_state.stderr.push_str(&chunk),
                         }
                         let Some(index) = command_state.index else {
-                            tracing::error!("missing entry index for existing command state");
+                            tracing::error!(
+                                call_id = %call_id,
+                                "missing entry index for existing command state"
+                            );
+                            emit_normalization_error(
+                                &msg_store,
+                                &entry_index,
+                                Some(&call_id),
+                                "missing entry index for command output delta",
+                            );
                             continue;
                         };
                         replace_normalized_entry(
@@ -619,8 +655,8 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                     duration: _,
                     formatted_output,
                     process_id: _,
-                }) => {
-                    if let Some(mut command_state) = state.commands.remove(&call_id) {
+                }) => match state.commands.remove(&call_id) {
+                    Some(mut command_state) => {
                         command_state.formatted_output = Some(formatted_output);
                         command_state.exit_code = Some(exit_code);
                         command_state.awaiting_approval = false;
@@ -630,7 +666,16 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                             ToolStatus::Failed
                         };
                         let Some(index) = command_state.index else {
-                            tracing::error!("missing entry index for existing command state");
+                            tracing::error!(
+                                call_id = %call_id,
+                                "missing entry index for existing command state"
+                            );
+                            emit_normalization_error(
+                                &msg_store,
+                                &entry_index,
+                                Some(&call_id),
+                                "missing entry index for command end",
+                            );
                             continue;
                         };
                         replace_normalized_entry(
@@ -639,7 +684,19 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                             command_state.to_normalized_entry(),
                         );
                     }
-                }
+                    None => {
+                        tracing::warn!(
+                            call_id = %call_id,
+                            "received ExecCommandEnd without matching command state"
+                        );
+                        emit_normalization_error(
+                            &msg_store,
+                            &entry_index,
+                            Some(&call_id),
+                            "ExecCommandEnd without matching command state",
+                        );
+                    }
+                },
                 EventMsg::BackgroundEvent(BackgroundEventEvent { message }) => {
                     add_normalized_entry(
                         &msg_store,
@@ -695,27 +752,24 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                 }) => {
                     state.assistant = None;
                     state.thinking = None;
-                    state.mcp_tools.insert(
-                        call_id.clone(),
-                        McpToolState {
-                            index: None,
-                            invocation,
-                            result: None,
-                            status: ToolStatus::Created,
-                        },
-                    );
-                    let mcp_tool_state = state.mcp_tools.get_mut(&call_id).unwrap();
+                    let mut mcp_tool_state = McpToolState {
+                        index: None,
+                        invocation,
+                        result: None,
+                        status: ToolStatus::Created,
+                    };
                     let index = add_normalized_entry(
                         &msg_store,
                         &entry_index,
                         mcp_tool_state.to_normalized_entry(),
                     );
                     mcp_tool_state.index = Some(index);
+                    state.mcp_tools.insert(call_id, mcp_tool_state);
                 }
                 EventMsg::McpToolCallEnd(McpToolCallEndEvent {
                     call_id, result, ..
-                }) => {
-                    if let Some(mut mcp_tool_state) = state.mcp_tools.remove(&call_id) {
+                }) => match state.mcp_tools.remove(&call_id) {
+                    Some(mut mcp_tool_state) => {
                         match result {
                             Ok(value) => {
                                 mcp_tool_state.status = if value.is_error.unwrap_or(false) {
@@ -765,7 +819,16 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                             }
                         };
                         let Some(index) = mcp_tool_state.index else {
-                            tracing::error!("missing entry index for existing mcp tool state");
+                            tracing::error!(
+                                call_id = %call_id,
+                                "missing entry index for existing mcp tool state"
+                            );
+                            emit_normalization_error(
+                                &msg_store,
+                                &entry_index,
+                                Some(&call_id),
+                                "missing entry index for MCP tool call end",
+                            );
                             continue;
                         };
                         replace_normalized_entry(
@@ -774,7 +837,19 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                             mcp_tool_state.to_normalized_entry(),
                         );
                     }
-                }
+                    None => {
+                        tracing::warn!(
+                            call_id = %call_id,
+                            "received McpToolCallEnd without matching mcp tool state"
+                        );
+                        emit_normalization_error(
+                            &msg_store,
+                            &entry_index,
+                            Some(&call_id),
+                            "McpToolCallEnd without matching tool call state",
+                        );
+                    }
+                },
                 EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
                     call_id, changes, ..
                 }) => {
@@ -825,21 +900,21 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                     } else {
                         let mut patch_state = PatchState::default();
                         for (path, file_changes) in normalized {
-                            patch_state.entries.push(PatchEntry {
+                            let mut patch_entry = PatchEntry {
                                 index: None,
                                 path,
                                 changes: file_changes,
                                 status: ToolStatus::Created,
                                 awaiting_approval: false,
                                 call_id: call_id.clone(),
-                            });
-                            let patch_entry = patch_state.entries.last_mut().unwrap();
+                            };
                             let index = add_normalized_entry(
                                 &msg_store,
                                 &entry_index,
                                 patch_entry.to_normalized_entry(),
                             );
                             patch_entry.index = Some(index);
+                            patch_state.entries.push(patch_entry);
                         }
                         state.patches.insert(call_id, patch_state);
                     }
@@ -850,8 +925,8 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                     stderr: _,
                     success,
                     ..
-                }) => {
-                    if let Some(patch_state) = state.patches.remove(&call_id) {
+                }) => match state.patches.remove(&call_id) {
+                    Some(patch_state) => {
                         let status = if success {
                             ToolStatus::Success
                         } else {
@@ -860,7 +935,16 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                         for mut entry in patch_state.entries {
                             entry.status = status.clone();
                             let Some(index) = entry.index else {
-                                tracing::error!("missing entry index for existing patch entry");
+                                tracing::error!(
+                                    call_id = %call_id,
+                                    "missing entry index for existing patch entry"
+                                );
+                                emit_normalization_error(
+                                    &msg_store,
+                                    &entry_index,
+                                    Some(&call_id),
+                                    "missing entry index for patch apply end",
+                                );
                                 continue;
                             };
                             replace_normalized_entry(
@@ -870,30 +954,66 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                             );
                         }
                     }
-                }
+                    None => {
+                        tracing::warn!(
+                            call_id = %call_id,
+                            "received PatchApplyEnd without matching patch state"
+                        );
+                        emit_normalization_error(
+                            &msg_store,
+                            &entry_index,
+                            Some(&call_id),
+                            "PatchApplyEnd without matching patch state",
+                        );
+                    }
+                },
                 EventMsg::WebSearchBegin(WebSearchBeginEvent { call_id }) => {
                     state.assistant = None;
                     state.thinking = None;
-                    state
-                        .web_searches
-                        .insert(call_id.clone(), WebSearchState::new());
-                    let web_search_state = state.web_searches.get_mut(&call_id).unwrap();
-                    let normalized_entry = web_search_state.to_normalized_entry();
-                    let index = add_normalized_entry(&msg_store, &entry_index, normalized_entry);
+                    let mut web_search_state = WebSearchState::new();
+                    let index = add_normalized_entry(
+                        &msg_store,
+                        &entry_index,
+                        web_search_state.to_normalized_entry(),
+                    );
                     web_search_state.index = Some(index);
+                    state.web_searches.insert(call_id, web_search_state);
                 }
                 EventMsg::WebSearchEnd(WebSearchEndEvent { call_id, query }) => {
                     state.assistant = None;
                     state.thinking = None;
-                    if let Some(mut entry) = state.web_searches.remove(&call_id) {
-                        entry.status = ToolStatus::Success;
-                        entry.query = Some(query.clone());
-                        let normalized_entry = entry.to_normalized_entry();
-                        let Some(index) = entry.index else {
-                            tracing::error!("missing entry index for existing websearch entry");
-                            continue;
-                        };
-                        replace_normalized_entry(&msg_store, index, normalized_entry);
+                    match state.web_searches.remove(&call_id) {
+                        Some(mut entry) => {
+                            entry.status = ToolStatus::Success;
+                            entry.query = Some(query.clone());
+                            let normalized_entry = entry.to_normalized_entry();
+                            let Some(index) = entry.index else {
+                                tracing::error!(
+                                    call_id = %call_id,
+                                    "missing entry index for existing websearch entry"
+                                );
+                                emit_normalization_error(
+                                    &msg_store,
+                                    &entry_index,
+                                    Some(&call_id),
+                                    "missing entry index for web search end",
+                                );
+                                continue;
+                            };
+                            replace_normalized_entry(&msg_store, index, normalized_entry);
+                        }
+                        None => {
+                            tracing::warn!(
+                                call_id = %call_id,
+                                "received WebSearchEnd without matching web search state"
+                            );
+                            emit_normalization_error(
+                                &msg_store,
+                                &entry_index,
+                                Some(&call_id),
+                                "WebSearchEnd without matching web search state",
+                            );
+                        }
                     }
                 }
                 EventMsg::ViewImageToolCall(ViewImageToolCallEvent { call_id: _, path }) => {
@@ -1627,6 +1747,44 @@ mod tests {
             _ => panic!("expected command tool entry"),
         }
 
+        msg_store.push_finished();
+    }
+
+    #[tokio::test]
+    async fn normalize_logs_exec_command_end_without_begin_emits_normalization_error() {
+        let msg_store = Arc::new(MsgStore::new());
+        normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::ExecCommandEnd(ExecCommandEndEvent {
+                call_id: "cmd-missing".to_string(),
+                process_id: None,
+                turn_id: "turn-1".to_string(),
+                command: vec!["echo".to_string(), "hello".to_string()],
+                cwd: PathBuf::from("/repo"),
+                parsed_cmd: Vec::new(),
+                source: ExecCommandSource::default(),
+                interaction_input: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                aggregated_output: String::new(),
+                exit_code: 0,
+                duration: Duration::from_secs(1),
+                formatted_output: String::new(),
+            }),
+        );
+
+        let entry = wait_for_entry(&msg_store, |entry| {
+            matches!(entry.entry_type, NormalizedEntryType::ErrorMessage { .. })
+                && entry.content.contains("Normalization error (cmd-missing)")
+                && entry
+                    .content
+                    .contains("ExecCommandEnd without matching command state")
+        })
+        .await;
+
+        assert!(entry.content.contains("cmd-missing"));
         msg_store.push_finished();
     }
 

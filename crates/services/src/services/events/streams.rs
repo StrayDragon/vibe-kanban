@@ -30,7 +30,20 @@ impl EventService {
             // Convert task array to object keyed by task ID
             let tasks_map: serde_json::Map<String, serde_json::Value> = tasks
                 .into_iter()
-                .map(|task| (task.id.to_string(), serde_json::to_value(task).unwrap()))
+                .filter_map(|task| {
+                    let task_id = task.id;
+                    match serde_json::to_value(task) {
+                        Ok(value) => Some((task_id.to_string(), value)),
+                        Err(err) => {
+                            tracing::error!(
+                                task_id = %task_id,
+                                error = %err,
+                                "failed to serialize task for tasks snapshot"
+                            );
+                            None
+                        }
+                    }
+                })
                 .collect();
 
             let patch = json!([
@@ -41,7 +54,13 @@ impl EventService {
                 }
             ]);
 
-            LogMsg::JsonPatch(serde_json::from_value(patch).unwrap())
+            match serde_json::from_value(patch) {
+                Ok(patch) => LogMsg::JsonPatch(patch),
+                Err(err) => {
+                    tracing::error!(error = %err, "failed to build tasks snapshot patch");
+                    LogMsg::JsonPatch(json_patch::Patch(vec![]))
+                }
+            }
         }
 
         let receiver = self.msg_store.get_receiver();
@@ -153,11 +172,19 @@ impl EventService {
             // Convert projects array to object keyed by project ID
             let projects_map: serde_json::Map<String, serde_json::Value> = projects
                 .into_iter()
-                .map(|project| {
-                    (
-                        project.id.to_string(),
-                        serde_json::to_value(project).unwrap(),
-                    )
+                .filter_map(|project| {
+                    let project_id = project.id;
+                    match serde_json::to_value(project) {
+                        Ok(value) => Some((project_id.to_string(), value)),
+                        Err(err) => {
+                            tracing::error!(
+                                project_id = %project_id,
+                                error = %err,
+                                "failed to serialize project for projects snapshot"
+                            );
+                            None
+                        }
+                    }
                 })
                 .collect();
 
@@ -169,7 +196,13 @@ impl EventService {
                 }
             ]);
 
-            LogMsg::JsonPatch(serde_json::from_value(patch).unwrap())
+            match serde_json::from_value(patch) {
+                Ok(patch) => LogMsg::JsonPatch(patch),
+                Err(err) => {
+                    tracing::error!(error = %err, "failed to build projects snapshot patch");
+                    LogMsg::JsonPatch(json_patch::Patch(vec![]))
+                }
+            }
         }
 
         let receiver = self.msg_store.get_receiver();
@@ -254,11 +287,19 @@ impl EventService {
             // Convert processes array to object keyed by process ID
             let processes_map: serde_json::Map<String, serde_json::Value> = all_processes
                 .into_iter()
-                .map(|process| {
-                    (
-                        process.id.to_string(),
-                        serde_json::to_value(process).unwrap(),
-                    )
+                .filter_map(|process| {
+                    let process_id = process.id;
+                    match serde_json::to_value(process) {
+                        Ok(value) => Some((process_id.to_string(), value)),
+                        Err(err) => {
+                            tracing::error!(
+                                execution_process_id = %process_id,
+                                error = %err,
+                                "failed to serialize execution process for snapshot"
+                            );
+                            None
+                        }
+                    }
                 })
                 .collect();
 
@@ -267,7 +308,16 @@ impl EventService {
                 "path": "/execution_processes",
                 "value": processes_map
             }]);
-            let initial_msg = LogMsg::JsonPatch(serde_json::from_value(initial_patch).unwrap());
+            let initial_msg = match serde_json::from_value(initial_patch) {
+                Ok(patch) => LogMsg::JsonPatch(patch),
+                Err(err) => {
+                    tracing::error!(
+                        error = %err,
+                        "failed to build execution processes snapshot patch"
+                    );
+                    LogMsg::JsonPatch(json_patch::Patch(vec![]))
+                }
+            };
 
             Ok((initial_msg, session_ids))
         }
@@ -428,7 +478,13 @@ impl EventService {
                 "value": scratch
             }]);
 
-            LogMsg::JsonPatch(serde_json::from_value(patch).unwrap())
+            match serde_json::from_value(patch) {
+                Ok(patch) => LogMsg::JsonPatch(patch),
+                Err(err) => {
+                    tracing::error!(error = %err, "failed to build scratch snapshot patch");
+                    LogMsg::JsonPatch(json_patch::Patch(vec![]))
+                }
+            }
         }
 
         async fn load_scratch_snapshot(
