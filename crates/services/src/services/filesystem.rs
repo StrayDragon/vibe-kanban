@@ -241,27 +241,35 @@ impl FilesystemService {
         for p in path.iter().skip(1) {
             walker_builder.add(p);
         }
-        let mut seen_dirs = HashSet::new();
+        let mut seen_repo_keys = HashSet::new();
         let mut git_repos: Vec<DirectoryEntry> = walker_builder
             .build()
             .filter_map(|entry| {
                 let entry = entry.ok()?;
-                if seen_dirs.contains(entry.path()) {
+                let repo_path = entry.path();
+                if !repo_path.join(".git").exists() {
                     return None;
                 }
-                seen_dirs.insert(entry.path().to_owned());
-                let name = entry.file_name().to_str()?;
-                if !entry.path().join(".git").exists() {
+                let canonical_repo_path =
+                    fs::canonicalize(repo_path).unwrap_or_else(|_| repo_path.to_path_buf());
+                let repo_key = Self::repo_identity_key(&canonical_repo_path);
+                if !seen_repo_keys.insert(repo_key) {
                     return None;
                 }
-                let last_modified = entry
-                    .metadata()
+
+                let name = canonical_repo_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .or_else(|| entry.file_name().to_str())?;
+
+                let last_modified = fs::metadata(&canonical_repo_path)
                     .ok()
                     .and_then(|m| m.modified().ok())
                     .map(|t| t.elapsed().unwrap_or_default().as_secs());
+
                 Some(DirectoryEntry {
                     name: name.to_string(),
-                    path: entry.into_path(),
+                    path: canonical_repo_path,
                     is_directory: true,
                     is_git_repo: true,
                     last_modified,
@@ -270,6 +278,24 @@ impl FilesystemService {
             .collect();
         git_repos.sort_by_key(|entry| entry.last_modified.unwrap_or(0));
         Ok(git_repos)
+    }
+
+    fn repo_identity_key(path: &Path) -> String {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+
+            if let Ok(metadata) = fs::metadata(path) {
+                return format!("{}:{}", metadata.dev(), metadata.ino());
+            }
+        }
+
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        if cfg!(windows) {
+            normalized.to_lowercase()
+        } else {
+            normalized
+        }
     }
 
     fn get_home_directory() -> PathBuf {
@@ -345,5 +371,41 @@ impl FilesystemService {
             entries: directory_entries,
             current_path: path.to_string_lossy().to_string(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::FilesystemService;
+
+    #[cfg(unix)]
+    #[test]
+    fn repo_identity_key_matches_for_equivalent_paths() {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path().join("repo");
+        fs::create_dir_all(repo_path.join(".git")).unwrap();
+
+        let alias_path = repo_path.join(".").join("..").join("repo");
+
+        let key_a = FilesystemService::repo_identity_key(&repo_path);
+        let key_b = FilesystemService::repo_identity_key(&alias_path);
+
+        assert_eq!(key_a, key_b);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn repo_identity_key_is_case_insensitive_on_windows() {
+        let upper = std::path::PathBuf::from(r"C:\Users\Example\Repo");
+        let lower = std::path::PathBuf::from(r"c:\users\example\repo");
+
+        let key_upper = FilesystemService::repo_identity_key(&upper);
+        let key_lower = FilesystemService::repo_identity_key(&lower);
+
+        assert_eq!(key_upper, key_lower);
     }
 }
