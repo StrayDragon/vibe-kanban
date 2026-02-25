@@ -38,7 +38,10 @@ pub fn router(deployment: DeploymentImpl) -> Router {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use std::{
+        fs,
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+    };
 
     use axum::{
         body::{Body, to_bytes},
@@ -74,6 +77,11 @@ mod tests {
         config.access_control.mode = AccessControlMode::Token;
         config.access_control.token = Some(token.to_string());
         config.access_control.allow_localhost_bypass = allow_localhost_bypass;
+    }
+
+    async fn set_workspace_dir(deployment: &DeploymentImpl, workspace_dir: &std::path::Path) {
+        let mut config = deployment.config().write().await;
+        config.workspace_dir = Some(workspace_dir.to_string_lossy().to_string());
     }
 
     fn loopback_connect_info() -> ConnectInfo<SocketAddr> {
@@ -254,5 +262,122 @@ mod tests {
         // rejects WebSocket upgrades with 426 even when the handshake headers are
         // otherwise valid. We still assert this isn't a 401 to confirm auth passed.
         assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn filesystem_directory_rejects_path_outside_workspace_dir() {
+        let (_env_guard, deployment) = setup_deployment().await;
+        let allowed_root =
+            std::env::temp_dir().join(format!("vk-fs-allowed-{}", Uuid::new_v4()));
+        let outside_root =
+            std::env::temp_dir().join(format!("vk-fs-outside-{}", Uuid::new_v4()));
+        fs::create_dir_all(&allowed_root).unwrap();
+        fs::create_dir_all(&outside_root).unwrap();
+        set_workspace_dir(&deployment, &allowed_root).await;
+
+        let app = super::router(deployment);
+        let uri = format!(
+            "/api/filesystem/directory?path={}",
+            outside_root.to_string_lossy()
+        );
+        let response = app
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let _ = fs::remove_dir_all(&allowed_root);
+        let _ = fs::remove_dir_all(&outside_root);
+    }
+
+    #[tokio::test]
+    async fn filesystem_directory_allows_path_inside_workspace_dir() {
+        let (_env_guard, deployment) = setup_deployment().await;
+        let allowed_root =
+            std::env::temp_dir().join(format!("vk-fs-allowed-{}", Uuid::new_v4()));
+        let nested = allowed_root.join("project-a");
+        fs::create_dir_all(&nested).unwrap();
+        set_workspace_dir(&deployment, &allowed_root).await;
+
+        let app = super::router(deployment);
+        let uri = format!(
+            "/api/filesystem/directory?path={}",
+            nested.to_string_lossy()
+        );
+        let response = app
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json.get("success").and_then(|v| v.as_bool()), Some(true));
+        let current_path = json
+            .pointer("/data/current_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(current_path.starts_with(allowed_root.to_string_lossy().as_ref()));
+
+        let _ = fs::remove_dir_all(&allowed_root);
+    }
+
+    #[tokio::test]
+    async fn filesystem_git_repo_discovery_stays_within_workspace_dir() {
+        let (_env_guard, deployment) = setup_deployment().await;
+        let allowed_root =
+            std::env::temp_dir().join(format!("vk-fs-allowed-{}", Uuid::new_v4()));
+        let allowed_repo = allowed_root.join("repo-in").join(".git");
+        let outside_root =
+            std::env::temp_dir().join(format!("vk-fs-outside-{}", Uuid::new_v4()));
+        let outside_repo = outside_root.join("repo-out").join(".git");
+        fs::create_dir_all(&allowed_repo).unwrap();
+        fs::create_dir_all(&outside_repo).unwrap();
+        set_workspace_dir(&deployment, &allowed_root).await;
+
+        let app = super::router(deployment);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/filesystem/git-repos")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let paths = json
+            .pointer("/data")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|entry| {
+                entry
+                    .get("path")
+                    .and_then(|path| path.as_str())
+                    .map(str::to_owned)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            paths.iter().any(|path| path.contains("repo-in")),
+            "expected repo-in in {:?}",
+            paths
+        );
+        assert!(
+            paths.iter().all(|path| !path.contains("repo-out")),
+            "unexpected repo-out in {:?}",
+            paths
+        );
+
+        let _ = fs::remove_dir_all(&allowed_root);
+        let _ = fs::remove_dir_all(&outside_root);
     }
 }

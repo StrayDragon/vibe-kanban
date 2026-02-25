@@ -101,6 +101,32 @@ impl FilesystemService {
             .await
     }
 
+    pub async fn list_git_repos_in_paths(
+        &self,
+        paths: Vec<PathBuf>,
+        timeout_ms: u64,
+        hard_timeout_ms: u64,
+        max_depth: Option<usize>,
+    ) -> Result<Vec<DirectoryEntry>, FilesystemError> {
+        let mut unique_paths = Vec::new();
+        let mut seen = HashSet::new();
+
+        for path in paths {
+            Self::verify_directory(&path)?;
+            let canonical = fs::canonicalize(path)?;
+            if seen.insert(canonical.clone()) {
+                unique_paths.push(canonical);
+            }
+        }
+
+        if unique_paths.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        self.list_git_repos_with_timeout(unique_paths, timeout_ms, hard_timeout_ms, max_depth)
+            .await
+    }
+
     async fn list_git_repos_with_timeout(
         &self,
         paths: Vec<PathBuf>,
