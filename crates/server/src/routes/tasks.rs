@@ -328,7 +328,10 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
     let task_id_router = Router::new()
         .route("/", get(get_task))
         .merge(task_actions_router)
-        .layer(from_fn_with_state(deployment.clone(), load_task_middleware));
+        .layer(from_fn_with_state(
+            deployment.clone(),
+            load_task_middleware::<DeploymentImpl>,
+        ));
 
     let inner = Router::new()
         .route("/", get(get_tasks).post(create_task))

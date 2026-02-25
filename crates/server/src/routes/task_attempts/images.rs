@@ -236,7 +236,7 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         )
         .layer(from_fn_with_state(
             deployment.clone(),
-            load_workspace_middleware,
+            load_workspace_middleware::<DeploymentImpl>,
         ));
 
     let file_router = Router::new()

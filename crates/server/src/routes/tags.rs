@@ -73,7 +73,10 @@ pub async fn delete_tag(
 pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
     let tag_router = Router::new()
         .route("/", put(update_tag).delete(delete_tag))
-        .layer(from_fn_with_state(deployment.clone(), load_tag_middleware));
+        .layer(from_fn_with_state(
+            deployment.clone(),
+            load_tag_middleware::<DeploymentImpl>,
+        ));
 
     let inner = Router::new()
         .route("/", get(get_tags).post(create_tag))

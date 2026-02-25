@@ -43,7 +43,7 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         .route("/repos", get(get_task_attempt_repos))
         .layer(from_fn_with_state(
             deployment.clone(),
-            load_workspace_middleware,
+            load_workspace_middleware::<DeploymentImpl>,
         ));
 
     let task_attempts_router = Router::new()

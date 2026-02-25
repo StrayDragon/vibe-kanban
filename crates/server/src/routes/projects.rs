@@ -385,7 +385,7 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         )
         .layer(from_fn_with_state(
             deployment.clone(),
-            load_project_middleware,
+            load_project_middleware::<DeploymentImpl>,
         ));
 
     let projects_router = Router::new()

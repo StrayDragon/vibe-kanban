@@ -144,7 +144,7 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         )
         .layer(from_fn_with_state(
             deployment.clone(),
-            load_task_group_middleware,
+            load_task_group_middleware::<DeploymentImpl>,
         ));
 
     let inner = Router::new()

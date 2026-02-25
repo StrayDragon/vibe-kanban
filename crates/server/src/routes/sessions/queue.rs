@@ -70,6 +70,6 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         )
         .layer(from_fn_with_state(
             deployment.clone(),
-            load_session_middleware,
+            load_session_middleware::<DeploymentImpl>,
         ))
 }

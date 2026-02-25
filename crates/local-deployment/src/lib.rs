@@ -21,6 +21,7 @@ use services::services::{
 };
 use tokio::sync::RwLock;
 use utils::{assets::config_path, msg_store::MsgStore};
+use uuid::Uuid;
 
 use crate::container::LocalContainerService;
 mod command;
@@ -43,75 +44,48 @@ pub struct LocalDeployment {
     queued_message_service: QueuedMessageService,
 }
 
+struct CoreServices {
+    git: GitService,
+    project: ProjectService,
+    repo: RepoService,
+    filesystem: FilesystemService,
+    file_search_cache: Arc<FileSearchCache>,
+    msg_stores: Arc<RwLock<HashMap<Uuid, Arc<MsgStore>>>>,
+    approvals: Approvals,
+    queued_message_service: QueuedMessageService,
+}
+
+struct RuntimeServices {
+    db: DBService,
+    image: ImageService,
+    events: EventService,
+    container: LocalContainerService,
+}
+
 #[async_trait]
 impl Deployment for LocalDeployment {
     async fn new() -> Result<Self, DeploymentError> {
-        let mut raw_config = load_config_from_file(&config_path()).await;
+        let config = Self::load_runtime_config().await?;
+        let core = Self::build_core_services();
+        let runtime = Self::build_runtime_services(config.clone(), &core).await?;
 
-        let profiles = ExecutorConfigs::get_cached();
-        executors::agent_command::agent_command_resolver().warm_cache();
-        if !raw_config.onboarding_acknowledged
-            && let Ok(recommended_executor) = profiles.get_recommended_executor_profile().await
-        {
-            raw_config.executor_profile = recommended_executor;
-        }
+        let CoreServices {
+            git,
+            project,
+            repo,
+            filesystem,
+            file_search_cache,
+            msg_stores: _msg_stores,
+            approvals,
+            queued_message_service,
+        } = core;
 
-        // Check if app version has changed and set release notes flag
-        {
-            let current_version = utils::version::APP_VERSION;
-            let stored_version = raw_config.last_app_version.as_deref();
-
-            if stored_version != Some(current_version) {
-                // Show release notes only if this is an upgrade (not first install)
-                raw_config.show_release_notes = stored_version.is_some();
-                raw_config.last_app_version = Some(current_version.to_string());
-            }
-        }
-
-        // Always save config (may have been migrated or version updated)
-        save_config_to_file(&raw_config, &config_path()).await?;
-
-        let config = Arc::new(RwLock::new(raw_config));
-        let git = GitService::new();
-        let project = ProjectService::new();
-        let repo = RepoService::new();
-        let msg_stores = Arc::new(RwLock::new(HashMap::new()));
-        let filesystem = FilesystemService::new();
-
-        // Create shared components for EventService
-        let events_msg_store = Arc::new(MsgStore::new());
-        let events_entry_count = Arc::new(RwLock::new(0));
-
-        let db = DBService::new().await?;
-
-        let image = ImageService::new(db.clone().pool)?;
-        {
-            let image_service = image.clone();
-            tokio::spawn(async move {
-                tracing::info!("Starting orphaned image cleanup...");
-                if let Err(e) = image_service.delete_orphaned_images().await {
-                    tracing::error!("Failed to clean up orphaned images: {}", e);
-                }
-            });
-        }
-
-        let approvals = Approvals::new(msg_stores.clone());
-        let queued_message_service = QueuedMessageService::new();
-
-        let container = LocalContainerService::new(
-            db.clone(),
-            msg_stores.clone(),
-            config.clone(),
-            git.clone(),
-            image.clone(),
-            approvals.clone(),
-            queued_message_service.clone(),
-        )
-        .await;
-
-        let events = EventService::new(db.clone(), events_msg_store, events_entry_count);
-
-        let file_search_cache = Arc::new(FileSearchCache::new());
+        let RuntimeServices {
+            db,
+            image,
+            events,
+            container,
+        } = runtime;
 
         let deployment = Self {
             config,
@@ -181,6 +155,90 @@ impl Deployment for LocalDeployment {
 }
 
 impl LocalDeployment {
+    async fn load_runtime_config() -> Result<Arc<RwLock<Config>>, DeploymentError> {
+        let mut raw_config = load_config_from_file(&config_path()).await;
+
+        let profiles = ExecutorConfigs::get_cached();
+        executors::agent_command::agent_command_resolver().warm_cache();
+        if !raw_config.onboarding_acknowledged
+            && let Ok(recommended_executor) = profiles.get_recommended_executor_profile().await
+        {
+            raw_config.executor_profile = recommended_executor;
+        }
+
+        Self::update_release_notes_flags(&mut raw_config, utils::version::APP_VERSION);
+        save_config_to_file(&raw_config, &config_path()).await?;
+
+        Ok(Arc::new(RwLock::new(raw_config)))
+    }
+
+    fn update_release_notes_flags(config: &mut Config, current_version: &str) {
+        let stored_version = config.last_app_version.as_deref();
+        if stored_version != Some(current_version) {
+            // Show release notes only for upgrades, not first install.
+            config.show_release_notes = stored_version.is_some();
+            config.last_app_version = Some(current_version.to_string());
+        }
+    }
+
+    fn build_core_services() -> CoreServices {
+        let msg_stores = Arc::new(RwLock::new(HashMap::new()));
+        let approvals = Approvals::new(msg_stores.clone());
+
+        CoreServices {
+            git: GitService::new(),
+            project: ProjectService::new(),
+            repo: RepoService::new(),
+            filesystem: FilesystemService::new(),
+            file_search_cache: Arc::new(FileSearchCache::new()),
+            msg_stores,
+            approvals,
+            queued_message_service: QueuedMessageService::new(),
+        }
+    }
+
+    async fn build_runtime_services(
+        config: Arc<RwLock<Config>>,
+        core: &CoreServices,
+    ) -> Result<RuntimeServices, DeploymentError> {
+        let db = DBService::new().await?;
+        let image = ImageService::new(db.clone().pool)?;
+        Self::spawn_orphaned_image_cleanup(image.clone());
+
+        let events = EventService::new(
+            db.clone(),
+            Arc::new(MsgStore::new()),
+            Arc::new(RwLock::new(0)),
+        );
+
+        let container = LocalContainerService::new(
+            db.clone(),
+            core.msg_stores.clone(),
+            config,
+            core.git.clone(),
+            image.clone(),
+            core.approvals.clone(),
+            core.queued_message_service.clone(),
+        )
+        .await;
+
+        Ok(RuntimeServices {
+            db,
+            image,
+            events,
+            container,
+        })
+    }
+
+    fn spawn_orphaned_image_cleanup(image_service: ImageService) {
+        tokio::spawn(async move {
+            tracing::info!("Starting orphaned image cleanup...");
+            if let Err(e) = image_service.delete_orphaned_images().await {
+                tracing::error!("Failed to clean up orphaned images: {}", e);
+            }
+        });
+    }
+
     pub fn log_cache_budgets(&self) {
         let budgets = cache_budgets();
         let file_search_entries = self.file_search_cache.cache_entry_count();
@@ -236,5 +294,40 @@ impl LocalDeployment {
             sample_secs = budgets.cache_warn_sample.as_secs(),
             "Cache warning thresholds"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use services::services::config::Config;
+
+    use super::LocalDeployment;
+
+    #[test]
+    fn update_release_notes_flags_sets_upgrade_state() {
+        let mut config = Config {
+            last_app_version: Some("0.0.100".to_string()),
+            show_release_notes: false,
+            ..Config::default()
+        };
+
+        LocalDeployment::update_release_notes_flags(&mut config, "0.0.101");
+
+        assert_eq!(config.last_app_version.as_deref(), Some("0.0.101"));
+        assert!(config.show_release_notes);
+    }
+
+    #[test]
+    fn update_release_notes_flags_does_not_flip_on_same_version() {
+        let mut config = Config {
+            last_app_version: Some("0.0.101".to_string()),
+            show_release_notes: true,
+            ..Config::default()
+        };
+
+        LocalDeployment::update_release_notes_flags(&mut config, "0.0.101");
+
+        assert_eq!(config.last_app_version.as_deref(), Some("0.0.101"));
+        assert!(config.show_release_notes);
     }
 }

@@ -394,7 +394,7 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         .route("/normalized-logs/v2/ws", get(stream_normalized_logs_v2_ws))
         .layer(from_fn_with_state(
             deployment.clone(),
-            load_execution_process_middleware,
+            load_execution_process_middleware::<DeploymentImpl>,
         ));
 
     let workspaces_router = Router::new()

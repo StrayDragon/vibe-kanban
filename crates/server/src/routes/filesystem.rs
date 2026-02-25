@@ -2,6 +2,7 @@ use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use axum::{
@@ -13,9 +14,11 @@ use axum::{
 use deployment::Deployment;
 use serde::Deserialize;
 use services::services::{
-    filesystem::{DirectoryEntry, DirectoryListResponse, FilesystemError},
+    config::Config,
+    filesystem::{DirectoryEntry, DirectoryListResponse, FilesystemError, FilesystemService},
     workspace_manager::WorkspaceManager,
 };
+use tokio::sync::RwLock;
 use utils::response::ApiResponse;
 
 use crate::{DeploymentImpl, error::ApiError};
@@ -23,6 +26,24 @@ use crate::{DeploymentImpl, error::ApiError};
 #[derive(Debug, Deserialize)]
 pub struct ListDirectoryQuery {
     path: Option<String>,
+}
+
+pub trait FilesystemRouteDeps {
+    fn config_state(&self) -> &Arc<RwLock<Config>>;
+    fn filesystem_service(&self) -> &FilesystemService;
+}
+
+impl<D> FilesystemRouteDeps for D
+where
+    D: Deployment,
+{
+    fn config_state(&self) -> &Arc<RwLock<Config>> {
+        self.config()
+    }
+
+    fn filesystem_service(&self) -> &FilesystemService {
+        self.filesystem()
+    }
 }
 
 fn map_filesystem_error(error: FilesystemError) -> ApiError {
@@ -50,8 +71,11 @@ fn canonicalize_directory(path: &Path) -> Result<PathBuf, ApiError> {
     fs::canonicalize(path).map_err(ApiError::Io)
 }
 
-async fn allowed_workspace_roots(deployment: &DeploymentImpl) -> Result<Vec<PathBuf>, ApiError> {
-    let configured_workspace_dir = deployment.config().read().await.workspace_dir.clone();
+async fn allowed_workspace_roots<D>(deployment: &D) -> Result<Vec<PathBuf>, ApiError>
+where
+    D: FilesystemRouteDeps,
+{
+    let configured_workspace_dir = deployment.config_state().read().await.workspace_dir.clone();
     let mut candidates: Vec<PathBuf> = vec![WorkspaceManager::get_workspace_base_dir()];
 
     if let Some(workspace_dir) = configured_workspace_dir {
@@ -113,25 +137,35 @@ fn resolve_request_path(path: Option<&str>, roots: &[PathBuf]) -> Result<PathBuf
     ))
 }
 
-pub async fn list_directory(
-    State(deployment): State<DeploymentImpl>,
+pub async fn list_directory<D>(
+    State(deployment): State<D>,
     Query(query): Query<ListDirectoryQuery>,
-) -> Result<ResponseJson<ApiResponse<DirectoryListResponse>>, ApiError> {
+) -> Result<ResponseJson<ApiResponse<DirectoryListResponse>>, ApiError>
+where
+    D: FilesystemRouteDeps,
+{
     let roots = allowed_workspace_roots(&deployment).await?;
     let path = resolve_request_path(query.path.as_deref(), &roots)?
         .to_string_lossy()
         .to_string();
 
-    match deployment.filesystem().list_directory(Some(path)).await {
+    match deployment
+        .filesystem_service()
+        .list_directory(Some(path))
+        .await
+    {
         Ok(response) => Ok(ResponseJson(ApiResponse::success(response))),
         Err(error) => Err(map_filesystem_error(error)),
     }
 }
 
-pub async fn list_git_repos(
-    State(deployment): State<DeploymentImpl>,
+pub async fn list_git_repos<D>(
+    State(deployment): State<D>,
     Query(query): Query<ListDirectoryQuery>,
-) -> Result<ResponseJson<ApiResponse<Vec<DirectoryEntry>>>, ApiError> {
+) -> Result<ResponseJson<ApiResponse<Vec<DirectoryEntry>>>, ApiError>
+where
+    D: FilesystemRouteDeps,
+{
     let roots = allowed_workspace_roots(&deployment).await?;
 
     let res = if let Some(ref path) = query.path {
@@ -139,12 +173,12 @@ pub async fn list_git_repos(
             .to_string_lossy()
             .to_string();
         deployment
-            .filesystem()
+            .filesystem_service()
             .list_git_repos(Some(resolved_path), 800, 1200, Some(3))
             .await
     } else {
         deployment
-            .filesystem()
+            .filesystem_service()
             .list_git_repos_in_paths(roots, 800, 1200, Some(4))
             .await
     };
@@ -156,6 +190,12 @@ pub async fn list_git_repos(
 
 pub fn router() -> Router<DeploymentImpl> {
     Router::new()
-        .route("/filesystem/directory", get(list_directory))
-        .route("/filesystem/git-repos", get(list_git_repos))
+        .route(
+            "/filesystem/directory",
+            get(list_directory::<DeploymentImpl>),
+        )
+        .route(
+            "/filesystem/git-repos",
+            get(list_git_repos::<DeploymentImpl>),
+        )
 }

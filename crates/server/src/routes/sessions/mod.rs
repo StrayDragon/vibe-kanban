@@ -249,7 +249,7 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         .route("/follow-up", post(follow_up))
         .layer(from_fn_with_state(
             deployment.clone(),
-            load_session_middleware,
+            load_session_middleware::<DeploymentImpl>,
         ));
 
     let sessions_router = Router::new()
