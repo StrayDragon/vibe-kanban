@@ -37,6 +37,119 @@ const makeApiResponse = (
 });
 
 describe('useConversationHistory', () => {
+  it('does not restart initial history load while the first load is in flight', async () => {
+    const now = new Date().toISOString();
+    const makeProcess = (id: string): ExecutionProcess => ({
+      id,
+      session_id: `session-${id}`,
+      run_reason: 'codingagent',
+      executor_action: {
+        typ: {
+          type: 'CodingAgentInitialRequest',
+          prompt: 'hello',
+          executor_profile_id: {
+            executor: BaseCodingAgent.CODEX,
+            variant: null,
+          },
+          image_paths: {},
+          working_dir: null,
+        },
+        next_action: null,
+      },
+      status: ExecutionProcessStatus.completed,
+      exit_code: null,
+      dropped: false,
+      started_at: now,
+      completed_at: now,
+      created_at: now,
+      updated_at: now,
+    });
+
+    const processOne = makeProcess('process-one');
+    const processTwo = makeProcess('process-two');
+    mockExecutionContext.executionProcessesVisible = [processOne];
+    mockExecutionContext.isLoading = false;
+
+    const normalizedEntry: PatchType = {
+      type: 'NORMALIZED_ENTRY',
+      content: {
+        entry_type: { type: 'assistant_message' },
+        content: 'hi',
+        metadata: null,
+        timestamp: null,
+      },
+    };
+
+    let resolveFirstFetch!: () => void;
+    const firstFetch = new Promise<{
+      ok: boolean;
+      json: () => Promise<ApiResponse<LogHistoryPage>>;
+    }>((resolve) => {
+      resolveFirstFetch = () =>
+        resolve({
+          ok: true,
+          json: async () =>
+            makeApiResponse({
+              entries: [{ entry_index: 1n, entry: normalizedEntry }],
+              next_cursor: null,
+              has_more: false,
+              history_truncated: false,
+            }),
+        });
+    });
+
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => firstFetch)
+      .mockResolvedValue({
+        ok: true,
+        json: async () =>
+          makeApiResponse({
+            entries: [{ entry_index: 2n, entry: normalizedEntry }],
+            next_cursor: null,
+            has_more: false,
+            history_truncated: false,
+          }),
+      });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    streamLogEntriesMock.mockImplementation(() => ({
+      close: vi.fn(),
+      isConnected: () => true,
+    }));
+
+    const attempt: Workspace = {
+      id: 'workspace-in-flight',
+      task_id: 'task-in-flight',
+      container_ref: null,
+      branch: 'main',
+      agent_working_dir: null,
+      setup_completed_at: null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const onEntriesUpdated = vi.fn();
+    const { rerender } = renderHook(() =>
+      useConversationHistory({ attempt, onEntriesUpdated })
+    );
+
+    mockExecutionContext.executionProcessesVisible = [processOne, processTwo];
+    rerender();
+
+    resolveFirstFetch();
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(2);
+    });
+
+    const calledUrls = fetchMock.mock.calls.map((call) => String(call[0]));
+    const processOneCalls = calledUrls.filter((url) =>
+      url.includes(processOne.id)
+    ).length;
+    expect(processOneCalls).toBe(1);
+  });
+
   it('loads older history pages on demand', async () => {
     const now = new Date().toISOString();
     const executionProcess: ExecutionProcess = {

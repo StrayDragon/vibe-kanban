@@ -37,7 +37,7 @@ use executors::{
 use git2::BranchType;
 use services::services::{
     container::ContainerService,
-    git::{ConflictOp, GitCliError, GitMergeOptions, GitServiceError},
+    git::{ConflictOp, GitCliError, GitMergeOptions, GitService, GitServiceError},
     github::GitHubService,
 };
 use utils::response::ApiResponse;
@@ -47,6 +47,16 @@ use super::{codex_setup, cursor_setup, dto::*, gh_cli_setup};
 use crate::{
     DeploymentImpl, error::ApiError, routes::task_attempts::gh_cli_setup::GhCliSetupError,
 };
+
+async fn run_git_operation<T, F>(git: GitService, op: F) -> Result<T, GitServiceError>
+where
+    T: Send + 'static,
+    F: FnOnce(GitService) -> Result<T, GitServiceError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || op(git))
+        .await
+        .map_err(|err| GitServiceError::InvalidRepository(format!("Git task join failed: {err}")))?
+}
 
 pub async fn get_task_attempts(
     State(deployment): State<DeploymentImpl>,
@@ -593,14 +603,21 @@ pub async fn merge_task_attempt(
     }
 
     let no_verify = deployment.config().read().await.git_no_verify;
-    let merge_commit_id = deployment.git().merge_changes_with_options(
-        &repo.path,
-        &worktree_path,
-        &workspace.branch,
-        &workspace_repo.target_branch,
-        &commit_message,
-        GitMergeOptions::new(no_verify),
-    )?;
+    let git = deployment.git().clone();
+    let repo_path = repo.path.clone();
+    let workspace_branch = workspace.branch.clone();
+    let target_branch = workspace_repo.target_branch.clone();
+    let merge_commit_id = run_git_operation(git, move |git| {
+        git.merge_changes_with_options(
+            &repo_path,
+            &worktree_path,
+            &workspace_branch,
+            &target_branch,
+            &commit_message,
+            GitMergeOptions::new(no_verify),
+        )
+    })
+    .await?;
 
     Merge::create_direct(
         pool,
@@ -666,10 +683,14 @@ pub async fn push_task_attempt_branch(
     let workspace_path = Path::new(&container_ref);
     let worktree_path = workspace_path.join(&repo.name);
 
-    match deployment
-        .git()
-        .push_to_github(&worktree_path, &workspace.branch, false)
-    {
+    let git = deployment.git().clone();
+    let workspace_branch = workspace.branch.clone();
+    let push_result = run_git_operation(git, move |git| {
+        git.push_to_github(&worktree_path, &workspace_branch, false)
+    })
+    .await;
+
+    match push_result {
         Ok(_) => Ok((StatusCode::OK, ResponseJson(ApiResponse::success(())))),
         Err(GitServiceError::GitCLI(GitCliError::PushRejected(_))) => Ok((
             StatusCode::CONFLICT,
@@ -705,9 +726,12 @@ pub async fn force_push_task_attempt_branch(
     let workspace_path = Path::new(&container_ref);
     let worktree_path = workspace_path.join(&repo.name);
 
-    deployment
-        .git()
-        .push_to_github(&worktree_path, &workspace.branch, true)?;
+    let git = deployment.git().clone();
+    let workspace_branch = workspace.branch.clone();
+    run_git_operation(git, move |git| {
+        git.push_to_github(&worktree_path, &workspace_branch, true)
+    })
+    .await?;
     Ok(ResponseJson(ApiResponse::success(())))
 }
 
@@ -815,109 +839,125 @@ pub async fn get_task_attempt_branch_status(
         let repo_merges = Merge::find_by_workspace_and_repo_id(pool, workspace.id, repo.id).await?;
 
         let worktree_path = workspace_dir.join(&repo.name);
-
-        let head_oid = deployment
-            .git()
-            .get_head_info(&worktree_path)
-            .ok()
-            .map(|h| h.oid);
-
-        let (is_rebase_in_progress, conflicted_files, conflict_op) = {
-            let in_rebase = deployment
-                .git()
-                .is_rebase_in_progress(&worktree_path)
-                .unwrap_or(false);
-            let conflicts = deployment
-                .git()
-                .get_conflicted_files(&worktree_path)
-                .unwrap_or_default();
-            let op = if conflicts.is_empty() {
-                None
-            } else {
-                deployment
-                    .git()
-                    .detect_conflict_op(&worktree_path)
-                    .unwrap_or(None)
-            };
-            (in_rebase, conflicts, op)
-        };
-
-        let (uncommitted_count, untracked_count) =
-            match deployment.git().get_worktree_change_counts(&worktree_path) {
-                Ok((a, b)) => (Some(a), Some(b)),
-                Err(_) => (None, None),
-            };
-
-        let has_uncommitted_changes = uncommitted_count.map(|c| c > 0);
-
-        let target_branch_type = match deployment
-            .git()
-            .find_branch_type(&repo.path, &target_branch)
-        {
-            Ok(branch_type) => Some(branch_type),
-            Err(err) => {
-                tracing::debug!(
-                    "Failed to detect branch type for repo {}: {}",
-                    repo.name,
-                    err
-                );
-                None
-            }
-        };
-
-        let (commits_ahead, commits_behind) = match target_branch_type {
-            Some(BranchType::Local) => match deployment.git().get_branch_status(
-                &repo.path,
-                &workspace.branch,
-                &target_branch,
-            ) {
-                Ok((a, b)) => (Some(a), Some(b)),
-                Err(err) => {
-                    tracing::debug!(
-                        "Failed to get local branch status for repo {}: {}",
-                        repo.name,
-                        err
-                    );
-                    (None, None)
-                }
-            },
-            Some(BranchType::Remote) => match deployment.git().get_remote_branch_status(
-                &repo.path,
-                &workspace.branch,
-                Some(&target_branch),
-            ) {
-                Ok((ahead, behind)) => (Some(ahead), Some(behind)),
-                Err(err) => {
-                    tracing::debug!(
-                        "Failed to get remote branch status for repo {}: {}",
-                        repo.name,
-                        err
-                    );
-                    (None, None)
-                }
-            },
-            None => (None, None),
-        };
-
-        let (remote_ahead, remote_behind) = if let Some(Merge::Pr(PrMerge {
-            pr_info:
-                PullRequestInfo {
+        let git = deployment.git().clone();
+        let repo_name = repo.name.clone();
+        let repo_path = repo.path.clone();
+        let workspace_branch = workspace.branch.clone();
+        let target_branch_for_git = target_branch.clone();
+        let has_open_pr = matches!(
+            repo_merges.first(),
+            Some(Merge::Pr(PrMerge {
+                pr_info: PullRequestInfo {
                     status: MergeStatus::Open,
                     ..
                 },
-            ..
-        })) = repo_merges.first()
-        {
-            match deployment
-                .git()
-                .get_remote_branch_status(&repo.path, &workspace.branch, None)
+                ..
+            }))
+        );
+        let (
+            head_oid,
+            is_rebase_in_progress,
+            conflicted_files,
+            conflict_op,
+            commits_ahead,
+            commits_behind,
+            uncommitted_count,
+            untracked_count,
+            remote_ahead,
+            remote_behind,
+        ) = run_git_operation(git, move |git| {
+            let head_oid = git.get_head_info(&worktree_path).ok().map(|h| h.oid);
+
+            let is_rebase_in_progress = git.is_rebase_in_progress(&worktree_path).unwrap_or(false);
+            let conflicted_files = git.get_conflicted_files(&worktree_path).unwrap_or_default();
+            let conflict_op = if conflicted_files.is_empty() {
+                None
+            } else {
+                git.detect_conflict_op(&worktree_path).unwrap_or(None)
+            };
+
+            let (uncommitted_count, untracked_count) =
+                match git.get_worktree_change_counts(&worktree_path) {
+                    Ok((a, b)) => (Some(a), Some(b)),
+                    Err(_) => (None, None),
+                };
+
+            let target_branch_type = match git.find_branch_type(&repo_path, &target_branch_for_git)
             {
-                Ok((ahead, behind)) => (Some(ahead), Some(behind)),
-                Err(_) => (None, None),
-            }
-        } else {
-            (None, None)
-        };
+                Ok(branch_type) => Some(branch_type),
+                Err(err) => {
+                    tracing::debug!(
+                        "Failed to detect branch type for repo {}: {}",
+                        repo_name,
+                        err
+                    );
+                    None
+                }
+            };
+
+            let (commits_ahead, commits_behind) = match target_branch_type {
+                Some(BranchType::Local) => {
+                    match git.get_branch_status(
+                        &repo_path,
+                        &workspace_branch,
+                        &target_branch_for_git,
+                    ) {
+                        Ok((a, b)) => (Some(a), Some(b)),
+                        Err(err) => {
+                            tracing::debug!(
+                                "Failed to get local branch status for repo {}: {}",
+                                repo_name,
+                                err
+                            );
+                            (None, None)
+                        }
+                    }
+                }
+                Some(BranchType::Remote) => {
+                    match git.get_remote_branch_status(
+                        &repo_path,
+                        &workspace_branch,
+                        Some(&target_branch_for_git),
+                    ) {
+                        Ok((ahead, behind)) => (Some(ahead), Some(behind)),
+                        Err(err) => {
+                            tracing::debug!(
+                                "Failed to get remote branch status for repo {}: {}",
+                                repo_name,
+                                err
+                            );
+                            (None, None)
+                        }
+                    }
+                }
+                None => (None, None),
+            };
+
+            let (remote_ahead, remote_behind) = if has_open_pr {
+                match git.get_remote_branch_status(&repo_path, &workspace_branch, None) {
+                    Ok((ahead, behind)) => (Some(ahead), Some(behind)),
+                    Err(_) => (None, None),
+                }
+            } else {
+                (None, None)
+            };
+
+            Ok((
+                head_oid,
+                is_rebase_in_progress,
+                conflicted_files,
+                conflict_op,
+                commits_ahead,
+                commits_behind,
+                uncommitted_count,
+                untracked_count,
+                remote_ahead,
+                remote_behind,
+            ))
+        })
+        .await?;
+
+        let has_uncommitted_changes = uncommitted_count.map(|c| c > 0);
 
         results.push(RepoBranchStatus {
             repo_id: repo.id,
@@ -957,9 +997,13 @@ pub async fn change_target_branch(
         .await?
         .ok_or(RepoError::NotFound)?;
 
-    if !deployment
-        .git()
-        .check_branch_exists(&repo.path, &new_target_branch)?
+    let git = deployment.git().clone();
+    let repo_path = repo.path.clone();
+    let branch_to_check = new_target_branch.clone();
+    if !run_git_operation(git, move |git| {
+        git.check_branch_exists(&repo_path, &branch_to_check)
+    })
+    .await?
     {
         return Err(ApiError::BadRequest(format!(
             "Branch '{}' does not exist in repository '{}'",
@@ -969,10 +1013,14 @@ pub async fn change_target_branch(
 
     WorkspaceRepo::update_target_branch(pool, workspace.id, repo_id, &new_target_branch).await?;
 
-    let status =
-        deployment
-            .git()
-            .get_branch_status(&repo.path, &workspace.branch, &new_target_branch)?;
+    let git = deployment.git().clone();
+    let repo_path = repo.path.clone();
+    let workspace_branch = workspace.branch.clone();
+    let target_branch = new_target_branch.clone();
+    let status = run_git_operation(git, move |git| {
+        git.get_branch_status(&repo_path, &workspace_branch, &target_branch)
+    })
+    .await?;
 
     Ok(ResponseJson(ApiResponse::success(
         ChangeTargetBranchResponse {
@@ -1047,11 +1095,14 @@ pub async fn rename_branch(
 
     for repo in &repos {
         let worktree_path = workspace_dir.join(&repo.name);
-
-        if deployment
-            .git()
-            .check_branch_exists(&repo.path, new_branch_name)?
-        {
+        let git = deployment.git().clone();
+        let repo_path = repo.path.clone();
+        let branch_name = new_branch_name.to_string();
+        let branch_exists = run_git_operation(git, move |git| {
+            git.check_branch_exists(&repo_path, &branch_name)
+        })
+        .await?;
+        if branch_exists {
             return Ok((
                 StatusCode::CONFLICT,
                 ResponseJson(ApiResponse::error_with_data(
@@ -1062,7 +1113,10 @@ pub async fn rename_branch(
             ));
         }
 
-        if deployment.git().is_rebase_in_progress(&worktree_path)? {
+        let git = deployment.git().clone();
+        let is_rebase_in_progress =
+            run_git_operation(git, move |git| git.is_rebase_in_progress(&worktree_path)).await?;
+        if is_rebase_in_progress {
             return Ok((
                 StatusCode::CONFLICT,
                 ResponseJson(ApiResponse::error_with_data(
@@ -1080,12 +1134,14 @@ pub async fn rename_branch(
 
     for repo in &repos {
         let worktree_path = workspace_dir.join(&repo.name);
-
-        match deployment.git().rename_local_branch(
-            &worktree_path,
-            &workspace.branch,
-            new_branch_name,
-        ) {
+        let git = deployment.git().clone();
+        let old_name = workspace.branch.clone();
+        let new_name = new_branch_name.to_string();
+        match run_git_operation(git, move |git| {
+            git.rename_local_branch(&worktree_path, &old_name, &new_name)
+        })
+        .await
+        {
             Ok(()) => {
                 renamed_repos.push(repo);
             }
@@ -1093,11 +1149,14 @@ pub async fn rename_branch(
                 // Rollback already renamed repos
                 for renamed_repo in &renamed_repos {
                     let rollback_path = workspace_dir.join(&renamed_repo.name);
-                    if let Err(rollback_err) = deployment.git().rename_local_branch(
-                        &rollback_path,
-                        new_branch_name,
-                        &old_branch,
-                    ) {
+                    let git = deployment.git().clone();
+                    let new_name = new_branch_name.to_string();
+                    let old_name = old_branch.clone();
+                    if let Err(rollback_err) = run_git_operation(git, move |git| {
+                        git.rename_local_branch(&rollback_path, &new_name, &old_name)
+                    })
+                    .await
+                    {
                         tracing::error!(
                             "Failed to rollback branch rename in '{}': {}",
                             renamed_repo.name,
@@ -1168,9 +1227,13 @@ pub async fn rebase_task_attempt(
         .new_base_branch
         .unwrap_or_else(|| workspace_repo.target_branch.clone());
 
-    match deployment
-        .git()
-        .check_branch_exists(&repo.path, &new_base_branch)?
+    let git = deployment.git().clone();
+    let repo_path = repo.path.clone();
+    let target_branch = new_base_branch.clone();
+    match run_git_operation(git, move |git| {
+        git.check_branch_exists(&repo_path, &target_branch)
+    })
+    .await?
     {
         true => {
             WorkspaceRepo::update_target_branch(
@@ -1196,13 +1259,19 @@ pub async fn rebase_task_attempt(
     let workspace_path = Path::new(&container_ref);
     let worktree_path = workspace_path.join(&repo.name);
 
-    let result = deployment.git().rebase_branch(
-        &repo.path,
-        &worktree_path,
-        &new_base_branch,
-        &old_base_branch,
-        &workspace.branch.clone(),
-    );
+    let git = deployment.git().clone();
+    let repo_path = repo.path.clone();
+    let workspace_branch = workspace.branch.clone();
+    let result = run_git_operation(git, move |git| {
+        git.rebase_branch(
+            &repo_path,
+            &worktree_path,
+            &new_base_branch,
+            &old_base_branch,
+            &workspace_branch,
+        )
+    })
+    .await;
     if let Err(e) = result {
         use services::services::git::GitServiceError;
         return match e {
@@ -1247,7 +1316,8 @@ pub async fn abort_conflicts_task_attempt(
     let workspace_path = Path::new(&container_ref);
     let worktree_path = workspace_path.join(&repo.name);
 
-    deployment.git().abort_conflicts(&worktree_path)?;
+    let git = deployment.git().clone();
+    run_git_operation(git, move |git| git.abort_conflicts(&worktree_path)).await?;
 
     Ok(ResponseJson(ApiResponse::success(())))
 }
@@ -1679,14 +1749,17 @@ mod tests {
     };
     use sea_orm::Database;
     use sea_orm_migration::MigratorTrait;
-    use services::services::{git::GitService, workspace_manager::WorkspaceManager};
+    use services::services::{
+        git::{GitService, GitServiceError},
+        workspace_manager::WorkspaceManager,
+    };
     use tokio::time::{Duration, sleep};
     use uuid::Uuid;
 
     use super::{
         CreateTaskAttemptBody, RenameBranchError, RenameBranchRequest, WorkspaceRepoInput,
         blocked_predecessors, cleanup_failed_attempt_start, create_task_attempt, rename_branch,
-        resolve_executor_profile_id, resolve_topology_base_branches,
+        resolve_executor_profile_id, resolve_topology_base_branches, run_git_operation,
     };
     use crate::{
         DeploymentImpl,
@@ -2404,5 +2477,22 @@ mod tests {
         drop(deployment);
         drop(env_guard);
         let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn run_git_operation_does_not_block_async_runtime() {
+        let sleep_future = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            1
+        });
+
+        let blocking_future = run_git_operation(GitService::new(), |_git| {
+            std::thread::sleep(Duration::from_millis(80));
+            Ok::<usize, GitServiceError>(2)
+        });
+
+        let (sleep_res, blocking_res) = tokio::join!(sleep_future, blocking_future);
+        assert_eq!(sleep_res.unwrap(), 1);
+        assert_eq!(blocking_res.unwrap(), 2);
     }
 }

@@ -1,29 +1,5 @@
-import {
-  Loader2,
-  Send,
-  StopCircle,
-  AlertCircle,
-  AlertTriangle,
-  Clock,
-  X,
-  Paperclip,
-  Terminal,
-  MessageSquare,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Loader2, AlertCircle, Clock } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
 import { useQuery } from '@tanstack/react-query';
 //
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
@@ -45,9 +21,9 @@ import { useKeySubmitFollowUp, Scope } from '@/keyboard';
 import { useHotkeysContext } from 'react-hotkeys-hook';
 import { useProject } from '@/contexts/ProjectContext';
 //
-import { VariantSelector } from '@/components/tasks/VariantSelector';
 import { useAttemptBranch } from '@/hooks/task-attempts/useAttemptBranch';
 import { FollowUpConflictSection } from '@/components/tasks/follow-up/FollowUpConflictSection';
+import { FollowUpActionBar } from '@/components/tasks/follow-up/FollowUpActionBar';
 import { ClickedElementsBanner } from '@/components/tasks/ClickedElementsBanner';
 import WYSIWYGEditor from '@/components/ui/wysiwyg';
 import { useRetryUi } from '@/contexts/RetryUiContext';
@@ -719,195 +695,44 @@ export function TaskFollowUpSection({
 
       {/* Always-visible action bar */}
       <div className="p-4">
-        <div className="flex flex-row gap-2 items-center">
-          <div className="flex-1 flex gap-2">
-            <VariantSelector
-              currentProfile={currentProfile}
-              selectedVariant={selectedVariant}
-              onChange={setSelectedVariant}
-              disabled={!isEditable}
-            />
-          </div>
-
-          {/* Hidden file input for attachment - always present */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            name="followUpAttachments"
-            className="hidden"
-            onChange={handleFileInputChange}
-          />
-
-          {/* Attach button - always visible */}
-          <Button
-            onClick={handleAttachClick}
-            disabled={!isEditable}
-            size="sm"
-            variant="outline"
-            title="Attach image"
-            aria-label="Attach image"
-          >
-            <Paperclip className="h-4 w-4" />
-          </Button>
-
-          {/* GitHub Comments button */}
-          <Button
-            onClick={handleGitHubCommentClick}
-            disabled={!isEditable}
-            size="sm"
-            variant="outline"
-            title="Insert GitHub comment"
-            aria-label="Insert GitHub comment"
-          >
-            <MessageSquare className="h-4 w-4" />
-          </Button>
-
-          {/* Scripts dropdown - only show if project has any scripts */}
-          {hasAnyScript && (
-            <DropdownMenu>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={isAttemptRunning}
-                        aria-label="Run scripts"
-                      >
-                        <Terminal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                  </TooltipTrigger>
-                  {isAttemptRunning && (
-                    <TooltipContent side="bottom">
-                      {t('followUp.scriptsDisabledWhileRunning')}
-                    </TooltipContent>
-                  )}
-                </Tooltip>
-              </TooltipProvider>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onClick={handleRunSetupScript}
-                  disabled={!hasSetupScript}
-                  title={
-                    hasSetupScript ? undefined : t('followUp.noSetupScript')
-                  }
-                >
-                  {t('followUp.runSetupScript')}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={handleRunCleanupScript}
-                  disabled={!hasCleanupScript}
-                  title={
-                    hasCleanupScript ? undefined : t('followUp.noCleanupScript')
-                  }
-                >
-                  {t('followUp.runCleanupScript')}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-
-          {isAttemptRunning ? (
-            <div className="flex items-center gap-2">
-              {/* Queue/Cancel Queue button when running */}
-              {isQueued ? (
-                <Button
-                  onClick={cancelQueue}
-                  disabled={isQueueLoading}
-                  size="sm"
-                  variant="outline"
-                >
-                  {isQueueLoading ? (
-                    <Loader2 className="animate-spin h-4 w-4 mr-2" />
-                  ) : (
-                    <>
-                      <X className="h-4 w-4 mr-2" />
-                      {t('followUp.cancelQueue', 'Cancel Queue')}
-                    </>
-                  )}
-                </Button>
-              ) : (
-                <Button
-                  onClick={handleQueueMessage}
-                  disabled={
-                    isQueueLoading ||
-                    (!localMessage.trim() &&
-                      !conflictResolutionInstructions &&
-                      !reviewMarkdown &&
-                      !clickedMarkdown)
-                  }
-                  size="sm"
-                >
-                  {isQueueLoading ? (
-                    <Loader2 className="animate-spin h-4 w-4 mr-2" />
-                  ) : (
-                    <>
-                      <Clock className="h-4 w-4 mr-2" />
-                      {t('followUp.queue', 'Queue')}
-                    </>
-                  )}
-                </Button>
-              )}
-              <Button
-                onClick={() => stopExecution()}
-                disabled={isStopping}
-                size="sm"
-                variant="destructive"
-              >
-                {isStopping ? (
-                  <Loader2 className="animate-spin h-4 w-4 mr-2" />
-                ) : (
-                  <>
-                    <StopCircle className="h-4 w-4 mr-2" />
-                    {t('followUp.stop')}
-                  </>
-                )}
-              </Button>
-              <Button
-                onClick={handleForceStop}
-                disabled={isStopping}
-                size="sm"
-                variant="destructive"
-              >
-                <AlertTriangle className="h-4 w-4 mr-2" />
-                {t('followUp.forceStop', 'Force stop')}
-              </Button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              {comments.length > 0 && (
-                <Button
-                  onClick={clearComments}
-                  size="sm"
-                  variant="destructive"
-                  disabled={!isEditable}
-                >
-                  {t('followUp.clearReviewComments')}
-                </Button>
-              )}
-              <Button
-                onClick={onSendFollowUp}
-                disabled={!canSendFollowUp || !isEditable}
-                size="sm"
-              >
-                {isSendingFollowUp ? (
-                  <Loader2 className="animate-spin h-4 w-4 mr-2" />
-                ) : (
-                  <>
-                    <Send className="h-4 w-4 mr-2" />
-                    {conflictResolutionInstructions
-                      ? t('followUp.resolveConflicts')
-                      : t('followUp.send')}
-                  </>
-                )}
-              </Button>
-            </div>
-          )}
-        </div>
+        <FollowUpActionBar
+          currentProfile={currentProfile}
+          selectedVariant={selectedVariant}
+          onVariantChange={setSelectedVariant}
+          isEditable={isEditable}
+          fileInputRef={fileInputRef}
+          onAttachClick={handleAttachClick}
+          onFileInputChange={handleFileInputChange}
+          onGitHubCommentClick={handleGitHubCommentClick}
+          hasAnyScript={hasAnyScript}
+          hasSetupScript={hasSetupScript}
+          hasCleanupScript={hasCleanupScript}
+          isAttemptRunning={isAttemptRunning}
+          onRunSetupScript={handleRunSetupScript}
+          onRunCleanupScript={handleRunCleanupScript}
+          isQueued={isQueued}
+          isQueueLoading={isQueueLoading}
+          canQueueMessage={
+            Boolean(
+              localMessage.trim() ||
+                conflictResolutionInstructions ||
+                reviewMarkdown ||
+                clickedMarkdown
+            )
+          }
+          onQueueMessage={handleQueueMessage}
+          onCancelQueue={cancelQueue}
+          onStopExecution={stopExecution}
+          onForceStopExecution={handleForceStop}
+          isStopping={isStopping}
+          reviewCommentCount={comments.length}
+          onClearComments={clearComments}
+          onSendFollowUp={onSendFollowUp}
+          canSendFollowUp={canSendFollowUp}
+          isSendingFollowUp={isSendingFollowUp}
+          hasConflictInstructions={Boolean(conflictResolutionInstructions)}
+          t={(key, fallback) => (fallback ? t(key, fallback) : t(key))}
+        />
       </div>
     </div>
   );

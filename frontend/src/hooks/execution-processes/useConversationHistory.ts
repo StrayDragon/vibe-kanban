@@ -241,6 +241,7 @@ export const useConversationHistory = ({
   const executionProcesses = useRef<ExecutionProcess[]>(executionProcessesRaw);
   const displayedExecutionProcesses = useRef<ExecutionProcessStateStore>({});
   const loadedInitialEntries = useRef(false);
+  const initialLoadInFlightRef = useRef(false);
   const streamingProcessIdsRef = useRef<Set<string>>(new Set());
   const pendingHistoricLoadIdsRef = useRef<Set<string>>(new Set());
   const entryLimitRef = useRef(CONVERSATION_CACHE_LIMIT);
@@ -250,6 +251,7 @@ export const useConversationHistory = ({
   const [hasMoreHistory, setHasMoreHistory] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [historyTruncated, setHistoryTruncated] = useState(false);
+  const processCount = executionProcessesRaw?.length ?? 0;
 
   const mergeIntoDisplayed = (
     mutator: (state: ExecutionProcessStateStore) => void
@@ -593,6 +595,7 @@ export const useConversationHistory = ({
   useEffect(() => {
     displayedExecutionProcesses.current = {};
     loadedInitialEntries.current = false;
+    initialLoadInFlightRef.current = false;
     streamingProcessIdsRef.current.clear();
     pendingHistoricLoadIdsRef.current.clear();
     entryLimitRef.current = CONVERSATION_CACHE_LIMIT;
@@ -1047,33 +1050,39 @@ export const useConversationHistory = ({
     let cancelled = false;
     (async () => {
       if (
-        executionProcesses?.current.length === 0 ||
-        loadedInitialEntries.current
+        processCount === 0 ||
+        loadedInitialEntries.current ||
+        initialLoadInFlightRef.current
       )
         return;
 
-      const allInitialEntries = await loadInitialEntries();
-      if (cancelled) return;
-      mergeIntoDisplayed((state) => {
-        Object.assign(state, allInitialEntries);
-      });
-      emitEntries(displayedExecutionProcesses.current, 'initial', false);
-      loadedInitialEntries.current = true;
+      initialLoadInFlightRef.current = true;
+      try {
+        const allInitialEntries = await loadInitialEntries();
+        if (cancelled) return;
+        mergeIntoDisplayed((state) => {
+          Object.assign(state, allInitialEntries);
+        });
+        emitEntries(displayedExecutionProcesses.current, 'initial', false);
+        loadedInitialEntries.current = true;
+      } finally {
+        initialLoadInFlightRef.current = false;
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [attempt.id, idListKey, loadInitialEntries, emitEntries]);
+  }, [attempt.id, processCount, loadInitialEntries, emitEntries]);
 
   // Stop showing the loading overlay when there are no processes for this attempt.
   useEffect(() => {
     if (executionProcessesLoading) return;
     if (loadedInitialEntries.current) return;
-    if (executionProcesses.current.length > 0) return;
+    if (processCount > 0) return;
 
     loadedInitialEntries.current = true;
     emitEntries(displayedExecutionProcesses.current, 'initial', false);
-  }, [attempt.id, executionProcessesLoading, idListKey, emitEntries]);
+  }, [attempt.id, executionProcessesLoading, processCount, emitEntries]);
 
   useEffect(() => {
     const activeProcesses = getActiveAgentProcesses();
