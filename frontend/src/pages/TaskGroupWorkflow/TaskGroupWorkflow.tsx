@@ -136,6 +136,34 @@ const normalizeGraph = (graph?: TaskGroupGraph | null): TaskGroupGraph => ({
   edges: (graph?.edges ?? []).map((edge) => ({ ...edge })),
 });
 
+const graphKey = (graph: TaskGroupGraph): string => {
+  const nodes = [...(graph.nodes ?? [])]
+    .map((node) => ({
+      id: node.id,
+      taskId: getNodeTaskId(node) ?? null,
+      kind: node.kind ?? 'task',
+      phase: typeof node.phase === 'number' ? node.phase : null,
+      executorProfileId: getNodeExecutorProfileId(node),
+      baseStrategy: getNodeBaseStrategy(node),
+      instructions: node.instructions ?? null,
+      requiresApproval: node.requires_approval ?? node.requiresApproval ?? null,
+      layoutX: node.layout?.x ?? null,
+      layoutY: node.layout?.y ?? null,
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  const edges = [...(graph.edges ?? [])]
+    .map((edge) => ({
+      id: edge.id,
+      from: edge.from,
+      to: edge.to,
+      label: getEdgeLabel(edge) ?? null,
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  return JSON.stringify({ nodes, edges });
+};
+
 type FlowNode = TaskGroupFlowNode;
 
 type FlowEdge = Edge;
@@ -170,13 +198,49 @@ export function TaskGroupWorkflow() {
   const [isPersistingGraph, setIsPersistingGraph] = useState(false);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
+  const serverGraph = useMemo(() => {
+    if (!taskGroup) return null;
+    return normalizeGraph(taskGroup.graph ?? taskGroup.graph_json);
+  }, [taskGroup]);
+
+  const serverGraphKey = useMemo(() => {
+    if (!serverGraph) return null;
+    return graphKey(serverGraph);
+  }, [serverGraph]);
+
+  const graphDraftKey = useMemo(() => {
+    if (!graphDraft) return null;
+    return graphKey(graphDraft);
+  }, [graphDraft]);
+
+  const isGraphDraftDirty = useMemo(() => {
+    if (!graphDraftKey || !serverGraphKey) return false;
+    return graphDraftKey !== serverGraphKey;
+  }, [graphDraftKey, serverGraphKey]);
+
+  const lastTaskGroupIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!taskGroup) {
+      lastTaskGroupIdRef.current = null;
       setGraphDraft(null);
       return;
     }
-    setGraphDraft(normalizeGraph(taskGroup.graph ?? taskGroup.graph_json));
+    const nextGraph = normalizeGraph(taskGroup.graph ?? taskGroup.graph_json);
+    const nextKey = graphKey(nextGraph);
     setGraphError(null);
+
+    setGraphDraft((prev) => {
+      const isNewTaskGroup = lastTaskGroupIdRef.current !== taskGroup.id;
+      lastTaskGroupIdRef.current = taskGroup.id;
+
+      if (isNewTaskGroup || !prev) return nextGraph;
+
+      const prevKey = graphKey(prev);
+      if (prevKey !== nextKey) {
+        return prev;
+      }
+      return nextGraph;
+    });
   }, [taskGroup]);
 
   const graph = useMemo(
@@ -290,10 +354,18 @@ export function TaskGroupWorkflow() {
     [refetchTaskGroup, taskGroup]
   );
 
-  const { debounced: persistGraphDebounced } = useDebouncedCallback(
+  const { debounced: persistGraphDebounced, cancel: cancelPersistGraphDebounced } =
+    useDebouncedCallback(
     persistGraph,
     600
   );
+
+  const handleDiscardGraphDraft = useCallback(() => {
+    if (!taskGroup) return;
+    cancelPersistGraphDebounced();
+    setGraphDraft(normalizeGraph(taskGroup.graph ?? taskGroup.graph_json));
+    setGraphError(null);
+  }, [cancelPersistGraphDebounced, taskGroup]);
 
   const updateGraphDraft = useCallback(
     (updater: (prev: TaskGroupGraph) => TaskGroupGraph) => {
@@ -926,6 +998,21 @@ export function TaskGroupWorkflow() {
       <NewCardHeader
         actions={
           <div className="flex flex-wrap items-center gap-3">
+            {isGraphDraftDirty && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline" className="text-xs">
+                  Unsaved changes
+                </Badge>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleDiscardGraphDraft}
+                  disabled={isPersistingGraph}
+                >
+                  Discard
+                </Button>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <Label className="text-xs text-muted-foreground">Baseline</Label>
               <Input

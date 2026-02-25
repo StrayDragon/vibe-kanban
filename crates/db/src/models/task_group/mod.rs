@@ -146,6 +146,13 @@ impl TaskGroupGraph {
         let mut graph = self.clone();
         for node in &mut graph.nodes {
             node.status = None;
+            if node
+                .instructions
+                .as_ref()
+                .is_some_and(|instructions| instructions.trim().is_empty())
+            {
+                node.instructions = None;
+            }
         }
         graph
     }
@@ -905,6 +912,166 @@ mod tests {
                 .iter()
                 .all(|task| task.task_group_node_id.is_some())
         );
+    }
+
+    #[tokio::test]
+    async fn instructions_persist_and_blank_normalizes_to_none() {
+        let db = setup_db().await;
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &db,
+            &CreateProject {
+                name: "Instruction project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_a_id = Uuid::new_v4();
+        let task_b_id = Uuid::new_v4();
+        Task::create(
+            &db,
+            &CreateTask::from_title_description(project_id, "Task A".to_string(), None),
+            task_a_id,
+        )
+        .await
+        .unwrap();
+        Task::create(
+            &db,
+            &CreateTask::from_title_description(project_id, "Task B".to_string(), None),
+            task_b_id,
+        )
+        .await
+        .unwrap();
+
+        let graph = TaskGroupGraph {
+            nodes: vec![
+                TaskGroupNode {
+                    id: "node-a".to_string(),
+                    task_id: task_a_id,
+                    kind: TaskGroupNodeKind::Task,
+                    phase: 0,
+                    executor_profile_id: None,
+                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    instructions: Some("Do the thing".to_string()),
+                    requires_approval: None,
+                    layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+                    status: None,
+                },
+                TaskGroupNode {
+                    id: "node-b".to_string(),
+                    task_id: task_b_id,
+                    kind: TaskGroupNodeKind::Task,
+                    phase: 0,
+                    executor_profile_id: None,
+                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    instructions: Some("   ".to_string()),
+                    requires_approval: None,
+                    layout: TaskGroupNodeLayout { x: 1.0, y: 1.0 },
+                    status: None,
+                },
+            ],
+            edges: Vec::new(),
+        };
+
+        let group_id = Uuid::new_v4();
+        let created = TaskGroup::create(
+            &db,
+            &CreateTaskGroup {
+                project_id,
+                title: "Workflow".to_string(),
+                description: None,
+                status: None,
+                baseline_ref: "main".to_string(),
+                schema_version: SUPPORTED_SCHEMA_VERSION,
+                graph,
+            },
+            group_id,
+        )
+        .await
+        .unwrap();
+
+        let created_node_a = created
+            .graph
+            .nodes
+            .iter()
+            .find(|node| node.id == "node-a")
+            .expect("node-a");
+        assert_eq!(created_node_a.instructions.as_deref(), Some("Do the thing"));
+
+        let created_node_b = created
+            .graph
+            .nodes
+            .iter()
+            .find(|node| node.id == "node-b")
+            .expect("node-b");
+        assert!(created_node_b.instructions.is_none());
+
+        let updated_graph = TaskGroupGraph {
+            nodes: vec![
+                TaskGroupNode {
+                    id: "node-a".to_string(),
+                    task_id: task_a_id,
+                    kind: TaskGroupNodeKind::Task,
+                    phase: 0,
+                    executor_profile_id: None,
+                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    instructions: Some("Updated instructions".to_string()),
+                    requires_approval: None,
+                    layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+                    status: None,
+                },
+                TaskGroupNode {
+                    id: "node-b".to_string(),
+                    task_id: task_b_id,
+                    kind: TaskGroupNodeKind::Task,
+                    phase: 0,
+                    executor_profile_id: None,
+                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    instructions: Some("\n\t".to_string()),
+                    requires_approval: None,
+                    layout: TaskGroupNodeLayout { x: 1.0, y: 1.0 },
+                    status: None,
+                },
+            ],
+            edges: Vec::new(),
+        };
+
+        let updated = TaskGroup::update(
+            &db,
+            group_id,
+            &UpdateTaskGroup {
+                title: None,
+                description: None,
+                status: None,
+                baseline_ref: None,
+                schema_version: None,
+                graph: Some(updated_graph),
+            },
+        )
+        .await
+        .unwrap();
+
+        let updated_node_a = updated
+            .graph
+            .nodes
+            .iter()
+            .find(|node| node.id == "node-a")
+            .expect("node-a updated");
+        assert_eq!(
+            updated_node_a.instructions.as_deref(),
+            Some("Updated instructions")
+        );
+
+        let updated_node_b = updated
+            .graph
+            .nodes
+            .iter()
+            .find(|node| node.id == "node-b")
+            .expect("node-b updated");
+        assert!(updated_node_b.instructions.is_none());
     }
 
     #[tokio::test]

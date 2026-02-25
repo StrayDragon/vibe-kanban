@@ -67,6 +67,23 @@ pub async fn create_task_group(
     Json(payload): Json<CreateTaskGroup>,
 ) -> Result<ResponseJson<ApiResponse<TaskGroup>>, ApiError> {
     let id = Uuid::new_v4();
+    let node_instructions = payload
+        .graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.instructions
+                .as_ref()
+                .is_some_and(|instructions| !instructions.trim().is_empty())
+        })
+        .count();
+    tracing::info!(
+        task_group_id = %id,
+        project_id = %payload.project_id,
+        node_instructions = node_instructions,
+        "Creating task group"
+    );
+
     let tx = deployment.db().pool.begin().await?;
     let task_group = TaskGroup::create(&tx, &payload, id)
         .await
@@ -81,6 +98,25 @@ pub async fn update_task_group(
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<UpdateTaskGroup>,
 ) -> Result<ResponseJson<ApiResponse<TaskGroup>>, ApiError> {
+    if let Some(graph) = payload.graph.as_ref() {
+        let node_instructions = graph
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.instructions
+                    .as_ref()
+                    .is_some_and(|instructions| !instructions.trim().is_empty())
+            })
+            .count();
+        tracing::info!(
+            task_group_id = %existing.id,
+            node_instructions = node_instructions,
+            "Updating task group graph"
+        );
+    } else {
+        tracing::info!(task_group_id = %existing.id, "Updating task group metadata");
+    }
+
     let tx = deployment.db().pool.begin().await?;
     let task_group = TaskGroup::update(&tx, existing.id, &payload)
         .await

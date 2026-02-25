@@ -26,6 +26,7 @@ use db::{
         repo::Repo,
         session::{CreateSession, Session, SessionError},
         task::{Task, TaskStatus},
+        task_group::TaskGroup,
         workspace::{Workspace, WorkspaceError},
         workspace_repo::WorkspaceRepo,
     },
@@ -154,6 +155,15 @@ fn log_backfill_concurrency() -> usize {
             }
         },
         Err(_) => DEFAULT_LOG_BACKFILL_CONCURRENCY,
+    }
+}
+
+fn append_node_instructions_to_prompt(base_prompt: &str, instructions: &str) -> String {
+    let trimmed = instructions.trim();
+    if trimmed.is_empty() {
+        base_prompt.to_string()
+    } else {
+        format!("{base_prompt}\n\n---\n\nNode instructions:\n{trimmed}")
     }
 }
 
@@ -1722,7 +1732,59 @@ pub trait ContainerService {
         )
         .await?;
 
-        let prompt = task.to_prompt();
+        let mut prompt = task.to_prompt();
+        if let (Some(task_group_id), Some(node_id)) =
+            (task.task_group_id, task.task_group_node_id.as_deref())
+        {
+            let node_key = node_id.trim();
+            if !node_key.is_empty() {
+                match TaskGroup::find_by_id(&self.db().pool, task_group_id).await {
+                    Ok(Some(task_group)) => {
+                        let node = task_group
+                            .graph
+                            .nodes
+                            .iter()
+                            .find(|node| node.id.trim() == node_key);
+                        match node.and_then(|node| node.instructions.as_deref()) {
+                            Some(instructions) if !instructions.trim().is_empty() => {
+                                tracing::info!(
+                                    task_id = %task.id,
+                                    task_group_id = %task_group_id,
+                                    node_id = %node_key,
+                                    "Appending task group node instructions to prompt"
+                                );
+                                prompt = append_node_instructions_to_prompt(&prompt, instructions);
+                            }
+                            _ => {
+                                tracing::info!(
+                                    task_id = %task.id,
+                                    task_group_id = %task_group_id,
+                                    node_id = %node_key,
+                                    "No task group node instructions to append"
+                                );
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        tracing::warn!(
+                            task_id = %task.id,
+                            task_group_id = %task_group_id,
+                            node_id = %node_key,
+                            "Task group not found while building task prompt"
+                        );
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            task_id = %task.id,
+                            task_group_id = %task_group_id,
+                            node_id = %node_key,
+                            error = %err,
+                            "Failed to load task group while building task prompt"
+                        );
+                    }
+                }
+            }
+        }
         let image_paths = match self.image_service().image_path_map_for_task(task.id).await {
             Ok(map) if !map.is_empty() => Some(map),
             Ok(_) => None,
@@ -2130,6 +2192,22 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn append_node_instructions_to_prompt_appends_trimmed_instructions() {
+        let base = "Base prompt";
+        let result = append_node_instructions_to_prompt(base, "  Follow the plan  ");
+
+        assert!(result.starts_with(base));
+        assert!(result.contains("Node instructions:"));
+        assert!(result.contains("Follow the plan"));
+    }
+
+    #[test]
+    fn append_node_instructions_to_prompt_skips_blank_instructions() {
+        let base = "Base prompt";
+        assert_eq!(append_node_instructions_to_prompt(base, " \n\t "), base);
+    }
 
     #[test]
     fn log_backfill_cache_respects_max_entries() {
