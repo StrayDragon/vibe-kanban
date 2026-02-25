@@ -222,11 +222,6 @@ impl ProjectService {
         let path = repo_service.normalize_path(&payload.git_repo_path)?;
         repo_service.validate_git_repo_path(&path)?;
 
-        // Count repos before adding
-        let repo_count_before = ProjectRepo::find_by_project_id(pool, project_id)
-            .await?
-            .len();
-
         let repository = ProjectRepo::add_repo_to_project(
             pool,
             project_id,
@@ -244,8 +239,18 @@ impl ProjectService {
             _ => ProjectServiceError::RepositoryNotFound,
         })?;
 
-        // If project just went from 1 to 2 repos, clear default_agent_working_dir
-        if repo_count_before == 1 {
+        // If the project now has multiple repositories and still carries a default
+        // working directory, clear it. This avoids stale single-repo defaults
+        // under concurrent add-repo requests.
+        let repo_count_after = ProjectRepo::find_by_project_id(pool, project_id)
+            .await?
+            .len();
+        let has_default_agent_working_dir = Project::find_by_id(pool, project_id)
+            .await?
+            .and_then(|project| project.default_agent_working_dir)
+            .map(|dir| !dir.trim().is_empty())
+            .unwrap_or(false);
+        if repo_count_after >= 2 && has_default_agent_working_dir {
             Project::clear_default_agent_working_dir(pool, project_id).await?;
         }
 
@@ -538,9 +543,26 @@ impl ProjectService {
 
 #[cfg(test)]
 mod tests {
-    use db::models::project::UpdateProject;
+    use db::{
+        DBService,
+        models::{
+            project::{CreateProject, Project, UpdateProject},
+            project_repo::{CreateProjectRepo, ProjectRepo},
+        },
+    };
+    use sea_orm::Database;
+    use sea_orm_migration::MigratorTrait;
+    use tempfile::tempdir;
+    use uuid::Uuid;
 
-    use super::{ProjectService, ProjectServiceError};
+    use super::{ProjectService, ProjectServiceError, RepoService};
+    use crate::services::git::GitService;
+
+    async fn setup_db() -> DBService {
+        let pool = Database::connect("sqlite::memory:").await.unwrap();
+        db_migration::Migrator::up(&pool, None).await.unwrap();
+        DBService { pool }
+    }
 
     #[test]
     fn validate_dev_script_update_accepts_single_command() {
@@ -601,5 +623,76 @@ mod tests {
             result,
             Err(ProjectServiceError::InvalidDevScriptWorkingDir(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn add_repository_concurrent_requests_clear_default_working_dir() {
+        let db = setup_db().await;
+        let project_service = ProjectService::new();
+        let repo_service = RepoService::new();
+        let git = GitService::new();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &db.pool,
+            &CreateProject {
+                name: "race-test".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+        Project::update(
+            &db.pool,
+            project_id,
+            &UpdateProject {
+                name: None,
+                dev_script: None,
+                dev_script_working_dir: None,
+                default_agent_working_dir: Some("repo-a".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        let tmp = tempdir().unwrap();
+        let repo_a = tmp.path().join("repo-a");
+        let repo_b = tmp.path().join("repo-b");
+        git.initialize_repo_with_main_branch(&repo_a).unwrap();
+        git.initialize_repo_with_main_branch(&repo_b).unwrap();
+
+        let payload_a = CreateProjectRepo {
+            display_name: "Repo A".to_string(),
+            git_repo_path: repo_a.to_string_lossy().to_string(),
+        };
+        let payload_b = CreateProjectRepo {
+            display_name: "Repo B".to_string(),
+            git_repo_path: repo_b.to_string_lossy().to_string(),
+        };
+
+        let (result_a, result_b) = tokio::join!(
+            project_service.add_repository(&db.pool, &repo_service, project_id, &payload_a),
+            project_service.add_repository(&db.pool, &repo_service, project_id, &payload_b)
+        );
+        assert!(result_a.is_ok(), "first add failed: {result_a:?}");
+        assert!(result_b.is_ok(), "second add failed: {result_b:?}");
+
+        let project = Project::find_by_id(&db.pool, project_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            project
+                .default_agent_working_dir
+                .as_deref()
+                .unwrap_or_default()
+                .is_empty()
+        );
+
+        let repos = ProjectRepo::find_by_project_id(&db.pool, project_id)
+            .await
+            .unwrap();
+        assert_eq!(repos.len(), 2);
     }
 }

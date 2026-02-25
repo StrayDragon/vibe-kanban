@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -75,6 +75,21 @@ struct AutoRetryState {
     attempt: u32,
 }
 
+#[derive(Clone, Default)]
+struct FinalizationTracker {
+    in_progress: Arc<RwLock<HashSet<Uuid>>>,
+}
+
+impl FinalizationTracker {
+    async fn begin(&self, execution_process_id: Uuid) -> bool {
+        self.in_progress.write().await.insert(execution_process_id)
+    }
+
+    async fn end(&self, execution_process_id: Uuid) {
+        self.in_progress.write().await.remove(&execution_process_id);
+    }
+}
+
 #[derive(Clone)]
 pub struct LocalContainerService {
     db: DBService,
@@ -82,6 +97,7 @@ pub struct LocalContainerService {
     interrupt_senders: Arc<RwLock<HashMap<Uuid, InterruptSender>>>,
     msg_stores: Arc<RwLock<HashMap<Uuid, Arc<MsgStore>>>>,
     auto_retry_states: Arc<RwLock<HashMap<Uuid, AutoRetryState>>>,
+    finalization_tracker: FinalizationTracker,
     config: Arc<RwLock<Config>>,
     git: GitService,
     image_service: ImageService,
@@ -104,6 +120,7 @@ impl LocalContainerService {
         let child_store = Arc::new(RwLock::new(HashMap::new()));
         let interrupt_senders = Arc::new(RwLock::new(HashMap::new()));
         let auto_retry_states = Arc::new(RwLock::new(HashMap::new()));
+        let finalization_tracker = FinalizationTracker::default();
         let notification_service = NotificationService::new(config.clone());
 
         let container = LocalContainerService {
@@ -112,6 +129,7 @@ impl LocalContainerService {
             interrupt_senders,
             msg_stores,
             auto_retry_states,
+            finalization_tracker,
             config,
             git,
             image_service,
@@ -148,6 +166,14 @@ impl LocalContainerService {
     async fn take_interrupt_sender(&self, id: &Uuid) -> Option<InterruptSender> {
         let mut map = self.interrupt_senders.write().await;
         map.remove(id)
+    }
+
+    async fn begin_finalization(&self, execution_process_id: Uuid) -> bool {
+        self.finalization_tracker.begin(execution_process_id).await
+    }
+
+    async fn end_finalization(&self, execution_process_id: Uuid) {
+        self.finalization_tracker.end(execution_process_id).await;
     }
 
     pub async fn cleanup_workspace(db: &DBService, workspace: &Workspace) {
@@ -755,130 +781,143 @@ impl LocalContainerService {
                 tracing::error!("Failed to update execution process completion: {}", e);
             }
 
-            if let Ok(ctx) = ExecutionProcess::load_context(&db.pool, exec_id).await {
-                // Avoid double-finalizing the same execution (duplicate notifications).
-                let mut finalized = false;
-
-                // Update executor session summary if available
-                if let Err(e) = container.update_executor_session_summary(&exec_id).await {
-                    tracing::warn!("Failed to update executor session summary: {}", e);
-                }
-
-                let success = matches!(
-                    ctx.execution_process.status,
-                    ExecutionProcessStatus::Completed
-                ) && exit_code == Some(0);
-
-                let cleanup_done = matches!(
-                    ctx.execution_process.run_reason,
-                    ExecutionProcessRunReason::CleanupScript
-                ) && !matches!(
-                    ctx.execution_process.status,
-                    ExecutionProcessStatus::Running
+            let owns_finalization = container.begin_finalization(exec_id).await;
+            if !owns_finalization {
+                tracing::debug!(
+                    "Skipping exit monitor finalization for process {} because another finalizer is active",
+                    exec_id
                 );
+            } else {
+                if let Ok(ctx) = ExecutionProcess::load_context(&db.pool, exec_id).await {
+                    // Avoid double-finalizing the same execution (duplicate notifications).
+                    let mut finalized = false;
 
-                if success || cleanup_done {
-                    // Commit changes (if any) and get feedback about whether changes were made
-                    let changes_committed = match container.try_commit_changes(&ctx).await {
-                        Ok(committed) => committed,
-                        Err(e) => {
-                            tracing::error!("Failed to commit changes after execution: {}", e);
-                            // Treat commit failures as if changes were made to be safe
-                            true
-                        }
-                    };
-
-                    let should_start_next = if matches!(
-                        ctx.execution_process.run_reason,
-                        ExecutionProcessRunReason::CodingAgent
-                    ) {
-                        changes_committed
-                    } else {
-                        true
-                    };
-
-                    if should_start_next {
-                        // If the process exited successfully, start the next action
-                        if let Err(e) = container.try_start_next_action(&ctx).await {
-                            tracing::error!("Failed to start next action after completion: {}", e);
-                        }
-                    } else {
-                        tracing::info!(
-                            "Skipping cleanup script for workspace {} - no changes made by coding agent",
-                            ctx.workspace.id
-                        );
-
-                        // Manually finalize task since we're bypassing normal execution flow
-                        if !finalized {
-                            container.finalize_task(&ctx).await;
-                            finalized = true;
-                        }
+                    // Update executor session summary if available
+                    if let Err(e) = container.update_executor_session_summary(&exec_id).await {
+                        tracing::warn!("Failed to update executor session summary: {}", e);
                     }
-                }
 
-                if let Err(e) = container.maybe_schedule_auto_retry(&ctx).await {
-                    tracing::warn!("Auto retry scheduling failed: {}", e);
-                }
-
-                container.auto_retry_states.write().await.remove(&exec_id);
-
-                if container.should_finalize(&ctx) {
-                    // Only execute queued messages if the execution succeeded
-                    // If it failed or was killed, just clear the queue and finalize
-                    let should_execute_queued = !matches!(
+                    let success = matches!(
                         ctx.execution_process.status,
-                        ExecutionProcessStatus::Failed | ExecutionProcessStatus::Killed
+                        ExecutionProcessStatus::Completed
+                    ) && exit_code == Some(0);
+
+                    let cleanup_done = matches!(
+                        ctx.execution_process.run_reason,
+                        ExecutionProcessRunReason::CleanupScript
+                    ) && !matches!(
+                        ctx.execution_process.status,
+                        ExecutionProcessStatus::Running
                     );
 
-                    if let Some(queued_msg) =
-                        container.queued_message_service.take_queued(ctx.session.id)
-                    {
-                        if should_execute_queued {
-                            tracing::info!(
-                                "Found queued message for session {}, starting follow-up execution",
-                                ctx.session.id
-                            );
+                    if success || cleanup_done {
+                        // Commit changes (if any) and get feedback about whether changes were made
+                        let changes_committed = match container.try_commit_changes(&ctx).await {
+                            Ok(committed) => committed,
+                            Err(e) => {
+                                tracing::error!("Failed to commit changes after execution: {}", e);
+                                // Treat commit failures as if changes were made to be safe
+                                true
+                            }
+                        };
 
-                            // Delete the scratch since we're consuming the queued message
-                            if let Err(e) = Scratch::delete(
-                                &db.pool,
-                                ctx.session.id,
-                                &ScratchType::DraftFollowUp,
-                            )
-                            .await
-                            {
-                                tracing::warn!(
-                                    "Failed to delete scratch after consuming queued message: {}",
+                        let should_start_next = if matches!(
+                            ctx.execution_process.run_reason,
+                            ExecutionProcessRunReason::CodingAgent
+                        ) {
+                            changes_committed
+                        } else {
+                            true
+                        };
+
+                        if should_start_next {
+                            // If the process exited successfully, start the next action
+                            if let Err(e) = container.try_start_next_action(&ctx).await {
+                                tracing::error!(
+                                    "Failed to start next action after completion: {}",
                                     e
                                 );
                             }
+                        } else {
+                            tracing::info!(
+                                "Skipping cleanup script for workspace {} - no changes made by coding agent",
+                                ctx.workspace.id
+                            );
 
-                            // Execute the queued follow-up
-                            if let Err(e) = container
-                                .start_queued_follow_up(&ctx, &queued_msg.data)
+                            // Manually finalize task since we're bypassing normal execution flow
+                            if !finalized {
+                                container.finalize_task(&ctx).await;
+                                finalized = true;
+                            }
+                        }
+                    }
+
+                    if let Err(e) = container.maybe_schedule_auto_retry(&ctx).await {
+                        tracing::warn!("Auto retry scheduling failed: {}", e);
+                    }
+
+                    container.auto_retry_states.write().await.remove(&exec_id);
+
+                    if container.should_finalize(&ctx) {
+                        // Only execute queued messages if the execution succeeded
+                        // If it failed or was killed, just clear the queue and finalize
+                        let should_execute_queued = !matches!(
+                            ctx.execution_process.status,
+                            ExecutionProcessStatus::Failed | ExecutionProcessStatus::Killed
+                        );
+
+                        if let Some(queued_msg) =
+                            container.queued_message_service.take_queued(ctx.session.id)
+                        {
+                            if should_execute_queued {
+                                tracing::info!(
+                                    "Found queued message for session {}, starting follow-up execution",
+                                    ctx.session.id
+                                );
+
+                                // Delete the scratch since we're consuming the queued message
+                                if let Err(e) = Scratch::delete(
+                                    &db.pool,
+                                    ctx.session.id,
+                                    &ScratchType::DraftFollowUp,
+                                )
                                 .await
-                            {
-                                tracing::error!("Failed to start queued follow-up: {}", e);
-                                // Fall back to finalization if follow-up fails
+                                {
+                                    tracing::warn!(
+                                        "Failed to delete scratch after consuming queued message: {}",
+                                        e
+                                    );
+                                }
+
+                                // Execute the queued follow-up
+                                if let Err(e) = container
+                                    .start_queued_follow_up(&ctx, &queued_msg.data)
+                                    .await
+                                {
+                                    tracing::error!("Failed to start queued follow-up: {}", e);
+                                    // Fall back to finalization if follow-up fails
+                                    if !finalized {
+                                        container.finalize_task(&ctx).await;
+                                    }
+                                }
+                            } else {
+                                // Execution failed or was killed - discard the queued message and finalize
+                                tracing::info!(
+                                    "Discarding queued message for session {} due to execution status {:?}",
+                                    ctx.session.id,
+                                    ctx.execution_process.status
+                                );
                                 if !finalized {
                                     container.finalize_task(&ctx).await;
                                 }
                             }
-                        } else {
-                            // Execution failed or was killed - discard the queued message and finalize
-                            tracing::info!(
-                                "Discarding queued message for session {} due to execution status {:?}",
-                                ctx.session.id,
-                                ctx.execution_process.status
-                            );
-                            if !finalized {
-                                container.finalize_task(&ctx).await;
-                            }
+                        } else if !finalized {
+                            container.finalize_task(&ctx).await;
                         }
-                    } else if !finalized {
-                        container.finalize_task(&ctx).await;
                     }
                 }
+
+                container.end_finalization(exec_id).await;
             }
 
             // Now that commit/next-action/finalization steps for this process are complete,
@@ -1478,94 +1517,115 @@ impl ContainerService for LocalContainerService {
         execution_process: &ExecutionProcess,
         status: ExecutionProcessStatus,
     ) -> Result<(), ContainerError> {
-        let child = self
-            .get_child_from_store(&execution_process.id)
-            .await
-            .ok_or_else(|| {
-                ContainerError::Other(anyhow!("Child process not found for execution"))
-            })?;
-        let exit_code = if status == ExecutionProcessStatus::Completed {
-            Some(0)
-        } else {
-            None
-        };
+        if !self.begin_finalization(execution_process.id).await {
+            tracing::debug!(
+                "Skipping stop_execution for {} because another finalizer is active",
+                execution_process.id
+            );
+            return Ok(());
+        }
 
-        ExecutionProcess::update_completion(&self.db.pool, execution_process.id, status, exit_code)
-            .await?;
-
-        // Try graceful interrupt first, then force kill
-        if let Some(interrupt_sender) = self.take_interrupt_sender(&execution_process.id).await {
-            // Send interrupt signal (ignore error if receiver dropped)
-            let _ = interrupt_sender.send(());
-
-            // Wait for graceful exit with timeout
-            let graceful_exit = {
-                let mut child_guard = child.write().await;
-                tokio::time::timeout(Duration::from_secs(5), child_guard.wait()).await
+        let result = async {
+            let child = self
+                .get_child_from_store(&execution_process.id)
+                .await
+                .ok_or_else(|| {
+                    ContainerError::Other(anyhow!("Child process not found for execution"))
+                })?;
+            let exit_code = if status == ExecutionProcessStatus::Completed {
+                Some(0)
+            } else {
+                None
             };
 
-            match graceful_exit {
-                Ok(Ok(_)) => {
-                    tracing::debug!(
-                        "Process {} exited gracefully after interrupt",
-                        execution_process.id
-                    );
-                }
-                Ok(Err(e)) => {
-                    tracing::info!("Error waiting for process {}: {}", execution_process.id, e);
-                }
-                Err(_) => {
-                    tracing::debug!(
-                        "Graceful shutdown timed out for process {}, force killing",
-                        execution_process.id
-                    );
-                }
-            }
-        }
-
-        // Kill the child process and remove from the store
-        {
-            let mut child_guard = child.write().await;
-            if let Err(e) = command::kill_process_group(&mut child_guard).await {
-                tracing::error!(
-                    "Failed to stop execution process {}: {}",
-                    execution_process.id,
-                    e
-                );
-                return Err(e);
-            }
-        }
-        self.remove_child_from_store(&execution_process.id).await;
-
-        // Mark the process finished in the MsgStore
-        if let Some(msg) = self.msg_stores.write().await.remove(&execution_process.id) {
-            msg.push_finished();
-        }
-
-        // Update task status to InReview when execution is stopped
-        if let Ok(ctx) = ExecutionProcess::load_context(&self.db.pool, execution_process.id).await
-            && !matches!(
-                ctx.execution_process.run_reason,
-                ExecutionProcessRunReason::DevServer
+            ExecutionProcess::update_completion(
+                &self.db.pool,
+                execution_process.id,
+                status,
+                exit_code,
             )
-        {
-            match Task::update_status(&self.db.pool, ctx.task.id, TaskStatus::InReview).await {
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::error!("Failed to update task status to InReview: {e}");
+            .await?;
+
+            // Try graceful interrupt first, then force kill
+            if let Some(interrupt_sender) = self.take_interrupt_sender(&execution_process.id).await
+            {
+                // Send interrupt signal (ignore error if receiver dropped)
+                let _ = interrupt_sender.send(());
+
+                // Wait for graceful exit with timeout
+                let graceful_exit = {
+                    let mut child_guard = child.write().await;
+                    tokio::time::timeout(Duration::from_secs(5), child_guard.wait()).await
+                };
+
+                match graceful_exit {
+                    Ok(Ok(_)) => {
+                        tracing::debug!(
+                            "Process {} exited gracefully after interrupt",
+                            execution_process.id
+                        );
+                    }
+                    Ok(Err(e)) => {
+                        tracing::info!("Error waiting for process {}: {}", execution_process.id, e);
+                    }
+                    Err(_) => {
+                        tracing::debug!(
+                            "Graceful shutdown timed out for process {}, force killing",
+                            execution_process.id
+                        );
+                    }
                 }
             }
+
+            // Kill the child process and remove from the store
+            {
+                let mut child_guard = child.write().await;
+                if let Err(e) = command::kill_process_group(&mut child_guard).await {
+                    tracing::error!(
+                        "Failed to stop execution process {}: {}",
+                        execution_process.id,
+                        e
+                    );
+                    return Err(e);
+                }
+            }
+            self.remove_child_from_store(&execution_process.id).await;
+
+            // Mark the process finished in the MsgStore
+            if let Some(msg) = self.msg_stores.write().await.remove(&execution_process.id) {
+                msg.push_finished();
+            }
+
+            // Update task status to InReview when execution is stopped
+            if let Ok(ctx) =
+                ExecutionProcess::load_context(&self.db.pool, execution_process.id).await
+                && !matches!(
+                    ctx.execution_process.run_reason,
+                    ExecutionProcessRunReason::DevServer
+                )
+            {
+                match Task::update_status(&self.db.pool, ctx.task.id, TaskStatus::InReview).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::error!("Failed to update task status to InReview: {e}");
+                    }
+                }
+            }
+
+            tracing::debug!(
+                "Execution process {} stopped successfully",
+                execution_process.id
+            );
+
+            // Record after-head commit OID (best-effort)
+            self.update_after_head_commits(execution_process.id).await;
+
+            Ok(())
         }
+        .await;
 
-        tracing::debug!(
-            "Execution process {} stopped successfully",
-            execution_process.id
-        );
-
-        // Record after-head commit OID (best-effort)
-        self.update_after_head_commits(execution_process.id).await;
-
-        Ok(())
+        self.end_finalization(execution_process.id).await;
+        result
     }
 
     async fn stop_execution_force(
@@ -1581,44 +1641,64 @@ impl ContainerService for LocalContainerService {
             return self.stop_execution(execution_process, status).await;
         }
 
-        let exit_code = if status == ExecutionProcessStatus::Completed {
-            Some(0)
-        } else {
-            None
-        };
+        if !self.begin_finalization(execution_process.id).await {
+            tracing::debug!(
+                "Skipping stop_execution_force for {} because another finalizer is active",
+                execution_process.id
+            );
+            return Ok(());
+        }
 
-        ExecutionProcess::update_completion(&self.db.pool, execution_process.id, status, exit_code)
+        let result = async {
+            let exit_code = if status == ExecutionProcessStatus::Completed {
+                Some(0)
+            } else {
+                None
+            };
+
+            ExecutionProcess::update_completion(
+                &self.db.pool,
+                execution_process.id,
+                status,
+                exit_code,
+            )
             .await?;
 
-        let _ = self.take_interrupt_sender(&execution_process.id).await;
-        self.remove_child_from_store(&execution_process.id).await;
+            let _ = self.take_interrupt_sender(&execution_process.id).await;
+            self.remove_child_from_store(&execution_process.id).await;
 
-        if let Some(msg) = self.msg_stores.write().await.remove(&execution_process.id) {
-            msg.push_finished();
-        }
+            if let Some(msg) = self.msg_stores.write().await.remove(&execution_process.id) {
+                msg.push_finished();
+            }
 
-        if let Ok(ctx) = ExecutionProcess::load_context(&self.db.pool, execution_process.id).await
-            && !matches!(
-                ctx.execution_process.run_reason,
-                ExecutionProcessRunReason::DevServer
-            )
-        {
-            match Task::update_status(&self.db.pool, ctx.task.id, TaskStatus::InReview).await {
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::error!("Failed to update task status to InReview: {e}");
+            if let Ok(ctx) =
+                ExecutionProcess::load_context(&self.db.pool, execution_process.id).await
+                && !matches!(
+                    ctx.execution_process.run_reason,
+                    ExecutionProcessRunReason::DevServer
+                )
+            {
+                match Task::update_status(&self.db.pool, ctx.task.id, TaskStatus::InReview).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::error!("Failed to update task status to InReview: {e}");
+                    }
                 }
             }
+
+            tracing::debug!(
+                "Execution process {} force-stopped without a child handle",
+                execution_process.id
+            );
+
+            self.update_after_head_commits(execution_process.id).await;
+
+            Ok(())
         }
+        .await;
 
-        tracing::debug!(
-            "Execution process {} force-stopped without a child handle",
-            execution_process.id
-        );
-
-        self.update_after_head_commits(execution_process.id).await;
-
-        Ok(())
+        self.end_finalization(execution_process.id).await;
+        result
     }
 
     async fn stream_diff(
@@ -1876,5 +1956,49 @@ fn success_exit_status() -> std::process::ExitStatus {
     {
         use std::os::windows::process::ExitStatusExt;
         ExitStatusExt::from_raw(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::Barrier;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn finalization_tracker_allows_single_owner_during_race() {
+        let tracker = FinalizationTracker::default();
+        let execution_process_id = Uuid::new_v4();
+        let barrier = Arc::new(Barrier::new(3));
+
+        let tracker_a = tracker.clone();
+        let barrier_a = barrier.clone();
+        let task_a = tokio::spawn(async move {
+            barrier_a.wait().await;
+            tracker_a.begin(execution_process_id).await
+        });
+
+        let tracker_b = tracker.clone();
+        let barrier_b = barrier.clone();
+        let task_b = tokio::spawn(async move {
+            barrier_b.wait().await;
+            tracker_b.begin(execution_process_id).await
+        });
+
+        barrier.wait().await;
+        let owns_a = task_a.await.unwrap();
+        let owns_b = task_b.await.unwrap();
+
+        assert_ne!(owns_a, owns_b);
+    }
+
+    #[tokio::test]
+    async fn finalization_tracker_reacquires_after_release() {
+        let tracker = FinalizationTracker::default();
+        let execution_process_id = Uuid::new_v4();
+
+        assert!(tracker.begin(execution_process_id).await);
+        tracker.end(execution_process_id).await;
+        assert!(tracker.begin(execution_process_id).await);
     }
 }
