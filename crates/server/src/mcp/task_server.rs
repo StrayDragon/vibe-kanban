@@ -34,7 +34,12 @@ use crate::{
     mcp::params::Parameters,
     routes::{
         containers::ContainerQuery,
-        task_attempts::{CreateTaskAttemptBody, WorkspaceRepoInput},
+        task_attempts::{
+            AttemptChangesBlockedReason as ApiAttemptChangesBlockedReason,
+            AttemptState as ApiAttemptState, CreateTaskAttemptBody,
+            TaskAttemptChangesResponse as ApiTaskAttemptChangesResponse,
+            TaskAttemptStatusResponse as ApiTaskAttemptStatusResponse, WorkspaceRepoInput,
+        },
     },
 };
 
@@ -415,6 +420,155 @@ impl FollowUpResponse {
             },
         }
     }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetAttemptStatusRequest {
+    #[schemars(
+        description = "The attempt/workspace id to inspect (UUID string). This is required!"
+    )]
+    pub attempt_id: Uuid,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum McpAttemptState {
+    Idle,
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct GetAttemptStatusResponse {
+    #[schemars(description = "The attempt/workspace id (UUID string)")]
+    pub attempt_id: String,
+    #[schemars(description = "The task id for this attempt (UUID string)")]
+    pub task_id: String,
+    #[schemars(description = "The workspace branch name for this attempt")]
+    pub workspace_branch: String,
+    #[schemars(description = "When the attempt was created (RFC3339)")]
+    pub created_at: String,
+    #[schemars(description = "When the attempt was last updated (RFC3339)")]
+    pub updated_at: String,
+    #[schemars(description = "Latest session id for this attempt (UUID string)")]
+    pub latest_session_id: Option<String>,
+    #[schemars(
+        description = "Latest relevant execution process id for this attempt (UUID string)"
+    )]
+    pub latest_execution_process_id: Option<String>,
+    #[schemars(description = "Coarse attempt lifecycle state (idle|running|completed|failed)")]
+    pub state: McpAttemptState,
+    #[schemars(description = "Best-effort last activity timestamp (RFC3339)")]
+    pub last_activity_at: Option<String>,
+    #[schemars(description = "Best-effort failure summary when state=failed")]
+    pub failure_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AttemptLogChannel {
+    Normalized,
+    Raw,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct TailAttemptLogsRequest {
+    #[schemars(description = "The attempt/workspace id (UUID string). This is required!")]
+    pub attempt_id: Uuid,
+    #[schemars(
+        description = "Log channel to tail: normalized|raw (default: normalized). Normalized is usually easier for LLMs."
+    )]
+    pub channel: Option<AttemptLogChannel>,
+    #[schemars(
+        description = "Maximum number of entries to return (optional). Server applies a safe cap."
+    )]
+    pub limit: Option<usize>,
+    #[schemars(description = "Cursor returned by a prior call to page older entries (optional).")]
+    pub cursor: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct McpIndexedLogEntry {
+    #[schemars(description = "Monotonic log entry index")]
+    pub entry_index: i64,
+    #[schemars(
+        description = "Log entry payload (PatchType JSON). Treat as opaque JSON and render/inspect by `type`."
+    )]
+    pub entry: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct McpLogHistoryPage {
+    #[schemars(description = "Entries in chronological order (oldest→newest)")]
+    pub entries: Vec<McpIndexedLogEntry>,
+    #[schemars(
+        description = "Cursor to request the next older page. Pass as `cursor` to a follow-up call."
+    )]
+    pub next_cursor: Option<i64>,
+    #[schemars(description = "Whether older history exists beyond this page")]
+    pub has_more: bool,
+    #[schemars(description = "Whether history was truncated due to in-memory eviction")]
+    pub history_truncated: bool,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct TailAttemptLogsResponse {
+    #[schemars(description = "The attempt/workspace id (UUID string)")]
+    pub attempt_id: String,
+    #[schemars(
+        description = "Execution process id used for the tail (UUID string). Null when no relevant process exists."
+    )]
+    pub execution_process_id: Option<String>,
+    #[schemars(description = "Channel used for this tail page")]
+    pub channel: AttemptLogChannel,
+    #[schemars(description = "Tail-first log history page")]
+    pub page: McpLogHistoryPage,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetAttemptChangesRequest {
+    #[schemars(description = "The attempt/workspace id (UUID string). This is required!")]
+    pub attempt_id: Uuid,
+    #[schemars(
+        description = "If true, bypass diff preview guard thresholds and return a changed-file list (default: false)."
+    )]
+    pub force: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpAttemptChangesBlockedReason {
+    SummaryFailed,
+    ThresholdExceeded,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct McpAttemptChangesSummary {
+    #[schemars(description = "Number of changed files")]
+    pub file_count: usize,
+    #[schemars(description = "Total added lines (best-effort)")]
+    pub added: usize,
+    #[schemars(description = "Total deleted lines (best-effort)")]
+    pub deleted: usize,
+    #[schemars(description = "Total bytes changed (best-effort)")]
+    pub total_bytes: usize,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct GetAttemptChangesResponse {
+    #[schemars(description = "The attempt/workspace id (UUID string)")]
+    pub attempt_id: String,
+    #[schemars(description = "Diff summary across all repos in the attempt")]
+    pub summary: McpAttemptChangesSummary,
+    #[schemars(description = "Whether the changed-file list is blocked by guardrails")]
+    pub blocked: bool,
+    #[schemars(description = "Why the file list was blocked (when blocked=true)")]
+    pub blocked_reason: Option<McpAttemptChangesBlockedReason>,
+    #[schemars(
+        description = "Changed file paths (repo-prefixed for multi-repo attempts). Empty when blocked."
+    )]
+    pub files: Vec<String>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -1465,6 +1619,164 @@ impl TaskServer {
     }
 
     #[tool(
+        description = "Get attempt/workspace status for orchestration. Returns coarse state, latest session/process ids, last activity, and a best-effort failure summary. `attempt_id` is required!"
+    )]
+    async fn get_attempt_status(
+        &self,
+        Parameters(GetAttemptStatusRequest { attempt_id }): Parameters<GetAttemptStatusRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let url = self.url(&format!("/api/task-attempts/{}/status", attempt_id));
+        let status: ApiTaskAttemptStatusResponse =
+            match self.send_json(self.client.get(&url), "GET", &url).await {
+                Ok(status) => status,
+                Err(e) => return Ok(e),
+            };
+
+        let state = match status.state {
+            ApiAttemptState::Idle => McpAttemptState::Idle,
+            ApiAttemptState::Running => McpAttemptState::Running,
+            ApiAttemptState::Completed => McpAttemptState::Completed,
+            ApiAttemptState::Failed => McpAttemptState::Failed,
+        };
+
+        let response = GetAttemptStatusResponse {
+            attempt_id: status.attempt_id.to_string(),
+            task_id: status.task_id.to_string(),
+            workspace_branch: status.workspace_branch,
+            created_at: status.created_at.to_rfc3339(),
+            updated_at: status.updated_at.to_rfc3339(),
+            latest_session_id: status.latest_session_id.map(|id| id.to_string()),
+            latest_execution_process_id: status
+                .latest_execution_process_id
+                .map(|id| id.to_string()),
+            state,
+            last_activity_at: status.last_activity_at.map(|at| at.to_rfc3339()),
+            failure_summary: status.failure_summary,
+        };
+
+        TaskServer::success(&response)
+    }
+
+    #[tool(
+        description = "Tail the latest attempt logs with cursor-based paging (pull mode). Use this after get_attempt_status. Defaults to normalized logs which are easier for LLMs. `attempt_id` is required!"
+    )]
+    async fn tail_attempt_logs(
+        &self,
+        Parameters(TailAttemptLogsRequest {
+            attempt_id,
+            channel,
+            limit,
+            cursor,
+        }): Parameters<TailAttemptLogsRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let channel = channel.unwrap_or(AttemptLogChannel::Normalized);
+
+        let status_url = self.url(&format!("/api/task-attempts/{}/status", attempt_id));
+        let status: ApiTaskAttemptStatusResponse = match self
+            .send_json(self.client.get(&status_url), "GET", &status_url)
+            .await
+        {
+            Ok(status) => status,
+            Err(e) => return Ok(e),
+        };
+
+        let Some(exec_id) = status.latest_execution_process_id else {
+            let response = TailAttemptLogsResponse {
+                attempt_id: attempt_id.to_string(),
+                execution_process_id: None,
+                channel,
+                page: McpLogHistoryPage {
+                    entries: Vec::new(),
+                    next_cursor: None,
+                    has_more: false,
+                    history_truncated: false,
+                },
+            };
+            return TaskServer::success(&response);
+        };
+
+        let logs_path = match channel {
+            AttemptLogChannel::Normalized => {
+                format!("/api/execution-processes/{}/normalized-logs/v2", exec_id)
+            }
+            AttemptLogChannel::Raw => {
+                format!("/api/execution-processes/{}/raw-logs/v2", exec_id)
+            }
+        };
+        let url = self.url(&logs_path);
+
+        let mut rb = self.client.get(&url);
+        if let Some(limit) = limit {
+            let capped = limit.clamp(1, 1000);
+            rb = rb.query(&[("limit", capped)]);
+        }
+        if let Some(cursor) = cursor {
+            rb = rb.query(&[("cursor", cursor)]);
+        }
+
+        let page: McpLogHistoryPage = match self.send_json(rb, "GET", &url).await {
+            Ok(page) => page,
+            Err(e) => return Ok(e),
+        };
+
+        let response = TailAttemptLogsResponse {
+            attempt_id: attempt_id.to_string(),
+            execution_process_id: Some(exec_id.to_string()),
+            channel,
+            page,
+        };
+
+        TaskServer::success(&response)
+    }
+
+    #[tool(
+        description = "Get a diff summary and changed-file list for an attempt without streaming. Respects diff preview guardrails unless force=true. `attempt_id` is required!"
+    )]
+    async fn get_attempt_changes(
+        &self,
+        Parameters(GetAttemptChangesRequest { attempt_id, force }): Parameters<
+            GetAttemptChangesRequest,
+        >,
+    ) -> Result<CallToolResult, ErrorData> {
+        let force = force.unwrap_or(false);
+        let url = self.url(&format!("/api/task-attempts/{}/changes", attempt_id));
+        let mut rb = self.client.get(&url);
+        if force {
+            rb = rb.query(&[("force", true)]);
+        }
+
+        let changes: ApiTaskAttemptChangesResponse = match self.send_json(rb, "GET", &url).await {
+            Ok(changes) => changes,
+            Err(e) => return Ok(e),
+        };
+
+        let blocked_reason = match changes.blocked_reason {
+            Some(ApiAttemptChangesBlockedReason::SummaryFailed) => {
+                Some(McpAttemptChangesBlockedReason::SummaryFailed)
+            }
+            Some(ApiAttemptChangesBlockedReason::ThresholdExceeded) => {
+                Some(McpAttemptChangesBlockedReason::ThresholdExceeded)
+            }
+            None => None,
+        };
+
+        let response = GetAttemptChangesResponse {
+            attempt_id: attempt_id.to_string(),
+            summary: McpAttemptChangesSummary {
+                file_count: changes.summary.file_count,
+                added: changes.summary.added,
+                deleted: changes.summary.deleted,
+                total_bytes: changes.summary.total_bytes,
+            },
+            blocked: changes.blocked,
+            blocked_reason,
+            files: changes.files,
+        };
+
+        TaskServer::success(&response)
+    }
+
+    #[tool(
         description = "Update an existing task/ticket's title, description, or status. `task_id` is required; `title`, `description`, and `status` are optional. Use this for changes beyond the initial inprogress transition (start_task_attempt already handles that)."
     )]
     async fn update_task(
@@ -1571,7 +1883,7 @@ impl TaskServer {
 #[tool_handler]
 impl ServerHandler for TaskServer {
     fn get_info(&self) -> ServerInfo {
-        let mut instruction = "A task and project management server. Use list tools to discover ids, then perform create/update/start/follow-up actions. start_task_attempt automatically sets the task to inprogress; do not call update_task just to set inprogress. After start_task_attempt, use follow_up to send the prompt to the attempt. TOOLS: 'list_projects', 'list_repos', 'list_tasks', 'list_task_attempts', 'get_task', 'create_task', 'update_task', 'delete_task', 'start_task_attempt', 'follow_up'. Use `list_tasks` to get task ids and latest attempt/session summaries. Use `list_task_attempts` to inspect attempts and get attempt_id/session_id for follow-up. The `follow_up` tool accepts either attempt_id (preferred) or session_id. attempt_id refers to the task attempt workspace id. Tool errors are returned as JSON with fields like error, hint, code, and retryable; invalid parameter errors include JSON-RPC error data with path/hint.".to_string();
+        let mut instruction = "A task and project management server. Use list tools to discover ids, then perform create/update/start/follow-up actions. start_task_attempt automatically sets the task to inprogress; do not call update_task just to set inprogress. After start_task_attempt, use follow_up to send the prompt to the attempt. For attempt observability (closed-loop), use: get_attempt_status → tail_attempt_logs (cursor/limit, default normalized) → get_attempt_changes (diff summary + changed files; may be blocked unless force=true). TOOLS: 'list_projects', 'list_repos', 'list_tasks', 'list_task_attempts', 'get_task', 'create_task', 'update_task', 'delete_task', 'start_task_attempt', 'follow_up', 'get_attempt_status', 'tail_attempt_logs', 'get_attempt_changes'. Use `list_tasks` to get task ids and latest attempt/session summaries. Use `list_task_attempts` to inspect attempts and get attempt_id/session_id for follow-up. The `follow_up` tool accepts either attempt_id (preferred) or session_id. attempt_id refers to the task attempt workspace id. Tool errors are returned as JSON with fields like error, hint, code, and retryable; invalid parameter errors include JSON-RPC error data with path/hint.".to_string();
         if self.context.is_some() {
             let context_instruction = "Use 'get_context' to fetch project/task/attempt metadata for the active Vibe Kanban workspace session when available.";
             instruction = format!("{} {}", context_instruction, instruction);
@@ -1593,5 +1905,369 @@ impl ServerHandler for TaskServer {
             },
             instructions: Some(instruction),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+
+    use axum;
+    use db::models::{
+        execution_process::{CreateExecutionProcess, ExecutionProcess, ExecutionProcessRunReason},
+        execution_process_log_entries::ExecutionProcessLogEntry,
+        project::{CreateProject, Project},
+        project_repo::ProjectRepo,
+        repo::Repo,
+        session::{CreateSession, Session},
+        task::{CreateTask, Task},
+        workspace::{CreateWorkspace, Workspace},
+        workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
+    };
+    use deployment::Deployment;
+    use executors::{
+        actions::{
+            ExecutorAction, ExecutorActionType,
+            script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
+        },
+        logs::{NormalizedEntry, NormalizedEntryType, utils::patch::PatchType},
+    };
+    use local_deployment::container::LocalContainerService;
+    use rmcp::ServerHandler as _;
+    use services::services::{
+        config::DiffPreviewGuardPreset,
+        git::GitService,
+        workspace_manager::{RepoWorkspaceInput, WorkspaceManager},
+    };
+    use utils::log_entries::LogEntryChannel;
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::{DeploymentImpl, http, test_support::TestEnvGuard};
+
+    fn tool_json(result: CallToolResult) -> serde_json::Value {
+        assert_eq!(result.is_error, Some(false));
+        let text = result
+            .content
+            .first()
+            .and_then(|content| content.as_text())
+            .map(|text| text.text.as_str())
+            .unwrap_or("");
+        serde_json::from_str(text).expect("tool should return valid JSON text")
+    }
+
+    async fn start_backend(
+        deployment: DeploymentImpl,
+    ) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+        let app = http::router(deployment);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (addr, handle)
+    }
+
+    #[test]
+    fn tool_router_includes_closed_loop_tools() {
+        let server = TaskServer::new("http://example.com");
+        assert!(server.tool_router.map.contains_key("get_attempt_status"));
+        assert!(server.tool_router.map.contains_key("tail_attempt_logs"));
+        assert!(server.tool_router.map.contains_key("get_attempt_changes"));
+
+        let info = server.get_info();
+        let instructions = info.instructions.unwrap_or_default();
+        assert!(instructions.contains("get_attempt_status"));
+        assert!(instructions.contains("tail_attempt_logs"));
+        assert!(instructions.contains("get_attempt_changes"));
+    }
+
+    #[tokio::test]
+    async fn closed_loop_tools_smoke() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        {
+            let mut config = deployment.config().write().await;
+            config.diff_preview_guard = DiffPreviewGuardPreset::Safe;
+        }
+
+        let repo_path = temp_root.join("repo");
+        GitService::new()
+            .initialize_repo_with_main_branch(&repo_path)
+            .unwrap();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &deployment.db().pool,
+            &CreateProject {
+                name: "MCP closed loop".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let repo = Repo::find_or_create(&deployment.db().pool, &repo_path, "Repo")
+            .await
+            .unwrap();
+        ProjectRepo::create(&deployment.db().pool, project_id, repo.id)
+            .await
+            .unwrap();
+
+        let task_title = "MCP closed loop task".to_string();
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &deployment.db().pool,
+            &CreateTask::from_title_description(project_id, task_title.clone(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let branch_name = format!("mcp-closed-loop-{}", Uuid::new_v4());
+        let attempt_id = Uuid::new_v4();
+        let workspace = Workspace::create(
+            &deployment.db().pool,
+            &CreateWorkspace {
+                branch: branch_name.clone(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        WorkspaceRepo::create_many(
+            &deployment.db().pool,
+            workspace.id,
+            &[CreateWorkspaceRepo {
+                repo_id: repo.id,
+                target_branch: "main".to_string(),
+            }],
+        )
+        .await
+        .unwrap();
+
+        let workspace_dir_name =
+            LocalContainerService::dir_name_from_workspace(&workspace.id, &task_title);
+        let workspace_dir = WorkspaceManager::get_workspace_base_dir().join(&workspace_dir_name);
+        WorkspaceManager::create_workspace(
+            &workspace_dir,
+            &[RepoWorkspaceInput::new(repo.clone(), "main".to_string())],
+            &branch_name,
+        )
+        .await
+        .unwrap();
+
+        let worktree_path = workspace_dir.join(&repo.name);
+        for i in 0..201 {
+            std::fs::write(worktree_path.join(format!("file-{i}.txt")), "hi\n").unwrap();
+        }
+
+        let workspace_dir_str = workspace_dir.to_string_lossy().to_string();
+        Workspace::update_container_ref(&deployment.db().pool, workspace.id, &workspace_dir_str)
+            .await
+            .unwrap();
+
+        let (addr, backend_handle) = start_backend(deployment.clone()).await;
+        let mcp = TaskServer::new(&format!("http://{addr}"));
+        let attempt_id_str = attempt_id.to_string();
+
+        // 1) Idle attempt status
+        let status = tool_json(
+            mcp.get_attempt_status(Parameters(GetAttemptStatusRequest { attempt_id }))
+                .await
+                .unwrap(),
+        );
+        assert_eq!(
+            status.get("attempt_id").and_then(|v| v.as_str()),
+            Some(attempt_id_str.as_str())
+        );
+        assert_eq!(status.get("state").and_then(|v| v.as_str()), Some("idle"));
+
+        // 2) No process yields empty logs
+        let logs = tool_json(
+            mcp.tail_attempt_logs(Parameters(TailAttemptLogsRequest {
+                attempt_id,
+                channel: None,
+                limit: Some(2),
+                cursor: None,
+            }))
+            .await
+            .unwrap(),
+        );
+        assert!(logs.get("execution_process_id").unwrap().is_null());
+        assert_eq!(
+            logs.pointer("/page/entries")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len()),
+            Some(0)
+        );
+
+        // 3) Changes guard blocks files unless forced
+        let changes_blocked = tool_json(
+            mcp.get_attempt_changes(Parameters(GetAttemptChangesRequest {
+                attempt_id,
+                force: Some(false),
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            changes_blocked.get("blocked").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            changes_blocked
+                .get("blocked_reason")
+                .and_then(|v| v.as_str()),
+            Some("threshold_exceeded")
+        );
+        assert_eq!(
+            changes_blocked
+                .get("files")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len()),
+            Some(0)
+        );
+
+        let changes_forced = tool_json(
+            mcp.get_attempt_changes(Parameters(GetAttemptChangesRequest {
+                attempt_id,
+                force: Some(true),
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            changes_forced.get("blocked").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert!(
+            changes_forced
+                .get("files")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0)
+                >= 201
+        );
+
+        // 4) Create a process + logs, then tail with cursor paging
+        let session = Session::create(
+            &deployment.db().pool,
+            &CreateSession { executor: None },
+            Uuid::new_v4(),
+            workspace.id,
+        )
+        .await
+        .unwrap();
+
+        let action = ExecutorAction::new(
+            ExecutorActionType::ScriptRequest(ScriptRequest {
+                script: "true".to_string(),
+                language: ScriptRequestLanguage::Bash,
+                context: ScriptContext::SetupScript,
+                working_dir: None,
+            }),
+            None,
+        );
+
+        let process_id = Uuid::new_v4();
+        let process = ExecutionProcess::create(
+            &deployment.db().pool,
+            &CreateExecutionProcess {
+                session_id: session.id,
+                executor_action: action,
+                run_reason: ExecutionProcessRunReason::CodingAgent,
+            },
+            process_id,
+            &[],
+        )
+        .await
+        .unwrap();
+
+        for i in 1..=5i64 {
+            let entry = PatchType::NormalizedEntry(NormalizedEntry {
+                timestamp: None,
+                entry_type: NormalizedEntryType::AssistantMessage,
+                content: format!("hello {i}"),
+                metadata: None,
+            });
+            let json = serde_json::to_string(&entry).unwrap();
+            ExecutionProcessLogEntry::upsert_entry(
+                &deployment.db().pool,
+                process.id,
+                LogEntryChannel::Normalized,
+                i,
+                &json,
+            )
+            .await
+            .unwrap();
+        }
+
+        let status = tool_json(
+            mcp.get_attempt_status(Parameters(GetAttemptStatusRequest { attempt_id }))
+                .await
+                .unwrap(),
+        );
+        assert_eq!(
+            status.get("state").and_then(|v| v.as_str()),
+            Some("running")
+        );
+
+        let process_id_str = process_id.to_string();
+        let page1 = tool_json(
+            mcp.tail_attempt_logs(Parameters(TailAttemptLogsRequest {
+                attempt_id,
+                channel: None,
+                limit: Some(2),
+                cursor: None,
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            page1.get("execution_process_id").and_then(|v| v.as_str()),
+            Some(process_id_str.as_str())
+        );
+        let next_cursor = page1
+            .get("page")
+            .and_then(|v| v.get("next_cursor"))
+            .and_then(|v| v.as_i64())
+            .expect("next_cursor");
+        assert_eq!(next_cursor, 4);
+
+        let page2 = tool_json(
+            mcp.tail_attempt_logs(Parameters(TailAttemptLogsRequest {
+                attempt_id,
+                channel: None,
+                limit: Some(2),
+                cursor: Some(next_cursor),
+            }))
+            .await
+            .unwrap(),
+        );
+        let next_cursor2 = page2
+            .get("page")
+            .and_then(|v| v.get("next_cursor"))
+            .and_then(|v| v.as_i64())
+            .expect("next_cursor");
+        assert_eq!(next_cursor2, 2);
+
+        backend_handle.abort();
+        WorkspaceManager::cleanup_workspace(&workspace_dir, &[repo])
+            .await
+            .unwrap();
+
+        drop(env_guard);
+        let _ = std::fs::remove_dir_all(&temp_root);
     }
 }

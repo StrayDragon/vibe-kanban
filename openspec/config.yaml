@@ -50,12 +50,14 @@ context: |
   - Important env vars: `FRONTEND_PORT`, `BACKEND_PORT`, `HOST`.
 
   Current focus (health + remediation):
+  - MCP closed-loop attempt observability is available via: get_attempt_status, tail_attempt_logs, get_attempt_changes.
+  - Keep agent-facing tool surface small (favor 2–5 tools per workflow) to improve LLM tool selection.
+  - Prefer pull-style pagination (cursor/limit) over long-lived streaming inside MCP; advanced streaming stays in `/api` (SSE/WS) when needed.
   - Optional access-control boundary for HTTP/SSE/WS/MCP.
   - Data consistency for multi-step create/start flows.
   - Consistent API error model + HTTP status mapping.
   - Fix known frontend loading issues; add minimal route-level tests.
-  - Improve MCP tooling towards a closed-loop orchestration workflow
-    (status/logs/diff/events).
+  - Next candidates (defer unless explicitly requested): attempt event subscription (SSE), executor discovery, and idempotency/correlation.
 
 rules:
   specs:

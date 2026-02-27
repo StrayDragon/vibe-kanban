@@ -1,8 +1,10 @@
+use chrono::{DateTime, Utc};
 use db::models::{merge::Merge, session::Session, workspace::Workspace};
 use executors::profile::ExecutorProfileId;
 use serde::{Deserialize, Serialize};
 use services::services::git::ConflictOp;
 use ts_rs::TS;
+use utils::diff::DiffSummary;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Serialize, TS)]
@@ -50,6 +52,28 @@ pub struct DiffStreamQuery {
     pub stats_only: bool,
     #[serde(default)]
     pub force: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AttemptChangesQuery {
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AttemptChangesBlockedReason {
+    SummaryFailed,
+    ThresholdExceeded,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskAttemptChangesResponse {
+    pub summary: DiffSummary,
+    pub blocked: bool,
+    pub blocked_reason: Option<AttemptChangesBlockedReason>,
+    pub files: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -182,4 +206,27 @@ pub struct StopTaskAttemptQuery {
 pub enum RunScriptError {
     NoScriptConfigured,
     ProcessAlreadyRunning,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AttemptState {
+    Idle,
+    Running,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskAttemptStatusResponse {
+    pub attempt_id: Uuid,
+    pub task_id: Uuid,
+    pub workspace_branch: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub latest_session_id: Option<Uuid>,
+    pub latest_execution_process_id: Option<Uuid>,
+    pub state: AttemptState,
+    pub last_activity_at: Option<DateTime<Utc>>,
+    pub failure_summary: Option<String>,
 }

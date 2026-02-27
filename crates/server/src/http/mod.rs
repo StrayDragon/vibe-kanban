@@ -267,10 +267,8 @@ mod tests {
     #[tokio::test]
     async fn filesystem_directory_rejects_path_outside_workspace_dir() {
         let (_env_guard, deployment) = setup_deployment().await;
-        let allowed_root =
-            std::env::temp_dir().join(format!("vk-fs-allowed-{}", Uuid::new_v4()));
-        let outside_root =
-            std::env::temp_dir().join(format!("vk-fs-outside-{}", Uuid::new_v4()));
+        let allowed_root = std::env::temp_dir().join(format!("vk-fs-allowed-{}", Uuid::new_v4()));
+        let outside_root = std::env::temp_dir().join(format!("vk-fs-outside-{}", Uuid::new_v4()));
         fs::create_dir_all(&allowed_root).unwrap();
         fs::create_dir_all(&outside_root).unwrap();
         set_workspace_dir(&deployment, &allowed_root).await;
@@ -294,8 +292,7 @@ mod tests {
     #[tokio::test]
     async fn filesystem_directory_allows_path_inside_workspace_dir() {
         let (_env_guard, deployment) = setup_deployment().await;
-        let allowed_root =
-            std::env::temp_dir().join(format!("vk-fs-allowed-{}", Uuid::new_v4()));
+        let allowed_root = std::env::temp_dir().join(format!("vk-fs-allowed-{}", Uuid::new_v4()));
         let nested = allowed_root.join("project-a");
         fs::create_dir_all(&nested).unwrap();
         set_workspace_dir(&deployment, &allowed_root).await;
@@ -327,11 +324,9 @@ mod tests {
     #[tokio::test]
     async fn filesystem_git_repo_discovery_stays_within_workspace_dir() {
         let (_env_guard, deployment) = setup_deployment().await;
-        let allowed_root =
-            std::env::temp_dir().join(format!("vk-fs-allowed-{}", Uuid::new_v4()));
+        let allowed_root = std::env::temp_dir().join(format!("vk-fs-allowed-{}", Uuid::new_v4()));
         let allowed_repo = allowed_root.join("repo-in").join(".git");
-        let outside_root =
-            std::env::temp_dir().join(format!("vk-fs-outside-{}", Uuid::new_v4()));
+        let outside_root = std::env::temp_dir().join(format!("vk-fs-outside-{}", Uuid::new_v4()));
         let outside_repo = outside_root.join("repo-out").join(".git");
         fs::create_dir_all(&allowed_repo).unwrap();
         fs::create_dir_all(&outside_repo).unwrap();

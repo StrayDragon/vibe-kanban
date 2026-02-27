@@ -37,10 +37,14 @@ use executors::{
 use git2::BranchType;
 use services::services::{
     container::ContainerService,
-    git::{ConflictOp, GitCliError, GitMergeOptions, GitService, GitServiceError},
+    diff_stream,
+    git::{
+        ConflictOp, DiffContentPolicy, DiffTarget, GitCliError, GitMergeOptions, GitService,
+        GitServiceError,
+    },
     github::GitHubService,
 };
-use utils::response::ApiResponse;
+use utils::{diff::DiffSummary, response::ApiResponse};
 use uuid::Uuid;
 
 use super::{codex_setup, cursor_setup, dto::*, gh_cli_setup};
@@ -231,6 +235,265 @@ pub async fn get_task_attempt(
     Extension(workspace): Extension<Workspace>,
 ) -> Result<ResponseJson<ApiResponse<Workspace>>, ApiError> {
     Ok(ResponseJson(ApiResponse::success(workspace)))
+}
+
+pub async fn get_task_attempt_status(
+    Extension(workspace): Extension<Workspace>,
+    State(deployment): State<DeploymentImpl>,
+) -> Result<ResponseJson<ApiResponse<TaskAttemptStatusResponse>>, ApiError> {
+    let pool = &deployment.db().pool;
+
+    let latest_session = Session::find_latest_by_workspace_id(pool, workspace.id).await?;
+
+    let mut latest_process: Option<ExecutionProcess> = None;
+    for run_reason in [
+        ExecutionProcessRunReason::CodingAgent,
+        ExecutionProcessRunReason::SetupScript,
+        ExecutionProcessRunReason::CleanupScript,
+    ] {
+        let Some(process) = ExecutionProcess::find_latest_by_workspace_and_run_reason(
+            pool,
+            workspace.id,
+            &run_reason,
+        )
+        .await?
+        else {
+            continue;
+        };
+
+        let replace = match &latest_process {
+            Some(existing) => process.created_at > existing.created_at,
+            None => true,
+        };
+        if replace {
+            latest_process = Some(process);
+        }
+    }
+
+    let (state, failure_summary) = match latest_process.as_ref().map(|p| p.status.clone()) {
+        None => (AttemptState::Idle, None),
+        Some(ExecutionProcessStatus::Running) => (AttemptState::Running, None),
+        Some(ExecutionProcessStatus::Completed) => (AttemptState::Completed, None),
+        Some(ExecutionProcessStatus::Failed) => (
+            AttemptState::Failed,
+            Some(match latest_process.as_ref().and_then(|p| p.exit_code) {
+                Some(exit_code) => format!("failed (exit_code={exit_code})"),
+                None => "failed".to_string(),
+            }),
+        ),
+        Some(ExecutionProcessStatus::Killed) => (AttemptState::Failed, Some("killed".to_string())),
+    };
+
+    let last_activity_at = latest_process
+        .as_ref()
+        .map(|process| {
+            if let Some(completed_at) = process.completed_at {
+                completed_at.max(process.updated_at)
+            } else {
+                process.updated_at
+            }
+        })
+        .or_else(|| latest_session.as_ref().map(|session| session.updated_at));
+
+    let status = TaskAttemptStatusResponse {
+        attempt_id: workspace.id,
+        task_id: workspace.task_id,
+        workspace_branch: workspace.branch,
+        created_at: workspace.created_at,
+        updated_at: workspace.updated_at,
+        latest_session_id: latest_session.as_ref().map(|session| session.id),
+        latest_execution_process_id: latest_process.as_ref().map(|process| process.id),
+        state,
+        last_activity_at,
+        failure_summary,
+    };
+
+    Ok(ResponseJson(ApiResponse::success(status)))
+}
+
+pub async fn get_task_attempt_changes(
+    Extension(workspace): Extension<Workspace>,
+    State(deployment): State<DeploymentImpl>,
+    Query(query): Query<AttemptChangesQuery>,
+) -> Result<ResponseJson<ApiResponse<TaskAttemptChangesResponse>>, ApiError> {
+    let pool = &deployment.db().pool;
+    let guard_preset = deployment.config().read().await.diff_preview_guard.clone();
+    let force = query.force;
+
+    let workspace_repos = WorkspaceRepo::find_by_workspace_id(pool, workspace.id).await?;
+    let target_branches: HashMap<_, _> = workspace_repos
+        .iter()
+        .map(|wr| (wr.repo_id, wr.target_branch.clone()))
+        .collect();
+
+    let repositories = WorkspaceRepo::find_repos_for_workspace(pool, workspace.id).await?;
+
+    let workspace_root = match workspace
+        .container_ref
+        .as_ref()
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+    {
+        Some(path) => path,
+        None => match deployment
+            .container()
+            .ensure_container_exists(&workspace)
+            .await
+        {
+            Ok(container_ref) => PathBuf::from(container_ref),
+            Err(err) => {
+                tracing::warn!(
+                    workspace_id = %workspace.id,
+                    error = %err,
+                    "Failed to ensure workspace container for attempt changes"
+                );
+                let response = TaskAttemptChangesResponse {
+                    summary: DiffSummary::default(),
+                    blocked: true,
+                    blocked_reason: Some(AttemptChangesBlockedReason::SummaryFailed),
+                    files: Vec::new(),
+                };
+                return Ok(ResponseJson(ApiResponse::success(response)));
+            }
+        },
+    };
+
+    let mut repo_inputs = Vec::new();
+    let mut skipped_repos = 0usize;
+    let mut total_repos = 0usize;
+
+    for repo in repositories {
+        total_repos += 1;
+        let worktree_path = workspace_root.join(&repo.name);
+        let branch = &workspace.branch;
+
+        let Some(target_branch) = target_branches.get(&repo.id) else {
+            tracing::warn!(
+                workspace_id = %workspace.id,
+                repo_name = %repo.name,
+                "Skipping attempt changes for repo: no target branch configured"
+            );
+            skipped_repos += 1;
+            continue;
+        };
+
+        let base_commit = match deployment
+            .git()
+            .get_base_commit(&repo.path, branch, target_branch)
+        {
+            Ok(commit) => commit,
+            Err(err) => {
+                tracing::warn!(
+                    workspace_id = %workspace.id,
+                    repo_name = %repo.name,
+                    error = %err,
+                    "Skipping attempt changes for repo: failed to get base commit"
+                );
+                skipped_repos += 1;
+                continue;
+            }
+        };
+
+        repo_inputs.push((repo, worktree_path, base_commit));
+    }
+
+    if repo_inputs.is_empty() {
+        let blocked_reason = if total_repos > 0 && skipped_repos == total_repos {
+            Some(AttemptChangesBlockedReason::SummaryFailed)
+        } else {
+            None
+        };
+        let blocked = blocked_reason.is_some();
+        let response = TaskAttemptChangesResponse {
+            summary: DiffSummary::default(),
+            blocked,
+            blocked_reason,
+            files: Vec::new(),
+        };
+        return Ok(ResponseJson(ApiResponse::success(response)));
+    }
+
+    let mut summary = DiffSummary::default();
+    let mut summary_failed = false;
+    for (repo, worktree_path, base_commit) in &repo_inputs {
+        match deployment
+            .git()
+            .get_worktree_diff_summary(worktree_path, base_commit, None)
+        {
+            Ok(repo_summary) => {
+                summary.file_count = summary.file_count.saturating_add(repo_summary.file_count);
+                summary.added = summary.added.saturating_add(repo_summary.added);
+                summary.deleted = summary.deleted.saturating_add(repo_summary.deleted);
+                summary.total_bytes = summary.total_bytes.saturating_add(repo_summary.total_bytes);
+            }
+            Err(err) => {
+                summary_failed = true;
+                tracing::warn!(
+                    workspace_id = %workspace.id,
+                    repo_name = %repo.name,
+                    error = %err,
+                    "Failed to compute diff summary for attempt changes"
+                );
+            }
+        }
+    }
+
+    let guard_enabled = diff_stream::diff_preview_guard_thresholds(guard_preset.clone()).is_some();
+    let blocked = !force
+        && guard_enabled
+        && (summary_failed || diff_stream::diff_preview_guard_exceeded(&summary, guard_preset));
+    let blocked_reason = if blocked {
+        if summary_failed {
+            Some(AttemptChangesBlockedReason::SummaryFailed)
+        } else {
+            Some(AttemptChangesBlockedReason::ThresholdExceeded)
+        }
+    } else {
+        None
+    };
+
+    let mut files: Vec<String> = Vec::new();
+    if !blocked {
+        let mut seen = std::collections::BTreeSet::new();
+        for (repo, worktree_path, base_commit) in &repo_inputs {
+            match deployment.git().get_diffs(
+                DiffTarget::Worktree {
+                    worktree_path,
+                    base_commit,
+                },
+                None,
+                DiffContentPolicy::OmitContents,
+            ) {
+                Ok(diffs) => {
+                    for diff in diffs {
+                        let Some(path) = diff.new_path.or(diff.old_path) else {
+                            continue;
+                        };
+                        seen.insert(format!("{}/{}", repo.name, path));
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        workspace_id = %workspace.id,
+                        repo_name = %repo.name,
+                        error = %err,
+                        "Failed to compute changed files for attempt changes"
+                    );
+                }
+            }
+        }
+
+        files = seen.into_iter().collect();
+    }
+
+    let response = TaskAttemptChangesResponse {
+        summary,
+        blocked,
+        blocked_reason,
+        files,
+    };
+
+    Ok(ResponseJson(ApiResponse::success(response)))
 }
 
 fn map_task_group_error(err: TaskGroupError) -> ApiError {
@@ -1802,7 +2065,12 @@ pub async fn get_task_attempt_repos(
 mod tests {
     use std::{collections::HashSet, path::Path};
 
-    use axum::{Extension, Json, extract::State, http::StatusCode, response::Json as ResponseJson};
+    use axum::{
+        Extension, Json,
+        extract::{Query, State},
+        http::StatusCode,
+        response::Json as ResponseJson,
+    };
     use chrono::Utc;
     use db::models::{
         execution_process::{
@@ -1831,9 +2099,11 @@ mod tests {
         executors::BaseCodingAgent,
         profile::ExecutorProfileId,
     };
+    use local_deployment::container::LocalContainerService;
     use sea_orm::Database;
     use sea_orm_migration::MigratorTrait;
     use services::services::{
+        config::DiffPreviewGuardPreset,
         git::{GitService, GitServiceError},
         workspace_manager::WorkspaceManager,
     };
@@ -1841,10 +2111,12 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        CreateTaskAttemptBody, RenameBranchError, RenameBranchRequest, WorkspaceRepoInput,
-        blocked_predecessors, cleanup_failed_attempt_start, create_task_attempt,
-        normalize_dev_server_working_dir, rename_branch, resolve_executor_profile_id,
-        resolve_topology_base_branches, run_git_operation, validate_dev_server_script,
+        AttemptChangesBlockedReason, AttemptChangesQuery, AttemptState, CreateTaskAttemptBody,
+        RenameBranchError, RenameBranchRequest, WorkspaceRepoInput, blocked_predecessors,
+        cleanup_failed_attempt_start, create_task_attempt, get_task_attempt_changes,
+        get_task_attempt_status, normalize_dev_server_working_dir, rename_branch,
+        resolve_executor_profile_id, resolve_topology_base_branches, run_git_operation,
+        validate_dev_server_script,
     };
     use crate::{
         DeploymentImpl,
@@ -2440,6 +2712,288 @@ mod tests {
         assert_eq!(task_after.status, TaskStatus::InReview);
 
         drop(deployment);
+        drop(env_guard);
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn attempt_status_reports_idle_running_failed_and_ignores_devserver() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &deployment.db().pool,
+            &CreateProject {
+                name: "Attempt status project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &deployment.db().pool,
+            &CreateTask::from_title_description(
+                project_id,
+                "Attempt status task".to_string(),
+                None,
+            ),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let workspace_id = Uuid::new_v4();
+        let workspace = Workspace::create(
+            &deployment.db().pool,
+            &CreateWorkspace {
+                branch: "attempt-status".to_string(),
+                agent_working_dir: None,
+            },
+            workspace_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let ResponseJson(response) =
+            get_task_attempt_status(Extension(workspace.clone()), State(deployment.clone()))
+                .await
+                .unwrap();
+        let status = response.into_data().expect("status should be present");
+        assert_eq!(status.state, AttemptState::Idle);
+        assert!(status.latest_session_id.is_none());
+        assert!(status.latest_execution_process_id.is_none());
+        assert!(status.last_activity_at.is_none());
+
+        let session = Session::create(
+            &deployment.db().pool,
+            &CreateSession { executor: None },
+            Uuid::new_v4(),
+            workspace.id,
+        )
+        .await
+        .unwrap();
+
+        let action = ExecutorAction::new(
+            ExecutorActionType::ScriptRequest(ScriptRequest {
+                script: "true".to_string(),
+                language: ScriptRequestLanguage::Bash,
+                context: ScriptContext::SetupScript,
+                working_dir: None,
+            }),
+            None,
+        );
+
+        let process_id = Uuid::new_v4();
+        ExecutionProcess::create(
+            &deployment.db().pool,
+            &CreateExecutionProcess {
+                session_id: session.id,
+                executor_action: action.clone(),
+                run_reason: ExecutionProcessRunReason::SetupScript,
+            },
+            process_id,
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let ResponseJson(response) =
+            get_task_attempt_status(Extension(workspace.clone()), State(deployment.clone()))
+                .await
+                .unwrap();
+        let status = response.into_data().expect("status should be present");
+        assert_eq!(status.state, AttemptState::Running);
+        assert_eq!(status.latest_session_id, Some(session.id));
+        assert_eq!(status.latest_execution_process_id, Some(process_id));
+        assert!(status.failure_summary.is_none());
+        assert!(status.last_activity_at.is_some());
+
+        ExecutionProcess::update_completion(
+            &deployment.db().pool,
+            process_id,
+            ExecutionProcessStatus::Failed,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        let devserver_id = Uuid::new_v4();
+        ExecutionProcess::create(
+            &deployment.db().pool,
+            &CreateExecutionProcess {
+                session_id: session.id,
+                executor_action: action,
+                run_reason: ExecutionProcessRunReason::DevServer,
+            },
+            devserver_id,
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let ResponseJson(response) =
+            get_task_attempt_status(Extension(workspace), State(deployment))
+                .await
+                .unwrap();
+        let status = response.into_data().expect("status should be present");
+        assert_eq!(status.state, AttemptState::Failed);
+        assert_eq!(status.latest_execution_process_id, Some(process_id));
+        assert!(matches!(
+            status.failure_summary.as_ref().map(String::as_str),
+            Some(summary) if !summary.trim().is_empty()
+        ));
+        assert!(status.last_activity_at.is_some());
+
+        drop(env_guard);
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn attempt_changes_blocks_when_guard_exceeded_and_unblocks_when_forced() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+
+        {
+            let mut config = deployment.config().write().await;
+            config.diff_preview_guard = DiffPreviewGuardPreset::Safe;
+        }
+
+        let repo_path = temp_root.join("repo");
+        GitService::new()
+            .initialize_repo_with_main_branch(&repo_path)
+            .unwrap();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &deployment.db().pool,
+            &CreateProject {
+                name: "Attempt changes project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let repo = Repo::find_or_create(&deployment.db().pool, &repo_path, "Repo")
+            .await
+            .unwrap();
+        ProjectRepo::create(&deployment.db().pool, project_id, repo.id)
+            .await
+            .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &deployment.db().pool,
+            &CreateTask::from_title_description(
+                project_id,
+                "Attempt changes task".to_string(),
+                None,
+            ),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let branch_name = format!("attempt-changes-{}", Uuid::new_v4());
+        let workspace_id = Uuid::new_v4();
+        let mut workspace = Workspace::create(
+            &deployment.db().pool,
+            &CreateWorkspace {
+                branch: branch_name.clone(),
+                agent_working_dir: None,
+            },
+            workspace_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        WorkspaceRepo::create_many(
+            &deployment.db().pool,
+            workspace.id,
+            &[CreateWorkspaceRepo {
+                repo_id: repo.id,
+                target_branch: "main".to_string(),
+            }],
+        )
+        .await
+        .unwrap();
+
+        let workspace_dir_name =
+            LocalContainerService::dir_name_from_workspace(&workspace.id, "Attempt changes task");
+        let workspace_dir = WorkspaceManager::get_workspace_base_dir().join(&workspace_dir_name);
+        let _container = WorkspaceManager::create_workspace(
+            &workspace_dir,
+            &[
+                services::services::workspace_manager::RepoWorkspaceInput::new(
+                    repo.clone(),
+                    "main".to_string(),
+                ),
+            ],
+            &branch_name,
+        )
+        .await
+        .unwrap();
+
+        let worktree_path = workspace_dir.join(&repo.name);
+        for i in 0..201 {
+            std::fs::write(worktree_path.join(format!("file-{i}.txt")), "hi\n").unwrap();
+        }
+
+        workspace.container_ref = Some(workspace_dir.to_string_lossy().to_string());
+
+        let ResponseJson(response) = get_task_attempt_changes(
+            Extension(workspace.clone()),
+            State(deployment.clone()),
+            Query(AttemptChangesQuery { force: false }),
+        )
+        .await
+        .unwrap();
+        let changes = response.into_data().expect("changes should be present");
+        assert!(changes.blocked);
+        assert_eq!(
+            changes.blocked_reason,
+            Some(AttemptChangesBlockedReason::ThresholdExceeded)
+        );
+        assert!(changes.files.is_empty());
+
+        let ResponseJson(response) = get_task_attempt_changes(
+            Extension(workspace),
+            State(deployment),
+            Query(AttemptChangesQuery { force: true }),
+        )
+        .await
+        .unwrap();
+        let changes = response.into_data().expect("changes should be present");
+        assert!(!changes.blocked);
+        assert_eq!(changes.blocked_reason, None);
+        assert!(
+            changes.files.len() >= 201,
+            "expected files list to include created files"
+        );
+
+        WorkspaceManager::cleanup_workspace(&workspace_dir, &[repo])
+            .await
+            .unwrap();
+
         drop(env_guard);
         let _ = std::fs::remove_dir_all(&temp_root);
     }

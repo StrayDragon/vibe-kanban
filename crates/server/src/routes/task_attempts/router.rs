@@ -7,18 +7,20 @@ use axum::{
 use super::{
     abort_conflicts_task_attempt, change_target_branch, create_task_attempt,
     force_push_task_attempt_branch, get_task_attempt, get_task_attempt_branch_status,
-    get_task_attempt_children, get_task_attempt_repos, get_task_attempts,
-    get_task_attempts_latest_summaries, get_task_attempts_with_latest_session,
-    gh_cli_setup_handler, images, merge_task_attempt, open_task_attempt_in_editor, pr,
-    push_task_attempt_branch, rebase_task_attempt, remove_task_attempt_worktree, rename_branch,
-    run_agent_setup, run_cleanup_script, run_setup_script, start_dev_server,
-    stop_task_attempt_execution, ws,
+    get_task_attempt_changes, get_task_attempt_children, get_task_attempt_repos,
+    get_task_attempt_status, get_task_attempts, get_task_attempts_latest_summaries,
+    get_task_attempts_with_latest_session, gh_cli_setup_handler, images, merge_task_attempt,
+    open_task_attempt_in_editor, pr, push_task_attempt_branch, rebase_task_attempt,
+    remove_task_attempt_worktree, rename_branch, run_agent_setup, run_cleanup_script,
+    run_setup_script, start_dev_server, stop_task_attempt_execution, ws,
 };
 use crate::{DeploymentImpl, middleware::load_workspace_middleware};
 
 pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
     let task_attempt_id_router = Router::new()
         .route("/", get(get_task_attempt))
+        .route("/status", get(get_task_attempt_status))
+        .route("/changes", get(get_task_attempt_changes))
         .route("/run-agent-setup", post(run_agent_setup))
         .route("/gh-cli-setup", post(gh_cli_setup_handler))
         .route("/start-dev-server", post(start_dev_server))
