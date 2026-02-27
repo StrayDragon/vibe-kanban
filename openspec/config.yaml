@@ -1,0 +1,74 @@
+schema: spec-driven
+
+context: |
+  Project: Vibe Kanban — a local-first Kanban + orchestration UI for AI coding agents
+  (Claude Code, Gemini CLI, Codex, Cursor, etc.). The app manages tasks, agent runs,
+  logs, and review workflows across multiple repos/worktrees.
+
+  Language:
+  - Prefer English for OpenSpec artifacts (`proposal.md`, `design.md`, `spec.md`,
+    `tasks.md`) to match existing docs.
+  - Chinese is OK when explicitly requested; keep code/commands/paths in English.
+
+  Tech stack:
+  - Backend: Rust (Axum 0.8 + Tokio), SQLite + SeaORM, SSE/WebSocket for realtime,
+    rmcp-based MCP server (`mcp_task_server`).
+  - Frontend: React 18 + TypeScript (Vite), Tailwind CSS, Radix UI primitives,
+    Zustand + React Query.
+  - Type safety: `ts-rs` generates TypeScript types from Rust.
+
+  Repo layout:
+  - `crates/`: Rust workspace crates (server, db, services, executors, utils, etc.).
+  - `frontend/`: React app (Vite + Tailwind). Source in `frontend/src`.
+  - `shared/`: generated TypeScript types (`shared/types.ts`) — do not edit directly.
+  - `scripts/`: dev helpers (port setup, db preparation).
+  - `openspec/`: specs (`openspec/specs/*/spec.md`) and archived changes.
+
+  Common commands:
+  - Install: `pnpm i`
+  - Dev (frontend+backend): `pnpm run dev` (ports via `scripts/setup-dev-environment.js`)
+  - Backend watch: `pnpm run backend:dev:watch`
+  - Frontend dev: `pnpm run frontend:dev`
+  - Checks: `pnpm run check` and `pnpm run backend:check`
+  - Lint: `pnpm run lint` (Rust clippy uses `-D warnings`)
+  - Rust tests: `cargo test --workspace`
+  - Generate TS types: `pnpm run generate-types` (runs `cargo run --bin generate_types`)
+  - Prepare DB schema: `pnpm run prepare-db`
+  - Justfile shortcuts: `just dev`, `just check`, `just lint`, `just run host=... port=...`
+
+  Conventions:
+  - Rust: `rustfmt` enforced; group imports by crate; prefer small, reviewable diffs.
+  - TypeScript/React: ESLint + Prettier (2 spaces, single quotes, ~80 cols).
+  - Keep changes focused; avoid unrelated refactors.
+
+  Constraints / safety:
+  - Do not edit `shared/types.ts` directly. Update Rust types and
+    `crates/server/src/bin/generate_types.rs`, then run `pnpm run generate-types`.
+  - Config semantics changes must be versioned/migrated under
+    `crates/services/src/services/config/versions`.
+  - Never commit secrets; redact tokens/credentials in API responses and logs.
+  - Important env vars: `FRONTEND_PORT`, `BACKEND_PORT`, `HOST`.
+
+  Current focus (health + remediation):
+  - Optional access-control boundary for HTTP/SSE/WS/MCP.
+  - Data consistency for multi-step create/start flows.
+  - Consistent API error model + HTTP status mapping.
+  - Fix known frontend loading issues; add minimal route-level tests.
+  - Improve MCP tooling towards a closed-loop orchestration workflow
+    (status/logs/diff/events).
+
+rules:
+  specs:
+    - Use MUST/SHALL for normative requirements (avoid should/may).
+    - Every requirement includes at least one `#### Scenario:` with WHEN/THEN.
+    - Keep specs testable and implementation-agnostic; mention modules only when needed.
+  design:
+    - "Prefer sections: Context, Goals/Non-Goals, Decisions, Risks/Trade-offs, Migration Plan."
+    - Call out config versioning and migration impacts explicitly.
+  proposal:
+    - Include Goals, Non-goals, Risks, and Verification.
+    - Reference existing code areas/files and prefer incremental changes.
+  tasks:
+    - Keep tasks small and verifiable; use `- [ ]` checkboxes.
+    - Every task includes concrete verification (command or UI smoke check).
+    - If shared types change, include `pnpm run generate-types` in the steps.
