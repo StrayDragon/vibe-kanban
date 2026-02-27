@@ -6,7 +6,7 @@ use std::{
 use axum::{
     Extension, Json,
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::Json as ResponseJson,
 };
 use db::{
@@ -657,143 +657,161 @@ fn blocked_predecessors(graph: &TaskGroupGraph, node_id: &str) -> Result<Vec<Str
 #[axum::debug_handler]
 pub async fn create_task_attempt(
     State(deployment): State<DeploymentImpl>,
+    headers: HeaderMap,
     Json(payload): Json<CreateTaskAttemptBody>,
 ) -> Result<ResponseJson<ApiResponse<Workspace>>, ApiError> {
-    let mut executor_profile_id = payload.executor_profile_id.clone();
-
     if payload.repos.is_empty() {
         return Err(ApiError::BadRequest(
             "At least one repository is required".to_string(),
         ));
     }
 
-    let pool = &deployment.db().pool;
-    let task = Task::find_by_id(&deployment.db().pool, payload.task_id)
-        .await?
-        .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
-    let original_task_status = task.status.clone();
-    let mut baseline_ref: Option<String> = None;
-    let mut topology_branches: Option<HashMap<Uuid, String>> = None;
-    if let (Some(task_group_id), Some(node_id)) =
-        (task.task_group_id, task.task_group_node_id.as_ref())
-    {
-        let task_group = TaskGroup::find_by_id(pool, task_group_id)
-            .await
-            .map_err(map_task_group_error)?
-            .ok_or_else(|| ApiError::BadRequest("Task group not found".to_string()))?;
+    let key = crate::routes::idempotency::idempotency_key(&headers);
+    let hash = crate::routes::idempotency::request_hash(&payload)?;
 
-        let blocked = blocked_predecessors(&task_group.graph, node_id)?;
-        if !blocked.is_empty() {
-            return Err(ApiError::Conflict(format!(
-                "Task is blocked by incomplete predecessors: {}",
-                blocked.join(", ")
-            )));
-        }
+    crate::routes::idempotency::idempotent_success(
+        &deployment.db().pool,
+        "create_task_attempt",
+        key,
+        hash,
+        || async {
+            let mut executor_profile_id = payload.executor_profile_id.clone();
 
-        let task_group_node = find_task_group_node(&task_group.graph, node_id)?;
-        executor_profile_id = resolve_executor_profile_id(task_group_node, executor_profile_id);
+            let pool = &deployment.db().pool;
+            let task = Task::find_by_id(&deployment.db().pool, payload.task_id)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+            let original_task_status = task.status.clone();
+            let mut baseline_ref: Option<String> = None;
+            let mut topology_branches: Option<HashMap<Uuid, String>> = None;
+            if let (Some(task_group_id), Some(node_id)) =
+                (task.task_group_id, task.task_group_node_id.as_ref())
+            {
+                let task_group = TaskGroup::find_by_id(pool, task_group_id)
+                    .await
+                    .map_err(map_task_group_error)?
+                    .ok_or_else(|| ApiError::BadRequest("Task group not found".to_string()))?;
 
-        match &task_group_node.base_strategy {
-            TaskGroupNodeBaseStrategy::Baseline => {
-                let trimmed = task_group.baseline_ref.trim();
-                if !trimmed.is_empty() {
-                    baseline_ref = Some(trimmed.to_string());
+                let blocked = blocked_predecessors(&task_group.graph, node_id)?;
+                if !blocked.is_empty() {
+                    return Err(ApiError::Conflict(format!(
+                        "Task is blocked by incomplete predecessors: {}",
+                        blocked.join(", ")
+                    )));
                 }
-            }
-            TaskGroupNodeBaseStrategy::Topology => {
-                topology_branches =
-                    resolve_topology_base_branches(pool, &task_group.graph, node_id).await?;
-                if topology_branches.is_none() {
-                    let trimmed = task_group.baseline_ref.trim();
-                    if !trimmed.is_empty() {
-                        baseline_ref = Some(trimmed.to_string());
+
+                let task_group_node = find_task_group_node(&task_group.graph, node_id)?;
+                executor_profile_id =
+                    resolve_executor_profile_id(task_group_node, executor_profile_id);
+
+                match &task_group_node.base_strategy {
+                    TaskGroupNodeBaseStrategy::Baseline => {
+                        let trimmed = task_group.baseline_ref.trim();
+                        if !trimmed.is_empty() {
+                            baseline_ref = Some(trimmed.to_string());
+                        }
+                    }
+                    TaskGroupNodeBaseStrategy::Topology => {
+                        topology_branches =
+                            resolve_topology_base_branches(pool, &task_group.graph, node_id)
+                                .await?;
+                        if topology_branches.is_none() {
+                            let trimmed = task_group.baseline_ref.trim();
+                            if !trimmed.is_empty() {
+                                baseline_ref = Some(trimmed.to_string());
+                            }
+                        }
                     }
                 }
             }
-        }
-    }
 
-    let project = task
-        .parent_project(pool)
-        .await?
-        .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+            let project = task
+                .parent_project(pool)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
 
-    let agent_working_dir = project
-        .default_agent_working_dir
-        .as_ref()
-        .filter(|dir| !dir.is_empty())
-        .cloned();
-
-    let attempt_id = Uuid::new_v4();
-    let git_branch_name = deployment
-        .container()
-        .git_branch_from_workspace(&attempt_id, &task.title)
-        .await;
-
-    let tx = pool.begin().await?;
-    let workspace = Workspace::create(
-        &tx,
-        &CreateWorkspace {
-            branch: git_branch_name.clone(),
-            agent_working_dir,
-        },
-        attempt_id,
-        payload.task_id,
-    )
-    .await?;
-
-    let workspace_repos: Vec<CreateWorkspaceRepo> = payload
-        .repos
-        .iter()
-        .map(|r| {
-            let target_branch = topology_branches
+            let agent_working_dir = project
+                .default_agent_working_dir
                 .as_ref()
-                .and_then(|branches| branches.get(&r.repo_id))
-                .cloned()
-                .or_else(|| baseline_ref.clone())
-                .unwrap_or_else(|| r.target_branch.clone());
-            CreateWorkspaceRepo {
-                repo_id: r.repo_id,
-                target_branch,
-            }
-        })
-        .collect();
+                .filter(|dir| !dir.is_empty())
+                .cloned();
 
-    WorkspaceRepo::create_many(&tx, workspace.id, &workspace_repos).await?;
-    tx.commit().await?;
+            let attempt_id = Uuid::new_v4();
+            let git_branch_name = deployment
+                .container()
+                .git_branch_from_workspace(&attempt_id, &task.title)
+                .await;
 
-    if let Err(err) = deployment
-        .container()
-        .start_workspace(&workspace, executor_profile_id.clone())
-        .await
-    {
-        tracing::error!(
-            task_id = %task.id,
-            workspace_id = %workspace.id,
-            error = %err,
-            "Failed to start task attempt"
-        );
-        if let Err(cleanup_err) =
-            cleanup_failed_attempt_start(&deployment, &task, &workspace, &original_task_status)
+            let tx = pool.begin().await?;
+            let workspace = Workspace::create(
+                &tx,
+                &CreateWorkspace {
+                    branch: git_branch_name.clone(),
+                    agent_working_dir,
+                },
+                attempt_id,
+                payload.task_id,
+            )
+            .await?;
+
+            let workspace_repos: Vec<CreateWorkspaceRepo> = payload
+                .repos
+                .iter()
+                .map(|r| {
+                    let target_branch = topology_branches
+                        .as_ref()
+                        .and_then(|branches| branches.get(&r.repo_id))
+                        .cloned()
+                        .or_else(|| baseline_ref.clone())
+                        .unwrap_or_else(|| r.target_branch.clone());
+                    CreateWorkspaceRepo {
+                        repo_id: r.repo_id,
+                        target_branch,
+                    }
+                })
+                .collect();
+
+            WorkspaceRepo::create_many(&tx, workspace.id, &workspace_repos).await?;
+            tx.commit().await?;
+
+            if let Err(err) = deployment
+                .container()
+                .start_workspace(&workspace, executor_profile_id.clone())
                 .await
-        {
-            tracing::error!(
-                task_id = %task.id,
-                workspace_id = %workspace.id,
-                error = %cleanup_err,
-                "Failed to cleanup attempt after start failure"
+            {
+                tracing::error!(
+                    task_id = %task.id,
+                    workspace_id = %workspace.id,
+                    error = %err,
+                    "Failed to start task attempt"
+                );
+                if let Err(cleanup_err) = cleanup_failed_attempt_start(
+                    &deployment,
+                    &task,
+                    &workspace,
+                    &original_task_status,
+                )
+                .await
+                {
+                    tracing::error!(
+                        task_id = %task.id,
+                        workspace_id = %workspace.id,
+                        error = %cleanup_err,
+                        "Failed to cleanup attempt after start failure"
+                    );
+                }
+                return Err(ApiError::from(err));
+            }
+
+            tracing::info!(
+                "Created and started attempt {} for task {}",
+                workspace.id,
+                task.id
             );
-        }
-        return Err(ApiError::from(err));
-    }
-
-    tracing::info!(
-        "Created and started attempt {} for task {}",
-        workspace.id,
-        task.id
-    );
-
-    Ok(ResponseJson(ApiResponse::success(workspace)))
+            Ok(workspace)
+        },
+    )
+    .await
 }
 
 async fn cleanup_failed_attempt_start(
@@ -2460,8 +2478,12 @@ mod tests {
             }],
         };
 
-        let attempt_result =
-            create_task_attempt(State(deployment.clone()), Json(attempt_payload)).await;
+        let attempt_result = create_task_attempt(
+            State(deployment.clone()),
+            axum::http::HeaderMap::new(),
+            Json(attempt_payload),
+        )
+        .await;
         assert!(attempt_result.is_err());
 
         let workspaces = Workspace::fetch_all(&deployment.db().pool, Some(task_id))

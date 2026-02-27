@@ -51,13 +51,14 @@ context: |
 
   Current focus (health + remediation):
   - MCP closed-loop attempt observability is available via: get_attempt_status, tail_attempt_logs, get_attempt_changes.
-  - Keep agent-facing tool surface small (favor 2–5 tools per workflow) to improve LLM tool selection.
+  - Agent-facing tool UX: prefer single-purpose tools and strict schemas; tool count is OK, but avoid multi-action mega-tools.
   - Prefer pull-style pagination (cursor/limit) over long-lived streaming inside MCP; advanced streaming stays in `/api` (SSE/WS) when needed.
   - Optional access-control boundary for HTTP/SSE/WS/MCP.
   - Data consistency for multi-step create/start flows.
+  - Idempotency for agent/orchestrator retries: HTTP supports `Idempotency-Key`; MCP exposes `request_id` on key mutating tools.
   - Consistent API error model + HTTP status mapping.
   - Fix known frontend loading issues; add minimal route-level tests.
-  - Next candidates (defer unless explicitly requested): attempt event subscription (SSE), executor discovery, and idempotency/correlation.
+  - Next candidates (defer unless explicitly requested): attempt event subscription (SSE), executor discovery, stop/transcript/artifact MCP tools for agent UI parity.
 
 rules:
   specs:

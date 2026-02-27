@@ -3,6 +3,7 @@ pub mod queue;
 use axum::{
     Extension, Json, Router,
     extract::{Query, State},
+    http::HeaderMap,
     middleware::from_fn_with_state,
     response::Json as ResponseJson,
     routing::{get, post},
@@ -24,7 +25,7 @@ use executors::{
     },
     profile::ExecutorProfileId,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use services::services::container::ContainerService;
 use ts_rs::TS;
 use utils::response::ApiResponse;
@@ -87,7 +88,7 @@ pub async fn create_session(
     Ok(ResponseJson(ApiResponse::success(session)))
 }
 
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS)]
 pub struct CreateFollowUpAttempt {
     pub prompt: String,
     pub variant: Option<String>,
@@ -99,148 +100,163 @@ pub struct CreateFollowUpAttempt {
 pub async fn follow_up(
     Extension(session): Extension<Session>,
     State(deployment): State<DeploymentImpl>,
+    headers: HeaderMap,
     Json(payload): Json<CreateFollowUpAttempt>,
 ) -> Result<ResponseJson<ApiResponse<ExecutionProcess>>, ApiError> {
-    let pool = &deployment.db().pool;
+    let key = crate::routes::idempotency::idempotency_key(&headers);
+    let hash = crate::routes::idempotency::request_hash(&payload)?;
 
-    // Load workspace from session
-    let workspace = Workspace::find_by_id(pool, session.workspace_id)
-        .await?
-        .ok_or(ApiError::Workspace(WorkspaceError::ValidationError(
-            "Workspace not found".to_string(),
-        )))?;
+    crate::routes::idempotency::idempotent_success(
+        &deployment.db().pool,
+        "follow_up_send",
+        key,
+        hash,
+        || async {
+            let pool = &deployment.db().pool;
 
-    tracing::info!("{:?}", workspace);
-
-    deployment
-        .container()
-        .ensure_container_exists(&workspace)
-        .await?;
-
-    // Get executor profile data from the latest CodingAgent process in this session
-    let initial_executor_profile_id =
-        ExecutionProcess::latest_executor_profile_for_session(pool, session.id).await?;
-
-    let executor_profile_id = ExecutorProfileId {
-        executor: initial_executor_profile_id.executor,
-        variant: payload.variant,
-    };
-
-    // Get parent task
-    let task = workspace
-        .parent_task(pool)
-        .await?
-        .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
-
-    let image_paths = match deployment.image().image_path_map_for_task(task.id).await {
-        Ok(map) if !map.is_empty() => Some(map),
-        Ok(_) => None,
-        Err(err) => {
-            tracing::warn!("Failed to resolve task image paths: {}", err);
-            None
-        }
-    };
-
-    // Get parent project
-    let project = task
-        .parent_project(pool)
-        .await?
-        .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
-
-    // If retry settings provided, perform replace-logic before proceeding
-    if let Some(proc_id) = payload.retry_process_id {
-        // Validate process belongs to this session
-        let process =
-            ExecutionProcess::find_by_id(pool, proc_id)
+            // Load workspace from session
+            let workspace = Workspace::find_by_id(pool, session.workspace_id)
                 .await?
                 .ok_or(ApiError::Workspace(WorkspaceError::ValidationError(
-                    "Process not found".to_string(),
+                    "Workspace not found".to_string(),
                 )))?;
-        if process.session_id != session.id {
-            return Err(ApiError::Workspace(WorkspaceError::ValidationError(
-                "Process does not belong to this session".to_string(),
-            )));
-        }
 
-        // Reset all repository worktrees to the state before the target process
-        let force_when_dirty = payload.force_when_dirty.unwrap_or(false);
-        let perform_git_reset = payload.perform_git_reset.unwrap_or(true);
-        restore_worktrees_to_process(
-            &deployment,
-            pool,
-            &workspace,
-            proc_id,
-            perform_git_reset,
-            force_when_dirty,
-        )
-        .await?;
+            tracing::info!("{:?}", workspace);
 
-        // Stop any running processes for this workspace (except dev server)
-        deployment.container().try_stop(&workspace, false).await;
+            deployment
+                .container()
+                .ensure_container_exists(&workspace)
+                .await?;
 
-        // Soft-drop the target process and all later processes in that session
-        let _ = ExecutionProcess::drop_at_and_after(pool, process.session_id, proc_id).await?;
-    }
+            // Get executor profile data from the latest CodingAgent process in this session
+            let initial_executor_profile_id =
+                ExecutionProcess::latest_executor_profile_for_session(pool, session.id).await?;
 
-    let latest_agent_session_id =
-        ExecutionProcess::find_latest_coding_agent_turn_session_id(pool, session.id).await?;
+            let executor_profile_id = ExecutorProfileId {
+                executor: initial_executor_profile_id.executor,
+                variant: payload.variant.clone(),
+            };
 
-    let prompt = payload.prompt;
+            // Get parent task
+            let task = workspace
+                .parent_task(pool)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
 
-    let project_repos = ProjectRepo::find_by_project_id_with_names(pool, project.id).await?;
-    let cleanup_action = deployment
-        .container()
-        .cleanup_actions_for_repos(&project_repos);
+            let image_paths = match deployment.image().image_path_map_for_task(task.id).await {
+                Ok(map) if !map.is_empty() => Some(map),
+                Ok(_) => None,
+                Err(err) => {
+                    tracing::warn!("Failed to resolve task image paths: {}", err);
+                    None
+                }
+            };
 
-    let working_dir = workspace
-        .agent_working_dir
-        .as_ref()
-        .filter(|dir| !dir.is_empty())
-        .cloned();
+            // Get parent project
+            let project = task
+                .parent_project(pool)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
 
-    let action_type = if let Some(agent_session_id) = latest_agent_session_id {
-        ExecutorActionType::CodingAgentFollowUpRequest(CodingAgentFollowUpRequest {
-            prompt: prompt.clone(),
-            session_id: agent_session_id,
-            executor_profile_id: executor_profile_id.clone(),
-            working_dir: working_dir.clone(),
-            image_paths: image_paths.clone(),
-        })
-    } else {
-        ExecutorActionType::CodingAgentInitialRequest(
-            executors::actions::coding_agent_initial::CodingAgentInitialRequest {
-                prompt,
-                executor_profile_id: executor_profile_id.clone(),
-                working_dir,
-                image_paths,
-            },
-        )
-    };
+            // If retry settings provided, perform replace-logic before proceeding
+            if let Some(proc_id) = payload.retry_process_id {
+                // Validate process belongs to this session
+                let process = ExecutionProcess::find_by_id(pool, proc_id).await?.ok_or(
+                    ApiError::Workspace(WorkspaceError::ValidationError(
+                        "Process not found".to_string(),
+                    )),
+                )?;
+                if process.session_id != session.id {
+                    return Err(ApiError::Workspace(WorkspaceError::ValidationError(
+                        "Process does not belong to this session".to_string(),
+                    )));
+                }
 
-    let action = ExecutorAction::new(action_type, cleanup_action.map(Box::new));
+                // Reset all repository worktrees to the state before the target process
+                let force_when_dirty = payload.force_when_dirty.unwrap_or(false);
+                let perform_git_reset = payload.perform_git_reset.unwrap_or(true);
+                restore_worktrees_to_process(
+                    &deployment,
+                    pool,
+                    &workspace,
+                    proc_id,
+                    perform_git_reset,
+                    force_when_dirty,
+                )
+                .await?;
 
-    let execution_process = deployment
-        .container()
-        .start_execution(
-            &workspace,
-            &session,
-            &action,
-            &ExecutionProcessRunReason::CodingAgent,
-        )
-        .await?;
+                // Stop any running processes for this workspace (except dev server)
+                deployment.container().try_stop(&workspace, false).await;
 
-    // Clear the draft follow-up scratch on successful spawn
-    // This ensures the scratch is wiped even if the user navigates away quickly
-    if let Err(e) = Scratch::delete(pool, session.id, &ScratchType::DraftFollowUp).await {
-        // Log but don't fail the request - scratch deletion is best-effort
-        tracing::debug!(
-            "Failed to delete draft follow-up scratch for session {}: {}",
-            session.id,
-            e
-        );
-    }
+                // Soft-drop the target process and all later processes in that session
+                let _ =
+                    ExecutionProcess::drop_at_and_after(pool, process.session_id, proc_id).await?;
+            }
 
-    Ok(ResponseJson(ApiResponse::success(execution_process)))
+            let latest_agent_session_id =
+                ExecutionProcess::find_latest_coding_agent_turn_session_id(pool, session.id)
+                    .await?;
+
+            let prompt = payload.prompt.clone();
+
+            let project_repos =
+                ProjectRepo::find_by_project_id_with_names(pool, project.id).await?;
+            let cleanup_action = deployment
+                .container()
+                .cleanup_actions_for_repos(&project_repos);
+
+            let working_dir = workspace
+                .agent_working_dir
+                .as_ref()
+                .filter(|dir| !dir.is_empty())
+                .cloned();
+
+            let action_type = if let Some(agent_session_id) = latest_agent_session_id {
+                ExecutorActionType::CodingAgentFollowUpRequest(CodingAgentFollowUpRequest {
+                    prompt: prompt.clone(),
+                    session_id: agent_session_id,
+                    executor_profile_id: executor_profile_id.clone(),
+                    working_dir: working_dir.clone(),
+                    image_paths: image_paths.clone(),
+                })
+            } else {
+                ExecutorActionType::CodingAgentInitialRequest(
+                    executors::actions::coding_agent_initial::CodingAgentInitialRequest {
+                        prompt,
+                        executor_profile_id: executor_profile_id.clone(),
+                        working_dir,
+                        image_paths,
+                    },
+                )
+            };
+
+            let action = ExecutorAction::new(action_type, cleanup_action.map(Box::new));
+
+            let execution_process = deployment
+                .container()
+                .start_execution(
+                    &workspace,
+                    &session,
+                    &action,
+                    &ExecutionProcessRunReason::CodingAgent,
+                )
+                .await?;
+
+            // Clear the draft follow-up scratch on successful spawn
+            // This ensures the scratch is wiped even if the user navigates away quickly
+            if let Err(e) = Scratch::delete(pool, session.id, &ScratchType::DraftFollowUp).await {
+                // Log but don't fail the request - scratch deletion is best-effort
+                tracing::debug!(
+                    "Failed to delete draft follow-up scratch for session {}: {}",
+                    session.id,
+                    e
+                );
+            }
+
+            Ok(execution_process)
+        },
+    )
+    .await
 }
 
 pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {

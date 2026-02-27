@@ -6,6 +6,7 @@ pub mod execution_process;
 pub mod execution_process_log_entries;
 pub mod execution_process_logs;
 pub mod execution_process_repo_state;
+pub mod idempotency;
 pub mod ids;
 pub mod image;
 pub mod merge;

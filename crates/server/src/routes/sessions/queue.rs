@@ -1,10 +1,10 @@
 use axum::{
-    Extension, Json, Router, extract::State, middleware::from_fn_with_state,
+    Extension, Json, Router, extract::State, http::HeaderMap, middleware::from_fn_with_state,
     response::Json as ResponseJson, routing::get,
 };
 use db::models::{scratch::DraftFollowUpData, session::Session};
 use deployment::Deployment;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use services::services::queued_message::QueueStatus;
 use ts_rs::TS;
 use utils::response::ApiResponse;
@@ -12,7 +12,7 @@ use utils::response::ApiResponse;
 use crate::{DeploymentImpl, error::ApiError, middleware::load_session_middleware};
 
 /// Request body for queueing a follow-up message
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Deserialize, Serialize, TS)]
 pub struct QueueMessageRequest {
     pub message: String,
     pub variant: Option<String>,
@@ -22,16 +22,26 @@ pub struct QueueMessageRequest {
 pub async fn queue_message(
     Extension(session): Extension<Session>,
     State(deployment): State<DeploymentImpl>,
+    headers: HeaderMap,
     Json(payload): Json<QueueMessageRequest>,
 ) -> Result<ResponseJson<ApiResponse<QueueStatus>>, ApiError> {
+    let key = crate::routes::idempotency::idempotency_key(&headers);
+    let hash = crate::routes::idempotency::request_hash(&payload)?;
+
     let data = DraftFollowUpData {
         message: payload.message,
         variant: payload.variant,
     };
 
-    let queued = deployment
-        .queued_message_service()
-        .queue_message(session.id, data);
+    let queued = match key {
+        Some(key) => deployment
+            .queued_message_service()
+            .queue_message_idempotent(session.id, key, hash, data)
+            .map_err(|_| ApiError::Conflict("Idempotency key conflict".to_string()))?,
+        None => deployment
+            .queued_message_service()
+            .queue_message(session.id, data),
+    };
 
     Ok(ResponseJson(ApiResponse::success(QueueStatus::Queued {
         message: queued,

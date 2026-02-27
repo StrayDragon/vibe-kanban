@@ -1,6 +1,7 @@
 use std::future::{Future, IntoFuture};
 
 use anyhow::{self, Error as AnyhowError};
+use chrono::Utc;
 use db::DbErr;
 use deployment::{Deployment, DeploymentError};
 use server::{DeploymentImpl, http};
@@ -13,6 +14,11 @@ use utils::{assets::asset_dir, browser::open_browser, port_file::write_port_file
 
 const GRACEFUL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+const IDEMPOTENCY_PRUNE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+const DEFAULT_IDEMPOTENCY_IN_PROGRESS_TTL_SECS: i64 = 60 * 60;
+const DEFAULT_IDEMPOTENCY_COMPLETED_TTL_SECS: i64 = 60 * 60 * 24 * 7;
+const IDEMPOTENCY_IN_PROGRESS_TTL_ENV: &str = "VK_IDEMPOTENCY_IN_PROGRESS_TTL_SECS";
+const IDEMPOTENCY_COMPLETED_TTL_ENV: &str = "VK_IDEMPOTENCY_COMPLETED_TTL_SECS";
 
 #[derive(Debug, Error)]
 pub enum VibeKanbanError {
@@ -94,6 +100,36 @@ async fn main() -> Result<(), VibeKanbanError> {
             .await
         {
             tracing::warn!("Failed to warm file search cache: {}", e);
+        }
+    });
+
+    let idempotency_pool = deployment.db().pool.clone();
+    spawn_background(async move {
+        let in_progress_ttl_secs = read_ttl_secs(
+            IDEMPOTENCY_IN_PROGRESS_TTL_ENV,
+            DEFAULT_IDEMPOTENCY_IN_PROGRESS_TTL_SECS,
+        );
+        let completed_ttl_secs = read_ttl_secs(
+            IDEMPOTENCY_COMPLETED_TTL_ENV,
+            DEFAULT_IDEMPOTENCY_COMPLETED_TTL_SECS,
+        );
+        tracing::info!(
+            in_progress_ttl_secs = in_progress_ttl_secs.unwrap_or(0),
+            completed_ttl_secs = completed_ttl_secs.unwrap_or(0),
+            "Starting idempotency key retention job"
+        );
+
+        loop {
+            if let Err(err) = prune_idempotency_keys_once(
+                &idempotency_pool,
+                in_progress_ttl_secs,
+                completed_ttl_secs,
+            )
+            .await
+            {
+                tracing::warn!(error = %err, "Failed to prune idempotency keys");
+            }
+            tokio::time::sleep(IDEMPOTENCY_PRUNE_INTERVAL).await;
         }
     });
 
@@ -265,6 +301,62 @@ fn spawn_shutdown_watchers() -> (watch::Receiver<bool>, watch::Receiver<bool>) {
     });
 
     (shutdown_rx, force_exit_rx)
+}
+
+fn read_ttl_secs(name: &str, default: i64) -> Option<i64> {
+    let raw = match std::env::var(name) {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return Some(default),
+        Err(err) => {
+            tracing::warn!(error = %err, "Failed to read {name}; using default");
+            return Some(default);
+        }
+    };
+
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        tracing::warn!("{name} is set but empty; using default");
+        return Some(default);
+    }
+
+    match trimmed.parse::<i64>() {
+        Ok(value) if value <= 0 => None,
+        Ok(value) => Some(value),
+        Err(err) => {
+            tracing::warn!(value = trimmed, error = %err, "Invalid {name}; using default");
+            Some(default)
+        }
+    }
+}
+
+async fn prune_idempotency_keys_once(
+    db: &db::DbPool,
+    in_progress_ttl_secs: Option<i64>,
+    completed_ttl_secs: Option<i64>,
+) -> Result<(), db::DbErr> {
+    let now = Utc::now();
+
+    let mut removed_in_progress = 0u64;
+    if let Some(ttl_secs) = in_progress_ttl_secs {
+        let cutoff = now - chrono::Duration::seconds(ttl_secs);
+        removed_in_progress = db::models::idempotency::prune_in_progress_before(db, cutoff).await?;
+    }
+
+    let mut removed_completed = 0u64;
+    if let Some(ttl_secs) = completed_ttl_secs {
+        let cutoff = now - chrono::Duration::seconds(ttl_secs);
+        removed_completed = db::models::idempotency::prune_completed_before(db, cutoff).await?;
+    }
+
+    if removed_in_progress > 0 || removed_completed > 0 {
+        tracing::info!(
+            removed_in_progress,
+            removed_completed,
+            "Pruned idempotency keys"
+        );
+    }
+
+    Ok(())
 }
 
 async fn wait_for_watch_true(mut rx: watch::Receiver<bool>) {

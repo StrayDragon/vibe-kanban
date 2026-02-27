@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use db::models::scratch::DraftFollowUpData;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -37,13 +38,27 @@ pub enum QueueStatus {
 #[derive(Clone)]
 pub struct QueuedMessageService {
     queue: Arc<DashMap<Uuid, QueuedMessage>>,
+    idempotency: Arc<DashMap<Uuid, QueueIdempotencyRecord>>,
     ttl: Duration,
+}
+
+#[derive(Debug, Clone)]
+struct QueueIdempotencyRecord {
+    key: String,
+    request_hash: String,
+}
+
+#[derive(Debug, Error)]
+pub enum QueueMessageIdempotencyError {
+    #[error("Idempotency key already used with different message payload")]
+    Conflict,
 }
 
 impl QueuedMessageService {
     pub fn new() -> Self {
         Self {
             queue: Arc::new(DashMap::new()),
+            idempotency: Arc::new(DashMap::new()),
             ttl: cache_budgets().queued_messages_ttl,
         }
     }
@@ -75,6 +90,7 @@ impl QueuedMessageService {
 
         for key in &expired {
             self.queue.remove(key);
+            self.idempotency.remove(key);
         }
 
         if !expired.is_empty() && should_warn("queued_messages") {
@@ -94,6 +110,7 @@ impl QueuedMessageService {
             drop(entry);
             if expired {
                 self.queue.remove(session_id);
+                self.idempotency.remove(session_id);
                 if should_warn("queued_messages") {
                     tracing::warn!(
                         "Queued message expired for session {session_id} (ttl={}s)",
@@ -109,6 +126,7 @@ impl QueuedMessageService {
     /// Queue a message for a session. Replaces any existing queued message.
     pub fn queue_message(&self, session_id: Uuid, data: DraftFollowUpData) -> QueuedMessage {
         self.prune_expired();
+        self.idempotency.remove(&session_id);
         let queued = QueuedMessage {
             session_id,
             data,
@@ -118,8 +136,51 @@ impl QueuedMessageService {
         queued
     }
 
+    /// Queue a message for a session, using an idempotency key for safe retries.
+    /// If the same idempotency key is reused with the same payload, this returns the existing
+    /// queued message without modifying timestamps. If the key is reused with a different payload,
+    /// this returns a Conflict error.
+    pub fn queue_message_idempotent(
+        &self,
+        session_id: Uuid,
+        idempotency_key: String,
+        request_hash: String,
+        data: DraftFollowUpData,
+    ) -> Result<QueuedMessage, QueueMessageIdempotencyError> {
+        self.prune_expired();
+
+        if let Some(entry) = self.idempotency.get(&session_id) {
+            // If the same key is reused, ensure the payload matches and return the existing message.
+            if entry.key == idempotency_key {
+                if entry.request_hash != request_hash {
+                    return Err(QueueMessageIdempotencyError::Conflict);
+                }
+                if let Some(existing) = self.queue.get(&session_id) {
+                    return Ok(existing.clone());
+                }
+            }
+        }
+
+        let queued_at = Utc::now();
+        let queued = QueuedMessage {
+            session_id,
+            data,
+            queued_at,
+        };
+        self.queue.insert(session_id, queued.clone());
+        self.idempotency.insert(
+            session_id,
+            QueueIdempotencyRecord {
+                key: idempotency_key,
+                request_hash,
+            },
+        );
+        Ok(queued)
+    }
+
     /// Cancel/remove a queued message for a session
     pub fn cancel_queued(&self, session_id: Uuid) -> Option<QueuedMessage> {
+        self.idempotency.remove(&session_id);
         self.queue.remove(&session_id).map(|(_, v)| v)
     }
 
@@ -137,6 +198,7 @@ impl QueuedMessageService {
         if self.prune_if_expired(&session_id) {
             return None;
         }
+        self.idempotency.remove(&session_id);
         self.queue.remove(&session_id).map(|(_, v)| v)
     }
 
@@ -194,5 +256,60 @@ mod tests {
 
         assert!(service.get_queued(session_id).is_none());
         assert!(!service.queue.contains_key(&session_id));
+    }
+
+    #[test]
+    fn queue_message_idempotent_reuses_existing_message() {
+        let service = QueuedMessageService::new();
+        let session_id = Uuid::new_v4();
+        let data = DraftFollowUpData {
+            message: "hello".to_string(),
+            variant: None,
+        };
+
+        let queued1 = service
+            .queue_message_idempotent(
+                session_id,
+                "req-1".to_string(),
+                "hash-1".to_string(),
+                data.clone(),
+            )
+            .unwrap();
+
+        let queued2 = service
+            .queue_message_idempotent(
+                session_id,
+                "req-1".to_string(),
+                "hash-1".to_string(),
+                data.clone(),
+            )
+            .unwrap();
+
+        assert_eq!(queued1.queued_at, queued2.queued_at);
+        assert_eq!(queued1.data.message, queued2.data.message);
+    }
+
+    #[test]
+    fn queue_message_idempotent_conflicts_on_payload_change() {
+        let service = QueuedMessageService::new();
+        let session_id = Uuid::new_v4();
+        let data1 = DraftFollowUpData {
+            message: "hello".to_string(),
+            variant: None,
+        };
+        let data2 = DraftFollowUpData {
+            message: "different".to_string(),
+            variant: None,
+        };
+
+        let _ = service
+            .queue_message_idempotent(session_id, "req-1".to_string(), "hash-1".to_string(), data1)
+            .unwrap();
+
+        let err = service
+            .queue_message_idempotent(session_id, "req-1".to_string(), "hash-2".to_string(), data2)
+            .expect_err("expected conflict");
+
+        assert!(matches!(err, QueueMessageIdempotencyError::Conflict));
     }
 }

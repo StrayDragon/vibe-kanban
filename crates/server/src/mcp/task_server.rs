@@ -53,6 +53,10 @@ pub struct CreateTaskRequest {
     pub title: String,
     #[schemars(description = "Optional description of the task")]
     pub description: Option<String>,
+    #[schemars(
+        description = "Optional idempotency key for safe retries. When provided, repeated calls with the same key and same payload return the same result."
+    )]
+    pub request_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -318,6 +322,10 @@ pub struct StartTaskAttemptRequest {
     pub variant: Option<String>,
     #[schemars(description = "Target branch for each repository in the project")]
     pub repos: Vec<McpWorkspaceRepoInput>,
+    #[schemars(
+        description = "Optional idempotency key for safe retries. When provided, repeated calls with the same key and same payload return the same attempt."
+    )]
+    pub request_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -348,6 +356,10 @@ pub struct FollowUpRequest {
     pub action: FollowUpAction,
     #[schemars(description = "Optional executor variant for this follow-up")]
     pub variant: Option<String>,
+    #[schemars(
+        description = "Optional idempotency key for safe retries. When provided, repeated send/queue calls with the same key and same payload return the same result."
+    )]
+    pub request_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -1186,6 +1198,7 @@ impl TaskServer {
             project_id,
             title,
             description,
+            request_id,
         }): Parameters<CreateTaskRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let title = title.trim();
@@ -1207,21 +1220,31 @@ impl TaskServer {
         };
 
         let url = self.url("/api/tasks");
+        let request_id = request_id.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
 
-        let task: Task = match self
-            .send_json(
-                self.client
-                    .post(&url)
-                    .json(&CreateTask::from_title_description(
-                        project_id,
-                        title,
-                        expanded_description,
-                    )),
-                "POST",
-                &url,
-            )
-            .await
-        {
+        let mut rb = self
+            .client
+            .post(&url)
+            .json(&CreateTask::from_title_description(
+                project_id,
+                title,
+                expanded_description,
+            ));
+        if let Some(request_id) = request_id.as_deref() {
+            rb = rb.header(
+                crate::routes::idempotency::IDEMPOTENCY_KEY_HEADER,
+                request_id,
+            );
+        }
+
+        let task: Task = match self.send_json(rb, "POST", &url).await {
             Ok(t) => t,
             Err(e) => return Ok(e),
         };
@@ -1403,6 +1426,7 @@ impl TaskServer {
             executor,
             variant,
             repos,
+            request_id,
         }): Parameters<StartTaskAttemptRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         if repos.is_empty() {
@@ -1485,10 +1509,22 @@ impl TaskServer {
         };
 
         let url = self.url("/api/task-attempts");
-        let workspace: Workspace = match self
-            .send_json(self.client.post(&url).json(&payload), "POST", &url)
-            .await
-        {
+        let request_id = request_id.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+        let mut rb = self.client.post(&url).json(&payload);
+        if let Some(request_id) = request_id.as_deref() {
+            rb = rb.header(
+                crate::routes::idempotency::IDEMPOTENCY_KEY_HEADER,
+                request_id,
+            );
+        }
+        let workspace: Workspace = match self.send_json(rb, "POST", &url).await {
             Ok(workspace) => workspace,
             Err(e) => return Ok(e),
         };
@@ -1512,6 +1548,7 @@ impl TaskServer {
             prompt,
             action,
             variant,
+            request_id,
         }): Parameters<FollowUpRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let session_id = match self.resolve_session_id(session_id, attempt_id).await {
@@ -1545,6 +1582,14 @@ impl TaskServer {
                 Some(trimmed.to_string())
             }
         });
+        let request_id = request_id.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
 
         match action {
             FollowUpAction::Send => {
@@ -1566,13 +1611,18 @@ impl TaskServer {
                 };
 
                 let url = self.url(&format!("/api/sessions/{}/follow-up", session_id));
-                let execution_process: ExecutionProcess = match self
-                    .send_json(self.client.post(&url).json(&payload), "POST", &url)
-                    .await
-                {
-                    Ok(process) => process,
-                    Err(e) => return Ok(e),
-                };
+                let mut rb = self.client.post(&url).json(&payload);
+                if let Some(request_id) = request_id.as_deref() {
+                    rb = rb.header(
+                        crate::routes::idempotency::IDEMPOTENCY_KEY_HEADER,
+                        request_id,
+                    );
+                }
+                let execution_process: ExecutionProcess =
+                    match self.send_json(rb, "POST", &url).await {
+                        Ok(process) => process,
+                        Err(e) => return Ok(e),
+                    };
 
                 TaskServer::success(&FollowUpResponse::from_execution(
                     session_id,
@@ -1593,10 +1643,14 @@ impl TaskServer {
                 };
 
                 let url = self.url(&format!("/api/sessions/{}/queue", session_id));
-                let status: QueueStatus = match self
-                    .send_json(self.client.post(&url).json(&payload), "POST", &url)
-                    .await
-                {
+                let mut rb = self.client.post(&url).json(&payload);
+                if let Some(request_id) = request_id.as_deref() {
+                    rb = rb.header(
+                        crate::routes::idempotency::IDEMPOTENCY_KEY_HEADER,
+                        request_id,
+                    );
+                }
+                let status: QueueStatus = match self.send_json(rb, "POST", &url).await {
                     Ok(status) => status,
                     Err(e) => return Ok(e),
                 };

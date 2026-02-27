@@ -5,6 +5,7 @@ pub mod events;
 pub mod execution_processes;
 pub mod filesystem;
 pub mod health;
+pub(crate) mod idempotency;
 pub mod images;
 pub mod projects;
 pub mod repo;
