@@ -16,6 +16,8 @@
     "backend:dev:watch": "DISABLE_WORKTREE_ORPHAN_CLEANUP=1 RUST_LOG=debug cargo watch -w crates -x 'run --bin server'",
     "generate-types": "cargo run --bin generate_types",
     "generate-types:check": "cargo run --bin generate_types -- --check",
+    "generate-env-docs": "node scripts/generate-env-docs.js",
+    "generate-env-docs:check": "node scripts/generate-env-docs.js --check",
     "prepare-db": "node scripts/prepare-db.js",
     "prepare-db:check": "node scripts/prepare-db.js --check",
     "remote:prepare-db:check": "node scripts/prepare-db.js --check"

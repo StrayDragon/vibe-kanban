@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::anyhow;
 use async_trait::async_trait;
+use chrono::{Duration as ChronoDuration, Utc};
 use command_group::AsyncGroupChild;
 use db::{
     DBService, DbErr,
@@ -87,6 +88,74 @@ impl FinalizationTracker {
 
     async fn end(&self, execution_process_id: Uuid) {
         self.in_progress.write().await.remove(&execution_process_id);
+    }
+}
+
+const WORKSPACE_EXPIRED_TTL_ENV: &str = "VK_WORKSPACE_EXPIRED_TTL_SECS";
+const WORKSPACE_CLEANUP_INTERVAL_ENV: &str = "VK_WORKSPACE_CLEANUP_INTERVAL_SECS";
+const DISABLE_WORKSPACE_EXPIRED_CLEANUP_ENV: &str = "DISABLE_WORKSPACE_EXPIRED_CLEANUP";
+
+const DEFAULT_WORKSPACE_EXPIRED_TTL_SECS: i64 = 60 * 60 * 72; // 72 hours
+const DEFAULT_WORKSPACE_CLEANUP_INTERVAL_SECS: u64 = 60 * 30; // 30 minutes
+
+const MIN_WORKSPACE_EXPIRED_TTL_SECS: i64 = 60; // 1 minute
+const MIN_WORKSPACE_CLEANUP_INTERVAL_SECS: u64 = 10; // 10 seconds
+
+fn read_env_u64(name: &str, default: u64, min: u64) -> u64 {
+    match std::env::var(name) {
+        Ok(raw) => match raw.trim().parse::<u64>() {
+            Ok(value) if value >= min => value,
+            Ok(value) => {
+                tracing::warn!(
+                    "{} set to {} (min {}); clamping to {}",
+                    name,
+                    value,
+                    min,
+                    min
+                );
+                min
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "Invalid {}='{}': {}. Using default {}",
+                    name,
+                    raw,
+                    err,
+                    default
+                );
+                default
+            }
+        },
+        Err(_) => default,
+    }
+}
+
+fn read_env_i64(name: &str, default: i64, min: i64) -> i64 {
+    match std::env::var(name) {
+        Ok(raw) => match raw.trim().parse::<i64>() {
+            Ok(value) if value >= min => value,
+            Ok(value) => {
+                tracing::warn!(
+                    "{} set to {} (min {}); clamping to {}",
+                    name,
+                    value,
+                    min,
+                    min
+                );
+                min
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "Invalid {}='{}': {}. Using default {}",
+                    name,
+                    raw,
+                    err,
+                    default
+                );
+                default
+            }
+        },
+        Err(_) => default,
     }
 }
 
@@ -213,7 +282,22 @@ impl LocalContainerService {
     }
 
     pub async fn cleanup_expired_workspaces(db: &DBService) -> Result<(), DeploymentError> {
-        let expired_workspaces = Workspace::find_expired_for_cleanup(&db.pool).await?;
+        if std::env::var(DISABLE_WORKSPACE_EXPIRED_CLEANUP_ENV).is_ok() {
+            tracing::debug!(
+                "Expired workspace cleanup disabled via {}",
+                DISABLE_WORKSPACE_EXPIRED_CLEANUP_ENV
+            );
+            return Ok(());
+        }
+
+        let ttl_secs = read_env_i64(
+            WORKSPACE_EXPIRED_TTL_ENV,
+            DEFAULT_WORKSPACE_EXPIRED_TTL_SECS,
+            MIN_WORKSPACE_EXPIRED_TTL_SECS,
+        );
+        let cutoff = Utc::now() - ChronoDuration::seconds(ttl_secs);
+
+        let expired_workspaces = Workspace::find_expired_for_cleanup(&db.pool, cutoff).await?;
         if expired_workspaces.is_empty() {
             tracing::debug!("No expired workspaces found");
             return Ok(());
@@ -230,7 +314,19 @@ impl LocalContainerService {
 
     pub async fn spawn_workspace_cleanup(&self) {
         let db = self.db.clone();
-        let mut cleanup_interval = tokio::time::interval(tokio::time::Duration::from_secs(1800)); // 30 minutes
+        let interval_secs = read_env_u64(
+            WORKSPACE_CLEANUP_INTERVAL_ENV,
+            DEFAULT_WORKSPACE_CLEANUP_INTERVAL_SECS,
+            MIN_WORKSPACE_CLEANUP_INTERVAL_SECS,
+        );
+        tracing::info!(
+            "Workspace cleanup interval set to {}s via {} (default {}s)",
+            interval_secs,
+            WORKSPACE_CLEANUP_INTERVAL_ENV,
+            DEFAULT_WORKSPACE_CLEANUP_INTERVAL_SECS
+        );
+        let mut cleanup_interval =
+            tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
         WorkspaceManager::cleanup_orphan_workspaces(&self.db.pool).await;
         tokio::spawn(async move {
             loop {

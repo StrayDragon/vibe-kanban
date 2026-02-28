@@ -2,6 +2,10 @@
 
 This document covers practical guidance for running Vibe Kanban, with a focus on SQLite-backed deployments.
 
+## Environment variables
+
+Environment-variable knobs are documented in the generated reference: `docs/env.gen.md`.
+
 ## Asset directory
 
 Vibe Kanban stores runtime state in an “asset directory” (config, credentials, SQLite DB, logs).

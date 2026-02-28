@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, Set,
@@ -336,11 +336,11 @@ impl Workspace {
             .is_some())
     }
 
-    /// Find workspaces that are expired (72+ hours since last activity) and eligible for cleanup
+    /// Find workspaces that are expired (last activity at or before cutoff) and eligible for cleanup.
     pub async fn find_expired_for_cleanup<C: ConnectionTrait>(
         db: &C,
+        cutoff: DateTime<Utc>,
     ) -> Result<Vec<Workspace>, DbErr> {
-        let cutoff = Utc::now() - Duration::hours(72);
         let models = workspace::Entity::find()
             .filter(workspace::Column::ContainerRef.is_not_null())
             .all(db)
