@@ -2872,7 +2872,7 @@ mod tests {
         assert_eq!(status.state, AttemptState::Failed);
         assert_eq!(status.latest_execution_process_id, Some(process_id));
         assert!(matches!(
-            status.failure_summary.as_ref().map(String::as_str),
+            status.failure_summary.as_deref(),
             Some(summary) if !summary.trim().is_empty()
         ));
         assert!(status.last_activity_at.is_some());

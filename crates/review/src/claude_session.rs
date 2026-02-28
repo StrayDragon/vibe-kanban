@@ -1,4 +1,5 @@
 use std::{
+    cmp::Reverse,
     fs::{self, File},
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
@@ -118,7 +119,7 @@ pub fn discover_projects() -> Result<Vec<ClaudeProject>, ReviewError> {
     }
 
     // Sort by modification time, most recent first
-    projects.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+    projects.sort_by_key(|project| Reverse(project.modified_at));
 
     Ok(projects)
 }
@@ -187,7 +188,7 @@ fn discover_sessions_in_dir(dir_path: &Path) -> Result<Vec<ClaudeSession>, Revie
     }
 
     // Sort by modification time, most recent first
-    sessions.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+    sessions.sort_by_key(|session| Reverse(session.modified_at));
 
     Ok(sessions)
 }
@@ -272,7 +273,7 @@ pub fn find_projects_by_branch(
     }
 
     // Sort by modification time, most recent first
-    matches.sort_by(|a, b| b.0.modified_at.cmp(&a.0.modified_at));
+    matches.sort_by_key(|entry| Reverse(entry.0.modified_at));
 
     Ok(matches)
 }
