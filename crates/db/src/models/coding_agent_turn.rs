@@ -1,13 +1,16 @@
 use chrono::{DateTime, Utc};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
-    Set,
+    QuerySelect, Set,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
-use crate::{entities::coding_agent_turn, models::ids};
+use crate::{
+    entities::{coding_agent_turn, execution_process},
+    models::ids,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct CodingAgentTurn {
@@ -24,6 +27,23 @@ pub struct CodingAgentTurn {
 pub struct CreateCodingAgentTurn {
     pub execution_process_id: Uuid,
     pub prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct IndexedCodingAgentTurn {
+    pub entry_index: i64,
+    pub turn_id: Uuid,
+    pub prompt: Option<String>,
+    pub summary: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct CodingAgentTurnPage {
+    pub entries: Vec<IndexedCodingAgentTurn>,
+    pub next_cursor: Option<i64>,
+    pub has_more: bool,
 }
 
 impl CodingAgentTurn {
@@ -160,5 +180,71 @@ impl CodingAgentTurn {
         active.updated_at = Set(Utc::now().into());
         active.update(db).await?;
         Ok(())
+    }
+
+    /// Tail coding agent turns for a session, tail-first with cursor paging for older history.
+    pub async fn tail_by_session_id<C: ConnectionTrait>(
+        db: &C,
+        session_id: Uuid,
+        limit: usize,
+        cursor: Option<i64>,
+    ) -> Result<CodingAgentTurnPage, DbErr> {
+        let limit = limit.max(1);
+        let session_row_id = ids::session_id_by_uuid(db, session_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Session not found".to_string()))?;
+
+        let process_ids: Vec<i64> = execution_process::Entity::find()
+            .select_only()
+            .column(execution_process::Column::Id)
+            .filter(execution_process::Column::SessionId.eq(session_row_id))
+            .filter(execution_process::Column::Dropped.eq(false))
+            .into_tuple()
+            .all(db)
+            .await?;
+
+        if process_ids.is_empty() {
+            return Ok(CodingAgentTurnPage {
+                entries: Vec::new(),
+                next_cursor: None,
+                has_more: false,
+            });
+        }
+
+        let mut query = coding_agent_turn::Entity::find()
+            .filter(coding_agent_turn::Column::ExecutionProcessId.is_in(process_ids))
+            .order_by_desc(coding_agent_turn::Column::Id)
+            .limit((limit.saturating_add(1)) as u64);
+
+        if let Some(cursor) = cursor {
+            query = query.filter(coding_agent_turn::Column::Id.lt(cursor));
+        }
+
+        let mut turns = query.all(db).await?;
+        let has_more = turns.len() > limit;
+        if has_more {
+            turns.pop();
+        }
+        turns.reverse();
+
+        let entries = turns
+            .into_iter()
+            .map(|turn| IndexedCodingAgentTurn {
+                entry_index: turn.id,
+                turn_id: turn.uuid,
+                prompt: turn.prompt,
+                summary: turn.summary,
+                created_at: turn.created_at.into(),
+                updated_at: turn.updated_at.into(),
+            })
+            .collect::<Vec<_>>();
+
+        let next_cursor = entries.first().map(|entry| entry.entry_index);
+
+        Ok(CodingAgentTurnPage {
+            entries,
+            next_cursor,
+            has_more,
+        })
     }
 }

@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
@@ -44,7 +45,11 @@ use services::services::{
     },
     github::GitHubService,
 };
-use utils::{diff::DiffSummary, response::ApiResponse};
+use utils::{
+    diff::{create_unified_diff, DiffSummary},
+    response::ApiResponse,
+    text::truncate_to_char_boundary,
+};
 use uuid::Uuid;
 
 use super::{codex_setup, cursor_setup, dto::*, gh_cli_setup};
@@ -494,6 +499,357 @@ pub async fn get_task_attempt_changes(
     };
 
     Ok(ResponseJson(ApiResponse::success(response)))
+}
+
+pub async fn get_task_attempt_file(
+    Extension(workspace): Extension<Workspace>,
+    State(deployment): State<DeploymentImpl>,
+    Query(query): Query<AttemptFileQuery>,
+) -> Result<ResponseJson<ApiResponse<AttemptFileResponse>>, ApiError> {
+    const DEFAULT_MAX_BYTES: usize = 64 * 1024;
+    const HARD_MAX_BYTES: usize = 512 * 1024;
+
+    let path = query
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::BadRequest("path is required".to_string()))?;
+
+    let start = query.start.unwrap_or(0);
+    let requested_max_bytes = query.max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
+    if requested_max_bytes > HARD_MAX_BYTES {
+        return Ok(ResponseJson(ApiResponse::success(AttemptFileResponse {
+            path: path.to_string(),
+            blocked: true,
+            blocked_reason: Some(AttemptArtifactBlockedReason::SizeExceeded),
+            truncated: false,
+            start,
+            bytes: 0,
+            total_bytes: None,
+            content: None,
+        })));
+    }
+
+    let workspace_root = match workspace
+        .container_ref
+        .as_ref()
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+    {
+        Some(path) => path,
+        None => PathBuf::from(deployment.container().ensure_container_exists(&workspace).await?),
+    };
+    let canonical_root = std::fs::canonicalize(&workspace_root).map_err(ApiError::Io)?;
+
+    let rel_path = PathBuf::from(path);
+    let invalid = rel_path.is_absolute()
+        || rel_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir));
+    if invalid {
+        return Ok(ResponseJson(ApiResponse::success(AttemptFileResponse {
+            path: path.to_string(),
+            blocked: true,
+            blocked_reason: Some(AttemptArtifactBlockedReason::PathOutsideWorkspace),
+            truncated: false,
+            start,
+            bytes: 0,
+            total_bytes: None,
+            content: None,
+        })));
+    }
+
+    let requested_path = workspace_root.join(&rel_path);
+    if !requested_path.exists() {
+        return Err(ApiError::NotFound("File does not exist".to_string()));
+    }
+    if !requested_path.is_file() {
+        return Err(ApiError::BadRequest("Path is not a file".to_string()));
+    }
+
+    let canonical_file = std::fs::canonicalize(&requested_path).map_err(ApiError::Io)?;
+    if !canonical_file.starts_with(&canonical_root) {
+        return Ok(ResponseJson(ApiResponse::success(AttemptFileResponse {
+            path: path.to_string(),
+            blocked: true,
+            blocked_reason: Some(AttemptArtifactBlockedReason::PathOutsideWorkspace),
+            truncated: false,
+            start,
+            bytes: 0,
+            total_bytes: None,
+            content: None,
+        })));
+    }
+
+    let meta = std::fs::metadata(&canonical_file).map_err(ApiError::Io)?;
+    let total_bytes = meta.len();
+    if start >= total_bytes {
+        return Ok(ResponseJson(ApiResponse::success(AttemptFileResponse {
+            path: path.to_string(),
+            blocked: false,
+            blocked_reason: None,
+            truncated: false,
+            start,
+            bytes: 0,
+            total_bytes: Some(total_bytes),
+            content: Some(String::new()),
+        })));
+    }
+
+    let read_len = requested_max_bytes.min((total_bytes - start) as usize);
+    let mut file = std::fs::File::open(&canonical_file).map_err(ApiError::Io)?;
+    file.seek(SeekFrom::Start(start)).map_err(ApiError::Io)?;
+    let mut buf = vec![0u8; read_len];
+    let n = file.read(&mut buf).map_err(ApiError::Io)?;
+    buf.truncate(n);
+
+    let truncated = (start as u128).saturating_add(n as u128) < (total_bytes as u128);
+    let content = String::from_utf8_lossy(&buf).into_owned();
+
+    Ok(ResponseJson(ApiResponse::success(AttemptFileResponse {
+        path: path.to_string(),
+        blocked: false,
+        blocked_reason: None,
+        truncated,
+        start,
+        bytes: n,
+        total_bytes: Some(total_bytes),
+        content: Some(content),
+    })))
+}
+
+pub async fn get_task_attempt_patch(
+    Extension(workspace): Extension<Workspace>,
+    State(deployment): State<DeploymentImpl>,
+    Json(request): Json<AttemptPatchRequest>,
+) -> Result<ResponseJson<ApiResponse<AttemptPatchResponse>>, ApiError> {
+    const DEFAULT_MAX_BYTES: usize = 200 * 1024;
+    const HARD_MAX_BYTES: usize = 2 * 1024 * 1024;
+    const MAX_PATHS: usize = 100;
+
+    if request.paths.is_empty() {
+        return Err(ApiError::BadRequest("paths must not be empty".to_string()));
+    }
+
+    if request.paths.len() > MAX_PATHS {
+        return Ok(ResponseJson(ApiResponse::success(AttemptPatchResponse {
+            blocked: true,
+            blocked_reason: Some(AttemptArtifactBlockedReason::TooManyPaths),
+            truncated: false,
+            bytes: 0,
+            paths: request.paths,
+            patch: None,
+        })));
+    }
+
+    let max_bytes = request.max_bytes.unwrap_or(DEFAULT_MAX_BYTES);
+    if max_bytes > HARD_MAX_BYTES {
+        return Ok(ResponseJson(ApiResponse::success(AttemptPatchResponse {
+            blocked: true,
+            blocked_reason: Some(AttemptArtifactBlockedReason::SizeExceeded),
+            truncated: false,
+            bytes: 0,
+            paths: request.paths,
+            patch: None,
+        })));
+    }
+
+    let pool = &deployment.db().pool;
+    let guard_preset = deployment.config().read().await.diff_preview_guard.clone();
+
+    let workspace_repos = WorkspaceRepo::find_by_workspace_id(pool, workspace.id).await?;
+    let target_branches: HashMap<_, _> = workspace_repos
+        .iter()
+        .map(|wr| (wr.repo_id, wr.target_branch.clone()))
+        .collect();
+
+    let repositories = WorkspaceRepo::find_repos_for_workspace(pool, workspace.id).await?;
+
+    let workspace_root = match workspace
+        .container_ref
+        .as_ref()
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+    {
+        Some(path) => path,
+        None => PathBuf::from(deployment.container().ensure_container_exists(&workspace).await?),
+    };
+
+    let mut repo_inputs = Vec::new();
+    let mut summary = DiffSummary::default();
+    let mut summary_failed = false;
+
+    for repo in repositories {
+        let worktree_path = workspace_root.join(&repo.name);
+        let branch = &workspace.branch;
+
+        let Some(target_branch) = target_branches.get(&repo.id) else {
+            summary_failed = true;
+            continue;
+        };
+
+        let base_commit = match deployment
+            .git()
+            .get_base_commit(&repo.path, branch, target_branch)
+        {
+            Ok(commit) => commit,
+            Err(_) => {
+                summary_failed = true;
+                continue;
+            }
+        };
+
+        match deployment
+            .git()
+            .get_worktree_diff_summary(&worktree_path, &base_commit, None)
+        {
+            Ok(repo_summary) => {
+                summary.file_count = summary.file_count.saturating_add(repo_summary.file_count);
+                summary.added = summary.added.saturating_add(repo_summary.added);
+                summary.deleted = summary.deleted.saturating_add(repo_summary.deleted);
+                summary.total_bytes = summary.total_bytes.saturating_add(repo_summary.total_bytes);
+            }
+            Err(_) => {
+                summary_failed = true;
+            }
+        }
+
+        repo_inputs.push((repo, worktree_path, base_commit));
+    }
+
+    let guard_enabled = diff_stream::diff_preview_guard_thresholds(guard_preset.clone()).is_some();
+    let blocked_by_guard = !request.force
+        && guard_enabled
+        && (summary_failed || diff_stream::diff_preview_guard_exceeded(&summary, guard_preset));
+    if blocked_by_guard {
+        let reason = if summary_failed {
+            AttemptArtifactBlockedReason::SummaryFailed
+        } else {
+            AttemptArtifactBlockedReason::ThresholdExceeded
+        };
+        return Ok(ResponseJson(ApiResponse::success(AttemptPatchResponse {
+            blocked: true,
+            blocked_reason: Some(reason),
+            truncated: false,
+            bytes: 0,
+            paths: request.paths,
+            patch: None,
+        })));
+    }
+
+    let mut requested_by_repo: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for raw in &request.paths {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some((repo_name, rel)) = trimmed.split_once('/') else {
+            return Ok(ResponseJson(ApiResponse::success(AttemptPatchResponse {
+                blocked: true,
+                blocked_reason: Some(AttemptArtifactBlockedReason::PathOutsideWorkspace),
+                truncated: false,
+                bytes: 0,
+                paths: request.paths,
+                patch: None,
+            })));
+        };
+        let rel = rel.trim();
+        if rel.is_empty() {
+            continue;
+        }
+        let rel_path = PathBuf::from(rel);
+        let invalid = rel_path.is_absolute()
+            || rel_path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir));
+        if invalid {
+            return Ok(ResponseJson(ApiResponse::success(AttemptPatchResponse {
+                blocked: true,
+                blocked_reason: Some(AttemptArtifactBlockedReason::PathOutsideWorkspace),
+                truncated: false,
+                bytes: 0,
+                paths: request.paths,
+                patch: None,
+            })));
+        }
+        requested_by_repo
+            .entry(repo_name.to_string())
+            .or_default()
+            .push(rel.to_string());
+    }
+
+    let mut patch = String::new();
+    for (repo, worktree_path, base_commit) in &repo_inputs {
+        let Some(rel_paths) = requested_by_repo.get(&repo.name) else {
+            continue;
+        };
+
+        let filter: Vec<&str> = rel_paths.iter().map(|s| s.as_str()).collect();
+        let diffs = match deployment.git().get_diffs(
+            DiffTarget::Worktree {
+                worktree_path,
+                base_commit,
+            },
+            Some(&filter),
+            DiffContentPolicy::Full,
+        ) {
+            Ok(diffs) => diffs,
+            Err(_) => {
+                return Ok(ResponseJson(ApiResponse::success(AttemptPatchResponse {
+                    blocked: true,
+                    blocked_reason: Some(AttemptArtifactBlockedReason::SummaryFailed),
+                    truncated: false,
+                    bytes: 0,
+                    paths: request.paths,
+                    patch: None,
+                })));
+            }
+        };
+
+        for diff in diffs {
+            let Some(path) = diff.new_path.or(diff.old_path) else {
+                continue;
+            };
+
+            let old = diff.old_content.unwrap_or_default();
+            let new = diff.new_content.unwrap_or_default();
+            let file_path = format!("{}/{}", repo.name, path);
+            patch.push_str(&create_unified_diff(&file_path, &old, &new));
+            if !patch.ends_with('\n') {
+                patch.push('\n');
+            }
+        }
+    }
+
+    if patch.is_empty() {
+        return Ok(ResponseJson(ApiResponse::success(AttemptPatchResponse {
+            blocked: false,
+            blocked_reason: None,
+            truncated: false,
+            bytes: 0,
+            paths: request.paths,
+            patch: Some(String::new()),
+        })));
+    }
+
+    let truncated = patch.len() > max_bytes;
+    let patch = if truncated {
+        truncate_to_char_boundary(&patch, max_bytes).to_string()
+    } else {
+        patch
+    };
+    let bytes = patch.as_bytes().len();
+
+    Ok(ResponseJson(ApiResponse::success(AttemptPatchResponse {
+        blocked: false,
+        blocked_reason: None,
+        truncated,
+        bytes,
+        paths: request.paths,
+        patch: Some(patch),
+    })))
 }
 
 fn map_task_group_error(err: TaskGroupError) -> ApiError {

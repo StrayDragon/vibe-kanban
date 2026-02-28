@@ -76,6 +76,55 @@ pub struct TaskAttemptChangesResponse {
     pub files: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AttemptArtifactBlockedReason {
+    PathOutsideWorkspace,
+    SizeExceeded,
+    TooManyPaths,
+    SummaryFailed,
+    ThresholdExceeded,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AttemptFileQuery {
+    pub path: Option<String>,
+    pub start: Option<u64>,
+    pub max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttemptFileResponse {
+    pub path: String,
+    pub blocked: bool,
+    pub blocked_reason: Option<AttemptArtifactBlockedReason>,
+    pub truncated: bool,
+    pub start: u64,
+    pub bytes: usize,
+    pub total_bytes: Option<u64>,
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AttemptPatchRequest {
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub force: bool,
+    pub max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttemptPatchResponse {
+    pub blocked: bool,
+    pub blocked_reason: Option<AttemptArtifactBlockedReason>,
+    pub truncated: bool,
+    pub bytes: usize,
+    pub paths: Vec<String>,
+    pub patch: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct WorkspaceWithSession {
     #[serde(flatten)]

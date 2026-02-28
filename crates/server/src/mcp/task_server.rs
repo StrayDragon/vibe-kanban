@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, str::FromStr};
+use std::{borrow::Cow, cmp::Ordering, str::FromStr};
 
 use db::models::{
     execution_process::ExecutionProcess,
@@ -36,12 +36,20 @@ use crate::{
         containers::ContainerQuery,
         task_attempts::{
             AttemptChangesBlockedReason as ApiAttemptChangesBlockedReason,
+            AttemptArtifactBlockedReason as ApiAttemptArtifactBlockedReason,
             AttemptState as ApiAttemptState, CreateTaskAttemptBody,
+            AttemptFileResponse as ApiAttemptFileResponse,
+            AttemptPatchResponse as ApiAttemptPatchResponse,
             TaskAttemptChangesResponse as ApiTaskAttemptChangesResponse,
             TaskAttemptStatusResponse as ApiTaskAttemptStatusResponse, WorkspaceRepoInput,
         },
     },
 };
+
+const MCP_CODE_AMBIGUOUS_TARGET: &str = "ambiguous_target";
+const MCP_CODE_NO_SESSION_YET: &str = "no_session_yet";
+const MCP_CODE_BLOCKED_GUARDRAILS: &str = "blocked_guardrails";
+const MCP_CODE_MIXED_PAGINATION: &str = "mixed_pagination";
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CreateTaskRequest {
@@ -117,6 +125,28 @@ pub struct ListProjectsResponse {
     #[schemars(description = "Project summaries")]
     pub projects: Vec<ProjectSummary>,
     #[schemars(description = "Number of projects returned")]
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct McpExecutorSummary {
+    #[schemars(description = "Stable executor identifier (use as start_task_attempt.executor)")]
+    pub executor: String,
+    #[schemars(
+        description = "Available executor variants (excluding the implicit default). Provide as start_task_attempt.variant."
+    )]
+    pub variants: Vec<String>,
+    #[schemars(description = "Whether this executor supports MCP configuration")]
+    pub supports_mcp: bool,
+    #[schemars(description = "Default variant to use, or null to omit variant")]
+    pub default_variant: Option<String>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ListExecutorsResponse {
+    #[schemars(description = "Available executors")]
+    pub executors: Vec<McpExecutorSummary>,
+    #[schemars(description = "Number of executors returned")]
     pub count: usize,
 }
 
@@ -344,22 +374,117 @@ pub enum FollowUpAction {
     Cancel,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize)]
 pub struct FollowUpRequest {
-    #[schemars(description = "The session ID to target for the follow-up action (UUID string)")]
     pub session_id: Option<Uuid>,
-    #[schemars(description = "The attempt ID whose latest session should be used (UUID string)")]
     pub attempt_id: Option<Uuid>,
-    #[schemars(description = "The follow-up prompt for send/queue actions")]
     pub prompt: Option<String>,
-    #[schemars(description = "The follow-up action to perform")]
     pub action: FollowUpAction,
-    #[schemars(description = "Optional executor variant for this follow-up")]
     pub variant: Option<String>,
-    #[schemars(
-        description = "Optional idempotency key for safe retries. When provided, repeated send/queue calls with the same key and same payload return the same result."
-    )]
     pub request_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
+enum FollowUpActionSendSchema {
+    Send,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
+enum FollowUpActionQueueSchema {
+    Queue,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
+enum FollowUpActionCancelSchema {
+    Cancel,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct FollowUpSendByAttemptSchema {
+    pub action: FollowUpActionSendSchema,
+    pub attempt_id: Uuid,
+    pub prompt: String,
+    pub variant: Option<String>,
+    pub request_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct FollowUpSendBySessionSchema {
+    pub action: FollowUpActionSendSchema,
+    pub session_id: Uuid,
+    pub prompt: String,
+    pub variant: Option<String>,
+    pub request_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct FollowUpQueueByAttemptSchema {
+    pub action: FollowUpActionQueueSchema,
+    pub attempt_id: Uuid,
+    pub prompt: String,
+    pub variant: Option<String>,
+    pub request_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct FollowUpQueueBySessionSchema {
+    pub action: FollowUpActionQueueSchema,
+    pub session_id: Uuid,
+    pub prompt: String,
+    pub variant: Option<String>,
+    pub request_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct FollowUpCancelByAttemptSchema {
+    pub action: FollowUpActionCancelSchema,
+    pub attempt_id: Uuid,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct FollowUpCancelBySessionSchema {
+    pub action: FollowUpActionCancelSchema,
+    pub session_id: Uuid,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+#[allow(dead_code)]
+enum FollowUpRequestSchema {
+    SendByAttempt(FollowUpSendByAttemptSchema),
+    SendBySession(FollowUpSendBySessionSchema),
+    QueueByAttempt(FollowUpQueueByAttemptSchema),
+    QueueBySession(FollowUpQueueBySessionSchema),
+    CancelByAttempt(FollowUpCancelByAttemptSchema),
+    CancelBySession(FollowUpCancelBySessionSchema),
+}
+
+impl schemars::JsonSchema for FollowUpRequest {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("FollowUpRequest")
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        FollowUpRequestSchema::json_schema(generator)
+    }
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -442,6 +567,100 @@ pub struct GetAttemptStatusRequest {
     pub attempt_id: Uuid,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct StopAttemptRequest {
+    #[schemars(description = "The attempt/workspace id to stop (UUID string). This is required!")]
+    pub attempt_id: Uuid,
+    #[schemars(description = "If true, perform a hard stop (default: false).")]
+    pub force: Option<bool>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct StopAttemptResponse {
+    #[schemars(description = "The attempt/workspace id (UUID string)")]
+    pub attempt_id: String,
+    #[schemars(description = "Whether a hard stop was requested")]
+    pub force: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TailSessionMessagesRequest {
+    pub session_id: Option<Uuid>,
+    pub attempt_id: Option<Uuid>,
+    pub limit: Option<usize>,
+    pub cursor: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct TailSessionMessagesBySessionSchema {
+    pub session_id: Uuid,
+    pub limit: Option<usize>,
+    pub cursor: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct TailSessionMessagesByAttemptSchema {
+    pub attempt_id: Uuid,
+    pub limit: Option<usize>,
+    pub cursor: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+#[allow(dead_code)]
+enum TailSessionMessagesRequestSchema {
+    BySession(TailSessionMessagesBySessionSchema),
+    ByAttempt(TailSessionMessagesByAttemptSchema),
+}
+
+impl schemars::JsonSchema for TailSessionMessagesRequest {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("TailSessionMessagesRequest")
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        TailSessionMessagesRequestSchema::json_schema(generator)
+    }
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct McpSessionMessageTurn {
+    #[schemars(description = "Monotonic transcript entry index for paging")]
+    pub entry_index: i64,
+    #[schemars(description = "Coding agent turn id (UUID string)")]
+    pub turn_id: String,
+    #[schemars(description = "User prompt for this turn, when available")]
+    pub prompt: Option<String>,
+    #[schemars(description = "Best-effort assistant summary/last message for this turn")]
+    pub summary: Option<String>,
+    #[schemars(description = "Turn created timestamp (RFC3339)")]
+    pub created_at: String,
+    #[schemars(description = "Turn updated timestamp (RFC3339)")]
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct McpSessionMessagesPage {
+    #[schemars(description = "Transcript entries in chronological order (oldest→newest)")]
+    pub entries: Vec<McpSessionMessageTurn>,
+    #[schemars(description = "Cursor to request the next older page")]
+    pub next_cursor: Option<i64>,
+    #[schemars(description = "Whether older history exists beyond this page")]
+    pub has_more: bool,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct TailSessionMessagesResponse {
+    #[schemars(description = "Resolved session id (UUID string)")]
+    pub session_id: String,
+    #[schemars(description = "Transcript history page")]
+    pub page: McpSessionMessagesPage,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum McpAttemptState {
@@ -484,20 +703,51 @@ pub enum AttemptLogChannel {
     Raw,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize)]
 pub struct TailAttemptLogsRequest {
-    #[schemars(description = "The attempt/workspace id (UUID string). This is required!")]
     pub attempt_id: Uuid,
-    #[schemars(
-        description = "Log channel to tail: normalized|raw (default: normalized). Normalized is usually easier for LLMs."
-    )]
     pub channel: Option<AttemptLogChannel>,
-    #[schemars(
-        description = "Maximum number of entries to return (optional). Server applies a safe cap."
-    )]
     pub limit: Option<usize>,
-    #[schemars(description = "Cursor returned by a prior call to page older entries (optional).")]
     pub cursor: Option<i64>,
+    pub after_entry_index: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct TailAttemptLogsHistorySchema {
+    pub attempt_id: Uuid,
+    pub channel: Option<AttemptLogChannel>,
+    pub limit: Option<usize>,
+    pub cursor: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct TailAttemptLogsAfterSchema {
+    pub attempt_id: Uuid,
+    pub channel: Option<AttemptLogChannel>,
+    pub limit: Option<usize>,
+    pub after_entry_index: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+#[allow(dead_code)]
+enum TailAttemptLogsRequestSchema {
+    History(TailAttemptLogsHistorySchema),
+    After(TailAttemptLogsAfterSchema),
+}
+
+impl schemars::JsonSchema for TailAttemptLogsRequest {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("TailAttemptLogsRequest")
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        TailAttemptLogsRequestSchema::json_schema(generator)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -577,10 +827,112 @@ pub struct GetAttemptChangesResponse {
     pub blocked: bool,
     #[schemars(description = "Why the file list was blocked (when blocked=true)")]
     pub blocked_reason: Option<McpAttemptChangesBlockedReason>,
+    #[schemars(description = "Stable code for recoverable blocks (present when blocked=true).")]
+    pub code: Option<String>,
+    #[schemars(
+        description = "Whether retrying the same call may succeed without changing parameters (present when blocked=true)."
+    )]
+    pub retryable: Option<bool>,
+    #[schemars(description = "Actionable next step when blocked=true.")]
+    pub hint: Option<String>,
     #[schemars(
         description = "Changed file paths (repo-prefixed for multi-repo attempts). Empty when blocked."
     )]
     pub files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpAttemptArtifactBlockedReason {
+    PathOutsideWorkspace,
+    SizeExceeded,
+    TooManyPaths,
+    SummaryFailed,
+    ThresholdExceeded,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetAttemptFileRequest {
+    #[schemars(description = "The attempt/workspace id (UUID string). This is required!")]
+    pub attempt_id: Uuid,
+    #[schemars(
+        description = "Repo-prefixed path inside the attempt workspace (e.g. `my-repo/src/main.rs`)."
+    )]
+    pub path: String,
+    #[schemars(description = "Optional byte offset to start reading from (default: 0).")]
+    pub start: Option<u64>,
+    #[schemars(
+        description = "Optional max bytes to return (default: 65536; hard cap enforced)."
+    )]
+    pub max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct GetAttemptFileResponse {
+    #[schemars(description = "The attempt/workspace id (UUID string)")]
+    pub attempt_id: String,
+    #[schemars(description = "Requested file path (repo-prefixed)")]
+    pub path: String,
+    #[schemars(description = "Whether access was blocked by guardrails")]
+    pub blocked: bool,
+    #[schemars(description = "Why access was blocked (when blocked=true)")]
+    pub blocked_reason: Option<McpAttemptArtifactBlockedReason>,
+    #[schemars(description = "Stable code for recoverable blocks (present when blocked=true).")]
+    pub code: Option<String>,
+    #[schemars(description = "Whether retrying without changing inputs may succeed.")]
+    pub retryable: Option<bool>,
+    #[schemars(description = "Actionable next step when blocked=true.")]
+    pub hint: Option<String>,
+    #[schemars(description = "Whether content was truncated to max_bytes")]
+    pub truncated: bool,
+    #[schemars(description = "Start offset used for this slice")]
+    pub start: u64,
+    #[schemars(description = "Bytes returned in content")]
+    pub bytes: usize,
+    #[schemars(description = "Total bytes in the file, when known")]
+    pub total_bytes: Option<u64>,
+    #[schemars(description = "File content slice (UTF-8, lossy). Null when blocked.")]
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetAttemptPatchRequest {
+    #[schemars(description = "The attempt/workspace id (UUID string). This is required!")]
+    pub attempt_id: Uuid,
+    #[schemars(
+        description = "Repo-prefixed file paths to include in the patch (e.g. `my-repo/src/lib.rs`)."
+    )]
+    pub paths: Vec<String>,
+    #[schemars(
+        description = "If true, bypass diff preview guard thresholds (still bounded by max_bytes and path limits)."
+    )]
+    pub force: Option<bool>,
+    #[schemars(description = "Optional max bytes to return (default: 204800; hard cap enforced).")]
+    pub max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct GetAttemptPatchResponse {
+    #[schemars(description = "The attempt/workspace id (UUID string)")]
+    pub attempt_id: String,
+    #[schemars(description = "Whether patch retrieval was blocked by guardrails")]
+    pub blocked: bool,
+    #[schemars(description = "Why patch retrieval was blocked (when blocked=true)")]
+    pub blocked_reason: Option<McpAttemptArtifactBlockedReason>,
+    #[schemars(description = "Stable code for recoverable blocks (present when blocked=true).")]
+    pub code: Option<String>,
+    #[schemars(description = "Whether retrying without changing inputs may succeed.")]
+    pub retryable: Option<bool>,
+    #[schemars(description = "Actionable next step when blocked=true.")]
+    pub hint: Option<String>,
+    #[schemars(description = "Whether the patch was truncated to max_bytes")]
+    pub truncated: bool,
+    #[schemars(description = "Bytes returned in patch")]
+    pub bytes: usize,
+    #[schemars(description = "Echo of requested paths")]
+    pub paths: Vec<String>,
+    #[schemars(description = "Unified diff patch (may be empty). Null when blocked.")]
+    pub patch: Option<String>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -975,6 +1327,88 @@ impl TaskServer {
         })
     }
 
+    async fn send_ok(
+        &self,
+        rb: reqwest::RequestBuilder,
+        method: &'static str,
+        url: &str,
+    ) -> Result<(), CallToolResult> {
+        let resp = rb.send().await.map_err(|e| {
+            Self::err_with(
+                "Failed to connect to VK API",
+                Some(serde_json::json!({
+                    "error": e.to_string(),
+                    "method": method,
+                    "url": url,
+                })),
+                Some(
+                    "Ensure the Vibe Kanban backend is running and reachable (VIBE_BACKEND_URL/BACKEND_PORT)."
+                        .to_string(),
+                ),
+                Some("backend_unreachable"),
+                Some(true),
+            )
+            .unwrap()
+        })?;
+
+        let status = resp.status();
+        let resp_url = resp.url().to_string();
+        let body = resp.text().await.map_err(|e| {
+            Self::err_with(
+                "Failed to read VK API response body",
+                Some(serde_json::json!({
+                    "error": e.to_string(),
+                    "status": status.as_u16(),
+                    "method": method,
+                    "url": resp_url,
+                })),
+                Some("Retry the request or check backend logs.".to_string()),
+                Some("backend_read_error"),
+                Some(true),
+            )
+            .unwrap()
+        })?;
+
+        if !status.is_success() {
+            return Err(Self::http_error(status, &body, method, &resp_url).unwrap());
+        }
+
+        let api_response: ApiResponseEnvelope<serde_json::Value> =
+            serde_json::from_str(&body).map_err(|e| {
+                Self::err_with(
+                    "Failed to parse VK API response",
+                    Some(serde_json::json!({
+                        "error": e.to_string(),
+                        "method": method,
+                        "url": resp_url,
+                        "body_snippet": Self::truncate_body(&body, 1000),
+                    })),
+                    Some("The backend returned invalid JSON. Check backend logs.".to_string()),
+                    Some("backend_invalid_response"),
+                    Some(false),
+                )
+                .unwrap()
+            })?;
+
+        if !api_response.success {
+            let msg = api_response.message.as_deref().unwrap_or("Unknown error");
+            return Err(Self::err_with(
+                "VK API returned error",
+                Some(serde_json::json!({
+                    "message": msg,
+                    "method": method,
+                    "url": resp_url,
+                })),
+                Some("Check request inputs or call list_* tools to refresh IDs.".to_string()),
+                Some("backend_error"),
+                None,
+            )
+            .unwrap());
+        }
+
+        Ok(())
+    }
+
     fn url(&self, path: &str) -> String {
         format!(
             "{}/{}",
@@ -987,52 +1421,65 @@ impl TaskServer {
         &self,
         session_id: Option<Uuid>,
         attempt_id: Option<Uuid>,
+        retry_tool: &'static str,
     ) -> Result<Uuid, CallToolResult> {
-        if let Some(session_id) = session_id {
-            return Ok(session_id);
-        }
+        match (session_id, attempt_id) {
+            (Some(session_id), None) => return Ok(session_id),
+            (None, Some(attempt_id)) => {
+                let status_url = self.url(&format!("/api/task-attempts/{}/status", attempt_id));
+                let status: ApiTaskAttemptStatusResponse = match self
+                    .send_json(self.client.get(&status_url), "GET", &status_url)
+                    .await
+                {
+                    Ok(status) => status,
+                    Err(e) => return Err(e),
+                };
 
-        let attempt_id = match attempt_id {
-            Some(attempt_id) => attempt_id,
-            None => {
-                return Err(
-                    Self::err_with(
-                        "session_id or attempt_id is required",
-                        None,
-                        Some(
-                            "Provide attempt_id from list_task_attempts or session_id from get_context."
-                                .to_string(),
-                        ),
-                        Some("missing_required"),
-                        None,
-                    )
-                    .unwrap(),
-                );
+                if let Some(latest_session_id) = status.latest_session_id {
+                    return Ok(latest_session_id);
+                }
+
+                return Err(Self::err_with(
+                    "No session exists for this attempt yet.",
+                    Some(serde_json::json!({ "attempt_id": attempt_id.to_string() })),
+                    Some(format!(
+                        "Call get_attempt_status(attempt_id) and retry {retry_tool} once latest_session_id is non-null."
+                    )),
+                    Some(MCP_CODE_NO_SESSION_YET),
+                    Some(true),
+                )
+                .unwrap());
             }
-        };
-
-        let url = self.url(&format!("/api/sessions?workspace_id={}", attempt_id));
-        let sessions: Vec<Session> = match self.send_json(self.client.get(&url), "GET", &url).await
-        {
-            Ok(sessions) => sessions,
-            Err(e) => return Err(e),
-        };
-
-        let latest = sessions
-            .into_iter()
-            .max_by_key(|session| session.created_at);
-        let Some(latest) = latest else {
-            return Err(Self::err_with(
-                "No sessions found for attempt",
-                Some(serde_json::json!({ "attempt_id": attempt_id.to_string() })),
-                Some("Call list_task_attempts to confirm attempts or use get_context.".to_string()),
-                Some("not_found"),
-                None,
-            )
-            .unwrap());
-        };
-
-        Ok(latest.id)
+            (Some(session_id), Some(attempt_id)) => {
+                return Err(Self::err_with(
+                    "Provide exactly one target identifier (attempt_id OR session_id).",
+                    Some(serde_json::json!({
+                        "attempt_id": attempt_id.to_string(),
+                        "session_id": session_id.to_string(),
+                    })),
+                    Some(
+                        "Remove one of {attempt_id, session_id}. If you only have a task_id, call list_task_attempts first."
+                            .to_string(),
+                    ),
+                    Some(MCP_CODE_AMBIGUOUS_TARGET),
+                    Some(false),
+                )
+                .unwrap());
+            }
+            (None, None) => {
+                return Err(Self::err_with(
+                    "Missing target identifier (attempt_id OR session_id is required).",
+                    None,
+                    Some(
+                        "Provide attempt_id from list_task_attempts, or session_id from get_context."
+                            .to_string(),
+                    ),
+                    Some(MCP_CODE_AMBIGUOUS_TARGET),
+                    Some(false),
+                )
+                .unwrap());
+            }
+        }
     }
 
     async fn fetch_attempts_with_latest_session(
@@ -1180,7 +1627,11 @@ impl TaskServer {
 #[tool_router]
 impl TaskServer {
     #[tool(
-        description = "Return project, task, and attempt metadata for the current workspace session context."
+        description = r#"Use when: You have an active VK workspace session and need its project/task/attempt IDs in one call.
+Required: (none)
+Optional: (none)
+Next: list_tasks, get_attempt_status
+Avoid: Calling this when no context is available (tool may not be registered)."#
     )]
     async fn get_context(&self) -> Result<CallToolResult, ErrorData> {
         // Context was fetched at startup and cached
@@ -1190,7 +1641,11 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "Create a new task/ticket in a project. Always pass the `project_id` of the project you want to create the task in - it is required!"
+        description = r#"Use when: Create a new task/ticket in a project.
+Required: project_id, title
+Optional: description, request_id
+Next: start_task_attempt
+Avoid: Empty title; guessing project_id (use list_projects)."#
     )]
     async fn create_task(
         &self,
@@ -1254,7 +1709,13 @@ impl TaskServer {
         })
     }
 
-    #[tool(description = "List all the available projects")]
+    #[tool(
+        description = r#"Use when: Discover project_id values.
+Required: (none)
+Optional: (none)
+Next: list_tasks, list_repos
+Avoid: Guessing UUIDs."#
+    )]
     async fn list_projects(&self) -> Result<CallToolResult, ErrorData> {
         let url = self.url("/api/projects");
         let projects: Vec<Project> = match self.send_json(self.client.get(&url), "GET", &url).await
@@ -1276,7 +1737,13 @@ impl TaskServer {
         TaskServer::success(&response)
     }
 
-    #[tool(description = "List all repositories for a project. `project_id` is required!")]
+    #[tool(
+        description = r#"Use when: Get repo_id + names for a project (needed to start an attempt).
+Required: project_id
+Optional: (none)
+Next: start_task_attempt
+Avoid: Passing a task_id/attempt_id instead of project_id."#
+    )]
     async fn list_repos(
         &self,
         Parameters(ListReposRequest { project_id }): Parameters<ListReposRequest>,
@@ -1305,7 +1772,48 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "List all the task/tickets in a project with optional filtering and execution status. `project_id` is required!"
+        description = r#"Use when: Discover valid executor ids + variants for start_task_attempt (avoid hard-coding strings).
+Required: (none)
+Optional: (none)
+Next: start_task_attempt
+Avoid: Guessing executor names; passing DEFAULT as a variant (omit variant instead)."#
+    )]
+    async fn list_executors(&self) -> Result<CallToolResult, ErrorData> {
+        let configs = executors::profile::ExecutorConfigs::get_cached();
+        let mut executors = Vec::with_capacity(configs.executors.len());
+
+        for (executor, config) in &configs.executors {
+            let mut variants: Vec<String> = config
+                .variant_names()
+                .into_iter()
+                .map(|name| name.to_string())
+                .collect();
+            variants.sort();
+
+            let supports_mcp = config.get_default().map(|a| a.supports_mcp()).unwrap_or(false);
+
+            executors.push(McpExecutorSummary {
+                executor: executor.to_string(),
+                variants,
+                supports_mcp,
+                default_variant: None,
+            });
+        }
+
+        executors.sort_by(|a, b| a.executor.cmp(&b.executor));
+
+        TaskServer::success(&ListExecutorsResponse {
+            count: executors.len(),
+            executors,
+        })
+    }
+
+    #[tool(
+        description = r#"Use when: List tasks in a project (includes latest attempt/session summary fields).
+Required: project_id
+Optional: status, limit
+Next: get_task, start_task_attempt, list_task_attempts
+Avoid: Using this as an attempt/session listing (use list_task_attempts)."#
     )]
     async fn list_tasks(
         &self,
@@ -1388,7 +1896,11 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "List all attempts for a task, including latest session details. `task_id` is required!"
+        description = r#"Use when: Get attempt_id values for a task and see latest_session_id/latest executor.
+Required: task_id
+Optional: (none)
+Next: get_attempt_status, follow_up
+Avoid: Using a project_id here (task_id is required)."#
     )]
     async fn list_task_attempts(
         &self,
@@ -1417,7 +1929,11 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "Start working on a task by creating and launching a new attempt (workspace). This automatically sets the task status to inprogress; do not call update_task just for that. Use follow_up to send the prompt."
+        description = r#"Use when: Create a new attempt/workspace for a task and start the executor (sets task status to inprogress).
+Required: task_id, executor, repos
+Optional: variant, request_id
+Next: get_attempt_status (wait for latest_session_id), then follow_up(action=send)
+Avoid: Calling update_task just to set inprogress; empty repos."#
     )]
     async fn start_task_attempt(
         &self,
@@ -1538,7 +2054,11 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "Manage follow-up actions for a session. Provide `session_id` or `attempt_id`, plus action=send|queue|cancel."
+        description = r#"Use when: Send/queue/cancel a follow-up message to the coding agent for a specific session (or an attempt's latest session).
+Required: action, exactly one of {attempt_id, session_id}; prompt is required for action=send|queue
+Optional: variant, request_id
+Next: get_attempt_status, tail_attempt_logs
+Avoid: Providing both attempt_id and session_id; missing prompt for send/queue."#
     )]
     async fn follow_up(
         &self,
@@ -1551,7 +2071,20 @@ impl TaskServer {
             request_id,
         }): Parameters<FollowUpRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let session_id = match self.resolve_session_id(session_id, attempt_id).await {
+        if matches!(action, FollowUpAction::Cancel) && prompt.is_some() {
+            return Self::err_with(
+                "prompt is not allowed for action=cancel.",
+                Some(serde_json::json!({ "field": "prompt" })),
+                Some("Omit prompt when action=cancel.".to_string()),
+                Some("invalid_argument"),
+                Some(false),
+            );
+        }
+
+        let session_id = match self
+            .resolve_session_id(session_id, attempt_id, "follow_up")
+            .await
+        {
             Ok(session_id) => session_id,
             Err(e) => return Ok(e),
         };
@@ -1673,7 +2206,11 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "Get attempt/workspace status for orchestration. Returns coarse state, latest session/process ids, last activity, and a best-effort failure summary. `attempt_id` is required!"
+        description = r#"Use when: Check attempt state and discover latest_session_id / latest_execution_process_id.
+Required: attempt_id
+Optional: (none)
+Next: tail_attempt_logs, get_attempt_changes, follow_up
+Avoid: Passing task_id where attempt_id is required."#
     )]
     async fn get_attempt_status(
         &self,
@@ -1712,7 +2249,105 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "Tail the latest attempt logs with cursor-based paging (pull mode). Use this after get_attempt_status. Defaults to normalized logs which are easier for LLMs. `attempt_id` is required!"
+        description = r#"Use when: Restore session transcript context (prompt + summary per turn) for an attempt's latest session.
+Required: exactly one of {attempt_id, session_id}
+Optional: limit, cursor
+Next: follow_up(action=send|queue), get_attempt_status
+Avoid: Passing both attempt_id and session_id; expecting raw tool logs (use tail_attempt_logs)."#
+    )]
+    async fn tail_session_messages(
+        &self,
+        Parameters(TailSessionMessagesRequest {
+            session_id,
+            attempt_id,
+            limit,
+            cursor,
+        }): Parameters<TailSessionMessagesRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let session_id = match self
+            .resolve_session_id(session_id, attempt_id, "tail_session_messages")
+            .await
+        {
+            Ok(session_id) => session_id,
+            Err(e) => return Ok(e),
+        };
+
+        let url = self.url(&format!("/api/sessions/{}/messages", session_id));
+        let mut rb = self.client.get(&url);
+        if let Some(limit) = limit {
+            let capped = limit.clamp(1, 200);
+            rb = rb.query(&[("limit", capped)]);
+        }
+        if let Some(cursor) = cursor {
+            rb = rb.query(&[("cursor", cursor)]);
+        }
+
+        let page: crate::routes::sessions::SessionMessagesPage =
+            match self.send_json(rb, "GET", &url).await {
+                Ok(page) => page,
+                Err(e) => return Ok(e),
+            };
+
+        let entries = page
+            .entries
+            .into_iter()
+            .map(|entry| McpSessionMessageTurn {
+                entry_index: entry.entry_index,
+                turn_id: entry.turn_id.to_string(),
+                prompt: entry.prompt,
+                summary: entry.summary,
+                created_at: entry.created_at.to_rfc3339(),
+                updated_at: entry.updated_at.to_rfc3339(),
+            })
+            .collect::<Vec<_>>();
+
+        TaskServer::success(&TailSessionMessagesResponse {
+            session_id: session_id.to_string(),
+            page: McpSessionMessagesPage {
+                entries,
+                next_cursor: page.next_cursor,
+                has_more: page.has_more,
+            },
+        })
+    }
+
+    #[tool(
+        description = r#"Use when: Stop a running attempt's non-dev-server execution (kill runaway agent runs).
+Required: attempt_id
+Optional: force
+Next: get_attempt_status, tail_attempt_logs
+Avoid: Using follow_up(action=cancel) for stopping execution; expecting this to stop dev servers."#
+    )]
+    async fn stop_attempt(
+        &self,
+        Parameters(StopAttemptRequest { attempt_id, force }): Parameters<StopAttemptRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        #[derive(Serialize)]
+        struct StopAttemptQuery {
+            force: Option<bool>,
+        }
+
+        let url = self.url(&format!("/api/task-attempts/{}/stop", attempt_id));
+        let query = StopAttemptQuery { force };
+        if let Err(e) = self
+            .send_ok(self.client.post(&url).query(&query), "POST", &url)
+            .await
+        {
+            return Ok(e);
+        }
+
+        TaskServer::success(&StopAttemptResponse {
+            attempt_id: attempt_id.to_string(),
+            force: force.unwrap_or(false),
+        })
+    }
+
+    #[tool(
+        description = r#"Use when: Fetch recent attempt logs (pull mode) after get_attempt_status.
+Required: attempt_id
+Optional: channel, limit, cursor, after_entry_index
+Next: get_attempt_status (until not running), get_attempt_changes
+Avoid: Mixing cursor with any after_* tail parameter; using raw logs unless needed."#
     )]
     async fn tail_attempt_logs(
         &self,
@@ -1721,9 +2356,26 @@ impl TaskServer {
             channel,
             limit,
             cursor,
+            after_entry_index,
         }): Parameters<TailAttemptLogsRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let channel = channel.unwrap_or(AttemptLogChannel::Normalized);
+
+        if cursor.is_some() && after_entry_index.is_some() {
+            return Self::err_with(
+                "cursor and after_entry_index are mutually exclusive.",
+                Some(serde_json::json!({
+                    "cursor": cursor,
+                    "after_entry_index": after_entry_index,
+                })),
+                Some(
+                    "Use cursor to page older history; use after_entry_index to fetch only new entries."
+                        .to_string(),
+                ),
+                Some(MCP_CODE_MIXED_PAGINATION),
+                Some(false),
+            );
+        }
 
         let status_url = self.url(&format!("/api/task-attempts/{}/status", attempt_id));
         let status: ApiTaskAttemptStatusResponse = match self
@@ -1773,6 +2425,12 @@ impl TaskServer {
             Err(e) => return Ok(e),
         };
 
+        let mut page = page;
+        if let Some(after_entry_index) = after_entry_index {
+            page.entries
+                .retain(|entry| entry.entry_index > after_entry_index);
+        }
+
         let response = TailAttemptLogsResponse {
             attempt_id: attempt_id.to_string(),
             execution_process_id: Some(exec_id.to_string()),
@@ -1784,7 +2442,11 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "Get a diff summary and changed-file list for an attempt without streaming. Respects diff preview guardrails unless force=true. `attempt_id` is required!"
+        description = r#"Use when: Get a diff summary and (if allowed) a changed-file list for an attempt.
+Required: attempt_id
+Optional: force
+Next: get_attempt_patch, follow_up
+Avoid: Assuming files will be returned when blocked=true; using force unless you accept larger output."#
     )]
     async fn get_attempt_changes(
         &self,
@@ -1814,6 +2476,19 @@ impl TaskServer {
             None => None,
         };
 
+        let (code, retryable, hint) = if changes.blocked && !force {
+            (
+                Some(MCP_CODE_BLOCKED_GUARDRAILS.to_string()),
+                Some(false),
+                Some(
+                    "Changed-file list blocked by diff preview guardrails. Retry with force=true if you accept a larger file list."
+                        .to_string(),
+                ),
+            )
+        } else {
+            (None, None, None)
+        };
+
         let response = GetAttemptChangesResponse {
             attempt_id: attempt_id.to_string(),
             summary: McpAttemptChangesSummary {
@@ -1824,6 +2499,9 @@ impl TaskServer {
             },
             blocked: changes.blocked,
             blocked_reason,
+            code,
+            retryable,
+            hint,
             files: changes.files,
         };
 
@@ -1831,7 +2509,233 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "Update an existing task/ticket's title, description, or status. `task_id` is required; `title`, `description`, and `status` are optional. Use this for changes beyond the initial inprogress transition (start_task_attempt already handles that)."
+        description = r#"Use when: Read a bounded slice of a file inside an attempt workspace (code/config/artifacts).
+Required: attempt_id, path
+Optional: start, max_bytes
+Next: get_attempt_patch, follow_up
+Avoid: Absolute paths or `..` traversal; requesting huge files without narrowing max_bytes."#
+    )]
+    async fn get_attempt_file(
+        &self,
+        Parameters(GetAttemptFileRequest {
+            attempt_id,
+            path,
+            start,
+            max_bytes,
+        }): Parameters<GetAttemptFileRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return Self::err_with(
+                "path must not be empty.",
+                Some(serde_json::json!({ "field": "path" })),
+                Some("Provide a repo-prefixed path like `my-repo/src/main.rs`.".to_string()),
+                Some("missing_required"),
+                None,
+            );
+        }
+
+        let url = self.url(&format!("/api/task-attempts/{}/file", attempt_id));
+        let mut rb = self.client.get(&url).query(&[("path", trimmed)]);
+        if let Some(start) = start {
+            rb = rb.query(&[("start", start)]);
+        }
+        if let Some(max_bytes) = max_bytes {
+            let capped = max_bytes.max(1);
+            rb = rb.query(&[("max_bytes", capped)]);
+        }
+
+        let file: ApiAttemptFileResponse = match self.send_json(rb, "GET", &url).await {
+            Ok(file) => file,
+            Err(e) => return Ok(e),
+        };
+
+        let blocked_reason = match file.blocked_reason {
+            Some(ApiAttemptArtifactBlockedReason::PathOutsideWorkspace) => {
+                Some(McpAttemptArtifactBlockedReason::PathOutsideWorkspace)
+            }
+            Some(ApiAttemptArtifactBlockedReason::SizeExceeded) => {
+                Some(McpAttemptArtifactBlockedReason::SizeExceeded)
+            }
+            Some(ApiAttemptArtifactBlockedReason::TooManyPaths) => {
+                Some(McpAttemptArtifactBlockedReason::TooManyPaths)
+            }
+            Some(ApiAttemptArtifactBlockedReason::SummaryFailed) => {
+                Some(McpAttemptArtifactBlockedReason::SummaryFailed)
+            }
+            Some(ApiAttemptArtifactBlockedReason::ThresholdExceeded) => {
+                Some(McpAttemptArtifactBlockedReason::ThresholdExceeded)
+            }
+            None => None,
+        };
+
+        let (code, retryable, hint) = if file.blocked {
+            let hint = match blocked_reason {
+                Some(McpAttemptArtifactBlockedReason::PathOutsideWorkspace) => {
+                    "Blocked: path is outside the attempt workspace. Use get_attempt_changes(attempt_id) to get valid repo-prefixed paths, and avoid absolute paths / '..'."
+                        .to_string()
+                }
+                Some(McpAttemptArtifactBlockedReason::SizeExceeded) => {
+                    "Blocked: requested size exceeds limits. Reduce max_bytes and/or adjust start to read a smaller slice."
+                        .to_string()
+                }
+                _ => "Blocked by guardrails. Narrow the request.".to_string(),
+            };
+            (
+                Some(MCP_CODE_BLOCKED_GUARDRAILS.to_string()),
+                Some(false),
+                Some(hint),
+            )
+        } else {
+            (None, None, None)
+        };
+
+        TaskServer::success(&GetAttemptFileResponse {
+            attempt_id: attempt_id.to_string(),
+            path: file.path,
+            blocked: file.blocked,
+            blocked_reason,
+            code,
+            retryable,
+            hint,
+            truncated: file.truncated,
+            start: file.start,
+            bytes: file.bytes,
+            total_bytes: file.total_bytes,
+            content: file.content,
+        })
+    }
+
+    #[tool(
+        description = r#"Use when: Retrieve a bounded unified diff patch for selected files in an attempt (for review/apply).
+Required: attempt_id, paths
+Optional: force, max_bytes
+Next: follow_up, stop_attempt
+Avoid: Passing too many paths; expecting a full repo patch by default; forgetting force=true when diff guardrails block."#
+    )]
+    async fn get_attempt_patch(
+        &self,
+        Parameters(GetAttemptPatchRequest {
+            attempt_id,
+            paths,
+            force,
+            max_bytes,
+        }): Parameters<GetAttemptPatchRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        if paths.is_empty() {
+            return Self::err_with(
+                "paths must not be empty.",
+                Some(serde_json::json!({ "field": "paths" })),
+                Some(
+                    "Provide repo-prefixed paths (e.g. from get_attempt_changes.files)."
+                        .to_string(),
+                ),
+                Some("missing_required"),
+                None,
+            );
+        }
+
+        #[derive(Serialize)]
+        struct ApiPatchRequest {
+            paths: Vec<String>,
+            force: bool,
+            max_bytes: Option<usize>,
+        }
+
+        let force = force.unwrap_or(false);
+        let url = self.url(&format!("/api/task-attempts/{}/patch", attempt_id));
+        let request = ApiPatchRequest {
+            paths,
+            force,
+            max_bytes,
+        };
+
+        let patch: ApiAttemptPatchResponse = match self
+            .send_json(self.client.post(&url).json(&request), "POST", &url)
+            .await
+        {
+            Ok(patch) => patch,
+            Err(e) => return Ok(e),
+        };
+
+        let blocked_reason = match patch.blocked_reason {
+            Some(ApiAttemptArtifactBlockedReason::PathOutsideWorkspace) => {
+                Some(McpAttemptArtifactBlockedReason::PathOutsideWorkspace)
+            }
+            Some(ApiAttemptArtifactBlockedReason::SizeExceeded) => {
+                Some(McpAttemptArtifactBlockedReason::SizeExceeded)
+            }
+            Some(ApiAttemptArtifactBlockedReason::TooManyPaths) => {
+                Some(McpAttemptArtifactBlockedReason::TooManyPaths)
+            }
+            Some(ApiAttemptArtifactBlockedReason::SummaryFailed) => {
+                Some(McpAttemptArtifactBlockedReason::SummaryFailed)
+            }
+            Some(ApiAttemptArtifactBlockedReason::ThresholdExceeded) => {
+                Some(McpAttemptArtifactBlockedReason::ThresholdExceeded)
+            }
+            None => None,
+        };
+
+        let (code, retryable, hint) = if patch.blocked {
+            let hint = match blocked_reason {
+                Some(McpAttemptArtifactBlockedReason::ThresholdExceeded)
+                | Some(McpAttemptArtifactBlockedReason::SummaryFailed) if !force => {
+                    "Patch blocked by diff preview guardrails. Retry with force=true and a narrow paths list."
+                        .to_string()
+                }
+                Some(McpAttemptArtifactBlockedReason::TooManyPaths) => {
+                    "Patch blocked: too many paths. Reduce paths to a small set of specific files."
+                        .to_string()
+                }
+                Some(McpAttemptArtifactBlockedReason::SizeExceeded) => {
+                    "Patch blocked: size exceeded. Reduce max_bytes and/or narrow paths."
+                        .to_string()
+                }
+                Some(McpAttemptArtifactBlockedReason::PathOutsideWorkspace) => {
+                    "Patch blocked: path outside workspace. Use get_attempt_changes(attempt_id) to get valid repo-prefixed paths."
+                        .to_string()
+                }
+                _ => "Patch blocked by guardrails. Narrow the request.".to_string(),
+            };
+            (
+                Some(MCP_CODE_BLOCKED_GUARDRAILS.to_string()),
+                Some(false),
+                Some(hint),
+            )
+        } else if patch.truncated {
+            (
+                Some(MCP_CODE_BLOCKED_GUARDRAILS.to_string()),
+                Some(false),
+                Some(
+                    "Patch truncated by max_bytes. Narrow paths or increase max_bytes (within limits) to retrieve more."
+                        .to_string(),
+                ),
+            )
+        } else {
+            (None, None, None)
+        };
+
+        TaskServer::success(&GetAttemptPatchResponse {
+            attempt_id: attempt_id.to_string(),
+            blocked: patch.blocked,
+            blocked_reason,
+            code,
+            retryable,
+            hint,
+            truncated: patch.truncated,
+            bytes: patch.bytes,
+            paths: patch.paths,
+            patch: patch.patch,
+        })
+    }
+
+    #[tool(
+        description = r#"Use when: Update a task's title/description/status.
+Required: task_id
+Optional: title, description, status
+Next: get_task, list_tasks
+Avoid: Calling this just to set status=inprogress (start_task_attempt already does that)."#
     )]
     async fn update_task(
         &self,
@@ -1894,14 +2798,20 @@ impl TaskServer {
         TaskServer::success(&repsonse)
     }
 
-    #[tool(description = "Delete a task/ticket. `task_id` is required!")]
+    #[tool(
+        description = r#"Use when: Permanently delete a task/ticket.
+Required: task_id
+Optional: (none)
+Next: list_tasks
+Avoid: Deleting the wrong task (confirm with get_task first)."#
+    )]
     async fn delete_task(
         &self,
         Parameters(DeleteTaskRequest { task_id }): Parameters<DeleteTaskRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let url = self.url(&format!("/api/tasks/{}", task_id));
         if let Err(e) = self
-            .send_json::<serde_json::Value>(self.client.delete(&url), "DELETE", &url)
+            .send_ok(self.client.delete(&url), "DELETE", &url)
             .await
         {
             return Ok(e);
@@ -1915,7 +2825,11 @@ impl TaskServer {
     }
 
     #[tool(
-        description = "Get detailed information (like task description) about a specific task/ticket. Use `list_tasks` to find task IDs. `task_id` is required!"
+        description = r#"Use when: Fetch full task details (title/description/status).
+Required: task_id
+Optional: (none)
+Next: update_task, start_task_attempt
+Avoid: Expecting attempt/session info here (use list_tasks/list_task_attempts)."#
     )]
     async fn get_task(
         &self,
@@ -1968,6 +2882,7 @@ mod tests {
 
     use axum;
     use db::models::{
+        coding_agent_turn::{CodingAgentTurn, CreateCodingAgentTurn},
         execution_process::{CreateExecutionProcess, ExecutionProcess, ExecutionProcessRunReason},
         execution_process_log_entries::ExecutionProcessLogEntry,
         project::{CreateProject, Project},
@@ -2010,6 +2925,17 @@ mod tests {
         serde_json::from_str(text).expect("tool should return valid JSON text")
     }
 
+    fn tool_error_json(result: CallToolResult) -> serde_json::Value {
+        assert_eq!(result.is_error, Some(true));
+        let text = result
+            .content
+            .first()
+            .and_then(|content| content.as_text())
+            .map(|text| text.text.as_str())
+            .unwrap_or("");
+        serde_json::from_str(text).expect("tool should return valid JSON text")
+    }
+
     async fn start_backend(
         deployment: DeploymentImpl,
     ) -> (SocketAddr, tokio::task::JoinHandle<()>) {
@@ -2034,6 +2960,163 @@ mod tests {
         assert!(instructions.contains("get_attempt_status"));
         assert!(instructions.contains("tail_attempt_logs"));
         assert!(instructions.contains("get_attempt_changes"));
+    }
+
+    #[test]
+    fn follow_up_description_uses_guidance_template() {
+        let server = TaskServer::new("http://example.com");
+        let tool = server
+            .tool_router
+            .map
+            .get("follow_up")
+            .expect("follow_up tool should be registered");
+        let desc = tool.attr.description.as_ref().map(|d| d.as_ref()).unwrap_or("");
+        assert!(desc.contains("Use when:"));
+        assert!(desc.contains("Required:"));
+        assert!(desc.contains("Next:"));
+        assert!(desc.contains("Avoid:"));
+    }
+
+    #[test]
+    fn follow_up_schema_enforces_action_specific_requirements() {
+        fn deref_schema<'a>(
+            schema: &'a serde_json::Value,
+            defs: &'a serde_json::Map<String, serde_json::Value>,
+        ) -> &'a serde_json::Value {
+            let Some(schema_ref) = schema.get("$ref").and_then(|v| v.as_str()) else {
+                return schema;
+            };
+            let name = schema_ref
+                .strip_prefix("#/$defs/")
+                .or_else(|| schema_ref.strip_prefix("#/definitions/"));
+            let Some(name) = name else { return schema };
+            defs.get(name).unwrap_or(schema)
+        }
+
+        let server = TaskServer::new("http://example.com");
+        let tool = server
+            .tool_router
+            .map
+            .get("follow_up")
+            .expect("follow_up tool should be registered");
+
+        let schema = serde_json::Value::Object(tool.attr.input_schema.as_ref().clone());
+        let defs = schema
+            .get("$defs")
+            .or_else(|| schema.get("definitions"))
+            .and_then(|v| v.as_object())
+            .cloned()
+            .unwrap_or_default();
+        let root = deref_schema(&schema, &defs);
+        let variants = root
+            .get("oneOf")
+            .or_else(|| root.get("anyOf"))
+            .and_then(|v| v.as_array())
+            .or_else(|| {
+                root.get("allOf").and_then(|v| v.as_array()).and_then(|all_of| {
+                    all_of.iter().find_map(|item| {
+                        let item = deref_schema(item, &defs);
+                        item.get("oneOf")
+                            .or_else(|| item.get("anyOf"))
+                            .and_then(|v| v.as_array())
+                    })
+                })
+            })
+            .expect("follow_up schema should include oneOf/anyOf variants");
+
+        let mut saw_send = false;
+        let mut saw_cancel = false;
+        for variant in variants {
+            let variant = deref_schema(variant, &defs);
+            let props = variant
+                .get("properties")
+                .and_then(|v| v.as_object())
+                .expect("variant should have properties");
+            let action_schema = props.get("action").expect("action schema missing");
+            let action_schema = deref_schema(action_schema, &defs);
+            let action = action_schema
+                .get("const")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    action_schema
+                        .get("enum")
+                        .and_then(|v| v.as_array())
+                        .and_then(|v| v.first())
+                        .and_then(|v| v.as_str())
+                })
+                .unwrap_or("");
+
+            let required = variant
+                .get("required")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            if action == "send" {
+                saw_send = true;
+                assert!(required.iter().any(|v| v.as_str() == Some("prompt")));
+                assert!(required.iter().any(|v| v.as_str() == Some("attempt_id"))
+                    || required.iter().any(|v| v.as_str() == Some("session_id")));
+            }
+
+            if action == "cancel" {
+                saw_cancel = true;
+                assert!(!required.iter().any(|v| v.as_str() == Some("prompt")));
+                assert!(!props.contains_key("prompt"));
+            }
+        }
+
+        assert!(saw_send, "schema should include a send branch");
+        assert!(saw_cancel, "schema should include a cancel branch");
+    }
+
+    #[tokio::test]
+    async fn follow_up_rejects_ambiguous_target_ids() {
+        let mcp = TaskServer::new("http://example.com");
+        let err = tool_error_json(
+            mcp.follow_up(Parameters(FollowUpRequest {
+                session_id: Some(Uuid::new_v4()),
+                attempt_id: Some(Uuid::new_v4()),
+                prompt: None,
+                action: FollowUpAction::Cancel,
+                variant: None,
+                request_id: None,
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            err.get("code").and_then(|v| v.as_str()),
+            Some(MCP_CODE_AMBIGUOUS_TARGET)
+        );
+        assert_eq!(err.get("retryable").and_then(|v| v.as_bool()), Some(false));
+        assert!(err
+            .get("hint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .contains("list_task_attempts"));
+    }
+
+    #[tokio::test]
+    async fn follow_up_send_requires_prompt_at_runtime() {
+        let mcp = TaskServer::new("http://example.com");
+        let err = tool_error_json(
+            mcp.follow_up(Parameters(FollowUpRequest {
+                session_id: Some(Uuid::new_v4()),
+                attempt_id: None,
+                prompt: None,
+                action: FollowUpAction::Send,
+                variant: None,
+                request_id: None,
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            err.get("code").and_then(|v| v.as_str()),
+            Some("missing_required")
+        );
+        assert!(err.get("hint").and_then(|v| v.as_str()).unwrap_or("").contains("prompt"));
     }
 
     #[tokio::test]
@@ -2147,6 +3230,33 @@ mod tests {
         );
         assert_eq!(status.get("state").and_then(|v| v.as_str()), Some("idle"));
 
+        // 1b) follow_up by attempt_id before any session exists yields an actionable hint
+        let no_session = tool_error_json(
+            mcp.follow_up(Parameters(FollowUpRequest {
+                session_id: None,
+                attempt_id: Some(attempt_id),
+                prompt: None,
+                action: FollowUpAction::Cancel,
+                variant: None,
+                request_id: None,
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            no_session.get("code").and_then(|v| v.as_str()),
+            Some(MCP_CODE_NO_SESSION_YET)
+        );
+        assert_eq!(
+            no_session.get("retryable").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert!(no_session
+            .get("hint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .contains("get_attempt_status"));
+
         // 2) No process yields empty logs
         let logs = tool_json(
             mcp.tail_attempt_logs(Parameters(TailAttemptLogsRequest {
@@ -2154,6 +3264,7 @@ mod tests {
                 channel: None,
                 limit: Some(2),
                 cursor: None,
+                after_entry_index: None,
             }))
             .await
             .unwrap(),
@@ -2179,6 +3290,15 @@ mod tests {
             changes_blocked.get("blocked").and_then(|v| v.as_bool()),
             Some(true)
         );
+        assert_eq!(
+            changes_blocked.get("code").and_then(|v| v.as_str()),
+            Some(MCP_CODE_BLOCKED_GUARDRAILS)
+        );
+        assert!(changes_blocked
+            .get("hint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .contains("force=true"));
         assert_eq!(
             changes_blocked
                 .get("blocked_reason")
@@ -2213,6 +3333,53 @@ mod tests {
                 .unwrap_or(0)
                 >= 201
         );
+
+        // 3b) Patch is blocked by guardrails unless force=true
+        let patch_blocked = tool_json(
+            mcp.get_attempt_patch(Parameters(GetAttemptPatchRequest {
+                attempt_id,
+                paths: vec![format!("{}/file-0.txt", repo.name)],
+                force: Some(false),
+                max_bytes: Some(50_000),
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            patch_blocked.get("blocked").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            patch_blocked.get("blocked_reason").and_then(|v| v.as_str()),
+            Some("threshold_exceeded")
+        );
+        assert_eq!(
+            patch_blocked.get("code").and_then(|v| v.as_str()),
+            Some(MCP_CODE_BLOCKED_GUARDRAILS)
+        );
+        assert!(patch_blocked
+            .get("hint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .contains("force=true"));
+
+        let patch_forced = tool_json(
+            mcp.get_attempt_patch(Parameters(GetAttemptPatchRequest {
+                attempt_id,
+                paths: vec![format!("{}/file-0.txt", repo.name)],
+                force: Some(true),
+                max_bytes: Some(50_000),
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            patch_forced.get("blocked").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        let patch_text = patch_forced.get("patch").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(patch_text.contains(&format!("+++ b/{}/file-0.txt", repo.name)));
+        assert!(patch_text.contains("+hi"));
 
         // 4) Create a process + logs, then tail with cursor paging
         let session = Session::create(
@@ -2284,6 +3451,7 @@ mod tests {
                 channel: None,
                 limit: Some(2),
                 cursor: None,
+                after_entry_index: None,
             }))
             .await
             .unwrap(),
@@ -2305,6 +3473,7 @@ mod tests {
                 channel: None,
                 limit: Some(2),
                 cursor: Some(next_cursor),
+                after_entry_index: None,
             }))
             .await
             .unwrap(),
@@ -2316,11 +3485,460 @@ mod tests {
             .expect("next_cursor");
         assert_eq!(next_cursor2, 2);
 
+        // 4b) Incremental tailing via after_entry_index (new entries only)
+        let after_page = tool_json(
+            mcp.tail_attempt_logs(Parameters(TailAttemptLogsRequest {
+                attempt_id,
+                channel: None,
+                limit: Some(10),
+                cursor: None,
+                after_entry_index: Some(3),
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            after_page
+                .pointer("/page/entries/0/entry_index")
+                .and_then(|v| v.as_i64()),
+            Some(4)
+        );
+        assert_eq!(
+            after_page
+                .pointer("/page/entries/1/entry_index")
+                .and_then(|v| v.as_i64()),
+            Some(5)
+        );
+
+        // 4c) Mixed pagination modes are rejected with a hint
+        let mixed_err = tool_error_json(
+            mcp.tail_attempt_logs(Parameters(TailAttemptLogsRequest {
+                attempt_id,
+                channel: None,
+                limit: Some(10),
+                cursor: Some(4),
+                after_entry_index: Some(3),
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            mixed_err.get("code").and_then(|v| v.as_str()),
+            Some(MCP_CODE_MIXED_PAGINATION)
+        );
+        assert_eq!(
+            mixed_err.get("retryable").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert!(mixed_err
+            .get("hint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .contains("after_entry_index"));
+
+        // 5) Stop a running attempt (force=true works even without an OS child process)
+        let stop = tool_json(
+            mcp.stop_attempt(Parameters(StopAttemptRequest {
+                attempt_id,
+                force: Some(true),
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            stop.get("attempt_id").and_then(|v| v.as_str()),
+            Some(attempt_id.to_string().as_str())
+        );
+        assert_eq!(stop.get("force").and_then(|v| v.as_bool()), Some(true));
+
+        let status_after = tool_json(
+            mcp.get_attempt_status(Parameters(GetAttemptStatusRequest { attempt_id }))
+                .await
+                .unwrap(),
+        );
+        assert_ne!(
+            status_after.get("state").and_then(|v| v.as_str()),
+            Some("running")
+        );
+
         backend_handle.abort();
         WorkspaceManager::cleanup_workspace(&workspace_dir, &[repo])
             .await
             .unwrap();
 
+        drop(env_guard);
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn list_executors_returns_parseable_executor_ids() {
+        let mcp = TaskServer::new("http://example.com");
+        let result = tool_json(mcp.list_executors().await.unwrap());
+        let executors = result
+            .get("executors")
+            .and_then(|v| v.as_array())
+            .expect("executors array");
+        assert!(!executors.is_empty());
+
+        for item in executors {
+            let executor = item
+                .get("executor")
+                .and_then(|v| v.as_str())
+                .expect("executor string");
+            let norm = executor.replace('-', "_").to_ascii_uppercase();
+            assert!(BaseCodingAgent::from_str(&norm).is_ok(), "{executor}");
+
+            assert!(item.get("supports_mcp").and_then(|v| v.as_bool()).is_some());
+            assert!(item.get("default_variant").is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn tail_session_messages_pages_and_resolves_latest_session() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &deployment.db().pool,
+            &CreateProject {
+                name: "Session transcript".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &deployment.db().pool,
+            &CreateTask::from_title_description(project_id, "Transcript task".to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let attempt_id = Uuid::new_v4();
+        Workspace::create(
+            &deployment.db().pool,
+            &CreateWorkspace {
+                branch: "transcript-branch".to_string(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let session_id = Uuid::new_v4();
+        Session::create(
+            &deployment.db().pool,
+            &CreateSession { executor: None },
+            session_id,
+            attempt_id,
+        )
+        .await
+        .unwrap();
+
+        for i in 1..=3 {
+            let action = ExecutorAction::new(
+                ExecutorActionType::ScriptRequest(ScriptRequest {
+                    script: "true".to_string(),
+                    language: ScriptRequestLanguage::Bash,
+                    context: ScriptContext::SetupScript,
+                    working_dir: None,
+                }),
+                None,
+            );
+            let process_id = Uuid::new_v4();
+            let process = ExecutionProcess::create(
+                &deployment.db().pool,
+                &CreateExecutionProcess {
+                    session_id,
+                    executor_action: action,
+                    run_reason: ExecutionProcessRunReason::CodingAgent,
+                },
+                process_id,
+                &[],
+            )
+            .await
+            .unwrap();
+
+            let turn_id = Uuid::new_v4();
+            CodingAgentTurn::create(
+                &deployment.db().pool,
+                &CreateCodingAgentTurn {
+                    execution_process_id: process.id,
+                    prompt: Some(format!("prompt {i}")),
+                },
+                turn_id,
+            )
+            .await
+            .unwrap();
+            CodingAgentTurn::update_summary(
+                &deployment.db().pool,
+                process.id,
+                &format!("summary {i}"),
+            )
+            .await
+            .unwrap();
+        }
+
+        let (addr, backend_handle) = start_backend(deployment.clone()).await;
+        let mcp = TaskServer::new(&format!("http://{addr}"));
+
+        let page1 = tool_json(
+            mcp.tail_session_messages(Parameters(TailSessionMessagesRequest {
+                session_id: None,
+                attempt_id: Some(attempt_id),
+                limit: Some(2),
+                cursor: None,
+            }))
+            .await
+            .unwrap(),
+        );
+
+        assert_eq!(
+            page1.get("session_id").and_then(|v| v.as_str()),
+            Some(session_id.to_string().as_str())
+        );
+        assert_eq!(
+            page1
+                .pointer("/page/entries/0/prompt")
+                .and_then(|v| v.as_str()),
+            Some("prompt 2")
+        );
+        assert_eq!(
+            page1
+                .pointer("/page/entries/1/prompt")
+                .and_then(|v| v.as_str()),
+            Some("prompt 3")
+        );
+
+        let cursor = page1
+            .pointer("/page/next_cursor")
+            .and_then(|v| v.as_i64())
+            .expect("next_cursor");
+
+        let page2 = tool_json(
+            mcp.tail_session_messages(Parameters(TailSessionMessagesRequest {
+                session_id: Some(session_id),
+                attempt_id: None,
+                limit: Some(2),
+                cursor: Some(cursor),
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            page2
+                .pointer("/page/entries/0/prompt")
+                .and_then(|v| v.as_str()),
+            Some("prompt 1")
+        );
+        assert!(page2.pointer("/page/entries/1").is_none());
+
+        backend_handle.abort();
+        drop(env_guard);
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn get_attempt_file_enforces_path_containment_and_size_limits() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &deployment.db().pool,
+            &CreateProject {
+                name: "Attempt file".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &deployment.db().pool,
+            &CreateTask::from_title_description(project_id, "File task".to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let attempt_id = Uuid::new_v4();
+        Workspace::create(
+            &deployment.db().pool,
+            &CreateWorkspace {
+                branch: "file-branch".to_string(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let workspace_dir = temp_root.join("workspace");
+        std::fs::create_dir_all(workspace_dir.join("repo")).unwrap();
+        std::fs::write(workspace_dir.join("repo/hello.txt"), "hello world").unwrap();
+        let workspace_dir_str = workspace_dir.to_string_lossy().to_string();
+        Workspace::update_container_ref(&deployment.db().pool, attempt_id, &workspace_dir_str)
+            .await
+            .unwrap();
+
+        let (addr, backend_handle) = start_backend(deployment.clone()).await;
+        let mcp = TaskServer::new(&format!("http://{addr}"));
+
+        let ok = tool_json(
+            mcp.get_attempt_file(Parameters(GetAttemptFileRequest {
+                attempt_id,
+                path: "repo/hello.txt".to_string(),
+                start: None,
+                max_bytes: Some(5),
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(ok.get("blocked").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(ok.get("truncated").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(ok.get("bytes").and_then(|v| v.as_u64()), Some(5));
+        assert_eq!(
+            ok.get("content").and_then(|v| v.as_str()),
+            Some("hello")
+        );
+
+        let outside = tool_json(
+            mcp.get_attempt_file(Parameters(GetAttemptFileRequest {
+                attempt_id,
+                path: "../outside.txt".to_string(),
+                start: None,
+                max_bytes: Some(10),
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            outside.get("blocked").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            outside.get("blocked_reason").and_then(|v| v.as_str()),
+            Some("path_outside_workspace")
+        );
+        assert_eq!(
+            outside.get("code").and_then(|v| v.as_str()),
+            Some(MCP_CODE_BLOCKED_GUARDRAILS)
+        );
+
+        let too_big = tool_json(
+            mcp.get_attempt_file(Parameters(GetAttemptFileRequest {
+                attempt_id,
+                path: "repo/hello.txt".to_string(),
+                start: None,
+                max_bytes: Some(600 * 1024),
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            too_big.get("blocked").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            too_big.get("blocked_reason").and_then(|v| v.as_str()),
+            Some("size_exceeded")
+        );
+
+        backend_handle.abort();
+        drop(env_guard);
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn tail_session_messages_no_session_yet_hint_mentions_retry_tool() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &deployment.db().pool,
+            &CreateProject {
+                name: "No session yet".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &deployment.db().pool,
+            &CreateTask::from_title_description(project_id, "No session task".to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let attempt_id = Uuid::new_v4();
+        Workspace::create(
+            &deployment.db().pool,
+            &CreateWorkspace {
+                branch: "no-session-branch".to_string(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let (addr, backend_handle) = start_backend(deployment.clone()).await;
+        let mcp = TaskServer::new(&format!("http://{addr}"));
+
+        let err = tool_error_json(
+            mcp.tail_session_messages(Parameters(TailSessionMessagesRequest {
+                session_id: None,
+                attempt_id: Some(attempt_id),
+                limit: Some(10),
+                cursor: None,
+            }))
+            .await
+            .unwrap(),
+        );
+        assert_eq!(
+            err.get("code").and_then(|v| v.as_str()),
+            Some(MCP_CODE_NO_SESSION_YET)
+        );
+        let hint = err.get("hint").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(hint.contains("get_attempt_status"));
+        assert!(hint.contains("tail_session_messages"));
+
+        backend_handle.abort();
         drop(env_guard);
         let _ = std::fs::remove_dir_all(&temp_root);
     }

@@ -8,9 +8,11 @@ use axum::{
     response::Json as ResponseJson,
     routing::{get, post},
 };
+use chrono::{DateTime, Utc};
 use db::{
     DbErr,
     models::{
+        coding_agent_turn::CodingAgentTurn,
         execution_process::{ExecutionProcess, ExecutionProcessRunReason},
         project_repo::ProjectRepo,
         scratch::{Scratch, ScratchType},
@@ -41,6 +43,32 @@ pub struct SessionQuery {
     pub workspace_id: Uuid,
 }
 
+const DEFAULT_SESSION_MESSAGES_PAGE_SIZE: usize = 20;
+const MAX_SESSION_MESSAGES_PAGE_SIZE: usize = 200;
+
+#[derive(Debug, Deserialize)]
+pub struct SessionMessagesQuery {
+    pub limit: Option<usize>,
+    pub cursor: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+pub struct SessionMessageTurn {
+    pub entry_index: i64,
+    pub turn_id: Uuid,
+    pub prompt: Option<String>,
+    pub summary: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+pub struct SessionMessagesPage {
+    pub entries: Vec<SessionMessageTurn>,
+    pub next_cursor: Option<i64>,
+    pub has_more: bool,
+}
+
 #[derive(Debug, Deserialize, TS)]
 pub struct CreateSessionRequest {
     pub workspace_id: Uuid,
@@ -60,6 +88,39 @@ pub async fn get_session(
     Extension(session): Extension<Session>,
 ) -> Result<ResponseJson<ApiResponse<Session>>, ApiError> {
     Ok(ResponseJson(ApiResponse::success(session)))
+}
+
+pub async fn get_session_messages(
+    Extension(session): Extension<Session>,
+    State(deployment): State<DeploymentImpl>,
+    Query(query): Query<SessionMessagesQuery>,
+) -> Result<ResponseJson<ApiResponse<SessionMessagesPage>>, ApiError> {
+    let pool = &deployment.db().pool;
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_SESSION_MESSAGES_PAGE_SIZE)
+        .clamp(1, MAX_SESSION_MESSAGES_PAGE_SIZE);
+
+    let turns = CodingAgentTurn::tail_by_session_id(pool, session.id, limit, query.cursor).await?;
+
+    let entries = turns
+        .entries
+        .into_iter()
+        .map(|turn| SessionMessageTurn {
+            entry_index: turn.entry_index,
+            turn_id: turn.turn_id,
+            prompt: turn.prompt,
+            summary: turn.summary,
+            created_at: turn.created_at,
+            updated_at: turn.updated_at,
+        })
+        .collect::<Vec<_>>();
+
+    Ok(ResponseJson(ApiResponse::success(SessionMessagesPage {
+        entries,
+        next_cursor: turns.next_cursor,
+        has_more: turns.has_more,
+    })))
 }
 
 pub async fn create_session(
@@ -262,6 +323,7 @@ pub async fn follow_up(
 pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
     let session_id_router = Router::new()
         .route("/", get(get_session))
+        .route("/messages", get(get_session_messages))
         .route("/follow-up", post(follow_up))
         .layer(from_fn_with_state(
             deployment.clone(),
