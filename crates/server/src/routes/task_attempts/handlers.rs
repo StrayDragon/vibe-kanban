@@ -15,6 +15,7 @@ use db::{
     models::{
         execution_process::{ExecutionProcess, ExecutionProcessRunReason, ExecutionProcessStatus},
         merge::{Merge, MergeStatus, PrMerge, PullRequestInfo},
+        project::Project,
         project_repo::ProjectRepo,
         repo::{Repo, RepoError},
         session::{CreateSession, Session},
@@ -1312,7 +1313,11 @@ pub async fn merge_task_attempt(
         commit_message.push_str(description);
     }
 
-    let no_verify = deployment.config().read().await.git_no_verify;
+    let global_no_verify = deployment.config().read().await.git_no_verify;
+    let no_verify = match Project::find_by_id(pool, task.project_id).await? {
+        Some(project) => project.effective_git_no_verify(global_no_verify),
+        None => global_no_verify,
+    };
     let git = deployment.git().clone();
     let repo_path = repo.path.clone();
     let workspace_branch = workspace.branch.clone();
@@ -1474,6 +1479,11 @@ pub async fn open_task_attempt_in_editor(
 
     let editor_config = {
         let config = deployment.config().read().await;
+        if config.editor.is_integration_disabled() {
+            return Err(ApiError::BadRequest(
+                "Editor integration is disabled".to_string(),
+            ));
+        }
         let editor_type_str = payload.editor_type.as_deref();
         config.editor.with_override(editor_type_str)
     };

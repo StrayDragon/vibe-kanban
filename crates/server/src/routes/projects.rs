@@ -181,6 +181,11 @@ pub async fn open_project_in_editor(
 
     let editor_config = {
         let config = deployment.config().read().await;
+        if config.editor.is_integration_disabled() {
+            return Err(ApiError::BadRequest(
+                "Editor integration is disabled".to_string(),
+            ));
+        }
         let editor_type_str = payload.as_ref().and_then(|req| req.editor_type.as_deref());
         config.editor.with_override(editor_type_str)
     };

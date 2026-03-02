@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { useUserSystem } from '@/components/ConfigProvider';
 import { IdeIcon, getIdeName } from './IdeIcon';
+import { isEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
 
 type OpenInIdeButtonProps = {
   onClick: () => void;
@@ -16,11 +17,14 @@ export function OpenInIdeButton({
 }: OpenInIdeButtonProps) {
   const { config } = useUserSystem();
   const editorType = config?.editor?.editor_type ?? null;
+  const enabled = isEditorIntegrationEnabled(editorType);
 
   const label = useMemo(() => {
     const ideName = getIdeName(editorType);
     return `Open in ${ideName}`;
   }, [editorType]);
+
+  if (!enabled) return null;
 
   return (
     <Button

@@ -56,7 +56,8 @@
         "type": {
           "label": "Editor Type",
           "placeholder": "Select editor",
-          "helper": "Choose your preferred code editor interface."
+          "helper": "Choose your preferred code editor interface.",
+          "noneOption": "None (do not use)"
         },
         "customCommand": {
           "label": "Custom Editor Command",
@@ -136,7 +137,7 @@
         },
         "noVerify": {
           "label": "Skip git hooks with --no-verify",
-          "helper": "When enabled, Vibe Kanban passes --no-verify to git commit and merge."
+          "helper": "When enabled, Vibe Kanban passes --no-verify to git commit and merge. Projects can override this in Project Settings."
         }
       },
       "diffPreview": {
@@ -434,6 +435,17 @@
         "copyFiles": {
           "label": "Copy Files",
           "helper": "Comma-separated list of files to copy from the original project directory to the worktree. These files will be copied after the worktree is created but before the setup script runs. Useful for environment-specific files like .env, configuration files, and local settings. Make sure these are gitignored or they could get committed!"
+        }
+      },
+      "git": {
+        "noVerify": {
+          "label": "Skip git hooks (--no-verify)",
+          "helper": "Overrides the global default in General Settings. Choose \"Use global\" to inherit the global value.",
+          "options": {
+            "inherit": "Use global",
+            "enabled": "Enabled",
+            "disabled": "Disabled"
+          }
         }
       },
       "save": {

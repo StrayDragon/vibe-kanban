@@ -11,6 +11,8 @@ use ts_rs::TS;
 #[ts(tag = "type", rename_all = "snake_case")]
 #[ts(export)]
 pub enum EditorOpenError {
+    #[error("Editor integration is disabled")]
+    EditorIntegrationDisabled,
     #[error("Editor executable '{executable}' not found in PATH")]
     ExecutableNotFound {
         executable: String,
@@ -47,6 +49,7 @@ pub struct EditorConfig {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum EditorType {
+    None,
     VsCode,
     Cursor,
     Windsurf,
@@ -85,6 +88,7 @@ impl EditorConfig {
 
     pub fn get_command(&self) -> CommandBuilder {
         let base_command = match &self.editor_type {
+            EditorType::None => "",
             EditorType::VsCode => "code",
             EditorType::Cursor => "cursor",
             EditorType::Windsurf => "windsurf",
@@ -102,6 +106,10 @@ impl EditorConfig {
     /// Resolve the editor command to an executable path and args.
     /// This is shared logic used by both check_availability() and spawn_local().
     async fn resolve_command(&self) -> Result<(std::path::PathBuf, Vec<String>), EditorOpenError> {
+        if matches!(self.editor_type, EditorType::None) {
+            return Err(EditorOpenError::EditorIntegrationDisabled);
+        }
+
         let command_builder = self.get_command();
         let command_parts =
             command_builder
@@ -128,10 +136,16 @@ impl EditorConfig {
     /// Check if the editor is available on the system.
     /// Uses the same command resolution logic as spawn_local().
     pub async fn check_availability(&self) -> bool {
+        if matches!(self.editor_type, EditorType::None) {
+            return false;
+        }
         self.resolve_command().await.is_ok()
     }
 
     pub async fn open_file(&self, path: &Path) -> Result<Option<String>, EditorOpenError> {
+        if matches!(self.editor_type, EditorType::None) {
+            return Err(EditorOpenError::EditorIntegrationDisabled);
+        }
         if let Some(url) = self.remote_url(path) {
             return Ok(Some(url));
         }
@@ -171,6 +185,10 @@ impl EditorConfig {
             editor_type: self.editor_type.clone(),
         })?;
         Ok(())
+    }
+
+    pub fn is_integration_disabled(&self) -> bool {
+        matches!(self.editor_type, EditorType::None)
     }
 
     pub fn with_override(&self, editor_type_str: Option<&str>) -> Self {

@@ -19,6 +19,8 @@ function getResolvedTheme(theme: ThemeMode): 'light' | 'dark' {
 export function getIdeName(editorType: EditorType | undefined | null): string {
   if (!editorType) return 'IDE';
   switch (editorType) {
+    case EditorType.NONE:
+      return 'Editor';
     case EditorType.VS_CODE:
       return 'VS Code';
     case EditorType.CURSOR:
@@ -44,7 +46,11 @@ export function IdeIcon({ editorType, className = 'h-4 w-4' }: IdeIconProps) {
   const ideName = getIdeName(editorType);
   let ideIconPath = '';
 
-  if (!editorType || editorType === EditorType.CUSTOM) {
+  if (
+    !editorType ||
+    editorType === EditorType.CUSTOM ||
+    editorType === EditorType.NONE
+  ) {
     // Generic fallback for other IDEs or no IDE configured
     return <Code2 className={className} />;
   }

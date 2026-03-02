@@ -441,9 +441,13 @@ impl LocalContainerService {
     }
 
     /// Commit changes to each repo. Logs failures but continues with other repos.
-    async fn commit_repos(&self, repos_with_changes: Vec<(Repo, PathBuf)>, message: &str) -> bool {
+    async fn commit_repos(
+        &self,
+        repos_with_changes: Vec<(Repo, PathBuf)>,
+        message: &str,
+        no_verify: bool,
+    ) -> bool {
         let mut any_committed = false;
-        let no_verify = self.config.read().await.git_no_verify;
         let commit_options = GitCommitOptions::new(no_verify);
 
         for (repo, worktree_path) in repos_with_changes {
@@ -1996,7 +2000,11 @@ impl ContainerService for LocalContainerService {
             return Ok(false);
         }
 
-        Ok(self.commit_repos(repos_with_changes, &message).await)
+        let global_no_verify = self.config.read().await.git_no_verify;
+        let no_verify = ctx.project.effective_git_no_verify(global_no_verify);
+        Ok(self
+            .commit_repos(repos_with_changes, &message, no_verify)
+            .await)
     }
 
     /// Copy files from the original project directory to the worktree.

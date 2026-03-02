@@ -31,6 +31,7 @@ import { useProject } from '@/contexts/ProjectContext';
 import { useOpenProjectInEditor } from '@/hooks/projects/useOpenProjectInEditor';
 import { OpenInIdeButton } from '@/components/ide/OpenInIdeButton';
 import { useNavigateWithSearch, useProjectRepos } from '@/hooks';
+import { useEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
 import { ProjectFormDialog } from '@/components/dialogs/projects/ProjectFormDialog';
 import { ConfirmDialog } from '@/components/dialogs';
 import { projectsApi } from '@/lib/api';
@@ -69,6 +70,7 @@ export function Navbar() {
     projects,
     isLoading: projectsLoading,
   } = useProject();
+  const editorIntegrationEnabled = useEditorIntegrationEnabled();
   const navigateWithSearch = useNavigateWithSearch();
   const { query, setQuery, active, clear, registerInputRef } = useSearch();
   const handleOpenInEditor = useOpenProjectInEditor(project || null);
@@ -79,7 +81,9 @@ export function Navbar() {
 
   const { data: repos } = useProjectRepos(projectId);
   const isSingleRepoProject = repos?.length === 1;
-  const showOpenInIde = Boolean(projectId && isSingleRepoProject);
+  const showOpenInIde = Boolean(
+    projectId && isSingleRepoProject && editorIntegrationEnabled
+  );
   const showCreateTask = Boolean(projectId && !isOverviewRoute);
   const showProjectActions = showOpenInIde || showCreateTask;
   const hasProjects = projects.length > 0;

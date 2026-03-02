@@ -56,7 +56,8 @@
         "type": {
           "label": "编辑器类型",
           "placeholder": "选择编辑器",
-          "helper": "选择您喜欢的代码编辑器界面。"
+          "helper": "选择您喜欢的代码编辑器界面。",
+          "noneOption": "不使用"
         },
         "customCommand": {
           "label": "自定义编辑器命令",
@@ -136,7 +137,7 @@
         },
         "noVerify": {
           "label": "使用 --no-verify 跳过 git 钩子",
-          "helper": "启用后，Vibe Kanban 会在 git commit 和 merge 时传入 --no-verify。"
+          "helper": "启用后，Vibe Kanban 会在 git commit 和 merge 时传入 --no-verify。项目设置可覆盖此全局默认值。"
         }
       },
       "diffPreview": {
@@ -434,6 +435,17 @@
         "copyFiles": {
           "label": "复制文件",
           "helper": "要从原始项目目录复制到工作树的文件的逗号分隔列表。这些文件将在创建工作树后但在运行设置脚本之前复制。对环境特定文件（如 .env、配置文件和本地设置）很有用。确保这些文件被 gitignore，否则它们可能会被提交！"
+        }
+      },
+      "git": {
+        "noVerify": {
+          "label": "跳过 git 钩子（--no-verify）",
+          "helper": "覆盖“常规设置”中的全局默认值。选择“使用全局设置”以继承全局值。",
+          "options": {
+            "inherit": "使用全局设置",
+            "enabled": "开启",
+            "disabled": "关闭"
+          }
         }
       },
       "save": {

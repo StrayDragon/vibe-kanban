@@ -10,6 +10,7 @@ pub struct Model {
     pub dev_script: Option<String>,
     pub dev_script_working_dir: Option<String>,
     pub default_agent_working_dir: Option<String>,
+    pub git_no_verify_override: Option<bool>,
     pub remote_project_id: Option<Uuid>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,

@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { attemptsApi } from '@/lib/api';
 import { EditorSelectionDialog } from '@/components/dialogs/tasks/EditorSelectionDialog';
 import type { EditorType } from 'shared/types';
+import { useEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
 
 type OpenEditorOptions = {
   editorType?: EditorType;
@@ -12,9 +13,11 @@ export function useOpenInEditor(
   attemptId?: string,
   onShowEditorDialog?: () => void
 ) {
+  const editorIntegrationEnabled = useEditorIntegrationEnabled();
   return useCallback(
     async (options?: OpenEditorOptions): Promise<void> => {
       if (!attemptId) return;
+      if (!editorIntegrationEnabled) return;
 
       const { editorType, filePath } = options ?? {};
 
@@ -42,6 +45,6 @@ export function useOpenInEditor(
         }
       }
     },
-    [attemptId, onShowEditorDialog]
+    [attemptId, editorIntegrationEnabled, onShowEditorDialog]
   );
 }

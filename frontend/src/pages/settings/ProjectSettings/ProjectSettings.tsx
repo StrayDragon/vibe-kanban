@@ -38,7 +38,10 @@ interface ProjectFormState {
   dev_script: string;
   dev_script_working_dir: string;
   default_agent_working_dir: string;
+  git_no_verify_override: GitNoVerifyOverrideMode;
 }
+
+type GitNoVerifyOverrideMode = 'INHERIT' | 'ENABLED' | 'DISABLED';
 
 interface RepoScriptsFormState {
   setup_script: string;
@@ -47,12 +50,36 @@ interface RepoScriptsFormState {
   copy_files: string;
 }
 
+function gitNoVerifyOverrideToMode(
+  value: boolean | null | undefined
+): GitNoVerifyOverrideMode {
+  if (value === true) return 'ENABLED';
+  if (value === false) return 'DISABLED';
+  return 'INHERIT';
+}
+
+function gitNoVerifyModeToOverride(
+  mode: GitNoVerifyOverrideMode
+): boolean | null {
+  switch (mode) {
+    case 'ENABLED':
+      return true;
+    case 'DISABLED':
+      return false;
+    case 'INHERIT':
+      return null;
+  }
+}
+
 function projectToFormState(project: Project): ProjectFormState {
   return {
     name: project.name,
     dev_script: project.dev_script ?? '',
     dev_script_working_dir: project.dev_script_working_dir ?? '',
     default_agent_working_dir: project.default_agent_working_dir ?? '',
+    git_no_verify_override: gitNoVerifyOverrideToMode(
+      project.git_no_verify_override
+    ),
   };
 }
 
@@ -209,19 +236,46 @@ export function ProjectSettings() {
       ? projects.find((p) => p.id === selectedProjectId)
       : null;
 
-    setSelectedProject((prev) =>
-      prev?.id === nextProject?.id ? prev : (nextProject ?? null)
-    );
-
     if (!nextProject) {
-      if (!hasUnsavedChanges) setDraft(null);
+      if (!hasUnsavedChanges) {
+        setSelectedProject(null);
+        setDraft(null);
+      }
       return;
     }
 
-    if (hasUnsavedChanges) return;
+    const nextUpdatedAtMs = (() => {
+      const ms = new Date(nextProject.updated_at as unknown as string).getTime();
+      return Number.isFinite(ms) ? ms : 0;
+    })();
 
-    setDraft(projectToFormState(nextProject));
-  }, [projects, selectedProjectId, hasUnsavedChanges]);
+    const selectedUpdatedAtMs =
+      selectedProject?.id === nextProject.id
+        ? (() => {
+            const ms = new Date(
+              selectedProject.updated_at as unknown as string
+            ).getTime();
+            return Number.isFinite(ms) ? ms : 0;
+          })()
+        : 0;
+
+    const effectiveProject =
+      selectedProject &&
+      selectedProject.id === nextProject.id &&
+      selectedUpdatedAtMs >= nextUpdatedAtMs
+        ? selectedProject
+        : nextProject;
+
+    if (hasUnsavedChanges) {
+      if (!selectedProject || selectedProject.id !== effectiveProject.id) {
+        setSelectedProject(effectiveProject);
+      }
+      return;
+    }
+
+    setSelectedProject(effectiveProject);
+    setDraft(projectToFormState(effectiveProject));
+  }, [projects, selectedProjectId, hasUnsavedChanges, selectedProject]);
 
   // Warn on tab close/navigation with unsaved changes
   useEffect(() => {
@@ -397,6 +451,9 @@ export function ProjectSettings() {
         dev_script_working_dir: draft.dev_script_working_dir.trim() || null,
         default_agent_working_dir:
           draft.default_agent_working_dir.trim() || null,
+        git_no_verify_override: gitNoVerifyModeToOverride(
+          draft.git_no_verify_override
+        ),
       };
 
       updateProject.mutate({
@@ -627,6 +684,38 @@ export function ProjectSettings() {
                 />
                 <p className="text-sm text-muted-foreground">
                   {t('settings.projects.scripts.agentWorkingDir.helper')}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="project-git-no-verify">
+                  {t('settings.projects.git.noVerify.label')}
+                </Label>
+                <Select
+                  value={draft.git_no_verify_override}
+                  onValueChange={(value) =>
+                    updateDraft({
+                      git_no_verify_override: value as GitNoVerifyOverrideMode,
+                    })
+                  }
+                >
+                  <SelectTrigger id="project-git-no-verify">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="INHERIT">
+                      {t('settings.projects.git.noVerify.options.inherit')}
+                    </SelectItem>
+                    <SelectItem value="ENABLED">
+                      {t('settings.projects.git.noVerify.options.enabled')}
+                    </SelectItem>
+                    <SelectItem value="DISABLED">
+                      {t('settings.projects.git.noVerify.options.disabled')}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-sm text-muted-foreground">
+                  {t('settings.projects.git.noVerify.helper')}
                 </p>
               </div>
 

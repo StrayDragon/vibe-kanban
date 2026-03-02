@@ -331,14 +331,17 @@ export function GeneralSettings() {
               <SelectContent>
                 {Object.values(EditorType).map((editor) => (
                   <SelectItem key={editor} value={editor}>
-                    {toPrettyCase(editor)}
+                    {editor === EditorType.NONE
+                      ? t('settings.general.editor.type.noneOption')
+                      : toPrettyCase(editor)}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
 
             {/* Editor availability status indicator */}
-            {draft?.editor.editor_type !== EditorType.CUSTOM && (
+            {draft?.editor.editor_type !== EditorType.CUSTOM &&
+              draft?.editor.editor_type !== EditorType.NONE && (
               <EditorAvailabilityIndicator availability={editorAvailability} />
             )}
 

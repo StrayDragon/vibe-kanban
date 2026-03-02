@@ -24,6 +24,7 @@ import { useProject } from '@/contexts/ProjectContext';
 import { openTaskForm } from '@/lib/openTaskForm';
 import { useExecutionProcesses } from '@/hooks/execution-processes/useExecutionProcesses';
 import { useTaskAttempts } from '@/hooks/task-attempts/useTaskAttempts';
+import { useEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
 
 import { useLocation, useNavigate } from 'react-router-dom';
 
@@ -41,6 +42,7 @@ export function ActionsDropdown({
   const { t } = useTranslation('tasks');
   const { projectId } = useProject();
   const openInEditor = useOpenInEditor(attempt?.id);
+  const editorIntegrationEnabled = useEditorIntegrationEnabled();
   const navigate = useNavigate();
   const location = useLocation();
   const isOverviewRoute = location.pathname.startsWith('/tasks');
@@ -193,12 +195,14 @@ export function ActionsDropdown({
               <DropdownMenuLabel>{t('actionsMenu.attempt')}</DropdownMenuLabel>
               {hasAttemptActions && (
                 <>
-                  <DropdownMenuItem
-                    disabled={!attempt?.id}
-                    onClick={handleOpenInEditor}
-                  >
-                    {t('actionsMenu.openInIde')}
-                  </DropdownMenuItem>
+                  {editorIntegrationEnabled && (
+                    <DropdownMenuItem
+                      disabled={!attempt?.id}
+                      onClick={handleOpenInEditor}
+                    >
+                      {t('actionsMenu.openInIde')}
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem
                     disabled={!attempt?.id}
                     onClick={handleViewProcesses}

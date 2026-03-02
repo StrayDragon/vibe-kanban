@@ -4,11 +4,11 @@
 
 // If you are an AI, and you absolutely have to edit this file, please confirm with the user first.
 
-export type Project = { id: string, name: string, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, remote_project_id: string | null, created_at: Date, updated_at: Date, };
+export type Project = { id: string, name: string, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null, remote_project_id: string | null, created_at: Date, updated_at: Date, };
 
 export type CreateProject = { name: string, repositories: Array<CreateProjectRepo>, };
 
-export type UpdateProject = { name: string | null, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, };
+export type UpdateProject = { name: string | null, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null | null, };
 
 export type SearchResult = { path: string, is_file: boolean, match_type: SearchMatchType, };
 
@@ -280,9 +280,9 @@ export enum ThemeMode { LIGHT = "LIGHT", DARK = "DARK", SYSTEM = "SYSTEM" }
 
 export type EditorConfig = { editor_type: EditorType, custom_command: string | null, remote_ssh_host: string | null, remote_ssh_user: string | null, };
 
-export enum EditorType { VS_CODE = "VS_CODE", CURSOR = "CURSOR", WINDSURF = "WINDSURF", INTELLI_J = "INTELLI_J", ZED = "ZED", XCODE = "XCODE", CUSTOM = "CUSTOM" }
+export enum EditorType { NONE = "NONE", VS_CODE = "VS_CODE", CURSOR = "CURSOR", WINDSURF = "WINDSURF", INTELLI_J = "INTELLI_J", ZED = "ZED", XCODE = "XCODE", CUSTOM = "CUSTOM" }
 
-export type EditorOpenError = { "type": "executable_not_found", executable: string, editor_type: EditorType, } | { "type": "invalid_command", details: string, editor_type: EditorType, } | { "type": "launch_failed", executable: string, details: string, editor_type: EditorType, };
+export type EditorOpenError = { "type": "editor_integration_disabled" } | { "type": "executable_not_found", executable: string, editor_type: EditorType, } | { "type": "invalid_command", details: string, editor_type: EditorType, } | { "type": "launch_failed", executable: string, details: string, editor_type: EditorType, };
 
 export type GitHubConfig = { pat: string | null, oauth_token: string | null, username: string | null, primary_email: string | null, default_pr_base: string | null, };
 

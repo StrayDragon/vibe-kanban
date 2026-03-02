@@ -35,6 +35,7 @@ import {
   useWrapTextDiff,
 } from '@/stores/useDiffViewStore';
 import { useProject } from '@/contexts/ProjectContext';
+import { useEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
 
 type Props = {
   diff: Diff;
@@ -87,6 +88,7 @@ export default function DiffCard({
   const ignoreWhitespace = useIgnoreWhitespaceDiff();
   const wrapText = useWrapTextDiff();
   const { projectId } = useProject();
+  const editorIntegrationEnabled = useEditorIntegrationEnabled();
 
   const oldName = diff.oldPath || undefined;
   const newName = diff.newPath || oldName || 'unknown';
@@ -246,6 +248,7 @@ export default function DiffCard({
 
   const handleOpenInIDE = async () => {
     if (!selectedAttempt?.id) return;
+    if (!editorIntegrationEnabled) return;
     try {
       const openPath = newName || oldName;
       const response = await attemptsApi.openEditor(selectedAttempt.id, {
@@ -284,19 +287,21 @@ export default function DiffCard({
           </Button>
         )}
         {title}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            handleOpenInIDE();
-          }}
-          className="h-6 w-6 p-0 ml-2"
-          title="Open in IDE"
-          disabled={diff.change === 'deleted'}
-        >
-          <ExternalLink className="h-3 w-3" aria-hidden />
-        </Button>
+        {editorIntegrationEnabled && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleOpenInIDE();
+            }}
+            className="h-6 w-6 p-0 ml-2"
+            title="Open in IDE"
+            disabled={diff.change === 'deleted'}
+          >
+            <ExternalLink className="h-3 w-3" aria-hidden />
+          </Button>
+        )}
       </div>
 
       {expanded && diffFile && (
@@ -324,7 +329,9 @@ export default function DiffCard({
           style={{ color: 'hsl(var(--muted-foreground) / 0.9)' }}
         >
           {isOmitted
-            ? 'Content omitted due to file size. Open in editor to view.'
+            ? editorIntegrationEnabled
+              ? 'Content omitted due to file size. Open in editor to view.'
+              : 'Content omitted due to file size.'
             : isContentEqual
               ? diff.change === 'renamed'
                 ? 'File renamed with no content changes.'

@@ -17,6 +17,7 @@ import { GitActionsDialog } from '@/components/dialogs/tasks/GitActionsDialog';
 import { useOpenInEditor } from '@/hooks/task-attempts/useOpenInEditor';
 import { useDiffSummary } from '@/hooks/task-attempts/useDiffSummary';
 import { useDevServer } from '@/hooks/task-attempts/useDevServer';
+import { useEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
 import { Button } from '@/components/ui/button';
 import { IdeIcon } from '@/components/ide/IdeIcon';
 import { useUserSystem } from '@/components/ConfigProvider';
@@ -58,6 +59,7 @@ export function NextActionCard({
   const { project } = useProject();
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
+  const editorIntegrationEnabled = useEditorIntegrationEnabled();
 
   const { data: attempt } = useQuery({
     queryKey: ['attemptWithSession', attemptId],
@@ -270,28 +272,30 @@ export function NextActionCard({
                 </Tooltip>
               )}
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 w-7 p-0"
-                    onClick={handleOpenInEditor}
-                    disabled={!attemptId}
-                    aria-label={t('attempt.openInEditor', {
-                      editor: editorName,
-                    })}
-                  >
-                    <IdeIcon
-                      editorType={config?.editor?.editor_type}
-                      className="h-3.5 w-3.5"
-                    />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t('attempt.openInEditor', { editor: editorName })}
-                </TooltipContent>
-              </Tooltip>
+              {editorIntegrationEnabled && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      onClick={handleOpenInEditor}
+                      disabled={!attemptId}
+                      aria-label={t('attempt.openInEditor', {
+                        editor: editorName,
+                      })}
+                    >
+                      <IdeIcon
+                        editorType={config?.editor?.editor_type}
+                        className="h-3.5 w-3.5"
+                      />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {t('attempt.openInEditor', { editor: editorName })}
+                  </TooltipContent>
+                </Tooltip>
+              )}
 
               <Tooltip>
                 <TooltipTrigger asChild>

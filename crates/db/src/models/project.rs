@@ -37,6 +37,7 @@ pub struct Project {
     pub dev_script: Option<String>,
     pub dev_script_working_dir: Option<String>,
     pub default_agent_working_dir: Option<String>,
+    pub git_no_verify_override: Option<bool>,
     pub remote_project_id: Option<Uuid>,
     #[ts(type = "Date")]
     pub created_at: DateTime<Utc>,
@@ -56,6 +57,22 @@ pub struct UpdateProject {
     pub dev_script: Option<String>,
     pub dev_script_working_dir: Option<String>,
     pub default_agent_working_dir: Option<String>,
+    #[serde(deserialize_with = "deserialize_optional_bool_as_double_option")]
+    pub git_no_verify_override: Option<Option<bool>>,
+}
+
+fn deserialize_optional_bool_as_double_option<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<bool>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // `Option<T>` treats `null` and "missing" the same (`None`). For update payloads
+    // we need to distinguish:
+    // - missing key: outer `None` => don't change
+    // - present `null`: `Some(None)` => clear override (inherit global)
+    // - present `true/false`: `Some(Some(v))` => set override
+    Ok(Some(Option::<bool>::deserialize(deserializer)?))
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -87,10 +104,15 @@ impl Project {
             dev_script: model.dev_script,
             dev_script_working_dir: model.dev_script_working_dir,
             default_agent_working_dir: model.default_agent_working_dir,
+            git_no_verify_override: model.git_no_verify_override,
             remote_project_id: model.remote_project_id,
             created_at: model.created_at.into(),
             updated_at: model.updated_at.into(),
         }
+    }
+
+    pub fn effective_git_no_verify(&self, global_default: bool) -> bool {
+        self.git_no_verify_override.unwrap_or(global_default)
     }
 
     pub async fn count<C: ConnectionTrait>(db: &C) -> Result<i64, DbErr> {
@@ -189,6 +211,7 @@ impl Project {
             dev_script: Set(None),
             dev_script_working_dir: Set(None),
             default_agent_working_dir: Set(None),
+            git_no_verify_override: Set(None),
             remote_project_id: Set(None),
             created_at: Set(now.into()),
             updated_at: Set(now.into()),
@@ -225,6 +248,9 @@ impl Project {
         }
         if payload.default_agent_working_dir.is_some() {
             active.default_agent_working_dir = Set(payload.default_agent_working_dir.clone());
+        }
+        if let Some(git_no_verify_override) = payload.git_no_verify_override {
+            active.git_no_verify_override = Set(git_no_verify_override);
         }
         active.updated_at = Set(Utc::now().into());
 
@@ -319,5 +345,39 @@ impl Project {
         }
 
         Ok(result.rows_affected)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    use super::Project;
+
+    #[test]
+    fn effective_git_no_verify_prefers_project_override() {
+        let now = Utc::now();
+
+        let project = Project {
+            id: Uuid::new_v4(),
+            name: "p".to_string(),
+            dev_script: None,
+            dev_script_working_dir: None,
+            default_agent_working_dir: None,
+            git_no_verify_override: Some(false),
+            remote_project_id: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        assert!(!project.effective_git_no_verify(true));
+
+        let inherited = Project {
+            git_no_verify_override: None,
+            ..project
+        };
+
+        assert!(inherited.effective_git_no_verify(true));
     }
 }

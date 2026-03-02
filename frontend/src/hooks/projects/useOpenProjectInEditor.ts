@@ -2,14 +2,17 @@ import { useCallback } from 'react';
 import { projectsApi } from '@/lib/api';
 import { ProjectEditorSelectionDialog } from '@/components/dialogs/projects/ProjectEditorSelectionDialog';
 import type { EditorType, Project } from 'shared/types';
+import { useEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
 
 export function useOpenProjectInEditor(
   project: Project | null,
   onShowEditorDialog?: () => void
 ) {
+  const editorIntegrationEnabled = useEditorIntegrationEnabled();
   return useCallback(
     async (editorType?: EditorType) => {
       if (!project) return;
+      if (!editorIntegrationEnabled) return;
 
       try {
         const response = await projectsApi.openEditor(project.id, {
@@ -34,6 +37,6 @@ export function useOpenProjectInEditor(
         }
       }
     },
-    [project, onShowEditorDialog]
+    [editorIntegrationEnabled, project, onShowEditorDialog]
   );
 }

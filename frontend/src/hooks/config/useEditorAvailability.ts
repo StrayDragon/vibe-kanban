@@ -20,8 +20,12 @@ export function useEditorAvailability(
     useState<EditorAvailabilityState>(null);
 
   useEffect(() => {
-    // Don't check for Custom editor or if no editor type
-    if (!editorType || editorType === EditorType.CUSTOM) {
+    // Don't check for Custom editor, disabled editor, or if no editor type
+    if (
+      !editorType ||
+      editorType === EditorType.CUSTOM ||
+      editorType === EditorType.NONE
+    ) {
       setAvailability(null);
       return;
     }

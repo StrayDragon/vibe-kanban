@@ -185,6 +185,7 @@ impl ProjectService {
                     dev_script: None,
                     dev_script_working_dir: None,
                     default_agent_working_dir: Some(repo.name),
+                    git_no_verify_override: None,
                 },
             )
             .await?;
@@ -571,6 +572,7 @@ mod tests {
             dev_script: Some("npm run dev -- --host 127.0.0.1".to_string()),
             dev_script_working_dir: Some("repo-a".to_string()),
             default_agent_working_dir: None,
+            git_no_verify_override: None,
         };
 
         let result = ProjectService::validate_dev_script_update(&payload);
@@ -584,6 +586,7 @@ mod tests {
             dev_script: Some("npm run dev && rm -rf /".to_string()),
             dev_script_working_dir: None,
             default_agent_working_dir: None,
+            git_no_verify_override: None,
         };
 
         let result = ProjectService::validate_dev_script_update(&payload);
@@ -600,6 +603,7 @@ mod tests {
             dev_script: Some("npm run dev".to_string()),
             dev_script_working_dir: Some("/tmp".to_string()),
             default_agent_working_dir: None,
+            git_no_verify_override: None,
         };
 
         let result = ProjectService::validate_dev_script_update(&payload);
@@ -616,6 +620,7 @@ mod tests {
             dev_script: Some("npm run dev".to_string()),
             dev_script_working_dir: Some("../outside".to_string()),
             default_agent_working_dir: None,
+            git_no_verify_override: None,
         };
 
         let result = ProjectService::validate_dev_script_update(&payload);
@@ -651,6 +656,7 @@ mod tests {
                 dev_script: None,
                 dev_script_working_dir: None,
                 default_agent_working_dir: Some("repo-a".to_string()),
+                git_no_verify_override: None,
             },
         )
         .await
