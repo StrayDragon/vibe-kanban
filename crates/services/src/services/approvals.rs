@@ -23,7 +23,7 @@ use executors::{
 };
 use futures::future::{BoxFuture, FutureExt, Shared};
 use thiserror::Error;
-use tokio::sync::{RwLock, oneshot};
+use tokio::sync::{RwLock, broadcast, oneshot};
 use utils::{
     approvals::{ApprovalRequest, ApprovalResponse, ApprovalStatus},
     log_msg::LogMsg,
@@ -54,6 +54,7 @@ pub struct ToolContext {
 pub struct Approvals {
     pending: Arc<DashMap<String, PendingApproval>>,
     msg_stores: Arc<RwLock<std::collections::HashMap<Uuid, Arc<MsgStore>>>>,
+    created_tx: broadcast::Sender<ApprovalRequest>,
 }
 
 #[derive(Debug, Error)]
@@ -72,14 +73,20 @@ pub enum ApprovalError {
 
 impl Approvals {
     pub fn new(msg_stores: Arc<RwLock<std::collections::HashMap<Uuid, Arc<MsgStore>>>>) -> Self {
+        let (created_tx, _) = broadcast::channel(256);
         Self {
             pending: Arc::new(DashMap::new()),
             msg_stores,
+            created_tx,
         }
     }
 
     pub fn pending_len(&self) -> usize {
         self.pending.len()
+    }
+
+    pub fn subscribe_created(&self) -> broadcast::Receiver<ApprovalRequest> {
+        self.created_tx.subscribe()
     }
 
     pub async fn create_with_waiter(
@@ -206,6 +213,7 @@ impl Approvals {
             );
         }
 
+        let _ = self.created_tx.send(request.clone());
         self.spawn_timeout_watcher(pool.clone(), req_id.clone(), request.timeout_at, waiter.clone());
         Ok((request, waiter))
     }

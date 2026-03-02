@@ -14,7 +14,7 @@ The system SHALL expose an MCP tool to tail project activity events. The tool SH
 
 #### Scenario: Reject mixed pagination modes
 - **WHEN** a client calls `tail_project_activity` with both `after_event_id` and `cursor`
-- **THEN** the server returns an invalid-argument error with a hint to use only one mode
+- **THEN** the server returns a structured tool error (`isError=true`) with `code=mixed_pagination` and a hint to use only one mode
 
 ### Requirement: Task activity can be tailed incrementally
 The system SHALL expose an MCP tool to tail task activity events with the same pagination semantics as project activity.
@@ -37,3 +37,16 @@ The system SHALL expose an MCP tool to tail an attempt feed that can include:
 - **WHEN** a client calls `tail_attempt_feed` with `after_log_index=K`
 - **THEN** the response includes only log entries newer than K and returns `next_after_log_index`
 
+### Requirement: Feed and activity tools SHALL return structuredContent
+系统 SHALL 为 `tail_attempt_feed/tail_project_activity/tail_task_activity` 返回 `structuredContent`，并保证字段与分页语义可被客户端直接消费。
+
+#### Scenario: Incremental tail returns structured content
+- **WHEN** 客户端使用 `after_log_index` 或 `after_event_id` 增量拉取
+- **THEN** 返回包含 `structuredContent`，并提供可用于下一次增量拉取的 `next_after_*` 指针
+
+### Requirement: Mixed pagination SHALL return a structured tool error
+当客户端同时提供 `cursor` 与 `after_*`（混用分页模式）时，系统 SHALL 返回 tool-level error，且错误对象为结构化内容（包含 `code` 与 `hint`）。
+
+#### Scenario: Reject mixed pagination modes with structured error
+- **WHEN** 客户端调用 `tail_*` 工具并同时提供 `cursor` 与 `after_*`
+- **THEN** tool result 的 `isError=true`，并在结构化错误对象中包含 `code=mixed_pagination` 与可操作的 `hint`

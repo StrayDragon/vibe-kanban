@@ -60,7 +60,7 @@ attempt：
 
 1) **`cursor` 与 `after_*` 互斥**：`tail_attempt_feed` / `tail_project_activity` / `tail_task_activity`  
 2) **同一个请求同时传 `attempt_id` 和 `session_id`**（会返回 `code=ambiguous_target`）  
-3) **遇到 `blocked=true` 不看 `hint`**：通常需要 `force=true`、缩小 `paths`、或降低 `max_bytes`  
+3) **遇到 `code=blocked_guardrails` 不看 `hint`**：通常需要 `force=true`、缩小 `paths`、或降低 `max_bytes`  
 4) **`respond_approval` 的 `execution_process_id` 不匹配**：必须与该 approval 绑定的 execution 一致
 
 ## 从零启动（典型链路）
@@ -100,5 +100,49 @@ attempt：
 
 ## 错误与恢复（重要）
 
-多数可恢复错误会返回 JSON（常见字段：`code`、`retryable`、`hint`）。  
-遇到 `blocked=true` 时优先按 `hint` 缩小范围或使用 `force=true`。
+### 1) 参数错误：JSON-RPC error（客户端调用不合法）
+
+当必填参数缺失、类型/格式不匹配（例如 UUID 解析失败）、或 tool 输入 schema 不满足时，服务器会返回 **JSON-RPC error**（通常 `code=-32602` / `invalid_params`）。  
+这类错误一般不应盲目重试：应修正调用参数后再发起请求。
+
+示例（伪）：
+```json
+{
+  "error": {
+    "code": -32602,
+    "message": "Invalid params",
+    "data": { "path": "attempt_id", "hint": "expected UUID" }
+  }
+}
+```
+
+### 2) 业务错误：tool structured_error（可恢复/可编排）
+
+当请求语义合法但触发业务约束（例如混用分页、幂等冲突、guardrails 阻断等）时，服务器会返回 **tool-level error**：
+- tools/call 的 JSON-RPC 请求本身成功
+- 但 `result.isError=true`
+- 且 `result.structuredContent` 为结构化错误对象：
+  - `code`：稳定错误码
+  - `retryable`：是否建议重试
+  - `hint`：下一步建议（编排器可直接展示/执行）
+  - `details`：结构化上下文（对象）
+
+示例：diff 预览被 guardrails 阻断（`code=blocked_guardrails`）
+```json
+{
+  "isError": true,
+  "structuredContent": {
+    "code": "blocked_guardrails",
+    "retryable": false,
+    "hint": "Patch blocked by diff preview guardrails. Retry with force=true to bypass.",
+    "details": { "attempt_id": "...", "blocked_reason": "threshold_exceeded" }
+  }
+}
+```
+
+常见业务错误码（非穷尽）：
+- `mixed_pagination`：同时传了 `cursor` 与 `after_*`
+- `ambiguous_target`：同时传了 `attempt_id` 与 `session_id`
+- `blocked_guardrails`：`get_attempt_changes/patch/file` 被 guardrails 阻断（提示通常会建议 `force=true` 或缩小范围）
+- `idempotency_conflict`：同一个 `request_id` 被不同参数复用
+- `idempotency_in_progress`：同一个 `request_id` 正在执行（`retryable=true`，按 hint 稍后重试）

@@ -1,6 +1,10 @@
 use std::{
     collections::{HashMap, HashSet},
     str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use db::{
@@ -39,7 +43,7 @@ use executors::{
 };
 use regex::Regex;
 use rmcp::{
-    ErrorData, ServerHandler,
+    ErrorData, Json, ServerHandler,
     handler::server::tool::ToolRouter,
     model::{
         CallToolResult, Content, Icon, Implementation, ProtocolVersion, ServerCapabilities,
@@ -771,6 +775,20 @@ pub struct CliDependencyPreflightResponse {
 pub struct TaskServer {
     deployment: DeploymentImpl,
     tool_router: ToolRouter<TaskServer>,
+    peer: Arc<std::sync::RwLock<Option<rmcp::service::Peer<rmcp::RoleServer>>>>,
+    approvals_elicitation_started: Arc<AtomicBool>,
+}
+
+#[derive(Debug)]
+enum ToolOrRpcError {
+    Tool(CallToolResult),
+    Rpc(ErrorData),
+}
+
+impl From<ErrorData> for ToolOrRpcError {
+    fn from(err: ErrorData) -> Self {
+        Self::Rpc(err)
+    }
 }
 
 impl TaskServer {
@@ -778,21 +796,240 @@ impl TaskServer {
         Self {
             deployment,
             tool_router: Self::tool_router(),
+            peer: Arc::new(std::sync::RwLock::new(None)),
+            approvals_elicitation_started: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn record_peer(&self, peer: rmcp::service::Peer<rmcp::RoleServer>) {
+        if let Ok(mut guard) = self.peer.write() {
+            *guard = Some(peer);
+        }
+    }
+
+    fn start_approvals_elicitation_if_supported(&self, peer: rmcp::service::Peer<rmcp::RoleServer>) {
+        if !peer.supports_elicitation() {
+            return;
+        }
+
+        if self
+            .approvals_elicitation_started
+            .swap(true, Ordering::SeqCst)
+        {
+            return;
+        }
+
+        let approvals = self.deployment.approvals().clone();
+        let pool = self.deployment.db().pool.clone();
+
+        let responded_by_client_id = peer.peer_info().map(|info| {
+            format!("mcp:{}@{}", info.client_info.name, info.client_info.version)
+        });
+
+        let mut rx = approvals.subscribe_created();
+        tokio::spawn(async move {
+            loop {
+                let approval = match rx.recv().await {
+                    Ok(approval) => approval,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                };
+
+                let approval_uuid = match Uuid::parse_str(&approval.id) {
+                    Ok(uuid) => uuid,
+                    Err(err) => {
+                        tracing::warn!(
+                            approval_id = approval.id,
+                            error = %err,
+                            "Skipping elicitation for approval with invalid id"
+                        );
+                        continue;
+                    }
+                };
+
+                let current = match approval_model::get_by_id(&pool, approval_uuid).await {
+                    Ok(Some(approval)) => approval,
+                    Ok(None) => continue,
+                    Err(err) => {
+                        tracing::warn!(
+                            approval_id = approval.id,
+                            error = %err,
+                            "Failed to load approval while attempting elicitation"
+                        );
+                        continue;
+                    }
+                };
+
+                if !matches!(current.status, utils::approvals::ApprovalStatus::Pending) {
+                    continue;
+                }
+
+                let input_pretty =
+                    serde_json::to_string_pretty(&approval.tool_input).unwrap_or_else(|_| {
+                        approval.tool_input.to_string()
+                    });
+
+                let message = format!(
+                    "Approval needed.\n\napproval_id: {}\nexecution_process_id: {}\ntool: {}\n\ntool_input:\n{}",
+                    approval.id, approval.execution_process_id, approval.tool_name, input_pretty
+                );
+
+                let timeout = (approval.timeout_at - chrono::Utc::now()).to_std().ok();
+
+                let schema = match rmcp::model::ElicitationSchema::builder()
+                    .required_enum(
+                        "decision",
+                        vec!["approved".to_string(), "denied".to_string()],
+                    )
+                    .optional_string_with("denial_reason", |s| {
+                        s.description("Optional denial reason (used when decision=denied)")
+                    })
+                    .description("Approval response")
+                    .build()
+                {
+                    Ok(schema) => schema,
+                    Err(err) => {
+                        tracing::warn!(
+                            approval_id = approval.id,
+                            error = err,
+                            "Failed to build elicitation schema; skipping approval elicitation"
+                        );
+                        continue;
+                    }
+                };
+
+                let elicitation = match peer
+                    .create_elicitation_with_timeout(
+                        rmcp::model::CreateElicitationRequestParam {
+                            message,
+                            requested_schema: schema,
+                        },
+                        timeout,
+                    )
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(rmcp::service::ServiceError::Timeout { .. }) => continue,
+                    Err(err) => {
+                        tracing::warn!(
+                            approval_id = approval.id,
+                            error = %err,
+                            "Approval elicitation failed"
+                        );
+                        continue;
+                    }
+                };
+
+                let content = match elicitation.action {
+                    rmcp::model::ElicitationAction::Accept => {
+                        let Some(content) = elicitation.content else {
+                            continue;
+                        };
+                        content
+                    }
+                    rmcp::model::ElicitationAction::Decline
+                    | rmcp::model::ElicitationAction::Cancel => {
+                        continue;
+                    }
+                };
+
+                let (decision, denial_reason) = match content {
+                    Value::Object(map) => (
+                        map.get("decision")
+                            .and_then(|value| value.as_str())
+                            .map(|s| s.to_string()),
+                        map.get("denial_reason")
+                            .and_then(|value| value.as_str())
+                            .map(|s| s.to_string()),
+                    ),
+                    _ => (None, None),
+                };
+
+                let decision = match decision.as_deref() {
+                    Some("approved") => "approved",
+                    Some("denied") => "denied",
+                    Some(other) => {
+                        tracing::warn!(
+                            approval_id = approval.id,
+                            decision = other,
+                            "Unknown approval decision from elicitation; skipping"
+                        );
+                        continue;
+                    }
+                    None => {
+                        tracing::warn!(
+                            approval_id = approval.id,
+                            "Missing decision in approval elicitation response; skipping"
+                        );
+                        continue;
+                    }
+                };
+
+                let status = match decision {
+                    "approved" => utils::approvals::ApprovalStatus::Approved,
+                    "denied" => utils::approvals::ApprovalStatus::Denied {
+                        reason: denial_reason,
+                    },
+                    _ => utils::approvals::ApprovalStatus::Denied {
+                        reason: Some("invalid decision".to_string()),
+                    },
+                };
+
+                let response = utils::approvals::ApprovalResponse {
+                    execution_process_id: approval.execution_process_id,
+                    status,
+                };
+
+                if let Err(err) = approvals
+                    .respond_with_client_id(&pool, &approval.id, response, responded_by_client_id.clone())
+                    .await
+                {
+                    tracing::warn!(
+                        approval_id = approval.id,
+                        error = %err,
+                        "Failed to apply approval response from elicitation"
+                    );
+                }
+            }
+        });
+    }
+
+    fn json_pretty_for_content(value: &Value) -> String {
+        serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+    }
+
+    fn structured_ok(value: Value) -> CallToolResult {
+        let pretty = Self::json_pretty_for_content(&value);
+        CallToolResult {
+            content: vec![Content::text(pretty)],
+            structured_content: Some(value),
+            is_error: Some(false),
+            meta: None,
+        }
+    }
+
+    fn structured_error(value: Value) -> CallToolResult {
+        let pretty = Self::json_pretty_for_content(&value);
+        CallToolResult {
+            content: vec![Content::text(pretty)],
+            structured_content: Some(value),
+            is_error: Some(true),
+            meta: None,
         }
     }
 
     fn success<T: Serialize>(data: &T) -> Result<CallToolResult, ErrorData> {
-        Ok(CallToolResult::success(vec![Content::text(
-            serde_json::to_string_pretty(data)
-                .unwrap_or_else(|_| "Failed to serialize response".to_string()),
-        )]))
+        let value = serde_json::to_value(data).map_err(|e| {
+            ErrorData::internal_error(
+                "Failed to serialize response",
+                Some(json!({ "error": e.to_string() })),
+            )
+        })?;
+        Ok(Self::structured_ok(value))
     }
 
     fn err_value(v: serde_json::Value) -> Result<CallToolResult, ErrorData> {
-        Ok(CallToolResult::error(vec![Content::text(
-            serde_json::to_string_pretty(&v)
-                .unwrap_or_else(|_| "Failed to serialize error".to_string()),
-        )]))
+        Ok(Self::structured_error(v))
     }
 
     fn err_payload<S: Into<String>>(
@@ -802,20 +1039,26 @@ impl TaskServer {
         code: Option<&'static str>,
         retryable: Option<bool>,
     ) -> Value {
-        let mut v = json!({"success": false, "error": msg.into()});
-        if let Some(code) = code {
-            v["code"] = json!(code);
+        let msg = msg.into();
+        let code = code.unwrap_or("unknown_error");
+        let retryable = retryable.unwrap_or(false);
+        let hint = hint.unwrap_or_else(|| msg.clone());
+
+        let mut details = match details {
+            Some(Value::Object(map)) => Value::Object(map),
+            Some(other) => json!({ "context": other }),
+            None => json!({}),
+        };
+        if let Value::Object(map) = &mut details {
+            map.entry("message".to_string()).or_insert_with(|| json!(msg));
         }
-        if let Some(details) = details {
-            v["details"] = details;
-        }
-        if let Some(hint) = hint {
-            v["hint"] = json!(hint);
-        }
-        if let Some(retryable) = retryable {
-            v["retryable"] = json!(retryable);
-        }
-        v
+
+        json!({
+            "code": code,
+            "retryable": retryable,
+            "hint": hint,
+            "details": details,
+        })
     }
 
     fn err_with<S: Into<String>>(
@@ -856,14 +1099,14 @@ impl TaskServer {
         key: Option<String>,
         request_hash: String,
         execute: F,
-    ) -> Result<T, ErrorData>
+    ) -> Result<T, ToolOrRpcError>
     where
         T: Serialize + DeserializeOwned,
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T, ErrorData>>,
     {
         let Some(key) = key else {
-            return execute().await;
+            return execute().await.map_err(ToolOrRpcError::Rpc);
         };
 
         match db::models::idempotency::begin(
@@ -880,10 +1123,10 @@ impl TaskServer {
                 match result {
                     Ok(data) => {
                         let response_json = serde_json::to_string(&data).map_err(|e| {
-                            ErrorData::internal_error(
+                            ToolOrRpcError::Rpc(ErrorData::internal_error(
                                 "Failed to serialize idempotent tool response",
                                 Some(json!({ "error": e.to_string(), "scope": scope })),
-                            )
+                            ))
                         })?;
                         if let Err(err) = db::models::idempotency::complete(
                             &self.deployment.db().pool,
@@ -907,62 +1150,69 @@ impl TaskServer {
                             record_uuid,
                         )
                         .await;
-                        Err(err)
+                        Err(ToolOrRpcError::Rpc(err))
                     }
                 }
             }
             Ok(db::models::idempotency::IdempotencyBeginOutcome::Existing { record }) => {
                 if record.request_hash != request_hash {
-                    return Err(ErrorData::invalid_params(
-                        "Idempotency key already used with different request parameters",
-                        Some(json!({
-                            "code": MCP_CODE_IDEMPOTENCY_CONFLICT,
-                            "retryable": false,
-                            "hint": "Use a new request_id for different parameters.",
-                            "scope": scope,
-                            "key": key,
-                        })),
-                    ));
+                    return Err(ToolOrRpcError::Tool(Self::structured_error(
+                        Self::err_payload(
+                            "Idempotency key already used with different request parameters",
+                            Some(json!({
+                                "scope": scope,
+                                "request_id": key,
+                                "existing_request_hash": record.request_hash,
+                                "request_hash": request_hash,
+                            })),
+                            Some("Use a new request_id for different parameters.".to_string()),
+                            Some(MCP_CODE_IDEMPOTENCY_CONFLICT),
+                            Some(false),
+                        ),
+                    )));
                 }
 
                 match record.state.as_str() {
                     db::models::idempotency::IDEMPOTENCY_STATE_COMPLETED => {
                         let Some(response_json) = record.response_json else {
-                            return Err(ErrorData::internal_error(
+                            return Err(ToolOrRpcError::Rpc(ErrorData::internal_error(
                                 "Idempotency record completed but missing stored response",
-                                Some(json!({ "scope": scope, "key": key })),
-                            ));
+                                Some(json!({ "scope": scope, "request_id": key })),
+                            )));
                         };
                         let parsed: T = serde_json::from_str(&response_json).map_err(|e| {
-                            ErrorData::internal_error(
+                            ToolOrRpcError::Rpc(ErrorData::internal_error(
                                 "Failed to parse stored idempotent response",
-                                Some(json!({ "error": e.to_string(), "scope": scope, "key": key })),
-                            )
+                                Some(json!({
+                                    "error": e.to_string(),
+                                    "scope": scope,
+                                    "request_id": key,
+                                })),
+                            ))
                         })?;
                         Ok(parsed)
                     }
-                    db::models::idempotency::IDEMPOTENCY_STATE_IN_PROGRESS => Err(
-                        ErrorData::invalid_params(
-                            "Request with this idempotency key is in progress. Retry shortly.",
-                            Some(json!({
-                                "code": MCP_CODE_IDEMPOTENCY_IN_PROGRESS,
-                                "retryable": true,
-                                "hint": "Wait briefly and retry the same tool call.",
-                                "scope": scope,
-                                "key": key,
-                            })),
-                        ),
-                    ),
-                    other => Err(ErrorData::internal_error(
+                    db::models::idempotency::IDEMPOTENCY_STATE_IN_PROGRESS => {
+                        Err(ToolOrRpcError::Tool(Self::structured_error(
+                            Self::err_payload(
+                                "Request with this idempotency key is in progress.",
+                                Some(json!({ "scope": scope, "request_id": key })),
+                                Some("Wait briefly and retry the same tool call.".to_string()),
+                                Some(MCP_CODE_IDEMPOTENCY_IN_PROGRESS),
+                                Some(true),
+                            ),
+                        )))
+                    }
+                    other => Err(ToolOrRpcError::Rpc(ErrorData::internal_error(
                         "Unknown idempotency record state",
-                        Some(json!({ "state": other, "scope": scope, "key": key })),
-                    )),
+                        Some(json!({ "state": other, "scope": scope, "request_id": key })),
+                    ))),
                 }
             }
-            Err(err) => Err(ErrorData::internal_error(
+            Err(err) => Err(ToolOrRpcError::Rpc(ErrorData::internal_error(
                 "Idempotency error",
                 Some(json!({ "error": err.to_string(), "scope": scope })),
-            )),
+            ))),
         }
     }
 
@@ -1252,7 +1502,8 @@ impl TaskServer {
 Required: (none)
 Optional: binaries[]
 Next: list_projects / list_executors
-Avoid: Using this as a health check for long-running processes."#
+Avoid: Using this as a health check for long-running processes."#,
+        annotations(read_only_hint = true)
     )]
     async fn cli_dependency_preflight(
         &self,
@@ -1319,9 +1570,10 @@ Avoid: Using this as a health check for long-running processes."#
 Required: (none)
 Optional: (none)
 Next: list_tasks, list_repos
-Avoid: Guessing UUIDs."#
+Avoid: Guessing UUIDs."#,
+        annotations(read_only_hint = true)
     )]
-    async fn list_projects(&self) -> Result<CallToolResult, ErrorData> {
+    async fn list_projects(&self) -> Result<Json<ListProjectsResponse>, ErrorData> {
         let projects = Project::find_all(&self.deployment.db().pool)
             .await
             .map_err(|e| {
@@ -1334,10 +1586,10 @@ Avoid: Guessing UUIDs."#
             .into_iter()
             .map(ProjectSummary::from_project)
             .collect::<Vec<_>>();
-        Self::success(&ListProjectsResponse {
+        Ok(Json(ListProjectsResponse {
             count: summaries.len(),
             projects: summaries,
-        })
+        }))
     }
 
     #[tool(
@@ -1345,7 +1597,8 @@ Avoid: Guessing UUIDs."#
 Required: project_id
 Optional: (none)
 Next: start_attempt
-Avoid: Passing a task_id/attempt_id instead of project_id."#
+Avoid: Passing a task_id/attempt_id instead of project_id."#,
+        annotations(read_only_hint = true)
     )]
     async fn list_repos(
         &self,
@@ -1378,7 +1631,8 @@ Avoid: Passing a task_id/attempt_id instead of project_id."#
 Required: (none)
 Optional: (none)
 Next: start_attempt
-Avoid: Guessing executor names; passing DEFAULT as a variant (omit variant instead)."#
+Avoid: Guessing executor names; passing DEFAULT as a variant (omit variant instead)."#,
+        annotations(read_only_hint = true)
     )]
     async fn list_executors(&self) -> Result<CallToolResult, ErrorData> {
         let configs = executors::profile::ExecutorConfigs::get_cached();
@@ -1415,7 +1669,8 @@ Avoid: Guessing executor names; passing DEFAULT as a variant (omit variant inste
 Required: project_id
 Optional: status, limit
 Next: get_task, start_attempt, list_task_attempts
-Avoid: Using this as an attempt/session listing (use list_task_attempts)."#
+Avoid: Using this as an attempt/session listing (use list_task_attempts)."#,
+        annotations(read_only_hint = true)
     )]
     async fn list_tasks(
         &self,
@@ -1424,7 +1679,7 @@ Avoid: Using this as an attempt/session listing (use list_task_attempts)."#
             status,
             limit,
         }): Parameters<ListTasksRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
+    ) -> Result<Json<ListTasksResponse>, ErrorData> {
         let status_filter = if let Some(ref status_str) = status {
             let trimmed = status_str.trim();
             if trimmed.is_empty() {
@@ -1433,16 +1688,15 @@ Avoid: Using this as an attempt/session listing (use list_task_attempts)."#
                 match TaskStatus::from_str(trimmed) {
                     Ok(s) => Some(s),
                     Err(_) => {
-                        return Self::err_with(
+                        return Err(ErrorData::invalid_params(
                             "Invalid status filter",
-                            Some(json!({ "value": trimmed })),
-                            Some(
-                                "Valid values: todo, inprogress, inreview, done, cancelled."
-                                    .to_string(),
-                            ),
-                            Some("invalid_argument"),
-                            None,
-                        );
+                            Some(json!({
+                                "code": "invalid_argument",
+                                "retryable": false,
+                                "hint": "Valid values: todo, inprogress, inreview, done, cancelled.",
+                                "details": { "value": trimmed },
+                            })),
+                        ));
                     }
                 }
             }
@@ -1484,11 +1738,11 @@ Avoid: Using this as an attempt/session listing (use list_task_attempts)."#
             task_summaries.push(TaskSummary::from_task_with_status(task, attempt_summary));
         }
 
-        Self::success(&ListTasksResponse {
+        Ok(Json(ListTasksResponse {
             count: task_summaries.len(),
             tasks: task_summaries,
             project_id: project_id.to_string(),
-        })
+        }))
     }
 
     #[tool(
@@ -1496,7 +1750,8 @@ Avoid: Using this as an attempt/session listing (use list_task_attempts)."#
 Required: task_id
 Optional: (none)
 Next: update_task, start_attempt
-Avoid: Expecting attempt/session info here (use list_tasks/list_task_attempts)."#
+Avoid: Expecting attempt/session info here (use list_tasks/list_task_attempts)."#,
+        annotations(read_only_hint = true)
     )]
     async fn get_task(
         &self,
@@ -1518,7 +1773,12 @@ Avoid: Expecting attempt/session info here (use list_tasks/list_task_attempts)."
 Required: project_id, title
 Optional: description, request_id
 Next: start_attempt
-Avoid: Empty title; guessing project_id (use list_projects)."#
+Avoid: Empty title; guessing project_id (use list_projects)."#,
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true
+        )
     )]
     async fn create_task(
         &self,
@@ -1550,7 +1810,7 @@ Avoid: Empty title; guessing project_id (use list_projects)."#
         let request_hash = Self::request_hash(&payload)?;
         let key = Self::stable_tool_idempotency_key(request_id);
 
-        let task_id = self
+        let task_id = match self
             .idempotent("create_task", key, request_hash, || async {
                 let id = Uuid::new_v4();
                 Task::create(&self.deployment.db().pool, &payload, id)
@@ -1565,7 +1825,12 @@ Avoid: Empty title; guessing project_id (use list_projects)."#
                     task_id: id.to_string(),
                 })
             })
-            .await?;
+            .await
+        {
+            Ok(task_id) => task_id,
+            Err(ToolOrRpcError::Tool(tool_error)) => return Ok(tool_error),
+            Err(ToolOrRpcError::Rpc(err)) => return Err(err),
+        };
 
         Self::success(&task_id)
     }
@@ -1575,7 +1840,12 @@ Avoid: Empty title; guessing project_id (use list_projects)."#
 Required: task_id
 Optional: title, description, status
 Next: get_task, start_attempt
-Avoid: Calling this just to set status=inprogress (start_attempt already does that)."#
+Avoid: Calling this just to set status=inprogress (start_attempt already does that)."#,
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true
+        )
     )]
     async fn update_task(
         &self,
@@ -1652,7 +1922,12 @@ Avoid: Calling this just to set status=inprogress (start_attempt already does th
 Required: task_id
 Optional: (none)
 Next: list_tasks
-Avoid: Deleting the wrong task (confirm with get_task first)."#
+Avoid: Deleting the wrong task (confirm with get_task first)."#,
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true
+        )
     )]
     async fn delete_task(
         &self,
@@ -1676,7 +1951,8 @@ Avoid: Deleting the wrong task (confirm with get_task first)."#
 Required: task_id
 Optional: (none)
 Next: tail_attempt_feed, send_follow_up, stop_attempt
-Avoid: Assuming a task always has an attempt."#
+Avoid: Assuming a task always has an attempt."#,
+        annotations(read_only_hint = true)
     )]
     async fn list_task_attempts(
         &self,
@@ -1735,7 +2011,12 @@ Avoid: Assuming a task always has an attempt."#
 Required: task_id, executor, repos
 Optional: variant, request_id, prompt
 Next: tail_attempt_feed, send_follow_up
-Avoid: Empty repos; guessing executor (use list_executors)."#
+Avoid: Empty repos; guessing executor (use list_executors)."#,
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true
+        )
     )]
     async fn start_attempt(
         &self,
@@ -1846,7 +2127,7 @@ Avoid: Empty repos; guessing executor (use list_executors)."#
         })?;
         let key = Self::stable_tool_idempotency_key(request_id);
 
-        let response = self
+        let response = match self
             .idempotent("start_attempt", key, payload_hash, || async {
                 let pool = &self.deployment.db().pool;
                 let task = Task::find_by_id(pool, task_id)
@@ -1954,7 +2235,12 @@ Avoid: Empty repos; guessing executor (use list_executors)."#
                     execution_process_id: exec.id.to_string(),
                 })
             })
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(ToolOrRpcError::Tool(tool_error)) => return Ok(tool_error),
+            Err(ToolOrRpcError::Rpc(err)) => return Err(err),
+        };
 
         Self::success(&response)
     }
@@ -1964,7 +2250,12 @@ Avoid: Empty repos; guessing executor (use list_executors)."#
 Required: exactly one of {attempt_id, session_id}, prompt
 Optional: variant, request_id
 Next: tail_attempt_feed
-Avoid: Providing both attempt_id and session_id; missing prompt."#
+Avoid: Providing both attempt_id and session_id; missing prompt."#,
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true
+        )
     )]
     async fn send_follow_up(
         &self,
@@ -2009,7 +2300,7 @@ Avoid: Providing both attempt_id and session_id; missing prompt."#
         })?;
         let key = Self::stable_tool_idempotency_key(request_id);
 
-        let response = self
+        let response = match self
             .idempotent("send_follow_up", key, hash, || async {
                 let pool = &self.deployment.db().pool;
                 let session = Session::find_by_id(pool, session_id)
@@ -2208,7 +2499,12 @@ Avoid: Providing both attempt_id and session_id; missing prompt."#
                     execution_process_id: exec.id.to_string(),
                 })
             })
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(ToolOrRpcError::Tool(tool_error)) => return Ok(tool_error),
+            Err(ToolOrRpcError::Rpc(err)) => return Err(err),
+        };
 
         Self::success(&response)
     }
@@ -2218,7 +2514,12 @@ Avoid: Providing both attempt_id and session_id; missing prompt."#
 Required: attempt_id
 Optional: force
 Next: tail_attempt_feed
-Avoid: Expecting this to stop dev servers."#
+Avoid: Expecting this to stop dev servers."#,
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true
+        )
     )]
     async fn stop_attempt(
         &self,
@@ -2252,7 +2553,16 @@ Avoid: Expecting this to stop dev servers."#
 Required: attempt_id
 Optional: limit, cursor, after_log_index
 Next: respond_approval, get_attempt_changes
-Avoid: Mixing cursor with after_log_index."#
+Avoid: Mixing cursor with after_log_index."#,
+        output_schema = rmcp::handler::server::tool::schema_for_output::<TailAttemptFeedResponse>()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "Invalid output schema for {}: {}",
+                    std::any::type_name::<TailAttemptFeedResponse>(),
+                    e
+                )
+            }),
+        annotations(read_only_hint = true)
     )]
     async fn tail_attempt_feed(
         &self,
@@ -2468,7 +2778,8 @@ Avoid: Mixing cursor with after_log_index."#
 Required: exactly one of {attempt_id, session_id}
 Optional: limit, cursor
 Next: send_follow_up
-Avoid: Expecting raw tool logs (use tail_attempt_feed)."#
+Avoid: Expecting raw tool logs (use tail_attempt_feed)."#,
+        annotations(read_only_hint = true)
     )]
     async fn tail_session_messages(
         &self,
@@ -2525,7 +2836,8 @@ Avoid: Expecting raw tool logs (use tail_attempt_feed)."#
 Required: attempt_id
 Optional: force
 Next: get_attempt_patch
-Avoid: Assuming files will be returned when blocked=true; using force unless you accept larger output."#
+Avoid: Assuming files will be returned when blocked=true; using force unless you accept larger output."#,
+        annotations(read_only_hint = true)
     )]
     async fn get_attempt_changes(
         &self,
@@ -2576,34 +2888,55 @@ Avoid: Assuming files will be returned when blocked=true; using force unless you
             None => None,
         };
 
-        let (code, retryable, hint) = if changes.blocked && !force {
-            (
-                Some(MCP_CODE_BLOCKED_GUARDRAILS.to_string()),
-                Some(false),
-                Some(
-                    "Changed-file list blocked by diff preview guardrails. Retry with force=true if you accept a larger file list."
-                        .to_string(),
-                ),
-            )
-        } else {
-            (None, None, None)
+        let summary = McpAttemptChangesSummary {
+            file_count: changes.summary.file_count,
+            added: changes.summary.added,
+            deleted: changes.summary.deleted,
+            total_bytes: changes.summary.total_bytes,
         };
 
-        let files = if changes.blocked { None } else { Some(changes.files) };
+        if changes.blocked {
+            let hint = match blocked_reason {
+                Some(McpAttemptChangesBlockedReason::ThresholdExceeded) => {
+                    if force {
+                        "Changed-file list blocked by guardrails even with force=true. Reduce the scope or try again later.".to_string()
+                    } else {
+                        "Changed-file list blocked by diff preview guardrails. Retry with force=true if you accept a larger file list.".to_string()
+                    }
+                }
+                Some(McpAttemptChangesBlockedReason::SummaryFailed) => {
+                    "Changed-file list blocked due to summary failure. Retry later.".to_string()
+                }
+                None => "Changed-file list blocked by guardrails.".to_string(),
+            };
+
+            return Self::err_with(
+                "Changed-file list blocked by guardrails.",
+                Some(json!({
+                    "attempt_id": attempt_id,
+                    "blocked_reason": blocked_reason,
+                    "summary": summary,
+                })),
+                Some(hint),
+                Some(MCP_CODE_BLOCKED_GUARDRAILS),
+                Some(false),
+            );
+        }
+
+        let files = if changes.blocked {
+            None
+        } else {
+            Some(changes.files)
+        };
 
         Self::success(&GetAttemptChangesResponse {
             attempt_id: attempt_id.to_string(),
-            summary: McpAttemptChangesSummary {
-                file_count: changes.summary.file_count,
-                added: changes.summary.added,
-                deleted: changes.summary.deleted,
-                total_bytes: changes.summary.total_bytes,
-            },
+            summary,
             blocked: changes.blocked,
             blocked_reason,
-            code,
-            retryable,
-            hint,
+            code: None,
+            retryable: None,
+            hint: None,
             files,
         })
     }
@@ -2613,7 +2946,8 @@ Avoid: Assuming files will be returned when blocked=true; using force unless you
 Required: attempt_id, path
 Optional: start, max_bytes
 Next: get_attempt_patch
-Avoid: Absolute paths or .. traversal."#
+Avoid: Absolute paths or .. traversal."#,
+        annotations(read_only_hint = true)
     )]
     async fn get_attempt_file(
         &self,
@@ -2683,23 +3017,50 @@ Avoid: Absolute paths or .. traversal."#
             }
         });
 
-        let (code, retryable, hint) = if file.blocked {
-            (
-                Some(MCP_CODE_BLOCKED_GUARDRAILS.to_string()),
+        if file.blocked {
+            let hint = match blocked_reason {
+                Some(McpAttemptArtifactBlockedReason::PathOutsideWorkspace) => {
+                    "Path is outside workspace. Provide a path within the attempt workspace."
+                        .to_string()
+                }
+                Some(McpAttemptArtifactBlockedReason::SizeExceeded) => {
+                    "File too large. Reduce max_bytes or page with start.".to_string()
+                }
+                Some(McpAttemptArtifactBlockedReason::TooManyPaths) => {
+                    "Too many paths. Provide a single path.".to_string()
+                }
+                Some(McpAttemptArtifactBlockedReason::SummaryFailed) => {
+                    "File retrieval blocked due to summary failure. Retry later.".to_string()
+                }
+                Some(McpAttemptArtifactBlockedReason::ThresholdExceeded) => {
+                    "File retrieval blocked by guardrails. Reduce max_bytes or request a smaller range."
+                        .to_string()
+                }
+                None => "File retrieval blocked by guardrails.".to_string(),
+            };
+
+            return Self::err_with(
+                "File retrieval blocked by guardrails.",
+                Some(json!({
+                    "attempt_id": attempt_id,
+                    "path": file.path,
+                    "start": file.start,
+                    "max_bytes": max_bytes,
+                    "blocked_reason": blocked_reason,
+                })),
+                Some(hint),
+                Some(MCP_CODE_BLOCKED_GUARDRAILS),
                 Some(false),
-                Some("File retrieval blocked by guardrails.".to_string()),
-            )
-        } else {
-            (None, None, None)
-        };
+            );
+        }
 
         Self::success(&GetAttemptFileResponse {
             attempt_id: attempt_id.to_string(),
             blocked: file.blocked,
             blocked_reason,
-            code,
-            retryable,
-            hint,
+            code: None,
+            retryable: None,
+            hint: None,
             truncated: file.truncated,
             start: file.start,
             bytes: file.bytes,
@@ -2714,7 +3075,8 @@ Avoid: Absolute paths or .. traversal."#
 Required: attempt_id, paths
 Optional: force, max_bytes
 Next: send_follow_up
-Avoid: Too many paths; huge max_bytes."#
+Avoid: Too many paths; huge max_bytes."#,
+        annotations(read_only_hint = true)
     )]
     async fn get_attempt_patch(
         &self,
@@ -2725,6 +3087,8 @@ Avoid: Too many paths; huge max_bytes."#
             max_bytes,
         }): Parameters<GetAttemptPatchRequest>,
     ) -> Result<CallToolResult, ErrorData> {
+        let force = force.unwrap_or(false);
+
         let workspace = Workspace::find_by_id(&self.deployment.db().pool, attempt_id)
             .await
             .map_err(|e| {
@@ -2737,7 +3101,7 @@ Avoid: Too many paths; huge max_bytes."#
 
         let req = crate::routes::task_attempts::AttemptPatchRequest {
             paths: paths.clone(),
-            force: force.unwrap_or(false),
+            force,
             max_bytes,
         };
         let ResponseJson(response) = crate::routes::task_attempts::get_task_attempt_patch(
@@ -2782,23 +3146,57 @@ Avoid: Too many paths; huge max_bytes."#
             }
         });
 
-        let (code, retryable, hint) = if patch.blocked && !force.unwrap_or(false) {
-            (
-                Some(MCP_CODE_BLOCKED_GUARDRAILS.to_string()),
+        if patch.blocked {
+            let hint = match blocked_reason {
+                Some(McpAttemptArtifactBlockedReason::PathOutsideWorkspace) => {
+                    "Paths are outside workspace. Provide only paths within the attempt workspace."
+                        .to_string()
+                }
+                Some(McpAttemptArtifactBlockedReason::SizeExceeded) => {
+                    "Patch too large. Reduce max_bytes or request fewer paths.".to_string()
+                }
+                Some(McpAttemptArtifactBlockedReason::TooManyPaths) => {
+                    "Too many paths. Reduce the number of paths requested.".to_string()
+                }
+                Some(McpAttemptArtifactBlockedReason::SummaryFailed) => {
+                    "Patch retrieval blocked due to summary failure. Retry later.".to_string()
+                }
+                Some(McpAttemptArtifactBlockedReason::ThresholdExceeded) => {
+                    if force {
+                        "Patch blocked by guardrails even with force=true. Reduce max_bytes or request fewer paths."
+                            .to_string()
+                    } else {
+                        "Patch blocked by diff preview guardrails. Retry with force=true to bypass."
+                            .to_string()
+                    }
+                }
+                None => "Patch blocked by guardrails.".to_string(),
+            };
+
+            return Self::err_with(
+                "Patch blocked by guardrails.",
+                Some(json!({
+                    "attempt_id": attempt_id,
+                    "paths": patch.paths,
+                    "force": force,
+                    "max_bytes": max_bytes,
+                    "blocked_reason": blocked_reason,
+                    "bytes": patch.bytes,
+                    "truncated": patch.truncated,
+                })),
+                Some(hint),
+                Some(MCP_CODE_BLOCKED_GUARDRAILS),
                 Some(false),
-                Some("Patch blocked by diff preview guardrails. Retry with force=true to bypass.".to_string()),
-            )
-        } else {
-            (None, None, None)
-        };
+            );
+        }
 
         Self::success(&GetAttemptPatchResponse {
             attempt_id: attempt_id.to_string(),
             blocked: patch.blocked,
             blocked_reason,
-            code,
-            retryable,
-            hint,
+            code: None,
+            retryable: None,
+            hint: None,
             truncated: patch.truncated,
             bytes: patch.bytes,
             paths: patch.paths,
@@ -2811,7 +3209,8 @@ Avoid: Too many paths; huge max_bytes."#
 Required: attempt_id
 Optional: status, limit, cursor
 Next: get_approval, respond_approval
-Avoid: Guessing attempt_id."#
+Avoid: Guessing attempt_id."#,
+        annotations(read_only_hint = true)
     )]
     async fn list_approvals(
         &self,
@@ -2873,7 +3272,8 @@ Avoid: Guessing attempt_id."#
 Required: approval_id
 Optional: (none)
 Next: respond_approval
-Avoid: Assuming approval exists."#
+Avoid: Assuming approval exists."#,
+        annotations(read_only_hint = true)
     )]
     async fn get_approval(
         &self,
@@ -2900,7 +3300,12 @@ Avoid: Assuming approval exists."#
 Required: approval_id, execution_process_id, status
 Optional: denial_reason, responded_by_client_id, request_id
 Next: tail_attempt_feed
-Avoid: Responding with mismatched execution_process_id."#
+Avoid: Responding with mismatched execution_process_id."#,
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true
+        )
     )]
     async fn respond_approval(
         &self,
@@ -2942,7 +3347,7 @@ Avoid: Responding with mismatched execution_process_id."#
         })?;
         let key = Self::stable_tool_idempotency_key(request_id);
 
-        let response = self
+        let response = match self
             .idempotent("respond_approval", key, hash, || async {
                 let approval_status = match status_trim.as_str() {
                     "approved" => utils::approvals::ApprovalStatus::Approved,
@@ -2991,7 +3396,12 @@ Avoid: Responding with mismatched execution_process_id."#
                     status: status_str,
                 })
             })
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(ToolOrRpcError::Tool(tool_error)) => return Ok(tool_error),
+            Err(ToolOrRpcError::Rpc(err)) => return Err(err),
+        };
 
         Self::success(&response)
     }
@@ -3001,7 +3411,8 @@ Avoid: Responding with mismatched execution_process_id."#
 Required: project_id
 Optional: limit, cursor, after_event_id
 Next: tail_task_activity
-Avoid: Mixing cursor with after_event_id."#
+Avoid: Mixing cursor with after_event_id."#,
+        annotations(read_only_hint = true)
     )]
     async fn tail_project_activity(
         &self,
@@ -3122,7 +3533,8 @@ Avoid: Mixing cursor with after_event_id."#
 Required: task_id
 Optional: limit, cursor, after_event_id
 Next: tail_attempt_feed
-Avoid: Mixing cursor with after_event_id."#
+Avoid: Mixing cursor with after_event_id."#,
+        annotations(read_only_hint = true)
     )]
     async fn tail_task_activity(
         &self,
@@ -3229,8 +3641,26 @@ Avoid: Mixing cursor with after_event_id."#
 
 #[tool_handler]
 impl ServerHandler for TaskServer {
+    fn initialize(
+        &self,
+        request: rmcp::model::InitializeRequestParam,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> impl std::future::Future<Output = Result<rmcp::model::InitializeResult, rmcp::ErrorData>>
+           + Send
+           + '_ {
+        // Default rmcp behavior: record peer info from initialize params once.
+        if context.peer.peer_info().is_none() {
+            context.peer.set_peer_info(request);
+        }
+
+        self.record_peer(context.peer.clone());
+        self.start_approvals_elicitation_if_supported(context.peer);
+
+        std::future::ready(Ok(self.get_info()))
+    }
+
     fn get_info(&self) -> ServerInfo {
-        let instruction = "Vibe Kanban MCP control plane (native mode). Recommended closed-loop: start_attempt (with optional prompt) → tail_attempt_feed (poll with after_log_index) → respond_approval (when pending approvals appear) → get_attempt_changes/get_attempt_patch/get_attempt_file as needed → stop_attempt. For broader observability, use tail_project_activity/tail_task_activity. Most tool errors are returned as JSON with fields like error, hint, code, and retryable; invalid parameter errors use JSON-RPC error data with path/hint.".to_string();
+        let instruction = "Vibe Kanban MCP control plane (native mode). Recommended closed-loop: start_attempt (with optional prompt) → tail_attempt_feed (poll with after_log_index) → respond_approval (when pending approvals appear) → get_attempt_changes/get_attempt_patch/get_attempt_file as needed → stop_attempt. For broader observability, use tail_project_activity/tail_task_activity. Errors: invalid/ill-typed tool inputs return JSON-RPC invalid_params; business failures return tool-level structured errors in structuredContent with {code,retryable,hint,details}. Some clients may also support approvals via MCP elicitation (server push) when declared during initialize.".to_string();
 
         ServerInfo {
             protocol_version: ProtocolVersion::V_2025_03_26,
@@ -3258,7 +3688,20 @@ use axum::response::Json as ResponseJson;
 mod tests {
     use super::*;
 
-    use std::path::Path;
+    use std::{
+        path::Path,
+        process::Command,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
+
+    use rmcp::ServiceExt;
+    use rmcp::handler::client::ClientHandler;
+
+    use rmcp::handler::server::tool::IntoCallToolResult;
 
     use db::models::{
         execution_process::CreateExecutionProcess,
@@ -3267,14 +3710,223 @@ mod tests {
     };
     use deployment::Deployment;
     use executors::actions::{script::ScriptContext, ExecutorActionType};
+    use services::services::config::DiffPreviewGuardPreset;
 
     use crate::test_support::TestEnvGuard;
+
+    #[derive(Clone)]
+    struct TestElicitationClient {
+        info: rmcp::model::ClientInfo,
+        response: serde_json::Value,
+        create_elicitation_calls: Arc<AtomicUsize>,
+    }
+
+    impl TestElicitationClient {
+        fn new(info: rmcp::model::ClientInfo, response: serde_json::Value) -> Self {
+            Self {
+                info,
+                response,
+                create_elicitation_calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn call_count(&self) -> usize {
+            self.create_elicitation_calls.load(Ordering::SeqCst)
+        }
+    }
+
+    impl ClientHandler for TestElicitationClient {
+        fn get_info(&self) -> rmcp::model::ClientInfo {
+            self.info.clone()
+        }
+
+        fn create_elicitation(
+            &self,
+            request: rmcp::model::CreateElicitationRequestParam,
+            context: rmcp::service::RequestContext<rmcp::RoleClient>,
+        ) -> impl std::future::Future<
+            Output = Result<rmcp::model::CreateElicitationResult, rmcp::ErrorData>,
+        > + Send
+               + '_ {
+            let response = self.response.clone();
+            let calls = self.create_elicitation_calls.clone();
+            async move {
+                let _ = (request, context);
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(rmcp::model::CreateElicitationResult {
+                    action: rmcp::model::ElicitationAction::Accept,
+                    content: Some(response),
+                })
+            }
+        }
+    }
 
     #[test]
     fn tool_router_includes_feed_and_approvals_tools() {
         let router = TaskServer::tool_router();
         assert!(router.map.contains_key("tail_attempt_feed"));
         assert!(router.map.contains_key("respond_approval"));
+    }
+
+    #[test]
+    fn tool_router_exposes_output_schema_for_key_tools() {
+        let tools = TaskServer::tool_router().list_all();
+
+        let tool = |name: &str| {
+            tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == name)
+                .unwrap_or_else(|| panic!("Missing tool: {}", name))
+        };
+
+        for name in ["list_projects", "list_tasks", "tail_attempt_feed"] {
+            let tool = tool(name);
+            assert!(
+                tool.output_schema.is_some(),
+                "Expected outputSchema for {}",
+                name
+            );
+            assert_eq!(
+                tool.output_schema
+                    .as_ref()
+                    .and_then(|schema| schema.get("type"))
+                    .and_then(|t| t.as_str()),
+                Some("object"),
+                "Expected outputSchema root type=object for {}",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn tool_router_exposes_annotations_for_key_tools() {
+        let tools = TaskServer::tool_router().list_all();
+
+        let tool = |name: &str| {
+            tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == name)
+                .unwrap_or_else(|| panic!("Missing tool: {}", name))
+        };
+
+        for name in [
+            "list_projects",
+            "list_tasks",
+            "tail_attempt_feed",
+            "get_attempt_changes",
+        ] {
+            let annotations = tool(name)
+                .annotations
+                .as_ref()
+                .unwrap_or_else(|| panic!("Missing annotations for {}", name));
+            assert_eq!(
+                annotations.read_only_hint,
+                Some(true),
+                "Expected readOnlyHint=true for {}",
+                name
+            );
+        }
+
+        let create_task = tool("create_task")
+            .annotations
+            .as_ref()
+            .expect("Missing create_task annotations");
+        assert_eq!(create_task.read_only_hint, Some(false));
+        assert_eq!(create_task.destructive_hint, Some(false));
+        assert_eq!(create_task.idempotent_hint, Some(true));
+
+        let delete_task = tool("delete_task")
+            .annotations
+            .as_ref()
+            .expect("Missing delete_task annotations");
+        assert_eq!(delete_task.read_only_hint, Some(false));
+        assert_eq!(delete_task.destructive_hint, Some(true));
+        assert_eq!(delete_task.idempotent_hint, Some(true));
+    }
+
+    #[tokio::test]
+    async fn list_projects_and_list_tasks_return_structured_content() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = &deployment.db().pool;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            pool,
+            &db::models::project::CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            pool,
+            &CreateTask::from_title_description(
+                project_id,
+                "Test task".to_string(),
+                Some("Test description".to_string()),
+            ),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let server = TaskServer::new(deployment);
+
+        let list_projects_result = server.list_projects().await.into_call_tool_result().unwrap();
+        assert!(list_projects_result.structured_content.is_some());
+
+        let list_tasks_result = server
+            .list_tasks(Parameters(ListTasksRequest {
+                project_id,
+                status: None,
+                limit: Some(10),
+            }))
+            .await
+            .into_call_tool_result()
+            .unwrap();
+        assert!(list_tasks_result.structured_content.is_some());
+    }
+
+    #[tokio::test]
+    async fn tail_attempt_feed_rejects_mixed_pagination_with_structured_error() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let server = TaskServer::new(deployment);
+
+        let attempt_id = Uuid::new_v4();
+        let result = server
+            .tail_attempt_feed(Parameters(TailAttemptFeedRequest {
+                attempt_id,
+                limit: Some(10),
+                cursor: Some(123),
+                after_log_index: Some(1),
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result.is_error, Some(true));
+
+        let structured = result
+            .structured_content
+            .clone()
+            .expect("structured_content should be present");
+
+        assert_eq!(
+            structured["code"].as_str(),
+            Some(MCP_CODE_MIXED_PAGINATION)
+        );
+        assert!(structured["hint"].as_str().is_some());
     }
 
     #[tokio::test]
@@ -3403,6 +4055,8 @@ mod tests {
             .await
             .unwrap();
 
+        assert!(result.structured_content.is_some());
+
         let text = result.content[0].as_text().unwrap().text.clone();
         let payload: serde_json::Value = serde_json::from_str(&text).unwrap();
 
@@ -3429,6 +4083,699 @@ mod tests {
         assert_eq!(entries[0]["entry_index"], 4);
         assert_eq!(payload["next_after_log_index"], 4);
 
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn create_task_idempotency_conflict_is_structured_tool_error() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = &deployment.db().pool;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            pool,
+            &db::models::project::CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let server = TaskServer::new(deployment);
+
+        let request_id = Some("req-123".to_string());
+
+        let first = server
+            .create_task(Parameters(CreateTaskRequest {
+                project_id,
+                title: "Task A".to_string(),
+                description: None,
+                request_id: request_id.clone(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(first.is_error, Some(false));
+
+        let second = server
+            .create_task(Parameters(CreateTaskRequest {
+                project_id,
+                title: "Task B".to_string(),
+                description: None,
+                request_id: request_id.clone(),
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(second.is_error, Some(true));
+        let structured = second
+            .structured_content
+            .clone()
+            .expect("structured_content should be present");
+        assert_eq!(
+            structured["code"].as_str(),
+            Some(MCP_CODE_IDEMPOTENCY_CONFLICT)
+        );
+        assert_eq!(structured["retryable"].as_bool(), Some(false));
+        assert!(structured["hint"].as_str().is_some());
+        assert_eq!(structured["details"]["request_id"].as_str(), Some("req-123"));
+
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn get_attempt_changes_guardrails_blocked_is_structured_tool_error() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        {
+            let mut config = deployment.config().write().await;
+            config.diff_preview_guard = DiffPreviewGuardPreset::Safe;
+        }
+        let pool = &deployment.db().pool;
+
+        let repo_dir = temp_root.join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        assert!(
+            Command::new("git")
+                .arg("init")
+                .current_dir(&repo_dir)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["config", "user.email", "vk-test@example.com"])
+                .current_dir(&repo_dir)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["config", "user.name", "vk-test"])
+                .current_dir(&repo_dir)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["checkout", "-b", "main"])
+                .current_dir(&repo_dir)
+                .status()
+                .unwrap()
+                .success()
+        );
+        std::fs::write(repo_dir.join("README.md"), "hello").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["add", "."])
+                .current_dir(&repo_dir)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["commit", "-m", "init"])
+                .current_dir(&repo_dir)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["checkout", "-b", "test-branch"])
+                .current_dir(&repo_dir)
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let workspace_root = temp_root.join("worktree_root");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let worktree_dir = workspace_root.join("repo");
+        assert!(
+            Command::new("git")
+                .args([
+                    "clone",
+                    repo_dir.to_str().unwrap(),
+                    worktree_dir.to_str().unwrap()
+                ])
+                .current_dir(&workspace_root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["checkout", "-B", "test-branch", "origin/test-branch"])
+                .current_dir(&worktree_dir)
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        // Safe preset blocks at >200 changed files.
+        for idx in 0..201usize {
+            std::fs::write(worktree_dir.join(format!("file_{idx:04}.txt")), "x").unwrap();
+        }
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            pool,
+            &db::models::project::CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            pool,
+            &CreateTask::from_title_description(project_id, "Test task".to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let attempt_id = Uuid::new_v4();
+        let workspace = Workspace::create(
+            pool,
+            &CreateWorkspace {
+                branch: "test-branch".to_string(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let repo = Repo::find_or_create(pool, &repo_dir, "Repo").await.unwrap();
+        WorkspaceRepo::create_many(
+            pool,
+            workspace.id,
+            &[CreateWorkspaceRepo {
+                repo_id: repo.id,
+                target_branch: "main".to_string(),
+            }],
+        )
+        .await
+        .unwrap();
+        Workspace::update_container_ref(pool, workspace.id, workspace_root.to_str().unwrap())
+            .await
+            .unwrap();
+
+        let server = TaskServer::new(deployment);
+        let result = server
+            .get_attempt_changes(Parameters(GetAttemptChangesRequest {
+                attempt_id: workspace.id,
+                force: Some(false),
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result.is_error, Some(true));
+        let structured = result
+            .structured_content
+            .clone()
+            .expect("structured_content should be present");
+        assert_eq!(
+            structured["code"].as_str(),
+            Some(MCP_CODE_BLOCKED_GUARDRAILS)
+        );
+        assert!(structured["hint"].as_str().is_some());
+        assert_eq!(
+            structured["details"]["blocked_reason"].as_str(),
+            Some("threshold_exceeded")
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn approvals_elicitation_auto_approves_when_supported() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = &deployment.db().pool;
+
+        let capabilities = rmcp::model::ClientCapabilities {
+            elicitation: Some(rmcp::model::ElicitationCapability {
+                schema_validation: Some(true),
+            }),
+            ..Default::default()
+        };
+
+        let client_info = rmcp::model::Implementation {
+            name: "vk-test-client".to_string(),
+            title: None,
+            version: "0.0.1".to_string(),
+            icons: None,
+            website_url: None,
+        };
+
+        let client = TestElicitationClient::new(
+            rmcp::model::ClientInfo {
+                protocol_version: ProtocolVersion::V_2025_03_26,
+                capabilities,
+                client_info,
+            },
+            json!({ "decision": "approved", "denial_reason": null }),
+        );
+
+        let server = TaskServer::new(deployment.clone());
+
+        let (server_io, client_io) = tokio::io::duplex(1024 * 1024);
+        let (server_running, client_running) =
+            tokio::join!(server.serve(server_io), client.clone().serve(client_io));
+        let server_running = server_running.unwrap();
+        let client_running = client_running.unwrap();
+
+        assert!(server_running.supports_elicitation());
+        assert!(server_running
+            .service()
+            .approvals_elicitation_started
+            .load(Ordering::SeqCst));
+        assert!(server_running.service().peer.read().unwrap().is_some());
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            pool,
+            &db::models::project::CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            pool,
+            &CreateTask::from_title_description(project_id, "Test task".to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let attempt_id = Uuid::new_v4();
+        Workspace::create(
+            pool,
+            &CreateWorkspace {
+                branch: "main".to_string(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let session_id = Uuid::new_v4();
+        Session::create(
+            pool,
+            &CreateSession {
+                executor: Some("test".to_string()),
+            },
+            session_id,
+            attempt_id,
+        )
+        .await
+        .unwrap();
+
+        let execution_process_id = Uuid::new_v4();
+        ExecutionProcess::create(
+            pool,
+            &CreateExecutionProcess {
+                session_id,
+                executor_action: ExecutorAction {
+                    typ: ExecutorActionType::ScriptRequest(executors::actions::script::ScriptRequest {
+                        script: "echo hi".to_string(),
+                        language: executors::actions::script::ScriptRequestLanguage::Bash,
+                        context: ScriptContext::SetupScript,
+                        working_dir: None,
+                    }),
+                    next_action: None,
+                },
+                run_reason: ExecutionProcessRunReason::CodingAgent,
+            },
+            execution_process_id,
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let request = utils::approvals::ApprovalRequest::from_create(
+            utils::approvals::CreateApprovalRequest {
+                tool_name: "test_tool".to_string(),
+                tool_input: json!({ "x": 1 }),
+                tool_call_id: "call-1".to_string(),
+            },
+            execution_process_id,
+        );
+
+        let mut created_rx = deployment.approvals().subscribe_created();
+        let (approval, waiter) = deployment
+            .approvals()
+            .create_with_waiter(pool, request)
+            .await
+            .unwrap();
+        let created = tokio::time::timeout(Duration::from_millis(200), created_rx.recv())
+            .await
+            .expect("approval should emit created event")
+            .expect("created event receive should succeed");
+        assert_eq!(created.id, approval.id);
+
+        let status = tokio::time::timeout(Duration::from_secs(2), waiter)
+            .await
+            .expect("approval waiter should resolve")
+            .clone();
+        assert!(matches!(status, utils::approvals::ApprovalStatus::Approved));
+        assert_eq!(client.call_count(), 1);
+
+        let approval_uuid = Uuid::parse_str(&approval.id).unwrap();
+        let persisted = approval_model::get_by_id(pool, approval_uuid)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            persisted.status,
+            utils::approvals::ApprovalStatus::Approved
+        ));
+        assert_eq!(
+            persisted.responded_by_client_id.as_deref(),
+            Some("mcp:vk-test-client@0.0.1")
+        );
+
+        let _ = server_running.cancel().await;
+        let _ = client_running.cancel().await;
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn approvals_elicitation_auto_denies_when_supported() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = &deployment.db().pool;
+
+        let client = TestElicitationClient::new(
+            rmcp::model::ClientInfo {
+                protocol_version: ProtocolVersion::V_2025_03_26,
+                capabilities: rmcp::model::ClientCapabilities {
+                    elicitation: Some(rmcp::model::ElicitationCapability {
+                        schema_validation: Some(true),
+                    }),
+                    ..Default::default()
+                },
+                client_info: rmcp::model::Implementation {
+                    name: "vk-test-client".to_string(),
+                    title: None,
+                    version: "0.0.2".to_string(),
+                    icons: None,
+                    website_url: None,
+                },
+            },
+            json!({ "decision": "denied", "denial_reason": "no" }),
+        );
+
+        let server = TaskServer::new(deployment.clone());
+
+        let (server_io, client_io) = tokio::io::duplex(1024 * 1024);
+        let (server_running, client_running) =
+            tokio::join!(server.serve(server_io), client.clone().serve(client_io));
+        let server_running = server_running.unwrap();
+        let client_running = client_running.unwrap();
+
+        assert!(server_running.supports_elicitation());
+        assert!(server_running
+            .service()
+            .approvals_elicitation_started
+            .load(Ordering::SeqCst));
+        assert!(server_running.service().peer.read().unwrap().is_some());
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            pool,
+            &db::models::project::CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            pool,
+            &CreateTask::from_title_description(project_id, "Test task".to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let attempt_id = Uuid::new_v4();
+        Workspace::create(
+            pool,
+            &CreateWorkspace {
+                branch: "main".to_string(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let session_id = Uuid::new_v4();
+        Session::create(
+            pool,
+            &CreateSession {
+                executor: Some("test".to_string()),
+            },
+            session_id,
+            attempt_id,
+        )
+        .await
+        .unwrap();
+
+        let execution_process_id = Uuid::new_v4();
+        ExecutionProcess::create(
+            pool,
+            &CreateExecutionProcess {
+                session_id,
+                executor_action: ExecutorAction {
+                    typ: ExecutorActionType::ScriptRequest(executors::actions::script::ScriptRequest {
+                        script: "echo hi".to_string(),
+                        language: executors::actions::script::ScriptRequestLanguage::Bash,
+                        context: ScriptContext::SetupScript,
+                        working_dir: None,
+                    }),
+                    next_action: None,
+                },
+                run_reason: ExecutionProcessRunReason::CodingAgent,
+            },
+            execution_process_id,
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let request = utils::approvals::ApprovalRequest::from_create(
+            utils::approvals::CreateApprovalRequest {
+                tool_name: "test_tool".to_string(),
+                tool_input: json!({ "x": 1 }),
+                tool_call_id: "call-1".to_string(),
+            },
+            execution_process_id,
+        );
+
+        let mut created_rx = deployment.approvals().subscribe_created();
+        let (approval, waiter) = deployment
+            .approvals()
+            .create_with_waiter(pool, request)
+            .await
+            .unwrap();
+        let created = tokio::time::timeout(Duration::from_millis(200), created_rx.recv())
+            .await
+            .expect("approval should emit created event")
+            .expect("created event receive should succeed");
+        assert_eq!(created.id, approval.id);
+
+        let status = tokio::time::timeout(Duration::from_secs(2), waiter)
+            .await
+            .expect("approval waiter should resolve")
+            .clone();
+        match status {
+            utils::approvals::ApprovalStatus::Denied { reason } => {
+                assert_eq!(reason.as_deref(), Some("no"));
+            }
+            other => panic!("Expected denied approval, got: {:?}", other),
+        }
+        assert_eq!(client.call_count(), 1);
+
+        let approval_uuid = Uuid::parse_str(&approval.id).unwrap();
+        let persisted = approval_model::get_by_id(pool, approval_uuid)
+            .await
+            .unwrap()
+            .unwrap();
+        match persisted.status {
+            utils::approvals::ApprovalStatus::Denied { reason } => {
+                assert_eq!(reason.as_deref(), Some("no"));
+            }
+            other => panic!("Expected denied approval, got: {:?}", other),
+        }
+        assert_eq!(
+            persisted.responded_by_client_id.as_deref(),
+            Some("mcp:vk-test-client@0.0.2")
+        );
+
+        let _ = server_running.cancel().await;
+        let _ = client_running.cancel().await;
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn approvals_elicitation_is_skipped_when_client_does_not_declare_capability() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = &deployment.db().pool;
+
+        let client = TestElicitationClient::new(
+            rmcp::model::ClientInfo {
+                protocol_version: ProtocolVersion::V_2025_03_26,
+                capabilities: rmcp::model::ClientCapabilities::default(),
+                client_info: rmcp::model::Implementation {
+                    name: "vk-test-client".to_string(),
+                    title: None,
+                    version: "0.0.3".to_string(),
+                    icons: None,
+                    website_url: None,
+                },
+            },
+            json!({ "decision": "approved", "denial_reason": null }),
+        );
+
+        let server = TaskServer::new(deployment.clone());
+
+        let (server_io, client_io) = tokio::io::duplex(1024 * 1024);
+        let (server_running, client_running) =
+            tokio::join!(server.serve(server_io), client.clone().serve(client_io));
+        let server_running = server_running.unwrap();
+        let client_running = client_running.unwrap();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            pool,
+            &db::models::project::CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            pool,
+            &CreateTask::from_title_description(project_id, "Test task".to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let attempt_id = Uuid::new_v4();
+        Workspace::create(
+            pool,
+            &CreateWorkspace {
+                branch: "main".to_string(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let session_id = Uuid::new_v4();
+        Session::create(
+            pool,
+            &CreateSession {
+                executor: Some("test".to_string()),
+            },
+            session_id,
+            attempt_id,
+        )
+        .await
+        .unwrap();
+
+        let execution_process_id = Uuid::new_v4();
+        ExecutionProcess::create(
+            pool,
+            &CreateExecutionProcess {
+                session_id,
+                executor_action: ExecutorAction {
+                    typ: ExecutorActionType::ScriptRequest(executors::actions::script::ScriptRequest {
+                        script: "echo hi".to_string(),
+                        language: executors::actions::script::ScriptRequestLanguage::Bash,
+                        context: ScriptContext::SetupScript,
+                        working_dir: None,
+                    }),
+                    next_action: None,
+                },
+                run_reason: ExecutionProcessRunReason::CodingAgent,
+            },
+            execution_process_id,
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let request = utils::approvals::ApprovalRequest::from_create(
+            utils::approvals::CreateApprovalRequest {
+                tool_name: "test_tool".to_string(),
+                tool_input: json!({ "x": 1 }),
+                tool_call_id: "call-1".to_string(),
+            },
+            execution_process_id,
+        );
+
+        let (_approval, waiter) = deployment
+            .approvals()
+            .create_with_waiter(pool, request)
+            .await
+            .unwrap();
+
+        let timed_out = tokio::time::timeout(Duration::from_millis(200), waiter).await;
+        assert!(timed_out.is_err(), "approval should stay pending");
+        assert_eq!(client.call_count(), 0);
+
+        let _ = server_running.cancel().await;
+        let _ = client_running.cancel().await;
         let _ = std::fs::remove_dir_all(&temp_root);
     }
 }

@@ -59,8 +59,15 @@ fn reset_db_on_migration_error() -> bool {
 
 fn build_connect_options(database_url: &str) -> Result<ConnectOptions, DbErr> {
     let mut options = ConnectOptions::new(database_url.to_string());
+    let database_url_trimmed = database_url.trim();
+    let is_sqlite_in_memory = database_url_trimmed == "sqlite::memory:"
+        || database_url_trimmed.starts_with("sqlite::memory:?")
+        || database_url_trimmed.starts_with("sqlite://:memory:")
+        || database_url_trimmed.starts_with("sqlite://:memory:?");
     options
-        .max_connections(5)
+        // sqlite::memory: creates a separate DB per connection. Force a single connection
+        // in tests to avoid cross-connection inconsistencies under concurrency.
+        .max_connections(if is_sqlite_in_memory { 1 } else { 5 })
         .connect_timeout(Duration::from_secs(30))
         .sqlx_logging(false)
         .after_connect(|conn| {
