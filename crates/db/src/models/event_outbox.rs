@@ -122,7 +122,10 @@ impl EventOutbox {
             .limit(limit)
             .all(db)
             .await?;
-        Ok(records.into_iter().map(EventOutboxEntry::from_model).collect())
+        Ok(records
+            .into_iter()
+            .map(EventOutboxEntry::from_model)
+            .collect())
     }
 
     pub async fn page_older<C: ConnectionTrait>(
@@ -156,7 +159,10 @@ impl EventOutbox {
         };
 
         Ok((
-            records.into_iter().map(EventOutboxEntry::from_model).collect(),
+            records
+                .into_iter()
+                .map(EventOutboxEntry::from_model)
+                .collect(),
             next_cursor,
             has_more,
         ))

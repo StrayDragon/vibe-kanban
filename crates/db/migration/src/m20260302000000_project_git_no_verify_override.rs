@@ -41,4 +41,3 @@ enum Projects {
     Table,
     GitNoVerifyOverride,
 }
-

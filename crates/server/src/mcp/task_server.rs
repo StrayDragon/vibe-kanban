@@ -34,8 +34,7 @@ use db::{
 use deployment::Deployment;
 use executors::{
     actions::{
-        ExecutorAction, ExecutorActionType,
-        coding_agent_follow_up::CodingAgentFollowUpRequest,
+        ExecutorAction, ExecutorActionType, coding_agent_follow_up::CodingAgentFollowUpRequest,
         coding_agent_initial::CodingAgentInitialRequest,
     },
     executors::BaseCodingAgent,
@@ -65,6 +64,10 @@ const MCP_CODE_BLOCKED_GUARDRAILS: &str = "blocked_guardrails";
 const MCP_CODE_MIXED_PAGINATION: &str = "mixed_pagination";
 const MCP_CODE_IDEMPOTENCY_CONFLICT: &str = "idempotency_conflict";
 const MCP_CODE_IDEMPOTENCY_IN_PROGRESS: &str = "idempotency_in_progress";
+const MCP_CODE_WAIT_MS_TOO_LARGE: &str = "wait_ms_too_large";
+const MCP_CODE_WAIT_MS_REQUIRES_AFTER_LOG_INDEX: &str = "wait_ms_requires_after_log_index";
+
+const TAIL_ATTEMPT_FEED_MAX_WAIT_MS: u64 = 30_000;
 
 const DEFAULT_IDEMPOTENCY_IN_PROGRESS_TTL_SECS: i64 = 60 * 60;
 const IDEMPOTENCY_IN_PROGRESS_TTL_ENV: &str = "VK_IDEMPOTENCY_IN_PROGRESS_TTL_SECS";
@@ -142,9 +145,7 @@ pub struct UpdateTaskRequest {
     pub title: Option<String>,
     #[schemars(description = "New description for the task")]
     pub description: Option<String>,
-    #[schemars(
-        description = "New status: 'todo', 'inprogress', 'inreview', 'done', 'cancelled'"
-    )]
+    #[schemars(description = "New status: 'todo', 'inprogress', 'inreview', 'done', 'cancelled'")]
     pub status: Option<String>,
 }
 
@@ -436,9 +437,13 @@ pub struct StartAttemptResponse {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SendFollowUpRequest {
-    #[schemars(description = "Attempt/workspace id (UUID string). Provide exactly one of attempt_id or session_id.")]
+    #[schemars(
+        description = "Attempt/workspace id (UUID string). Provide exactly one of attempt_id or session_id."
+    )]
     pub attempt_id: Option<Uuid>,
-    #[schemars(description = "Session id (UUID string). Provide exactly one of attempt_id or session_id.")]
+    #[schemars(
+        description = "Session id (UUID string). Provide exactly one of attempt_id or session_id."
+    )]
     pub session_id: Option<Uuid>,
     #[schemars(description = "Follow-up prompt to send")]
     pub prompt: String,
@@ -509,9 +514,13 @@ pub struct McpLogHistoryPage {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TailSessionMessagesRequest {
-    #[schemars(description = "Attempt/workspace id (UUID string). Provide exactly one of attempt_id or session_id.")]
+    #[schemars(
+        description = "Attempt/workspace id (UUID string). Provide exactly one of attempt_id or session_id."
+    )]
     pub attempt_id: Option<Uuid>,
-    #[schemars(description = "Session id (UUID string). Provide exactly one of attempt_id or session_id.")]
+    #[schemars(
+        description = "Session id (UUID string). Provide exactly one of attempt_id or session_id."
+    )]
     pub session_id: Option<Uuid>,
     #[schemars(description = "Maximum number of entries to return (default: 20)")]
     pub limit: Option<usize>,
@@ -552,6 +561,10 @@ pub struct TailAttemptFeedRequest {
     pub cursor: Option<i64>,
     #[schemars(description = "Return only log entries newer than this index")]
     pub after_log_index: Option<i64>,
+    #[schemars(
+        description = "Optional long-poll wait in milliseconds (only valid when after_log_index is set; max 30000)"
+    )]
+    pub wait_ms: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
@@ -807,7 +820,10 @@ impl TaskServer {
         }
     }
 
-    fn start_approvals_elicitation_if_supported(&self, peer: rmcp::service::Peer<rmcp::RoleServer>) {
+    fn start_approvals_elicitation_if_supported(
+        &self,
+        peer: rmcp::service::Peer<rmcp::RoleServer>,
+    ) {
         if !peer.supports_elicitation() {
             return;
         }
@@ -822,9 +838,9 @@ impl TaskServer {
         let approvals = self.deployment.approvals().clone();
         let pool = self.deployment.db().pool.clone();
 
-        let responded_by_client_id = peer.peer_info().map(|info| {
-            format!("mcp:{}@{}", info.client_info.name, info.client_info.version)
-        });
+        let responded_by_client_id = peer
+            .peer_info()
+            .map(|info| format!("mcp:{}@{}", info.client_info.name, info.client_info.version));
 
         let mut rx = approvals.subscribe_created();
         tokio::spawn(async move {
@@ -864,10 +880,8 @@ impl TaskServer {
                     continue;
                 }
 
-                let input_pretty =
-                    serde_json::to_string_pretty(&approval.tool_input).unwrap_or_else(|_| {
-                        approval.tool_input.to_string()
-                    });
+                let input_pretty = serde_json::to_string_pretty(&approval.tool_input)
+                    .unwrap_or_else(|_| approval.tool_input.to_string());
 
                 let message = format!(
                     "Approval needed.\n\napproval_id: {}\nexecution_process_id: {}\ntool: {}\n\ntool_input:\n{}",
@@ -981,7 +995,12 @@ impl TaskServer {
                 };
 
                 if let Err(err) = approvals
-                    .respond_with_client_id(&pool, &approval.id, response, responded_by_client_id.clone())
+                    .respond_with_client_id(
+                        &pool,
+                        &approval.id,
+                        response,
+                        responded_by_client_id.clone(),
+                    )
                     .await
                 {
                     tracing::warn!(
@@ -1050,7 +1069,8 @@ impl TaskServer {
             None => json!({}),
         };
         if let Value::Object(map) = &mut details {
-            map.entry("message".to_string()).or_insert_with(|| json!(msg));
+            map.entry("message".to_string())
+                .or_insert_with(|| json!(msg));
         }
 
         json!({
@@ -1192,17 +1212,15 @@ impl TaskServer {
                         })?;
                         Ok(parsed)
                     }
-                    db::models::idempotency::IDEMPOTENCY_STATE_IN_PROGRESS => {
-                        Err(ToolOrRpcError::Tool(Self::structured_error(
-                            Self::err_payload(
-                                "Request with this idempotency key is in progress.",
-                                Some(json!({ "scope": scope, "request_id": key })),
-                                Some("Wait briefly and retry the same tool call.".to_string()),
-                                Some(MCP_CODE_IDEMPOTENCY_IN_PROGRESS),
-                                Some(true),
-                            ),
-                        )))
-                    }
+                    db::models::idempotency::IDEMPOTENCY_STATE_IN_PROGRESS => Err(
+                        ToolOrRpcError::Tool(Self::structured_error(Self::err_payload(
+                            "Request with this idempotency key is in progress.",
+                            Some(json!({ "scope": scope, "request_id": key })),
+                            Some("Wait briefly and retry the same tool call.".to_string()),
+                            Some(MCP_CODE_IDEMPOTENCY_IN_PROGRESS),
+                            Some(true),
+                        ))),
+                    ),
                     other => Err(ToolOrRpcError::Rpc(ErrorData::internal_error(
                         "Unknown idempotency record state",
                         Some(json!({ "state": other, "scope": scope, "request_id": key })),
@@ -1317,13 +1335,19 @@ impl TaskServer {
         }
     }
 
-    fn map_attempt_state(status: Option<ExecutionProcessStatus>) -> (McpAttemptState, Option<String>) {
+    fn map_attempt_state(
+        status: Option<ExecutionProcessStatus>,
+    ) -> (McpAttemptState, Option<String>) {
         match status {
             None => (McpAttemptState::Idle, None),
             Some(ExecutionProcessStatus::Running) => (McpAttemptState::Running, None),
             Some(ExecutionProcessStatus::Completed) => (McpAttemptState::Completed, None),
-            Some(ExecutionProcessStatus::Failed) => (McpAttemptState::Failed, Some("failed".to_string())),
-            Some(ExecutionProcessStatus::Killed) => (McpAttemptState::Failed, Some("killed".to_string())),
+            Some(ExecutionProcessStatus::Failed) => {
+                (McpAttemptState::Failed, Some("failed".to_string()))
+            }
+            Some(ExecutionProcessStatus::Killed) => {
+                (McpAttemptState::Failed, Some("killed".to_string()))
+            }
         }
     }
 
@@ -1335,10 +1359,12 @@ impl TaskServer {
             return Ok(HashMap::new());
         }
 
-        let workspaces = Workspace::fetch_all_by_task_ids(&self.deployment.db().pool, &task_ids).await?;
+        let workspaces =
+            Workspace::fetch_all_by_task_ids(&self.deployment.db().pool, &task_ids).await?;
         let workspace_ids: Vec<Uuid> = workspaces.iter().map(|w| w.id).collect();
         let sessions_by_workspace =
-            Session::find_latest_by_workspace_ids(&self.deployment.db().pool, &workspace_ids).await?;
+            Session::find_latest_by_workspace_ids(&self.deployment.db().pool, &workspace_ids)
+                .await?;
 
         let mut latest_by_task: HashMap<Uuid, Workspace> = HashMap::new();
         for workspace in workspaces {
@@ -1451,7 +1477,9 @@ impl TaskServer {
                     return Some(*project_id);
                 }
                 let session = Session::find_by_id(pool, payload.session_id).await.ok()??;
-                let workspace = Workspace::find_by_id(pool, session.workspace_id).await.ok()??;
+                let workspace = Workspace::find_by_id(pool, session.workspace_id)
+                    .await
+                    .ok()??;
                 let task = Task::find_by_id(pool, workspace.task_id).await.ok()??;
                 session_project_cache.insert(payload.session_id, task.project_id);
                 Some(task.project_id)
@@ -1486,7 +1514,9 @@ impl TaskServer {
                     return Some(*task_id);
                 }
                 let session = Session::find_by_id(pool, payload.session_id).await.ok()??;
-                let workspace = Workspace::find_by_id(pool, session.workspace_id).await.ok()??;
+                let workspace = Workspace::find_by_id(pool, session.workspace_id)
+                    .await
+                    .ok()??;
                 session_task_cache.insert(payload.session_id, workspace.task_id);
                 Some(workspace.task_id)
             }
@@ -1646,7 +1676,10 @@ Avoid: Guessing executor names; passing DEFAULT as a variant (omit variant inste
                 .collect();
             variants.sort();
 
-            let supports_mcp = config.get_default().map(|a| a.supports_mcp()).unwrap_or(false);
+            let supports_mcp = config
+                .get_default()
+                .map(|a| a.supports_mcp())
+                .unwrap_or(false);
 
             executors.push(McpExecutorSummary {
                 executor: executor.to_string(),
@@ -1725,12 +1758,12 @@ Avoid: Using this as an attempt/session listing (use list_task_attempts)."#,
         let limited: Vec<TaskWithAttemptStatus> = filtered.take(task_limit).collect();
 
         let task_ids: Vec<Uuid> = limited.iter().map(|task| task.id).collect();
-        let summaries = self
-            .task_attempt_summaries(task_ids)
-            .await
-            .map_err(|e| {
-                ErrorData::internal_error("Failed to compute attempt summaries", Some(json!({ "error": e.to_string() })))
-            })?;
+        let summaries = self.task_attempt_summaries(task_ids).await.map_err(|e| {
+            ErrorData::internal_error(
+                "Failed to compute attempt summaries",
+                Some(json!({ "error": e.to_string() })),
+            )
+        })?;
 
         let mut task_summaries = Vec::with_capacity(limited.len());
         for task in limited {
@@ -1760,9 +1793,14 @@ Avoid: Expecting attempt/session info here (use list_tasks/list_task_attempts)."
         let task = Task::find_by_id(&self.deployment.db().pool, task_id)
             .await
             .map_err(|e| {
-                ErrorData::internal_error("Failed to load task", Some(json!({ "error": e.to_string() })))
+                ErrorData::internal_error(
+                    "Failed to load task",
+                    Some(json!({ "error": e.to_string() })),
+                )
             })?
-            .ok_or_else(|| ErrorData::invalid_params("Task not found", Some(json!({ "task_id": task_id }))))?;
+            .ok_or_else(|| {
+                ErrorData::invalid_params("Task not found", Some(json!({ "task_id": task_id })))
+            })?;
         Self::success(&GetTaskResponse {
             task: McpTask::from_task(task),
         })
@@ -1865,7 +1903,9 @@ Avoid: Calling this just to set status=inprogress (start_attempt already does th
                     Some(json!({ "error": e.to_string(), "task_id": task_id })),
                 )
             })?
-            .ok_or_else(|| ErrorData::invalid_params("Task not found", Some(json!({ "task_id": task_id }))))?;
+            .ok_or_else(|| {
+                ErrorData::invalid_params("Task not found", Some(json!({ "task_id": task_id })))
+            })?;
 
         let status = status.and_then(|s| {
             let trimmed = s.trim();
@@ -1877,10 +1917,7 @@ Avoid: Calling this just to set status=inprogress (start_attempt already does th
         });
         let status = if let Some(status) = status {
             Some(TaskStatus::from_str(&status).map_err(|_| {
-                ErrorData::invalid_params(
-                    "Invalid task status",
-                    Some(json!({ "value": status })),
-                )
+                ErrorData::invalid_params("Invalid task status", Some(json!({ "value": status })))
             })?)
         } else {
             None
@@ -1909,7 +1946,10 @@ Avoid: Calling this just to set status=inprogress (start_attempt already does th
         )
         .await
         .map_err(|e| {
-            ErrorData::internal_error("Failed to update task", Some(json!({ "error": e.to_string() })))
+            ErrorData::internal_error(
+                "Failed to update task",
+                Some(json!({ "error": e.to_string() })),
+            )
         })?;
 
         Self::success(&UpdateTaskResponse {
@@ -1936,7 +1976,10 @@ Avoid: Deleting the wrong task (confirm with get_task first)."#,
         let rows = Task::delete(&self.deployment.db().pool, task_id)
             .await
             .map_err(|e| {
-                ErrorData::internal_error("Failed to delete task", Some(json!({ "error": e.to_string() })))
+                ErrorData::internal_error(
+                    "Failed to delete task",
+                    Some(json!({ "error": e.to_string() })),
+                )
             })?;
         let deleted_task_id = if rows > 0 {
             Some(task_id.to_string())
@@ -2057,7 +2100,9 @@ Avoid: Empty repos; guessing executor (use list_executors)."#,
                 return Self::err_with(
                     format!("Unknown executor '{executor_trimmed}'."),
                     Some(json!({ "value": executor_trimmed })),
-                    Some("Call list_executors to see valid executor names and variants.".to_string()),
+                    Some(
+                        "Call list_executors to see valid executor names and variants.".to_string(),
+                    ),
                     Some("invalid_argument"),
                     None,
                 );
@@ -2410,15 +2455,21 @@ Avoid: Providing both attempt_id and session_id; missing prompt."#,
                         )
                     })?;
 
-                let project_repos = ProjectRepo::find_by_project_id_with_names(pool, task.project_id)
-                    .await
-                    .map_err(|e| {
-                        ErrorData::internal_error(
-                            "Failed to load project repos",
-                            Some(json!({ "error": e.to_string(), "project_id": task.project_id })),
-                        )
-                    })?;
-                let cleanup_action = self.deployment.container().cleanup_actions_for_repos(&project_repos);
+                let project_repos = ProjectRepo::find_by_project_id_with_names(
+                    pool,
+                    task.project_id,
+                )
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        "Failed to load project repos",
+                        Some(json!({ "error": e.to_string(), "project_id": task.project_id })),
+                    )
+                })?;
+                let cleanup_action = self
+                    .deployment
+                    .container()
+                    .cleanup_actions_for_repos(&project_repos);
 
                 let working_dir = workspace
                     .agent_working_dir
@@ -2534,12 +2585,23 @@ Avoid: Expecting this to stop dev servers."#,
                     Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
                 )
             })?
-            .ok_or_else(|| ErrorData::invalid_params("Attempt not found", Some(json!({ "attempt_id": attempt_id }))))?;
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    "Attempt not found",
+                    Some(json!({ "attempt_id": attempt_id })),
+                )
+            })?;
 
         if force.unwrap_or(false) {
-            self.deployment.container().try_stop_force(&workspace, false).await;
+            self.deployment
+                .container()
+                .try_stop_force(&workspace, false)
+                .await;
         } else {
-            self.deployment.container().try_stop(&workspace, false).await;
+            self.deployment
+                .container()
+                .try_stop(&workspace, false)
+                .await;
         }
 
         Self::success(&StopAttemptResponse {
@@ -2551,9 +2613,9 @@ Avoid: Expecting this to stop dev servers."#,
     #[tool(
         description = r#"Use when: Tail attempt feed (state + normalized logs + pending approvals).
 Required: attempt_id
-Optional: limit, cursor, after_log_index
+Optional: limit, cursor, after_log_index, wait_ms
 Next: respond_approval, get_attempt_changes
-Avoid: Mixing cursor with after_log_index."#,
+Avoid: Mixing cursor with after_log_index; using wait_ms without after_log_index."#,
         output_schema = rmcp::handler::server::tool::schema_for_output::<TailAttemptFeedResponse>()
             .unwrap_or_else(|e| {
                 panic!(
@@ -2571,6 +2633,7 @@ Avoid: Mixing cursor with after_log_index."#,
             limit,
             cursor,
             after_log_index,
+            wait_ms,
         }): Parameters<TailAttemptFeedRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         if cursor.is_some() && after_log_index.is_some() {
@@ -2586,6 +2649,35 @@ Avoid: Mixing cursor with after_log_index."#,
             );
         }
 
+        let wait_ms = wait_ms.unwrap_or(0);
+        if wait_ms > 0 {
+            if after_log_index.is_none() {
+                return Self::err_with(
+                    "wait_ms is only supported when after_log_index is set.",
+                    Some(json!({ "wait_ms": wait_ms, "after_log_index": after_log_index })),
+                    Some("Provide after_log_index when using wait_ms.".to_string()),
+                    Some(MCP_CODE_WAIT_MS_REQUIRES_AFTER_LOG_INDEX),
+                    Some(false),
+                );
+            }
+
+            if wait_ms > TAIL_ATTEMPT_FEED_MAX_WAIT_MS {
+                return Self::err_with(
+                    "wait_ms exceeds the server limit.",
+                    Some(json!({
+                        "wait_ms": wait_ms,
+                        "max_wait_ms": TAIL_ATTEMPT_FEED_MAX_WAIT_MS,
+                    })),
+                    Some(format!(
+                        "Reduce wait_ms to <= {}.",
+                        TAIL_ATTEMPT_FEED_MAX_WAIT_MS
+                    )),
+                    Some(MCP_CODE_WAIT_MS_TOO_LARGE),
+                    Some(false),
+                );
+            }
+        }
+
         let pool = &self.deployment.db().pool;
         let workspace = Workspace::find_by_id(pool, attempt_id)
             .await
@@ -2595,7 +2687,12 @@ Avoid: Mixing cursor with after_log_index."#,
                     Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
                 )
             })?
-            .ok_or_else(|| ErrorData::invalid_params("Attempt not found", Some(json!({ "attempt_id": attempt_id }))))?;
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    "Attempt not found",
+                    Some(json!({ "attempt_id": attempt_id })),
+                )
+            })?;
 
         let latest_session = Session::find_latest_by_workspace_id(pool, workspace.id)
             .await
@@ -2612,15 +2709,18 @@ Avoid: Mixing cursor with after_log_index."#,
             ExecutionProcessRunReason::SetupScript,
             ExecutionProcessRunReason::CleanupScript,
         ] {
-            let Some(process) =
-                ExecutionProcess::find_latest_by_workspace_and_run_reason(pool, workspace.id, &run_reason)
-                    .await
-                    .map_err(|e| {
-                        ErrorData::internal_error(
-                            "Failed to resolve latest execution process",
-                            Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
-                        )
-                    })?
+            let Some(process) = ExecutionProcess::find_latest_by_workspace_and_run_reason(
+                pool,
+                workspace.id,
+                &run_reason,
+            )
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to resolve latest execution process",
+                    Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
+                )
+            })?
             else {
                 continue;
             };
@@ -2634,9 +2734,14 @@ Avoid: Mixing cursor with after_log_index."#,
             }
         }
 
-        let (state, failure_summary) = Self::map_attempt_state(latest_process.as_ref().map(|p| p.status.clone()));
+        let (mut state, mut failure_summary) =
+            Self::map_attempt_state(latest_process.as_ref().map(|p| p.status.clone()));
 
-        let (page, latest_execution_process_id, next_after_log_index) = if let Some(process) = latest_process.as_ref() {
+        let (mut page, mut latest_execution_process_id, mut next_after_log_index) = if let Some(
+            process,
+        ) =
+            latest_process.as_ref()
+        {
             let limit = limit.unwrap_or(50).clamp(1, 1000);
 
             if let Some(after) = after_log_index {
@@ -2665,10 +2770,7 @@ Avoid: Mixing cursor with after_log_index."#,
                     })
                     .collect::<Vec<_>>();
 
-                let next_after = entries
-                    .last()
-                    .map(|e| e.entry_index)
-                    .or(Some(after));
+                let next_after = entries.last().map(|e| e.entry_index).or(Some(after));
 
                 (
                     McpLogHistoryPage {
@@ -2742,13 +2844,7 @@ Avoid: Mixing cursor with after_log_index."#,
         let (pending, _) = self
             .deployment
             .approvals()
-            .list_approvals_by_attempt(
-                pool,
-                attempt_id,
-                Some("pending"),
-                200,
-                None,
-            )
+            .list_approvals_by_attempt(pool, attempt_id, Some("pending"), 200, None)
             .await
             .map_err(|e| {
                 ErrorData::internal_error(
@@ -2757,7 +2853,169 @@ Avoid: Mixing cursor with after_log_index."#,
                 )
             })?;
 
-        let pending_approvals = pending.into_iter().map(Self::approval_to_summary).collect();
+        let mut pending_approvals: Vec<McpApprovalSummary> =
+            pending.into_iter().map(Self::approval_to_summary).collect();
+
+        if wait_ms > 0
+            && after_log_index.is_some()
+            && pending_approvals.is_empty()
+            && page.entries.is_empty()
+        {
+            let Some(process) = latest_process.as_ref() else {
+                // No running process to wait on; return current snapshot.
+                return Self::success(&TailAttemptFeedResponse {
+                    attempt_id: workspace.id.to_string(),
+                    task_id: workspace.task_id.to_string(),
+                    workspace_branch: workspace.branch,
+                    state,
+                    latest_session_id: latest_session.as_ref().map(|s| s.id.to_string()),
+                    latest_execution_process_id,
+                    failure_summary,
+                    page,
+                    next_after_log_index,
+                    pending_approvals,
+                });
+            };
+
+            let after = after_log_index.unwrap_or(-1);
+            let process_id = process.id;
+            let wait_for = std::time::Duration::from_millis(wait_ms);
+
+            let mut approvals_rx = self.deployment.approvals().subscribe_created();
+            let store = self
+                .deployment
+                .container()
+                .get_msg_store_by_id(&process_id)
+                .await;
+            let mut log_rx = store.map(|store| store.subscribe_normalized_entries());
+
+            let deadline = tokio::time::sleep(wait_for);
+            tokio::pin!(deadline);
+
+            loop {
+                tokio::select! {
+                    _ = &mut deadline => break,
+                    recv = async { log_rx.as_mut().unwrap().recv().await }, if log_rx.is_some() => {
+                        match recv {
+                            Ok(event) => match event {
+                                utils::msg_store::LogEntryEvent::Append { entry_index, .. }
+                                | utils::msg_store::LogEntryEvent::Replace { entry_index, .. } => {
+                                    let idx = i64::try_from(entry_index).unwrap_or(i64::MAX);
+                                    if idx > after {
+                                        break;
+                                    }
+                                }
+                                utils::msg_store::LogEntryEvent::Finished => break,
+                            },
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => break,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                log_rx = None;
+                            }
+                        }
+                    }
+                    recv = approvals_rx.recv() => {
+                        match recv {
+                            Ok(approval) if approval.execution_process_id == process_id => break,
+                            Ok(_) => {}
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => break,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {}
+                        }
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(250)), if log_rx.is_none() => {
+                        let check = self
+                            .deployment
+                            .container()
+                            .log_history_after(
+                                process,
+                                utils::log_entries::LogEntryChannel::Normalized,
+                                1,
+                                after,
+                            )
+                            .await;
+                        match check {
+                            Ok((entries, _truncated)) if !entries.is_empty() => break,
+                            Ok(_) => {}
+                            Err(err) => {
+                                return Err(ErrorData::internal_error(
+                                    "Failed to check log history during wait",
+                                    Some(json!({ "error": err.to_string(), "execution_process_id": process_id })),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Refresh attempt state and data after waiting.
+            if let Some(fresh) = ExecutionProcess::find_by_id(pool, process_id)
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        "Failed to reload execution process",
+                        Some(json!({ "error": e.to_string(), "execution_process_id": process_id })),
+                    )
+                })?
+            {
+                latest_process = Some(fresh);
+            }
+
+            let (fresh_state, fresh_failure) =
+                Self::map_attempt_state(latest_process.as_ref().map(|p| p.status.clone()));
+            state = fresh_state;
+            failure_summary = fresh_failure;
+
+            // Refresh logs (after mode only).
+            if let Some(process) = latest_process.as_ref() {
+                let limit = limit.unwrap_or(50).clamp(1, 1000);
+                let (entries, history_truncated) = self
+                    .deployment
+                    .container()
+                    .log_history_after(
+                        process,
+                        utils::log_entries::LogEntryChannel::Normalized,
+                        limit,
+                        after,
+                    )
+                    .await
+                    .map_err(|e| {
+                        ErrorData::internal_error(
+                            "Failed to load log history",
+                            Some(json!({ "error": e.to_string(), "execution_process_id": process.id })),
+                        )
+                    })?;
+
+                let entries = entries
+                    .into_iter()
+                    .map(|entry| McpIndexedLogEntry {
+                        entry_index: i64::try_from(entry.entry_index).unwrap_or(i64::MAX),
+                        entry: entry.entry_json,
+                    })
+                    .collect::<Vec<_>>();
+
+                next_after_log_index = entries.last().map(|e| e.entry_index).or(Some(after));
+                latest_execution_process_id = Some(process.id.to_string());
+                page = McpLogHistoryPage {
+                    entries,
+                    next_cursor: None,
+                    has_more: false,
+                    history_truncated,
+                };
+            }
+
+            // Refresh pending approvals.
+            let (pending, _) = self
+                .deployment
+                .approvals()
+                .list_approvals_by_attempt(pool, attempt_id, Some("pending"), 200, None)
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        "Failed to list approvals",
+                        Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
+                    )
+                })?;
+            pending_approvals = pending.into_iter().map(Self::approval_to_summary).collect();
+        }
 
         Self::success(&TailAttemptFeedResponse {
             attempt_id: workspace.id.to_string(),
@@ -2799,14 +3057,19 @@ Avoid: Expecting raw tool logs (use tail_attempt_feed)."#,
         };
 
         let limit = limit.unwrap_or(20).clamp(1, 200);
-        let turns = CodingAgentTurn::tail_by_session_id(&self.deployment.db().pool, session_id, limit, cursor)
-            .await
-            .map_err(|e| {
-                ErrorData::internal_error(
-                    "Failed to tail session messages",
-                    Some(json!({ "error": e.to_string(), "session_id": session_id })),
-                )
-            })?;
+        let turns = CodingAgentTurn::tail_by_session_id(
+            &self.deployment.db().pool,
+            session_id,
+            limit,
+            cursor,
+        )
+        .await
+        .map_err(|e| {
+            ErrorData::internal_error(
+                "Failed to tail session messages",
+                Some(json!({ "error": e.to_string(), "session_id": session_id })),
+            )
+        })?;
 
         let entries = turns
             .entries
@@ -2854,22 +3117,26 @@ Avoid: Assuming files will be returned when blocked=true; using force unless you
                     Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
                 )
             })?
-            .ok_or_else(|| ErrorData::invalid_params("Attempt not found", Some(json!({ "attempt_id": attempt_id }))))?;
-
-        let query = crate::routes::task_attempts::AttemptChangesQuery { force };
-        let ResponseJson(response) =
-            crate::routes::task_attempts::get_task_attempt_changes(
-                axum::Extension(workspace),
-                axum::extract::State(self.deployment.clone()),
-                axum::extract::Query(query),
-            )
-            .await
-            .map_err(|e| {
-                ErrorData::internal_error(
-                    "Failed to compute attempt changes",
-                    Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    "Attempt not found",
+                    Some(json!({ "attempt_id": attempt_id })),
                 )
             })?;
+
+        let query = crate::routes::task_attempts::AttemptChangesQuery { force };
+        let ResponseJson(response) = crate::routes::task_attempts::get_task_attempt_changes(
+            axum::Extension(workspace),
+            axum::extract::State(self.deployment.clone()),
+            axum::extract::Query(query),
+        )
+        .await
+        .map_err(|e| {
+            ErrorData::internal_error(
+                "Failed to compute attempt changes",
+                Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
+            )
+        })?;
 
         let message = response.message().map(str::to_string);
         let changes = response.into_data().ok_or_else(|| {
@@ -2966,7 +3233,12 @@ Avoid: Absolute paths or .. traversal."#,
                     Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
                 )
             })?
-            .ok_or_else(|| ErrorData::invalid_params("Attempt not found", Some(json!({ "attempt_id": attempt_id }))))?;
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    "Attempt not found",
+                    Some(json!({ "attempt_id": attempt_id })),
+                )
+            })?;
 
         let query = crate::routes::task_attempts::AttemptFileQuery {
             path: Some(path.clone()),
@@ -2986,18 +3258,21 @@ Avoid: Absolute paths or .. traversal."#,
             )
         })?;
 
-        let file = response
-            .into_data()
-            .unwrap_or(crate::routes::task_attempts::AttemptFileResponse {
-            path,
-            blocked: true,
-            blocked_reason: Some(crate::routes::task_attempts::AttemptArtifactBlockedReason::SummaryFailed),
-            truncated: false,
-            start: 0,
-            bytes: 0,
-            total_bytes: None,
-            content: None,
-        });
+        let file =
+            response
+                .into_data()
+                .unwrap_or(crate::routes::task_attempts::AttemptFileResponse {
+                    path,
+                    blocked: true,
+                    blocked_reason: Some(
+                        crate::routes::task_attempts::AttemptArtifactBlockedReason::SummaryFailed,
+                    ),
+                    truncated: false,
+                    start: 0,
+                    bytes: 0,
+                    total_bytes: None,
+                    content: None,
+                });
 
         let blocked_reason = file.blocked_reason.map(|reason| match reason {
             crate::routes::task_attempts::AttemptArtifactBlockedReason::PathOutsideWorkspace => {
@@ -3097,7 +3372,12 @@ Avoid: Too many paths; huge max_bytes."#,
                     Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
                 )
             })?
-            .ok_or_else(|| ErrorData::invalid_params("Attempt not found", Some(json!({ "attempt_id": attempt_id }))))?;
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    "Attempt not found",
+                    Some(json!({ "attempt_id": attempt_id })),
+                )
+            })?;
 
         let req = crate::routes::task_attempts::AttemptPatchRequest {
             paths: paths.clone(),
@@ -3117,16 +3397,19 @@ Avoid: Too many paths; huge max_bytes."#,
             )
         })?;
 
-        let patch = response
-            .into_data()
-            .unwrap_or(crate::routes::task_attempts::AttemptPatchResponse {
-            blocked: true,
-            blocked_reason: Some(crate::routes::task_attempts::AttemptArtifactBlockedReason::SummaryFailed),
-            truncated: false,
-            bytes: 0,
-            paths,
-            patch: None,
-        });
+        let patch =
+            response
+                .into_data()
+                .unwrap_or(crate::routes::task_attempts::AttemptPatchResponse {
+                    blocked: true,
+                    blocked_reason: Some(
+                        crate::routes::task_attempts::AttemptArtifactBlockedReason::SummaryFailed,
+                    ),
+                    truncated: false,
+                    bytes: 0,
+                    paths,
+                    patch: None,
+                });
 
         let blocked_reason = patch.blocked_reason.map(|reason| match reason {
             crate::routes::task_attempts::AttemptArtifactBlockedReason::PathOutsideWorkspace => {
@@ -3259,7 +3542,10 @@ Avoid: Guessing attempt_id."#,
                 )
             })?;
 
-        let approvals = approvals.into_iter().map(Self::approval_to_summary).collect();
+        let approvals = approvals
+            .into_iter()
+            .map(Self::approval_to_summary)
+            .collect();
         Self::success(&ListApprovalsResponse {
             attempt_id: attempt_id.to_string(),
             approvals,
@@ -3439,13 +3725,13 @@ Avoid: Mixing cursor with after_event_id."#,
         let mut task_project_cache = HashMap::new();
         let mut session_project_cache = HashMap::new();
 
-        let (events, next_cursor, has_more, next_after) = if let Some(after_event_id) = after_event_id {
-            let mut events = Vec::new();
-            let mut last_seen_id = after_event_id;
+        let (events, next_cursor, has_more, next_after) =
+            if let Some(after_event_id) = after_event_id {
+                let mut events = Vec::new();
+                let mut last_seen_id = after_event_id;
 
-            loop {
-                let batch =
-                    EventOutbox::tail_after(pool, last_seen_id, limit)
+                loop {
+                    let batch = EventOutbox::tail_after(pool, last_seen_id, limit)
                         .await
                         .map_err(|e| {
                             ErrorData::internal_error(
@@ -3453,12 +3739,49 @@ Avoid: Mixing cursor with after_event_id."#,
                                 Some(json!({ "error": e.to_string() })),
                             )
                         })?;
-                if batch.is_empty() {
-                    break;
+                    if batch.is_empty() {
+                        break;
+                    }
+
+                    for entry in batch {
+                        last_seen_id = entry.id;
+                        let Some(pid) = self
+                            .project_id_for_event(
+                                &entry,
+                                &mut task_project_cache,
+                                &mut session_project_cache,
+                            )
+                            .await
+                        else {
+                            continue;
+                        };
+                        if pid == project_id {
+                            events.push(Self::activity_event_from_outbox(entry));
+                            if events.len() >= limit as usize {
+                                break;
+                            }
+                        }
+                    }
+
+                    if events.len() >= limit as usize {
+                        break;
+                    }
                 }
 
-                for entry in batch {
-                    last_seen_id = entry.id;
+                let has_more = events.len() >= limit as usize;
+                (events, None, has_more, Some(last_seen_id))
+            } else {
+                let (page, next_cursor, has_more) = EventOutbox::page_older(pool, cursor, limit)
+                    .await
+                    .map_err(|e| {
+                        ErrorData::internal_error(
+                            "Failed to page events",
+                            Some(json!({ "error": e.to_string() })),
+                        )
+                    })?;
+
+                let mut events = Vec::new();
+                for entry in page {
                     let Some(pid) = self
                         .project_id_for_event(
                             &entry,
@@ -3471,54 +3794,11 @@ Avoid: Mixing cursor with after_event_id."#,
                     };
                     if pid == project_id {
                         events.push(Self::activity_event_from_outbox(entry));
-                        if events.len() >= limit as usize {
-                            break;
-                        }
                     }
                 }
 
-                if events.len() >= limit as usize {
-                    break;
-                }
-            }
-
-            let has_more = events.len() >= limit as usize;
-            (
-                events,
-                None,
-                has_more,
-                Some(last_seen_id),
-            )
-        } else {
-            let (page, next_cursor, has_more) =
-                EventOutbox::page_older(pool, cursor, limit)
-                    .await
-                    .map_err(|e| {
-                        ErrorData::internal_error(
-                            "Failed to page events",
-                            Some(json!({ "error": e.to_string() })),
-                        )
-                    })?;
-
-            let mut events = Vec::new();
-            for entry in page {
-                let Some(pid) = self
-                    .project_id_for_event(
-                        &entry,
-                        &mut task_project_cache,
-                        &mut session_project_cache,
-                    )
-                    .await
-                else {
-                    continue;
-                };
-                if pid == project_id {
-                    events.push(Self::activity_event_from_outbox(entry));
-                }
-            }
-
-            (events, next_cursor, has_more, None)
-        };
+                (events, next_cursor, has_more, None)
+            };
 
         Self::success(&TailActivityResponse {
             events,
@@ -3560,13 +3840,13 @@ Avoid: Mixing cursor with after_event_id."#,
 
         let mut session_task_cache = HashMap::new();
 
-        let (events, next_cursor, has_more, next_after) = if let Some(after_event_id) = after_event_id {
-            let mut events = Vec::new();
-            let mut last_seen_id = after_event_id;
+        let (events, next_cursor, has_more, next_after) =
+            if let Some(after_event_id) = after_event_id {
+                let mut events = Vec::new();
+                let mut last_seen_id = after_event_id;
 
-            loop {
-                let batch =
-                    EventOutbox::tail_after(pool, last_seen_id, limit)
+                loop {
+                    let batch = EventOutbox::tail_after(pool, last_seen_id, limit)
                         .await
                         .map_err(|e| {
                             ErrorData::internal_error(
@@ -3574,40 +3854,35 @@ Avoid: Mixing cursor with after_event_id."#,
                                 Some(json!({ "error": e.to_string() })),
                             )
                         })?;
-                if batch.is_empty() {
-                    break;
-                }
+                    if batch.is_empty() {
+                        break;
+                    }
 
-                for entry in batch {
-                    last_seen_id = entry.id;
-                    let Some(tid) =
-                        self.task_id_for_event(&entry, &mut session_task_cache).await
-                    else {
-                        continue;
-                    };
-                    if tid == task_id {
-                        events.push(Self::activity_event_from_outbox(entry));
-                        if events.len() >= limit as usize {
-                            break;
+                    for entry in batch {
+                        last_seen_id = entry.id;
+                        let Some(tid) = self
+                            .task_id_for_event(&entry, &mut session_task_cache)
+                            .await
+                        else {
+                            continue;
+                        };
+                        if tid == task_id {
+                            events.push(Self::activity_event_from_outbox(entry));
+                            if events.len() >= limit as usize {
+                                break;
+                            }
                         }
+                    }
+
+                    if events.len() >= limit as usize {
+                        break;
                     }
                 }
 
-                if events.len() >= limit as usize {
-                    break;
-                }
-            }
-
-            let has_more = events.len() >= limit as usize;
-            (
-                events,
-                None,
-                has_more,
-                Some(last_seen_id),
-            )
-        } else {
-            let (page, next_cursor, has_more) =
-                EventOutbox::page_older(pool, cursor, limit)
+                let has_more = events.len() >= limit as usize;
+                (events, None, has_more, Some(last_seen_id))
+            } else {
+                let (page, next_cursor, has_more) = EventOutbox::page_older(pool, cursor, limit)
                     .await
                     .map_err(|e| {
                         ErrorData::internal_error(
@@ -3616,19 +3891,21 @@ Avoid: Mixing cursor with after_event_id."#,
                         )
                     })?;
 
-            let mut events = Vec::new();
-            for entry in page {
-                let Some(tid) = self.task_id_for_event(&entry, &mut session_task_cache).await
-                else {
-                    continue;
-                };
-                if tid == task_id {
-                    events.push(Self::activity_event_from_outbox(entry));
+                let mut events = Vec::new();
+                for entry in page {
+                    let Some(tid) = self
+                        .task_id_for_event(&entry, &mut session_task_cache)
+                        .await
+                    else {
+                        continue;
+                    };
+                    if tid == task_id {
+                        events.push(Self::activity_event_from_outbox(entry));
+                    }
                 }
-            }
 
-            (events, next_cursor, has_more, None)
-        };
+                (events, next_cursor, has_more, None)
+            };
 
         Self::success(&TailActivityResponse {
             events,
@@ -3646,8 +3923,8 @@ impl ServerHandler for TaskServer {
         request: rmcp::model::InitializeRequestParam,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> impl std::future::Future<Output = Result<rmcp::model::InitializeResult, rmcp::ErrorData>>
-           + Send
-           + '_ {
+    + Send
+    + '_ {
         // Default rmcp behavior: record peer info from initialize params once.
         if context.peer.peer_info().is_none() {
             context.peer.set_peer_info(request);
@@ -3686,8 +3963,6 @@ use axum::response::Json as ResponseJson;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::{
         path::Path,
         process::Command,
@@ -3698,20 +3973,18 @@ mod tests {
         time::Duration,
     };
 
-    use rmcp::ServiceExt;
-    use rmcp::handler::client::ClientHandler;
-
-    use rmcp::handler::server::tool::IntoCallToolResult;
-
     use db::models::{
-        execution_process::CreateExecutionProcess,
-        repo::Repo,
-        session::CreateSession,
+        execution_process::CreateExecutionProcess, repo::Repo, session::CreateSession,
     };
     use deployment::Deployment;
-    use executors::actions::{script::ScriptContext, ExecutorActionType};
+    use executors::actions::{ExecutorActionType, script::ScriptContext};
+    use rmcp::{
+        ServiceExt,
+        handler::{client::ClientHandler, server::tool::IntoCallToolResult},
+    };
     use services::services::config::DiffPreviewGuardPreset;
 
+    use super::*;
     use crate::test_support::TestEnvGuard;
 
     #[derive(Clone)]
@@ -3747,7 +4020,7 @@ mod tests {
         ) -> impl std::future::Future<
             Output = Result<rmcp::model::CreateElicitationResult, rmcp::ErrorData>,
         > + Send
-               + '_ {
+        + '_ {
             let response = self.response.clone();
             let calls = self.create_elicitation_calls.clone();
             async move {
@@ -3880,7 +4153,11 @@ mod tests {
 
         let server = TaskServer::new(deployment);
 
-        let list_projects_result = server.list_projects().await.into_call_tool_result().unwrap();
+        let list_projects_result = server
+            .list_projects()
+            .await
+            .into_call_tool_result()
+            .unwrap();
         assert!(list_projects_result.structured_content.is_some());
 
         let list_tasks_result = server
@@ -3911,6 +4188,7 @@ mod tests {
                 limit: Some(10),
                 cursor: Some(123),
                 after_log_index: Some(1),
+                wait_ms: None,
             }))
             .await
             .unwrap();
@@ -3922,11 +4200,76 @@ mod tests {
             .clone()
             .expect("structured_content should be present");
 
+        assert_eq!(structured["code"].as_str(), Some(MCP_CODE_MIXED_PAGINATION));
+        assert!(structured["hint"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn tail_attempt_feed_wait_ms_requires_after_log_index_is_structured_error() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let server = TaskServer::new(deployment);
+
+        let attempt_id = Uuid::new_v4();
+        let result = server
+            .tail_attempt_feed(Parameters(TailAttemptFeedRequest {
+                attempt_id,
+                limit: Some(10),
+                cursor: None,
+                after_log_index: None,
+                wait_ms: Some(10),
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result.is_error, Some(true));
+        let structured = result
+            .structured_content
+            .clone()
+            .expect("structured_content should be present");
         assert_eq!(
             structured["code"].as_str(),
-            Some(MCP_CODE_MIXED_PAGINATION)
+            Some(MCP_CODE_WAIT_MS_REQUIRES_AFTER_LOG_INDEX)
         );
-        assert!(structured["hint"].as_str().is_some());
+
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn tail_attempt_feed_wait_ms_too_large_is_structured_error() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let server = TaskServer::new(deployment);
+
+        let attempt_id = Uuid::new_v4();
+        let result = server
+            .tail_attempt_feed(Parameters(TailAttemptFeedRequest {
+                attempt_id,
+                limit: Some(10),
+                cursor: None,
+                after_log_index: Some(0),
+                wait_ms: Some(TAIL_ATTEMPT_FEED_MAX_WAIT_MS + 1),
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result.is_error, Some(true));
+        let structured = result
+            .structured_content
+            .clone()
+            .expect("structured_content should be present");
+        assert_eq!(
+            structured["code"].as_str(),
+            Some(MCP_CODE_WAIT_MS_TOO_LARGE)
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_root);
     }
 
     #[tokio::test]
@@ -4051,6 +4394,7 @@ mod tests {
                 limit: Some(2),
                 cursor: None,
                 after_log_index: Some(1),
+                wait_ms: None,
             }))
             .await
             .unwrap();
@@ -4073,6 +4417,7 @@ mod tests {
                 limit: Some(2),
                 cursor: None,
                 after_log_index: Some(3),
+                wait_ms: None,
             }))
             .await
             .unwrap();
@@ -4082,6 +4427,160 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0]["entry_index"], 4);
         assert_eq!(payload["next_after_log_index"], 4);
+
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn tail_attempt_feed_wait_ms_returns_when_new_log_appears() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = deployment.db().pool.clone();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &pool,
+            &db::models::project::CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &pool,
+            &CreateTask::from_title_description(
+                project_id,
+                "Test task".to_string(),
+                Some("Test description".to_string()),
+            ),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let repo = Repo::find_or_create(&pool, Path::new("/tmp/vk-test-repo"), "Test repo")
+            .await
+            .unwrap();
+
+        let attempt_id = Uuid::new_v4();
+        let workspace = Workspace::create(
+            &pool,
+            &CreateWorkspace {
+                branch: "test-branch".to_string(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        WorkspaceRepo::create_many(
+            &pool,
+            workspace.id,
+            &[CreateWorkspaceRepo {
+                repo_id: repo.id,
+                target_branch: "main".to_string(),
+            }],
+        )
+        .await
+        .unwrap();
+
+        let session = Session::create(
+            &pool,
+            &CreateSession {
+                executor: Some("CLAUDE_CODE".to_string()),
+            },
+            Uuid::new_v4(),
+            workspace.id,
+        )
+        .await
+        .unwrap();
+
+        let execution_process_id = Uuid::new_v4();
+        let _execution_process = ExecutionProcess::create(
+            &pool,
+            &CreateExecutionProcess {
+                session_id: session.id,
+                executor_action: ExecutorAction::new(
+                    ExecutorActionType::ScriptRequest(executors::actions::script::ScriptRequest {
+                        language: executors::actions::script::ScriptRequestLanguage::Bash,
+                        script: "echo hello".to_string(),
+                        context: ScriptContext::SetupScript,
+                        working_dir: None,
+                    }),
+                    None,
+                ),
+                run_reason: ExecutionProcessRunReason::CodingAgent,
+            },
+            execution_process_id,
+            &[CreateExecutionProcessRepoState {
+                repo_id: repo.id,
+                before_head_commit: None,
+                after_head_commit: None,
+                merge_commit: None,
+            }],
+        )
+        .await
+        .unwrap();
+
+        // Seed normalized log entries in the DB: entry_index 0..=4.
+        for idx in 0..=4i64 {
+            let entry_json = serde_json::json!({ "type": "test_log", "n": idx });
+            db::models::execution_process_log_entries::ExecutionProcessLogEntry::upsert_entry(
+                &pool,
+                execution_process_id,
+                utils::log_entries::LogEntryChannel::Normalized,
+                idx,
+                &entry_json.to_string(),
+            )
+            .await
+            .unwrap();
+        }
+
+        // Insert a new log entry shortly after the call starts waiting.
+        let pool2 = pool.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let entry_json = serde_json::json!({ "type": "test_log", "n": 5 });
+            db::models::execution_process_log_entries::ExecutionProcessLogEntry::upsert_entry(
+                &pool2,
+                execution_process_id,
+                utils::log_entries::LogEntryChannel::Normalized,
+                5,
+                &entry_json.to_string(),
+            )
+            .await
+            .unwrap();
+        });
+
+        let server = TaskServer::new(deployment);
+        let result = server
+            .tail_attempt_feed(Parameters(TailAttemptFeedRequest {
+                attempt_id,
+                limit: Some(10),
+                cursor: None,
+                after_log_index: Some(4),
+                wait_ms: Some(2_000),
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result.is_error, Some(false));
+        let text = result.content[0].as_text().unwrap().text.clone();
+        let payload: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let entries = payload["page"]["entries"].as_array().unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["entry_index"], 5);
+        assert_eq!(payload["next_after_log_index"], 5);
 
         let _ = std::fs::remove_dir_all(&temp_root);
     }
@@ -4143,7 +4642,10 @@ mod tests {
         );
         assert_eq!(structured["retryable"].as_bool(), Some(false));
         assert!(structured["hint"].as_str().is_some());
-        assert_eq!(structured["details"]["request_id"].as_str(), Some("req-123"));
+        assert_eq!(
+            structured["details"]["request_id"].as_str(),
+            Some("req-123")
+        );
 
         let _ = std::fs::remove_dir_all(&temp_root);
     }
@@ -4368,10 +4870,12 @@ mod tests {
         let client_running = client_running.unwrap();
 
         assert!(server_running.supports_elicitation());
-        assert!(server_running
-            .service()
-            .approvals_elicitation_started
-            .load(Ordering::SeqCst));
+        assert!(
+            server_running
+                .service()
+                .approvals_elicitation_started
+                .load(Ordering::SeqCst)
+        );
         assert!(server_running.service().peer.read().unwrap().is_some());
 
         let project_id = Uuid::new_v4();
@@ -4426,12 +4930,14 @@ mod tests {
             &CreateExecutionProcess {
                 session_id,
                 executor_action: ExecutorAction {
-                    typ: ExecutorActionType::ScriptRequest(executors::actions::script::ScriptRequest {
-                        script: "echo hi".to_string(),
-                        language: executors::actions::script::ScriptRequestLanguage::Bash,
-                        context: ScriptContext::SetupScript,
-                        working_dir: None,
-                    }),
+                    typ: ExecutorActionType::ScriptRequest(
+                        executors::actions::script::ScriptRequest {
+                            script: "echo hi".to_string(),
+                            language: executors::actions::script::ScriptRequestLanguage::Bash,
+                            context: ScriptContext::SetupScript,
+                            working_dir: None,
+                        },
+                    ),
                     next_action: None,
                 },
                 run_reason: ExecutionProcessRunReason::CodingAgent,
@@ -4527,10 +5033,12 @@ mod tests {
         let client_running = client_running.unwrap();
 
         assert!(server_running.supports_elicitation());
-        assert!(server_running
-            .service()
-            .approvals_elicitation_started
-            .load(Ordering::SeqCst));
+        assert!(
+            server_running
+                .service()
+                .approvals_elicitation_started
+                .load(Ordering::SeqCst)
+        );
         assert!(server_running.service().peer.read().unwrap().is_some());
 
         let project_id = Uuid::new_v4();
@@ -4585,12 +5093,14 @@ mod tests {
             &CreateExecutionProcess {
                 session_id,
                 executor_action: ExecutorAction {
-                    typ: ExecutorActionType::ScriptRequest(executors::actions::script::ScriptRequest {
-                        script: "echo hi".to_string(),
-                        language: executors::actions::script::ScriptRequestLanguage::Bash,
-                        context: ScriptContext::SetupScript,
-                        working_dir: None,
-                    }),
+                    typ: ExecutorActionType::ScriptRequest(
+                        executors::actions::script::ScriptRequest {
+                            script: "echo hi".to_string(),
+                            language: executors::actions::script::ScriptRequestLanguage::Bash,
+                            context: ScriptContext::SetupScript,
+                            working_dir: None,
+                        },
+                    ),
                     next_action: None,
                 },
                 run_reason: ExecutionProcessRunReason::CodingAgent,
@@ -4739,12 +5249,14 @@ mod tests {
             &CreateExecutionProcess {
                 session_id,
                 executor_action: ExecutorAction {
-                    typ: ExecutorActionType::ScriptRequest(executors::actions::script::ScriptRequest {
-                        script: "echo hi".to_string(),
-                        language: executors::actions::script::ScriptRequestLanguage::Bash,
-                        context: ScriptContext::SetupScript,
-                        working_dir: None,
-                    }),
+                    typ: ExecutorActionType::ScriptRequest(
+                        executors::actions::script::ScriptRequest {
+                            script: "echo hi".to_string(),
+                            language: executors::actions::script::ScriptRequestLanguage::Bash,
+                            context: ScriptContext::SetupScript,
+                            working_dir: None,
+                        },
+                    ),
                     next_action: None,
                 },
                 run_reason: ExecutionProcessRunReason::CodingAgent,

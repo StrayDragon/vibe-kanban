@@ -1,4 +1,5 @@
 pub mod approval;
+pub mod attempt_control_lease;
 pub mod coding_agent_turn;
 pub mod draft;
 pub mod event_outbox;
@@ -25,6 +26,7 @@ pub mod workspace;
 pub mod workspace_repo;
 
 pub use approval::Entity as Approval;
+pub use attempt_control_lease::Entity as AttemptControlLease;
 pub use coding_agent_turn::Entity as CodingAgentTurn;
 pub use draft::Entity as Draft;
 pub use event_outbox::Entity as EventOutbox;

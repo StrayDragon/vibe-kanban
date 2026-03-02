@@ -210,6 +210,14 @@ impl MsgStore {
         self.sender.subscribe()
     }
 
+    pub fn subscribe_raw_entries(&self) -> broadcast::Receiver<LogEntryEvent> {
+        self.raw_sender.subscribe()
+    }
+
+    pub fn subscribe_normalized_entries(&self) -> broadcast::Receiver<LogEntryEvent> {
+        self.normalized_sender.subscribe()
+    }
+
     pub fn get_history(&self) -> Vec<LogMsg> {
         self.inner
             .read()
@@ -321,10 +329,7 @@ impl MsgStore {
         let inner = self.inner.read().unwrap();
         let mut entries: Vec<LogEntrySnapshot> = Vec::new();
 
-        for (index, entry) in inner
-            .normalized_entries
-            .range((Excluded(after), Unbounded))
-        {
+        for (index, entry) in inner.normalized_entries.range((Excluded(after), Unbounded)) {
             entries.push(LogEntrySnapshot {
                 entry_index: *index,
                 entry_json: entry.entry_json.clone(),

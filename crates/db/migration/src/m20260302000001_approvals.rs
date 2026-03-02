@@ -14,7 +14,11 @@ impl MigrationTrait for Migration {
                     .col(pk_id_col(manager, Approvals::Id))
                     .col(uuid_col(Approvals::Uuid))
                     .col(ColumnDef::new(Approvals::AttemptId).uuid().not_null())
-                    .col(ColumnDef::new(Approvals::ExecutionProcessId).uuid().not_null())
+                    .col(
+                        ColumnDef::new(Approvals::ExecutionProcessId)
+                            .uuid()
+                            .not_null(),
+                    )
                     .col(
                         ColumnDef::new(Approvals::ToolCallId)
                             .string_len(128)
@@ -25,11 +29,7 @@ impl MigrationTrait for Migration {
                             .string_len(128)
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(Approvals::ToolInputJson)
-                            .json()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(Approvals::ToolInputJson).json().not_null())
                     .col(
                         ColumnDef::new(Approvals::Status)
                             .string_len(32)
@@ -40,10 +40,7 @@ impl MigrationTrait for Migration {
                     .col(timestamp_col(Approvals::CreatedAt))
                     .col(ColumnDef::new(Approvals::TimeoutAt).timestamp().not_null())
                     .col(ColumnDef::new(Approvals::RespondedAt).timestamp())
-                    .col(
-                        ColumnDef::new(Approvals::RespondedByClientId)
-                            .string_len(128),
-                    )
+                    .col(ColumnDef::new(Approvals::RespondedByClientId).string_len(128))
                     .col(timestamp_col(Approvals::UpdatedAt))
                     .to_owned(),
             )
@@ -152,4 +149,3 @@ enum Approvals {
     RespondedByClientId,
     UpdatedAt,
 }
-

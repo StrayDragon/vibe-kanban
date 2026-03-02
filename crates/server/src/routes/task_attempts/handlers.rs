@@ -47,7 +47,7 @@ use services::services::{
     github::GitHubService,
 };
 use utils::{
-    diff::{create_unified_diff, DiffSummary},
+    diff::{DiffSummary, create_unified_diff},
     response::ApiResponse,
     text::truncate_to_char_boundary,
 };
@@ -539,7 +539,12 @@ pub async fn get_task_attempt_file(
         .filter(|path| path.exists())
     {
         Some(path) => path,
-        None => PathBuf::from(deployment.container().ensure_container_exists(&workspace).await?),
+        None => PathBuf::from(
+            deployment
+                .container()
+                .ensure_container_exists(&workspace)
+                .await?,
+        ),
     };
     let canonical_root = std::fs::canonicalize(&workspace_root).map_err(ApiError::Io)?;
 
@@ -674,7 +679,12 @@ pub async fn get_task_attempt_patch(
         .filter(|path| path.exists())
     {
         Some(path) => path,
-        None => PathBuf::from(deployment.container().ensure_container_exists(&workspace).await?),
+        None => PathBuf::from(
+            deployment
+                .container()
+                .ensure_container_exists(&workspace)
+                .await?,
+        ),
     };
 
     let mut repo_inputs = Vec::new();

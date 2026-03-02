@@ -1,7 +1,6 @@
-use rmcp::{ServiceExt, transport::stdio};
 use deployment::Deployment;
-use server::DeploymentImpl;
-use server::mcp::task_server::TaskServer;
+use rmcp::{ServiceExt, transport::stdio};
+use server::{DeploymentImpl, mcp::task_server::TaskServer};
 use tracing_subscriber::{EnvFilter, prelude::*};
 
 fn main() -> anyhow::Result<()> {

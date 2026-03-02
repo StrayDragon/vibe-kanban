@@ -1,9 +1,6 @@
 pub mod executor_approvals;
 
-use std::{
-    sync::Arc,
-    time::Duration as StdDuration,
-};
+use std::{sync::Arc, time::Duration as StdDuration};
 
 use dashmap::DashMap;
 use db::{
@@ -111,7 +108,11 @@ impl Approvals {
         } else {
             // Persist the approval. This is the source of truth for list/respond and for restart recovery.
             let approval_id = Uuid::parse_str(&request.id).map_err(|err| {
-                ApprovalError::Custom(anyhow::anyhow!("Invalid approval id '{}': {}", request.id, err))
+                ApprovalError::Custom(anyhow::anyhow!(
+                    "Invalid approval id '{}': {}",
+                    request.id,
+                    err
+                ))
             })?;
 
             let ctx = ExecutionProcess::load_context(pool, request.execution_process_id).await?;
@@ -214,7 +215,12 @@ impl Approvals {
         }
 
         let _ = self.created_tx.send(request.clone());
-        self.spawn_timeout_watcher(pool.clone(), req_id.clone(), request.timeout_at, waiter.clone());
+        self.spawn_timeout_watcher(
+            pool.clone(),
+            req_id.clone(),
+            request.timeout_at,
+            waiter.clone(),
+        );
         Ok((request, waiter))
     }
 
@@ -258,9 +264,13 @@ impl Approvals {
         // Idempotent behavior: if the approval is already completed, return its status.
         // Otherwise persist the response and unblock any waiter.
         let final_status = if matches!(approval.status, ApprovalStatus::Pending) {
-            let updated =
-                approval_model::respond(pool, approval_uuid, req.status.clone(), responded_by_client_id)
-                    .await?;
+            let updated = approval_model::respond(
+                pool,
+                approval_uuid,
+                req.status.clone(),
+                responded_by_client_id,
+            )
+            .await?;
 
             if let Some((_, pending)) = self.pending.remove(id) {
                 let _ = pending.response_tx.send(updated.status.clone());
@@ -282,7 +292,8 @@ impl Approvals {
         if matches!(
             final_status,
             ApprovalStatus::Approved | ApprovalStatus::Denied { .. }
-        ) && let Ok(ctx) = ExecutionProcess::load_context(pool, tool_ctx.execution_process_id).await
+        ) && let Ok(ctx) =
+            ExecutionProcess::load_context(pool, tool_ctx.execution_process_id).await
             && ctx.task.status == TaskStatus::InReview
             && let Err(e) = Task::update_status(pool, ctx.task.id, TaskStatus::InProgress).await
         {
@@ -389,7 +400,13 @@ impl Approvals {
                     && let Ok(Some(current)) = approval_model::get_by_id(&pool, approval_uuid).await
                     && matches!(current.status, ApprovalStatus::Pending)
                 {
-                    let _ = approval_model::respond(&pool, approval_uuid, ApprovalStatus::TimedOut, None).await;
+                    let _ = approval_model::respond(
+                        &pool,
+                        approval_uuid,
+                        ApprovalStatus::TimedOut,
+                        None,
+                    )
+                    .await;
                 }
             }
 
@@ -404,10 +421,9 @@ impl Approvals {
                 };
 
                 if let Some(store) = store {
-                    if let Some((idx, entry)) =
-                        pending_approval
-                            .entry_index
-                            .zip(pending_approval.entry.clone())
+                    if let Some((idx, entry)) = pending_approval
+                        .entry_index
+                        .zip(pending_approval.entry.clone())
                     {
                         if let Some(updated_entry) = entry.with_tool_status(ToolStatus::TimedOut) {
                             store.push_patch(ConversationPatch::replace(idx, updated_entry));
@@ -484,7 +500,10 @@ fn find_matching_tool_use(
     None
 }
 
-fn find_tool_use_by_call_id(store: Arc<MsgStore>, tool_call_id: &str) -> Option<(usize, NormalizedEntry)> {
+fn find_tool_use_by_call_id(
+    store: Arc<MsgStore>,
+    tool_call_id: &str,
+) -> Option<(usize, NormalizedEntry)> {
     let history = store.get_history();
 
     for msg in history.iter().rev() {
@@ -526,8 +545,7 @@ mod tests {
     use executors::logs::{ActionType, NormalizedEntry, NormalizedEntryType, ToolStatus};
     use sea_orm::Database;
     use sea_orm_migration::MigratorTrait;
-    use utils::msg_store::MsgStore;
-    use utils::approvals::CreateApprovalRequest;
+    use utils::{approvals::CreateApprovalRequest, msg_store::MsgStore};
 
     use super::*;
 
@@ -725,8 +743,9 @@ mod tests {
         let db = setup_db().await;
         let (attempt_id, execution_process_id) = seed_execution_context(&db).await;
 
-        let msg_stores =
-            Arc::new(RwLock::new(std::collections::HashMap::<Uuid, Arc<MsgStore>>::new()));
+        let msg_stores = Arc::new(RwLock::new(
+            std::collections::HashMap::<Uuid, Arc<MsgStore>>::new(),
+        ));
         let approvals = Approvals::new(msg_stores);
 
         let request = ApprovalRequest::from_create(
@@ -775,8 +794,9 @@ mod tests {
         let db = setup_db().await;
         let (attempt_id, execution_process_id) = seed_execution_context(&db).await;
 
-        let msg_stores =
-            Arc::new(RwLock::new(std::collections::HashMap::<Uuid, Arc<MsgStore>>::new()));
+        let msg_stores = Arc::new(RwLock::new(
+            std::collections::HashMap::<Uuid, Arc<MsgStore>>::new(),
+        ));
         let approvals = Approvals::new(msg_stores.clone());
 
         let request = ApprovalRequest::from_create(
