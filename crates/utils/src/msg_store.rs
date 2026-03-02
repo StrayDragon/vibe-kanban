@@ -253,6 +253,26 @@ impl MsgStore {
         (entries, has_more)
     }
 
+    pub fn raw_history_after(&self, limit: usize, after: usize) -> Vec<LogEntrySnapshot> {
+        let inner = self.inner.read().unwrap();
+        let mut entries: Vec<LogEntrySnapshot> = Vec::new();
+
+        for entry in inner.raw_entries.iter() {
+            if entry.entry_index <= after {
+                continue;
+            }
+            entries.push(LogEntrySnapshot {
+                entry_index: entry.entry_index,
+                entry_json: entry.entry_json.clone(),
+            });
+            if entries.len() >= limit {
+                break;
+            }
+        }
+
+        entries
+    }
+
     pub fn raw_history_metadata(&self) -> HistoryMetadata {
         let inner = self.inner.read().unwrap();
         HistoryMetadata {
@@ -293,6 +313,28 @@ impl MsgStore {
         });
 
         (entries, has_more)
+    }
+
+    pub fn normalized_history_after(&self, limit: usize, after: usize) -> Vec<LogEntrySnapshot> {
+        use std::ops::Bound::{Excluded, Unbounded};
+
+        let inner = self.inner.read().unwrap();
+        let mut entries: Vec<LogEntrySnapshot> = Vec::new();
+
+        for (index, entry) in inner
+            .normalized_entries
+            .range((Excluded(after), Unbounded))
+        {
+            entries.push(LogEntrySnapshot {
+                entry_index: *index,
+                entry_json: entry.entry_json.clone(),
+            });
+            if entries.len() >= limit {
+                break;
+            }
+        }
+
+        entries
     }
 
     pub fn normalized_history_metadata(&self) -> HistoryMetadata {
@@ -789,6 +831,59 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].entry_index, 0);
         assert_eq!(entries[0].entry_json["content"]["content"], "updated");
+    }
+
+    #[test]
+    fn raw_history_after_returns_entries_after_index() {
+        let store = MsgStore::new();
+        store.push_stdout("one");
+        store.push_stdout("two");
+        store.push_stdout("three");
+
+        let entries = store.raw_history_after(10, 0);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].entry_index, 1);
+        assert_eq!(entries[1].entry_index, 2);
+
+        let entries = store.raw_history_after(10, 1);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].entry_index, 2);
+    }
+
+    fn add_normalized_entry(store: &MsgStore, index: usize, content: &str) {
+        let patch: Patch = serde_json::from_value(serde_json::json!([{
+            "op": "add",
+            "path": format!("/entries/{index}"),
+            "value": {
+                "type": "NORMALIZED_ENTRY",
+                "content": {
+                    "entry_type": { "type": "assistant_message" },
+                    "content": content,
+                    "metadata": null,
+                    "timestamp": null
+                }
+            }
+        }]))
+        .expect("valid add patch");
+
+        store.push_patch(patch);
+    }
+
+    #[test]
+    fn normalized_history_after_returns_entries_after_index() {
+        let store = MsgStore::new();
+        add_normalized_entry(&store, 0, "zero");
+        add_normalized_entry(&store, 1, "one");
+        add_normalized_entry(&store, 2, "two");
+
+        let entries = store.normalized_history_after(10, 0);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].entry_index, 1);
+        assert_eq!(entries[1].entry_index, 2);
+
+        let entries = store.normalized_history_after(1, 0);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].entry_index, 1);
     }
 
     #[tokio::test]

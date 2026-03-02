@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, Set,
@@ -9,6 +9,33 @@ use uuid::Uuid;
 use crate::entities::event_outbox;
 
 pub struct EventOutbox;
+
+#[derive(Debug, Clone)]
+pub struct EventOutboxEntry {
+    pub id: i64,
+    pub uuid: Uuid,
+    pub event_type: String,
+    pub entity_type: String,
+    pub entity_uuid: Uuid,
+    pub payload: Value,
+    pub created_at: DateTime<Utc>,
+    pub published_at: Option<DateTime<Utc>>,
+}
+
+impl EventOutboxEntry {
+    fn from_model(model: event_outbox::Model) -> Self {
+        Self {
+            id: model.id,
+            uuid: model.uuid,
+            event_type: model.event_type,
+            entity_type: model.entity_type,
+            entity_uuid: model.entity_uuid,
+            payload: model.payload,
+            created_at: model.created_at.into(),
+            published_at: model.published_at.map(Into::into),
+        }
+    }
+}
 
 impl EventOutbox {
     pub async fn enqueue<C: ConnectionTrait>(
@@ -81,6 +108,58 @@ impl EventOutbox {
         active.last_error = Set(Some(error.to_string()));
         active.update(db).await?;
         Ok(())
+    }
+
+    pub async fn tail_after<C: ConnectionTrait>(
+        db: &C,
+        after_id: i64,
+        limit: u64,
+    ) -> Result<Vec<EventOutboxEntry>, DbErr> {
+        let limit = limit.clamp(1, 200);
+        let records = event_outbox::Entity::find()
+            .filter(event_outbox::Column::Id.gt(after_id))
+            .order_by_asc(event_outbox::Column::Id)
+            .limit(limit)
+            .all(db)
+            .await?;
+        Ok(records.into_iter().map(EventOutboxEntry::from_model).collect())
+    }
+
+    pub async fn page_older<C: ConnectionTrait>(
+        db: &C,
+        cursor: Option<i64>,
+        limit: u64,
+    ) -> Result<(Vec<EventOutboxEntry>, Option<i64>, bool), DbErr> {
+        let limit = limit.clamp(1, 200);
+        let mut query = event_outbox::Entity::find().order_by_desc(event_outbox::Column::Id);
+        if let Some(cursor) = cursor {
+            query = query.filter(event_outbox::Column::Id.lt(cursor));
+        }
+
+        let mut records = query.limit(limit).all(db).await?;
+        // Oldest -> newest for clients
+        records.reverse();
+
+        let next_cursor = records.first().map(|r| r.id);
+        let has_more = if let Some(oldest) = next_cursor {
+            event_outbox::Entity::find()
+                .filter(event_outbox::Column::Id.lt(oldest))
+                .select_only()
+                .column(event_outbox::Column::Id)
+                .limit(1)
+                .into_tuple::<i64>()
+                .one(db)
+                .await?
+                .is_some()
+        } else {
+            false
+        };
+
+        Ok((
+            records.into_iter().map(EventOutboxEntry::from_model).collect(),
+            next_cursor,
+            has_more,
+        ))
     }
 }
 

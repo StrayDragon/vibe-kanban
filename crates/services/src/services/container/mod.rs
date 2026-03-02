@@ -1494,6 +1494,88 @@ pub trait ContainerService {
         })
     }
 
+    async fn log_history_after(
+        &self,
+        execution_process: &ExecutionProcess,
+        channel: LogEntryChannel,
+        limit: usize,
+        after_index: i64,
+    ) -> Result<(Vec<LogEntrySnapshot>, bool), ContainerError> {
+        let limit = limit.clamp(1, usize::MAX);
+        let after_usize = usize::try_from(after_index).unwrap_or(usize::MAX);
+
+        if execution_process.status != ExecutionProcessStatus::Running {
+            self.backfill_log_entries_if_incomplete(execution_process.id, channel)
+                .await?;
+        }
+
+        let mut merged: BTreeMap<usize, serde_json::Value> = BTreeMap::new();
+
+        if ExecutionProcessLogEntry::has_any(&self.db().pool, execution_process.id, channel).await?
+        {
+            let rows = ExecutionProcessLogEntry::fetch_after(
+                &self.db().pool,
+                execution_process.id,
+                channel,
+                limit,
+                after_index,
+            )
+            .await?;
+
+            for row in rows {
+                let index = match usize::try_from(row.entry_index) {
+                    Ok(idx) => idx,
+                    Err(_) => continue,
+                };
+
+                match serde_json::from_str::<serde_json::Value>(&row.entry_json) {
+                    Ok(value) => {
+                        merged.insert(index, value);
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            "Failed to parse log entry {} for {}: {}",
+                            row.entry_index,
+                            execution_process.id,
+                            err
+                        );
+                    }
+                }
+            }
+        }
+
+        let mut history_truncated = false;
+        if let Some(store) = self.get_msg_store_by_id(&execution_process.id).await {
+            let history_meta = match channel {
+                LogEntryChannel::Raw => store.raw_history_metadata(),
+                LogEntryChannel::Normalized => store.normalized_history_metadata(),
+            };
+            history_truncated = history_meta.evicted;
+
+            let snapshots = match channel {
+                LogEntryChannel::Raw => store.raw_history_after(limit, after_usize),
+                LogEntryChannel::Normalized => store.normalized_history_after(limit, after_usize),
+            };
+
+            for snapshot in snapshots {
+                merged.insert(snapshot.entry_index, snapshot.entry_json);
+            }
+        }
+
+        let mut entries = Vec::new();
+        for (entry_index, entry_json) in merged {
+            entries.push(LogEntrySnapshot {
+                entry_index,
+                entry_json,
+            });
+            if entries.len() >= limit {
+                break;
+            }
+        }
+
+        Ok((entries, history_truncated))
+    }
+
     fn spawn_stream_raw_logs_to_db(
         &self,
         execution_id: &Uuid,
@@ -1699,6 +1781,7 @@ pub trait ContainerService {
         &self,
         workspace: &Workspace,
         executor_profile_id: ExecutorProfileId,
+        prompt_override: Option<String>,
     ) -> Result<ExecutionProcess, ContainerError> {
         // Create container
         self.create(workspace).await?;
@@ -1733,7 +1816,10 @@ pub trait ContainerService {
         )
         .await?;
 
-        let mut prompt = task.to_prompt();
+        let prompt_override = prompt_override
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let mut prompt = prompt_override.unwrap_or_else(|| task.to_prompt());
         if let (Some(task_group_id), Some(node_id)) =
             (task.task_group_id, task.task_group_node_id.as_deref())
         {

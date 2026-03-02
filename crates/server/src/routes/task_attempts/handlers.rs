@@ -1133,7 +1133,7 @@ pub async fn create_task_attempt(
 
             if let Err(err) = deployment
                 .container()
-                .start_workspace(&workspace, executor_profile_id.clone())
+                .start_workspace(&workspace, executor_profile_id.clone(), None)
                 .await
             {
                 tracing::error!(

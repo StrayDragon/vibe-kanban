@@ -153,6 +153,39 @@ impl ExecutionProcessLogEntry {
             .collect())
     }
 
+    pub async fn fetch_after<C: ConnectionTrait>(
+        db: &C,
+        execution_id: Uuid,
+        channel: LogEntryChannel,
+        limit: usize,
+        after_index: i64,
+    ) -> Result<Vec<LogEntryRow>, DbErr> {
+        let execution_row_id = ids::execution_process_id_by_uuid(db, execution_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound(
+                "Execution process not found".to_string(),
+            ))?;
+        let channel_value = to_db_channel(channel);
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX) as u64;
+
+        let rows = execution_process_log_entry::Entity::find()
+            .filter(execution_process_log_entry::Column::ExecutionProcessId.eq(execution_row_id))
+            .filter(execution_process_log_entry::Column::Channel.eq(channel_value))
+            .filter(execution_process_log_entry::Column::EntryIndex.gt(after_index))
+            .order_by_asc(execution_process_log_entry::Column::EntryIndex)
+            .limit(limit)
+            .all(db)
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| LogEntryRow {
+                entry_index: row.entry_index,
+                entry_json: row.entry_json.to_string(),
+            })
+            .collect())
+    }
+
     pub async fn has_older<C: ConnectionTrait>(
         db: &C,
         execution_id: Uuid,

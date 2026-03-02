@@ -244,7 +244,7 @@ impl LocalDeployment {
         let file_search_entries = self.file_search_cache.cache_entry_count();
         let file_search_watchers = self.file_search_cache.watcher_count();
         let file_stats_entries = file_stats_cache_len();
-        let approvals_completed = self.approvals.completed_len();
+        let approvals_waiters = self.approvals.pending_len();
         let queued_messages = self.queued_message_service.queue_len();
         let log_backfill_entries = log_backfill_completion_cache_len();
 
@@ -270,9 +270,8 @@ impl LocalDeployment {
             "Cache budget"
         );
         tracing::info!(
-            cache = "approvals_completed",
-            ttl_secs = budgets.approvals_completed_ttl.as_secs(),
-            current_entries = approvals_completed,
+            cache = "approvals_waiters",
+            current_entries = approvals_waiters,
             "Cache budget"
         );
         tracing::info!(
