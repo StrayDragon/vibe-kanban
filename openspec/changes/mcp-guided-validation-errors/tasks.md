@@ -1,6 +1,6 @@
 ## 1. Specifications
 
-- [ ] 1.1 Update `openspec/specs/api-error-model/spec.md` to include a new MCP requirement for guided invalid-params tool errors (codes + missing_fields/path + hint + retryable=false); verify by reading the rendered spec file for correctness.
+- [ ] 1.1 Review the incremental spec at `openspec/changes/mcp-guided-validation-errors/specs/api-error-model/spec.md` for OpenSpec formatting (Requirement + `#### Scenario` WHEN/THEN) and alignment with the intended MCP error behavior; verify by inspection and `openspec status --change mcp-guided-validation-errors`.
 
 ## 2. Guided MCP Invalid-Params Errors
 
