@@ -22,6 +22,7 @@ use db::{
         event_outbox::{EventOutbox, EventOutboxEntry},
         execution_process::{ExecutionProcess, ExecutionProcessRunReason, ExecutionProcessStatus},
         execution_process_repo_state::CreateExecutionProcessRepoState,
+        mcp_tool_task as mcp_tool_task_model,
         project::Project,
         project_repo::ProjectRepo,
         session::Session,
@@ -45,8 +46,11 @@ use rmcp::{
     ErrorData, Json, ServerHandler,
     handler::server::tool::ToolRouter,
     model::{
-        CallToolResult, Content, EnumSchema, Icon, Implementation, InitializeRequestParams,
-        ProtocolVersion, ServerCapabilities, ServerInfo,
+        CallToolRequestParams, CallToolResult, CancelTaskParams, CancelTaskResult, Content,
+        CreateTaskResult, EnumSchema, GetTaskInfoParams, GetTaskPayloadResult, GetTaskResult,
+        GetTaskResultParams, Icon, Implementation, InitializeRequestParams, PaginatedRequestParams,
+        ProtocolVersion, ServerCapabilities, ServerInfo, Task as McpProtocolTask,
+        TaskStatus as McpProtocolTaskStatus, TasksCapability,
     },
     schemars, tool, tool_handler, tool_router,
 };
@@ -54,6 +58,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use services::services::container::ContainerService;
 use sha2::{Digest, Sha256};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, mcp::params::Parameters};
@@ -77,6 +82,15 @@ const IDEMPOTENCY_IN_PROGRESS_TTL_ENV: &str = "VK_IDEMPOTENCY_IN_PROGRESS_TTL_SE
 
 const DEFAULT_ATTEMPT_CONTROL_LEASE_TTL_SECS: i64 = 60 * 60;
 const ATTEMPT_CONTROL_LEASE_MAX_TTL_SECS: i64 = 24 * 60 * 60;
+
+const DEFAULT_MCP_TASK_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+const MCP_TASK_TTL_MS_ENV: &str = "VK_MCP_TASK_TTL_MS";
+
+const DEFAULT_MCP_TASK_POLL_INTERVAL_MS: u64 = 1_000;
+const MCP_TASK_POLL_INTERVAL_MS_ENV: &str = "VK_MCP_TASK_POLL_INTERVAL_MS";
+
+const DEFAULT_MCP_TASK_MAX_CONCURRENCY: usize = 4;
+const MCP_TASK_MAX_CONCURRENCY_ENV: &str = "VK_MCP_TASK_MAX_CONCURRENCY";
 
 fn idempotency_in_progress_ttl() -> Option<chrono::Duration> {
     let raw = match std::env::var(IDEMPOTENCY_IN_PROGRESS_TTL_ENV) {
@@ -117,6 +131,105 @@ fn idempotency_in_progress_ttl() -> Option<chrono::Duration> {
             Some(chrono::Duration::seconds(
                 DEFAULT_IDEMPOTENCY_IN_PROGRESS_TTL_SECS,
             ))
+        }
+    }
+}
+
+fn mcp_task_ttl_ms() -> Option<u64> {
+    let raw = match std::env::var(MCP_TASK_TTL_MS_ENV) {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return Some(DEFAULT_MCP_TASK_TTL_MS),
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "Failed to read {MCP_TASK_TTL_MS_ENV}; using default"
+            );
+            return Some(DEFAULT_MCP_TASK_TTL_MS);
+        }
+    };
+
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        tracing::warn!("{MCP_TASK_TTL_MS_ENV} is set but empty; using default");
+        return Some(DEFAULT_MCP_TASK_TTL_MS);
+    }
+
+    match trimmed.parse::<i64>() {
+        Ok(value) if value <= 0 => None,
+        Ok(value) => Some(value as u64),
+        Err(err) => {
+            tracing::warn!(
+                value = trimmed,
+                error = %err,
+                "Invalid {MCP_TASK_TTL_MS_ENV}; using default"
+            );
+            Some(DEFAULT_MCP_TASK_TTL_MS)
+        }
+    }
+}
+
+fn mcp_task_poll_interval_ms() -> u64 {
+    let raw = match std::env::var(MCP_TASK_POLL_INTERVAL_MS_ENV) {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return DEFAULT_MCP_TASK_POLL_INTERVAL_MS,
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "Failed to read {MCP_TASK_POLL_INTERVAL_MS_ENV}; using default"
+            );
+            return DEFAULT_MCP_TASK_POLL_INTERVAL_MS;
+        }
+    };
+
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        tracing::warn!("{MCP_TASK_POLL_INTERVAL_MS_ENV} is set but empty; using default");
+        return DEFAULT_MCP_TASK_POLL_INTERVAL_MS;
+    }
+
+    match trimmed.parse::<u64>() {
+        Ok(value) if value == 0 => DEFAULT_MCP_TASK_POLL_INTERVAL_MS,
+        Ok(value) => value,
+        Err(err) => {
+            tracing::warn!(
+                value = trimmed,
+                error = %err,
+                "Invalid {MCP_TASK_POLL_INTERVAL_MS_ENV}; using default"
+            );
+            DEFAULT_MCP_TASK_POLL_INTERVAL_MS
+        }
+    }
+}
+
+fn mcp_task_max_concurrency() -> usize {
+    let raw = match std::env::var(MCP_TASK_MAX_CONCURRENCY_ENV) {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return DEFAULT_MCP_TASK_MAX_CONCURRENCY,
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "Failed to read {MCP_TASK_MAX_CONCURRENCY_ENV}; using default"
+            );
+            return DEFAULT_MCP_TASK_MAX_CONCURRENCY;
+        }
+    };
+
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        tracing::warn!("{MCP_TASK_MAX_CONCURRENCY_ENV} is set but empty; using default");
+        return DEFAULT_MCP_TASK_MAX_CONCURRENCY;
+    }
+
+    match trimmed.parse::<usize>() {
+        Ok(value) if value == 0 => DEFAULT_MCP_TASK_MAX_CONCURRENCY,
+        Ok(value) => value,
+        Err(err) => {
+            tracing::warn!(
+                value = trimmed,
+                error = %err,
+                "Invalid {MCP_TASK_MAX_CONCURRENCY_ENV}; using default"
+            );
+            DEFAULT_MCP_TASK_MAX_CONCURRENCY
         }
     }
 }
@@ -859,6 +972,20 @@ pub struct TaskServer {
     tool_router: ToolRouter<TaskServer>,
     peer: Arc<std::sync::RwLock<Option<rmcp::service::Peer<rmcp::RoleServer>>>>,
     approvals_elicitation_started: Arc<AtomicBool>,
+    mcp_tasks: Arc<McpTasksRuntime>,
+}
+
+struct RunningMcpTask {
+    ct: CancellationToken,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+struct McpTasksRuntime {
+    running: tokio::sync::Mutex<HashMap<String, RunningMcpTask>>,
+    semaphore: Arc<tokio::sync::Semaphore>,
+    poll_interval_ms: u64,
+    ttl_ms: Option<u64>,
+    resumer_started: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -875,12 +1002,22 @@ impl From<ErrorData> for ToolOrRpcError {
 
 impl TaskServer {
     pub fn new(deployment: DeploymentImpl) -> Self {
-        Self {
+        let runtime = Arc::new(McpTasksRuntime {
+            running: tokio::sync::Mutex::new(HashMap::new()),
+            semaphore: Arc::new(tokio::sync::Semaphore::new(mcp_task_max_concurrency())),
+            poll_interval_ms: mcp_task_poll_interval_ms(),
+            ttl_ms: mcp_task_ttl_ms(),
+            resumer_started: AtomicBool::new(false),
+        });
+
+        let server = Self {
             deployment,
             tool_router: Self::tool_router(),
             peer: Arc::new(std::sync::RwLock::new(None)),
             approvals_elicitation_started: Arc::new(AtomicBool::new(false)),
-        }
+            mcp_tasks: runtime,
+        };
+        server
     }
 
     fn record_peer(&self, peer: rmcp::service::Peer<rmcp::RoleServer>) {
@@ -963,8 +1100,7 @@ impl TaskServer {
                 let timeout = (approval.timeout_at - chrono::Utc::now()).to_std().ok();
 
                 let decision_schema =
-                    EnumSchema::builder(vec!["approved".to_string(), "denied".to_string()])
-                        .build();
+                    EnumSchema::builder(vec!["approved".to_string(), "denied".to_string()]).build();
 
                 let schema = match rmcp::model::ElicitationSchema::builder()
                     .required_enum_schema("decision", decision_schema)
@@ -1085,6 +1221,222 @@ impl TaskServer {
                 }
             }
         });
+    }
+
+    fn spawn_mcp_task_resumer(&self, peer: rmcp::service::Peer<rmcp::RoleServer>) {
+        if self.mcp_tasks.resumer_started.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
+        let server = self.clone();
+        tokio::spawn(async move {
+            if let Err(err) = server.resume_working_mcp_tasks(peer).await {
+                tracing::warn!(error = %err, "Failed to resume MCP tasks");
+            }
+        });
+    }
+
+    async fn resume_working_mcp_tasks(
+        &self,
+        peer: rmcp::service::Peer<rmcp::RoleServer>,
+    ) -> Result<(), DbErr> {
+        let pool = &self.deployment.db().pool;
+        let _ = mcp_tool_task_model::delete_expired(pool).await;
+
+        let tasks = mcp_tool_task_model::list_working(pool).await?;
+        for task in tasks {
+            if task.resumable {
+                self.spawn_mcp_tool_task_execution(
+                    task.task_id.clone(),
+                    task.tool_name.clone(),
+                    task.tool_arguments_json.clone(),
+                    peer.clone(),
+                )
+                .await;
+            } else {
+                let _ = mcp_tool_task_model::update_status(
+                    pool,
+                    &task.task_id,
+                    "failed",
+                    Some("Server restarted; task was not resumable.".to_string()),
+                )
+                .await;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn spawn_mcp_tool_task_execution(
+        &self,
+        task_id: String,
+        tool_name: String,
+        tool_arguments_json: serde_json::Value,
+        peer: rmcp::service::Peer<rmcp::RoleServer>,
+    ) {
+        {
+            let running = self.mcp_tasks.running.lock().await;
+            if running.contains_key(&task_id) {
+                return;
+            }
+        }
+
+        let ct = CancellationToken::new();
+        let ct_for_exec = ct.clone();
+        let task_id_for_exec = task_id.clone();
+        let server = self.clone();
+        let runtime = self.mcp_tasks.clone();
+        let handle = tokio::spawn(async move {
+            let _permit = runtime
+                .semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("MCP task semaphore closed");
+
+            let pool = &server.deployment.db().pool;
+            let current = match mcp_tool_task_model::find_by_task_id(pool, &task_id_for_exec).await
+            {
+                Ok(Some(task)) => task,
+                Ok(None) => return,
+                Err(err) => {
+                    tracing::warn!(task_id = task_id_for_exec, error = %err, "Failed to load MCP task");
+                    return;
+                }
+            };
+
+            if current.status != "working" {
+                let mut running = runtime.running.lock().await;
+                running.remove(&task_id_for_exec);
+                return;
+            }
+
+            let arguments = tool_arguments_json.as_object().cloned();
+            let request = CallToolRequestParams {
+                meta: None,
+                name: std::borrow::Cow::Owned(tool_name.clone()),
+                arguments,
+                task: None,
+            };
+
+            let context = rmcp::service::RequestContext::<rmcp::RoleServer> {
+                ct: ct_for_exec.clone(),
+                id: rmcp::model::NumberOrString::String(format!("task:{task_id_for_exec}").into()),
+                meta: rmcp::model::Meta::new(),
+                extensions: rmcp::model::Extensions::default(),
+                peer,
+            };
+
+            let execution = tokio::select! {
+                _ = ct_for_exec.cancelled() => None,
+                result = server.call_tool(request, context) => Some(result),
+            };
+
+            match execution {
+                None => {
+                    let _ = mcp_tool_task_model::update_status(
+                        pool,
+                        &task_id_for_exec,
+                        "cancelled",
+                        Some("Cancelled.".to_string()),
+                    )
+                    .await;
+                }
+                Some(Ok(result)) => {
+                    let status = if result.is_error == Some(true) {
+                        "failed"
+                    } else {
+                        "completed"
+                    };
+
+                    let payload = serde_json::to_value(&result).unwrap_or_else(|_| {
+                        json!({
+                            "content": [{"type": "text", "text": "Failed to serialize tool result."}],
+                            "isError": true
+                        })
+                    });
+
+                    let _ = mcp_tool_task_model::finish_with_payload(
+                        pool,
+                        &task_id_for_exec,
+                        status,
+                        payload,
+                        None,
+                    )
+                    .await;
+                }
+                Some(Err(err)) => {
+                    let tool_result = TaskServer::err_with(
+                        "Tool execution failed.",
+                        Some(json!({
+                            "task_id": task_id_for_exec,
+                            "tool": tool_name,
+                            "rpc_error": {
+                                "code": err.code.0,
+                                "message": err.message,
+                                "data": err.data,
+                            }
+                        })),
+                        Some("RPC-level failure while executing tool.".to_string()),
+                        Some("rpc_error"),
+                        Some(false),
+                    )
+                    .unwrap_or(CallToolResult {
+                        content: vec![Content::text("Tool execution failed.".to_string())],
+                        structured_content: None,
+                        is_error: Some(true),
+                        meta: None,
+                    });
+
+                    let payload = serde_json::to_value(&tool_result).unwrap_or_else(|_| {
+                        json!({
+                            "content": [{"type": "text", "text": "Tool execution failed."}],
+                            "isError": true
+                        })
+                    });
+
+                    let _ = mcp_tool_task_model::finish_with_payload(
+                        pool,
+                        &task_id_for_exec,
+                        "failed",
+                        payload,
+                        Some("Tool execution failed.".to_string()),
+                    )
+                    .await;
+                }
+            }
+
+            let mut running = runtime.running.lock().await;
+            running.remove(&task_id_for_exec);
+        });
+
+        let mut running = self.mcp_tasks.running.lock().await;
+        running.insert(task_id, RunningMcpTask { ct, handle });
+    }
+
+    fn mcp_task_status_from_db(raw: &str) -> McpProtocolTaskStatus {
+        match raw {
+            "working" => McpProtocolTaskStatus::Working,
+            "input_required" => McpProtocolTaskStatus::InputRequired,
+            "completed" => McpProtocolTaskStatus::Completed,
+            "failed" => McpProtocolTaskStatus::Failed,
+            "cancelled" => McpProtocolTaskStatus::Cancelled,
+            _ => McpProtocolTaskStatus::Working,
+        }
+    }
+
+    fn mcp_protocol_task_from_record(record: &mcp_tool_task_model::McpToolTask) -> McpProtocolTask {
+        McpProtocolTask {
+            task_id: record.task_id.clone(),
+            status: Self::mcp_task_status_from_db(&record.status),
+            status_message: record.status_message.clone(),
+            created_at: record.created_at.to_rfc3339(),
+            last_updated_at: record.last_updated_at.to_rfc3339(),
+            ttl: record.ttl_ms.and_then(|value| u64::try_from(value).ok()),
+            poll_interval: record
+                .poll_interval_ms
+                .and_then(|value| u64::try_from(value).ok()),
+        }
     }
 
     fn json_pretty_for_content(value: &Value) -> String {
@@ -3668,7 +4020,8 @@ Required: attempt_id
 Optional: force
 Next: get_attempt_patch
 Avoid: Assuming files will be returned when blocked=true; using force unless you accept larger output."#,
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        execution(task_support = "optional")
     )]
     async fn get_attempt_changes(
         &self,
@@ -3782,7 +4135,8 @@ Required: attempt_id, path
 Optional: start, max_bytes
 Next: get_attempt_patch
 Avoid: Absolute paths or .. traversal."#,
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        execution(task_support = "optional")
     )]
     async fn get_attempt_file(
         &self,
@@ -3919,7 +4273,8 @@ Required: attempt_id, paths
 Optional: force, max_bytes
 Next: send_follow_up
 Avoid: Too many paths; huge max_bytes."#,
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        execution(task_support = "optional")
     )]
     async fn get_attempt_patch(
         &self,
@@ -4498,6 +4853,309 @@ Avoid: Mixing cursor with after_event_id."#,
 
 #[tool_handler]
 impl ServerHandler for TaskServer {
+    fn enqueue_task(
+        &self,
+        request: CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> impl std::future::Future<Output = Result<CreateTaskResult, rmcp::ErrorData>> + Send + '_
+    {
+        async move {
+            let pool = &self.deployment.db().pool;
+            let _ = mcp_tool_task_model::delete_expired(pool).await;
+
+            let created_by_client_id = context
+                .peer
+                .peer_info()
+                .map(|info| format!("mcp:{}@{}", info.client_info.name, info.client_info.version));
+
+            let tool_name = request.name.to_string();
+            let tool_arguments =
+                serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
+
+            let resumable = self
+                .get_tool(&request.name)
+                .and_then(|tool| tool.annotations)
+                .and_then(|anno| anno.read_only_hint)
+                .unwrap_or(false);
+
+            let attempt_id = request
+                .arguments
+                .as_ref()
+                .and_then(|args| args.get("attempt_id"))
+                .and_then(|value| value.as_str())
+                .and_then(|raw| Uuid::parse_str(raw).ok());
+
+            let mut kanban_task_id = None;
+            let mut project_id = None;
+            if let Some(attempt_id) = attempt_id {
+                if let Ok(Some(workspace)) = Workspace::find_by_id(pool, attempt_id).await {
+                    kanban_task_id = Some(workspace.task_id);
+                    if let Ok(Some(task)) = Task::find_by_id(pool, workspace.task_id).await {
+                        project_id = Some(task.project_id);
+                    }
+                }
+            }
+
+            let ttl_ms = self
+                .mcp_tasks
+                .ttl_ms
+                .and_then(|value| i64::try_from(value).ok());
+            let poll_interval_ms = i64::try_from(self.mcp_tasks.poll_interval_ms).ok();
+
+            let task_id = Uuid::new_v4().to_string();
+            let record = mcp_tool_task_model::insert_working(
+                pool,
+                task_id.clone(),
+                created_by_client_id,
+                tool_name.clone(),
+                tool_arguments.clone(),
+                attempt_id,
+                kanban_task_id,
+                project_id,
+                ttl_ms,
+                poll_interval_ms,
+                resumable,
+            )
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to persist MCP task",
+                    Some(json!({ "error": e.to_string(), "tool": tool_name })),
+                )
+            })?;
+
+            self.spawn_mcp_tool_task_execution(
+                task_id.clone(),
+                tool_name,
+                tool_arguments,
+                context.peer,
+            )
+            .await;
+
+            Ok(CreateTaskResult {
+                task: Self::mcp_protocol_task_from_record(&record),
+            })
+        }
+    }
+
+    fn list_tasks(
+        &self,
+        request: Option<PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> impl std::future::Future<Output = Result<rmcp::model::ListTasksResult, rmcp::ErrorData>>
+    + Send
+    + '_ {
+        async move {
+            let pool = &self.deployment.db().pool;
+            let _ = mcp_tool_task_model::delete_expired(pool).await;
+
+            let mut status = None;
+            let mut attempt_id = None;
+            let mut kanban_task_id = None;
+            let mut project_id = None;
+            let mut limit = 20_u64;
+
+            if let Some(params) = request.as_ref() {
+                if let Some(meta) = params.meta.as_ref() {
+                    if let Some(vk) = meta.get("vk").and_then(|v| v.as_object()) {
+                        status = vk
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        attempt_id = vk
+                            .get("attempt_id")
+                            .and_then(|v| v.as_str())
+                            .and_then(|raw| Uuid::parse_str(raw).ok());
+                        project_id = vk
+                            .get("project_id")
+                            .and_then(|v| v.as_str())
+                            .and_then(|raw| Uuid::parse_str(raw).ok());
+                        kanban_task_id = vk
+                            .get("kanban_task_id")
+                            .or_else(|| vk.get("task_id"))
+                            .and_then(|v| v.as_str())
+                            .and_then(|raw| Uuid::parse_str(raw).ok());
+                        limit = vk
+                            .get("limit")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(limit)
+                            .clamp(1, 200);
+                    }
+                }
+            }
+
+            let cursor = request
+                .as_ref()
+                .and_then(|params| params.cursor.as_ref())
+                .map(|raw| raw.trim().to_string())
+                .filter(|raw| !raw.is_empty());
+
+            let cursor = match cursor {
+                None => None,
+                Some(raw) => Some(raw.parse::<i64>().map_err(|_| {
+                    ErrorData::invalid_params("Invalid cursor", Some(json!({ "cursor": raw })))
+                })?),
+            };
+
+            let (tasks, next_cursor) = mcp_tool_task_model::list(
+                pool,
+                status.as_deref(),
+                attempt_id,
+                kanban_task_id,
+                project_id,
+                limit,
+                cursor,
+            )
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to list MCP tasks",
+                    Some(json!({ "error": e.to_string() })),
+                )
+            })?;
+
+            Ok(rmcp::model::ListTasksResult {
+                tasks: tasks
+                    .into_iter()
+                    .map(|task| Self::mcp_protocol_task_from_record(&task))
+                    .collect(),
+                next_cursor: next_cursor.map(|value| value.to_string()),
+                total: None,
+            })
+        }
+    }
+
+    fn get_task_info(
+        &self,
+        request: GetTaskInfoParams,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> impl std::future::Future<Output = Result<GetTaskResult, rmcp::ErrorData>> + Send + '_ {
+        async move {
+            let pool = &self.deployment.db().pool;
+            let _ = mcp_tool_task_model::delete_expired(pool).await;
+
+            let task = mcp_tool_task_model::find_by_task_id(pool, &request.task_id)
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        "Failed to load MCP task",
+                        Some(json!({ "error": e.to_string(), "task_id": request.task_id })),
+                    )
+                })?
+                .ok_or_else(|| {
+                    ErrorData::resource_not_found(
+                        "Task not found",
+                        Some(json!({ "task_id": request.task_id })),
+                    )
+                })?;
+
+            Ok(GetTaskResult {
+                meta: request.meta,
+                task: Self::mcp_protocol_task_from_record(&task),
+            })
+        }
+    }
+
+    fn get_task_result(
+        &self,
+        request: GetTaskResultParams,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> impl std::future::Future<Output = Result<GetTaskPayloadResult, rmcp::ErrorData>> + Send + '_
+    {
+        async move {
+            let pool = &self.deployment.db().pool;
+            let _ = mcp_tool_task_model::delete_expired(pool).await;
+
+            let task = mcp_tool_task_model::find_by_task_id(pool, &request.task_id)
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        "Failed to load MCP task result",
+                        Some(json!({ "error": e.to_string(), "task_id": request.task_id })),
+                    )
+                })?
+                .ok_or_else(|| {
+                    ErrorData::resource_not_found(
+                        "Task not found",
+                        Some(json!({ "task_id": request.task_id })),
+                    )
+                })?;
+
+            if let Some(payload) = task.result_json {
+                return Ok(GetTaskPayloadResult(payload));
+            }
+            if let Some(payload) = task.error_json {
+                return Ok(GetTaskPayloadResult(payload));
+            }
+
+            Err(ErrorData::invalid_request(
+                "Task result not available",
+                Some(json!({ "task_id": request.task_id, "status": task.status })),
+            ))
+        }
+    }
+
+    fn cancel_task(
+        &self,
+        request: CancelTaskParams,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> impl std::future::Future<Output = Result<CancelTaskResult, rmcp::ErrorData>> + Send + '_
+    {
+        async move {
+            let pool = &self.deployment.db().pool;
+            let _ = mcp_tool_task_model::delete_expired(pool).await;
+
+            let current = mcp_tool_task_model::find_by_task_id(pool, &request.task_id)
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        "Failed to load MCP task",
+                        Some(json!({ "error": e.to_string(), "task_id": request.task_id })),
+                    )
+                })?
+                .ok_or_else(|| {
+                    ErrorData::resource_not_found(
+                        "Task not found",
+                        Some(json!({ "task_id": request.task_id })),
+                    )
+                })?;
+
+            if current.status != "working" && current.status != "input_required" {
+                return Ok(CancelTaskResult {
+                    meta: request.meta,
+                    task: Self::mcp_protocol_task_from_record(&current),
+                });
+            }
+
+            let updated = mcp_tool_task_model::update_status(
+                pool,
+                &request.task_id,
+                "cancelled",
+                Some("Cancelled by client.".to_string()),
+            )
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to cancel task",
+                    Some(json!({ "error": e.to_string(), "task_id": request.task_id })),
+                )
+            })?;
+
+            {
+                let mut running = self.mcp_tasks.running.lock().await;
+                if let Some(running) = running.remove(&request.task_id) {
+                    running.ct.cancel();
+                    running.handle.abort();
+                }
+            }
+
+            Ok(CancelTaskResult {
+                meta: request.meta,
+                task: Self::mcp_protocol_task_from_record(&updated),
+            })
+        }
+    }
+
     fn initialize(
         &self,
         request: InitializeRequestParams,
@@ -4510,8 +5168,10 @@ impl ServerHandler for TaskServer {
             context.peer.set_peer_info(request);
         }
 
-        self.record_peer(context.peer.clone());
-        self.start_approvals_elicitation_if_supported(context.peer);
+        let peer = context.peer.clone();
+        self.record_peer(peer.clone());
+        self.start_approvals_elicitation_if_supported(peer.clone());
+        self.spawn_mcp_task_resumer(peer);
 
         std::future::ready(Ok(self.get_info()))
     }
@@ -4520,8 +5180,11 @@ impl ServerHandler for TaskServer {
         let instruction = "Vibe Kanban MCP control plane (native mode). Recommended closed-loop: start_attempt (with optional prompt) → tail_attempt_feed (poll with after_log_index) → respond_approval (when pending approvals appear) → get_attempt_changes/get_attempt_patch/get_attempt_file as needed → stop_attempt. For broader observability, use tail_project_activity/tail_task_activity. Errors: invalid/ill-typed tool inputs return JSON-RPC invalid_params; business failures return tool-level structured errors in structuredContent with {code,retryable,hint,details}. Some clients may also support approvals via MCP elicitation (server push) when declared during initialize.".to_string();
 
         ServerInfo {
-            protocol_version: ProtocolVersion::V_2025_03_26,
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            protocol_version: ProtocolVersion::LATEST,
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .enable_tasks_with(TasksCapability::server_default())
+                .build(),
             server_info: Implementation {
                 name: "vibe-kanban".to_string(),
                 title: Some("Vibe Kanban MCP Server".to_string()),
@@ -4700,6 +5363,58 @@ mod tests {
         assert_eq!(delete_task.read_only_hint, Some(false));
         assert_eq!(delete_task.destructive_hint, Some(true));
         assert_eq!(delete_task.idempotent_hint, Some(true));
+    }
+
+    #[test]
+    fn tool_router_marks_large_attempt_tools_as_task_optional() {
+        let tools = TaskServer::tool_router().list_all();
+
+        let tool = |name: &str| {
+            tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == name)
+                .unwrap_or_else(|| panic!("Missing tool: {}", name))
+        };
+
+        for name in [
+            "get_attempt_changes",
+            "get_attempt_file",
+            "get_attempt_patch",
+        ] {
+            let execution = tool(name)
+                .execution
+                .as_ref()
+                .unwrap_or_else(|| panic!("Missing execution for {}", name));
+            assert_eq!(
+                execution.task_support,
+                Some(rmcp::model::TaskSupport::Optional),
+                "Expected taskSupport=optional for {}",
+                name
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn server_info_declares_latest_protocol_and_tasks_capability() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+        let deployment = DeploymentImpl::new().await.expect("deployment");
+        let server = TaskServer::new(deployment);
+
+        let info = server.get_info();
+        assert_eq!(info.protocol_version, ProtocolVersion::LATEST);
+
+        let tasks = info
+            .capabilities
+            .tasks
+            .as_ref()
+            .expect("Missing tasks capability");
+        assert!(tasks.supports_list());
+        assert!(tasks.supports_cancel());
+        assert!(tasks.supports_tools_call());
+
+        let _ = std::fs::remove_dir_all(&temp_root);
     }
 
     #[tokio::test]

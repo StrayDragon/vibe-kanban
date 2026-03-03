@@ -7,6 +7,7 @@ mod m20260227000000_idempotency_keys;
 mod m20260302000000_project_git_no_verify_override;
 mod m20260302000001_approvals;
 mod m20260302000002_attempt_control_leases;
+mod m20260303000000_mcp_tool_tasks;
 
 pub struct Migrator;
 
@@ -21,6 +22,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260302000000_project_git_no_verify_override::Migration),
             Box::new(m20260302000001_approvals::Migration),
             Box::new(m20260302000002_attempt_control_leases::Migration),
+            Box::new(m20260303000000_mcp_tool_tasks::Migration),
         ]
     }
 }

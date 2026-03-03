@@ -11,6 +11,7 @@ pub mod execution_process_repo_state;
 pub mod idempotency;
 pub mod ids;
 pub mod image;
+pub mod mcp_tool_task;
 pub mod merge;
 pub mod project;
 pub mod project_repo;
