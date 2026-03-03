@@ -27,7 +27,43 @@ ts-rs = { git = "https://github.com/xazukx/ts-rs.git", branch = "use-ts-enum", f
 schemars = { version = "1.0.4", features = ["derive", "chrono04", "uuid1", "preserve_order"] }
 async-trait = "0.1"
 
+[profile.dev]
+# Minimal artifacts by default.
+debug = 0
+incremental = false
+
+[profile.dev-fast]
+inherits = "dev"
+incremental = true
+
+[profile.dev-debug]
+inherits = "dev"
+debug = 1
+
+[profile.dev-debug-deps]
+inherits = "dev-debug"
+
+[profile.dev.package."*"]
+debug = 0
+
+[profile.dev-debug-deps.package."*"]
+debug = 1
+
+[profile.test]
+debug = 0
+incremental = false
+
+[profile.test-debug]
+inherits = "test"
+debug = 1
+
+[profile.test.package."*"]
+debug = 0
+
 [profile.release]
-debug = true
-split-debuginfo = "packed"
-strip = true
+strip = "debuginfo"
+
+[profile.release-debug]
+inherits = "release"
+debug = 1
+strip = "none"
