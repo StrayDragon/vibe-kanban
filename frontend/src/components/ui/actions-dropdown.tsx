@@ -98,6 +98,15 @@ export function ActionsDropdown({
         task,
         projectId,
       });
+      // If the user is currently viewing the deleted task/attempt route, navigate away to avoid
+      // the panel getting stuck on 404s while the tasks stream catches up.
+      const projectTaskPrefix = `/projects/${projectId}/tasks/${task.id}`;
+      const overviewTaskPrefix = `/tasks/${projectId}/${task.id}`;
+      if (location.pathname.startsWith(projectTaskPrefix)) {
+        navigate(`/projects/${projectId}/tasks`, { replace: true });
+      } else if (location.pathname.startsWith(overviewTaskPrefix)) {
+        navigate('/tasks', { replace: true });
+      }
     } catch {
       // User cancelled or error occurred
     }

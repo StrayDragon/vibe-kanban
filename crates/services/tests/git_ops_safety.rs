@@ -106,7 +106,7 @@ fn setup_repo_with_worktree(root: &TempDir) -> (PathBuf, PathBuf) {
     create_branch_from_head(&repo, "feature");
 
     let svc = GitService::new();
-    svc.add_worktree(&repo_path, &worktree_path, "feature", false)
+    svc.add_worktree(&repo_path, &worktree_path, "feature")
         .expect("create worktree");
 
     write_file(&worktree_path, "feat.txt", "feat change\n");
@@ -151,7 +151,7 @@ fn setup_conflict_repo_with_worktree(root: &TempDir) -> (PathBuf, PathBuf) {
 
     // add a worktree for feature and create the conflicting commit
     let svc = GitService::new();
-    svc.add_worktree(&repo_path, &worktree_path, "feature", false)
+    svc.add_worktree(&repo_path, &worktree_path, "feature")
         .expect("create worktree");
     let wt_repo = Repository::open(&worktree_path).unwrap();
     write_file(&worktree_path, "conflict.txt", "feature version\n");
@@ -190,7 +190,7 @@ fn setup_no_unique_feature_repo(root: &TempDir) -> (PathBuf, PathBuf) {
     checkout_branch(&repo, "old-base");
     create_branch_from_head(&repo, "feature");
     let svc = GitService::new();
-    svc.add_worktree(&repo_path, &worktree_path, "feature", false)
+    svc.add_worktree(&repo_path, &worktree_path, "feature")
         .expect("create worktree");
 
     (repo_path, worktree_path)
@@ -216,7 +216,7 @@ fn setup_direct_conflict_repo(root: &TempDir) -> (PathBuf, PathBuf) {
     // Create feature and commit conflicting change
     create_branch_from_head(&repo, "feature");
     let svc = GitService::new();
-    svc.add_worktree(&repo_path, &worktree_path, "feature", false)
+    svc.add_worktree(&repo_path, &worktree_path, "feature")
         .expect("create worktree");
     let wt_repo = Repository::open(&worktree_path).unwrap();
     write_file(&worktree_path, "conflict.txt", "feature change\n");
@@ -862,7 +862,7 @@ fn merge_cleans_stale_squash_state_on_base() {
 
     create_branch_from_head(&repo, "feature");
     service
-        .add_worktree(&repo_path, &worktree_path, "feature", false)
+        .add_worktree(&repo_path, &worktree_path, "feature")
         .expect("create worktree");
     let wt_repo = Repository::open(&worktree_path).unwrap();
     write_file(&worktree_path, "feature.txt", "feature\n");
@@ -1001,7 +1001,7 @@ fn merge_refreshes_main_worktree_when_on_base() {
     // Create feature branch and worktree
     create_branch_from_head(&repo, "feature");
     let wt = td.path().join("wt_refresh");
-    s.add_worktree(&repo_path, &wt, "feature", false).unwrap();
+    s.add_worktree(&repo_path, &wt, "feature").unwrap();
     // Modify file in worktree and commit
     write_file(&wt, "file.txt", "feature change\n");
     let _ = s.commit(&wt, "feature change").unwrap();
@@ -1042,7 +1042,7 @@ fn sparse_checkout_respected_in_worktree_diffs_and_commit() {
     // create feature branch and worktree
     create_branch_from_head(&repo, "feature");
     let wt = td.path().join("wt_sparse");
-    s.add_worktree(&repo_path, &wt, "feature", false).unwrap();
+    s.add_worktree(&repo_path, &wt, "feature").unwrap();
 
     // materialization check: included exists, excluded does not
     assert!(wt.join("included/a.txt").exists());
@@ -1115,7 +1115,7 @@ fn worktree_diff_ignores_commits_where_base_branch_is_ahead() {
 
     create_branch_from_head(&repo, "feature");
     let wt = td.path().join("wt_base_ahead");
-    s.add_worktree(&repo_path, &wt, "feature", false).unwrap();
+    s.add_worktree(&repo_path, &wt, "feature").unwrap();
 
     write_file(&repo_path, "base_only.txt", "main ahead\n");
     let _ = s.commit(&repo_path, "main ahead").unwrap();
@@ -1167,7 +1167,7 @@ fn merge_binary_conflict_does_not_move_ref() {
     // create feature branch and worktree
     create_branch_from_head(&repo, "feature");
     let worktree_path = td.path().join("wt_bin");
-    s.add_worktree(&repo_path, &worktree_path, "feature", false)
+    s.add_worktree(&repo_path, &worktree_path, "feature")
         .unwrap();
 
     // feature adds/commits binary file
@@ -1198,7 +1198,7 @@ fn merge_rename_vs_modify_conflict_does_not_move_ref() {
     let _ = s.commit(&repo_path, "base").unwrap();
     create_branch_from_head(&repo, "feature");
     let worktree_path = td.path().join("wt_ren");
-    s.add_worktree(&repo_path, &worktree_path, "feature", false)
+    s.add_worktree(&repo_path, &worktree_path, "feature")
         .unwrap();
 
     // feature renames file
@@ -1321,10 +1321,10 @@ fn worktree_to_worktree_merge_leaves_no_staged_changes() {
 
     // Create worktrees for both feature branches
     service
-        .add_worktree(&repo_path, &worktree_a_path, "feature-a", false)
+        .add_worktree(&repo_path, &worktree_a_path, "feature-a")
         .expect("create worktree A");
     service
-        .add_worktree(&repo_path, &worktree_b_path, "feature-b", false)
+        .add_worktree(&repo_path, &worktree_b_path, "feature-b")
         .expect("create worktree B");
 
     // Make changes in worktree A
@@ -1451,7 +1451,7 @@ fn merge_base_ahead_of_task_should_error() {
     // Create feature branch from this point
     create_branch_from_head(&repo, "feature");
     service
-        .add_worktree(&repo_path, &worktree_path, "feature", false)
+        .add_worktree(&repo_path, &worktree_path, "feature")
         .expect("create worktree");
 
     // Feature makes a change and commits

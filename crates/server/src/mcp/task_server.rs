@@ -5698,8 +5698,7 @@ mod tests {
         };
 
         assert_eq!(
-            err.message,
-            "Missing required field(s): project_id",
+            err.message, "Missing required field(s): project_id",
             "Inspector headline should be actionable"
         );
 
@@ -5801,10 +5800,7 @@ mod tests {
             .get("details")
             .and_then(|v| v.as_object())
             .expect("details");
-        assert_eq!(
-            details.get("path").and_then(|v| v.as_str()),
-            Some("status")
-        );
+        assert_eq!(details.get("path").and_then(|v| v.as_str()), Some("status"));
         assert_eq!(
             details.get("value").and_then(|v| v.as_str()),
             Some("not-a-status")

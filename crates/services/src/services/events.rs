@@ -74,17 +74,28 @@ impl EventService {
 
     async fn run_outbox_loop(&self) {
         loop {
-            if let Err(err) = self.flush_pending().await {
-                tracing::error!(error = %err, "event outbox flush failed");
+            match self.flush_pending().await {
+                Ok(0) => {
+                    tokio::time::sleep(OUTBOX_POLL_INTERVAL).await;
+                }
+                Ok(_) => {
+                    // Drain as fast as possible when backlog exists, but yield to avoid starving
+                    // request handling on single-thread runtimes.
+                    tokio::task::yield_now().await;
+                }
+                Err(err) => {
+                    tracing::error!(error = %err, "event outbox flush failed");
+                    tokio::time::sleep(OUTBOX_POLL_INTERVAL).await;
+                }
             }
-            tokio::time::sleep(OUTBOX_POLL_INTERVAL).await;
         }
     }
 
-    async fn flush_pending(&self) -> Result<(), EventError> {
+    async fn flush_pending(&self) -> Result<usize, EventError> {
         let entries = EventOutbox::fetch_unpublished(&self.db.pool, OUTBOX_BATCH_LIMIT).await?;
-        if entries.is_empty() {
-            return Ok(());
+        let entry_count = entries.len();
+        if entry_count == 0 {
+            return Ok(0);
         }
 
         for entry in entries {
@@ -100,7 +111,7 @@ impl EventService {
             }
         }
 
-        Ok(())
+        Ok(entry_count)
     }
 
     async fn dispatch_entry(
@@ -386,7 +397,8 @@ mod tests {
             .unwrap();
         assert_eq!(before_flush.len(), 3);
 
-        service.flush_pending().await.unwrap();
+        let processed = service.flush_pending().await.unwrap();
+        assert!(processed > 0);
 
         let unpublished_after = EventOutbox::fetch_unpublished(&service.db.pool, 10)
             .await

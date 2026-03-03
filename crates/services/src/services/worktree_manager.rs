@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
-use git2::{Error as GitError, Repository};
+use git2::{BranchType, Error as GitError, Repository};
 use thiserror::Error;
 use tracing::{debug, info, trace};
 use utils::{path::normalize_macos_private_alias, shell::resolve_executable_path};
@@ -69,6 +69,14 @@ impl WorktreeManager {
 
             tokio::task::spawn_blocking(move || {
                 let repo = Repository::open(&repo_path_owned)?;
+                // `create_worktree` is used by both initial creation and "ensure" flows.
+                // Only create the attempt branch if it does not already exist.
+                if repo
+                    .find_branch(&branch_name_owned, BranchType::Local)
+                    .is_ok()
+                {
+                    return Ok::<(), GitServiceError>(());
+                }
                 let base_branch_ref =
                     GitService::find_branch(&repo, &base_branch_owned)?.into_reference();
                 repo.branch(
@@ -172,8 +180,11 @@ impl WorktreeManager {
 
             // Check 2: Worktree must be registered in git metadata using find_worktree
             let repo = Repository::open(&repo_path).map_err(WorktreeError::Git)?;
-            let worktree_name = Self::find_worktree_git_internal_name(&repo_path, &worktree_path)?
-                .ok_or_else(|| WorktreeError::InvalidPath("Invalid worktree path".to_string()))?;
+            let Some(worktree_name) =
+                Self::find_worktree_git_internal_name(&repo_path, &worktree_path)?
+            else {
+                return Ok(false);
+            };
 
             // Try to find the worktree - if it exists and is valid, we're good
             match repo.find_worktree(&worktree_name) {
@@ -190,16 +201,23 @@ impl WorktreeManager {
         worktree_path: &Path,
     ) -> Result<Option<String>, WorktreeError> {
         let worktree_metadata_path = git_repo_path.join(".git").join("worktrees");
-        let worktree_metadata_folders = fs::read_dir(&worktree_metadata_path)
-            .map_err(|e| {
-                WorktreeError::Repository(format!(
+        let worktree_metadata_folders = match fs::read_dir(&worktree_metadata_path) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // `.git/worktrees` is created after the first `git worktree add`.
+                // Treat its absence as "no worktrees registered yet".
+                return Ok(None);
+            }
+            Err(e) => {
+                return Err(WorktreeError::Repository(format!(
                     "Failed to read worktree metadata directory at {}: {}",
                     worktree_metadata_path.display(),
                     e
-                ))
-            })?
-            .filter_map(|entry| entry.ok())
-            .collect::<Vec<fs::DirEntry>>();
+                )));
+            }
+        }
+        .filter_map(|entry| entry.ok())
+        .collect::<Vec<fs::DirEntry>>();
         // read the worktrees/*/gitdir and see which one matches the worktree_path
         for entry in worktree_metadata_folders {
             let gitdir_path = entry.path().join("gitdir");
@@ -310,7 +328,7 @@ impl WorktreeManager {
         tokio::task::spawn_blocking(move || -> Result<(), WorktreeError> {
             // Prefer git CLI for worktree add to inherit sparse-checkout semantics
             let git_service = GitService::new();
-            match git_service.add_worktree(&git_repo_path, &worktree_path, &branch_name, false) {
+            match git_service.add_worktree(&git_repo_path, &worktree_path, &branch_name) {
                 Ok(()) => {
                     if !worktree_path.exists() {
                         return Err(WorktreeError::Repository(format!(
@@ -335,12 +353,9 @@ impl WorktreeManager {
                     if worktree_path.exists() {
                         std::fs::remove_dir_all(&worktree_path).map_err(WorktreeError::Io)?;
                     }
-                    if let Err(e2) = git_service.add_worktree(
-                        &git_repo_path,
-                        &worktree_path,
-                        &branch_name,
-                        false,
-                    ) {
+                    if let Err(e2) =
+                        git_service.add_worktree(&git_repo_path, &worktree_path, &branch_name)
+                    {
                         return Err(WorktreeError::GitService(e2));
                     }
                     if !worktree_path.exists() {

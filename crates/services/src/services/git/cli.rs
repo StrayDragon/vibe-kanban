@@ -90,21 +90,16 @@ impl GitCli {
     pub fn new() -> Self {
         Self {}
     }
-    /// Run `git -C <repo> worktree add <path> <branch>` (optionally creating the branch with -b)
+    /// Run `git -C <repo> worktree add <path> <branch>`
     pub fn worktree_add(
         &self,
         repo_path: &Path,
         worktree_path: &Path,
         branch: &str,
-        create_branch: bool,
     ) -> Result<(), GitCliError> {
         self.ensure_available()?;
 
         let mut args: Vec<OsString> = vec!["worktree".into(), "add".into()];
-        if create_branch {
-            args.push("-b".into());
-            args.push(OsString::from(branch));
-        }
         args.push(worktree_path.as_os_str().into());
         args.push(OsString::from(branch));
         self.git(repo_path, args)?;

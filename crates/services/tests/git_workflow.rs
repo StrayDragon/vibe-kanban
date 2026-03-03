@@ -507,7 +507,7 @@ fn squash_merge_libgit2_sets_author_without_user() {
 
     // Create feature branch and worktree
     create_branch(&repo_path, "feature");
-    s.add_worktree(&repo_path, &worktree_path, "feature", false)
+    s.add_worktree(&repo_path, &worktree_path, "feature")
         .unwrap();
 
     // Make a feature commit in the worktree via libgit2 using an explicit signature
