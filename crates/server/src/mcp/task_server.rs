@@ -245,6 +245,7 @@ fn mcp_task_max_concurrency() -> usize {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateTaskRequest {
     #[schemars(
         description = "The ID of the project to create the task in (UUID string). This is required!"
@@ -267,6 +268,7 @@ pub struct CreateTaskResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateTaskRequest {
     #[schemars(description = "The ID of the task to update (UUID string)")]
     pub task_id: Uuid,
@@ -285,6 +287,7 @@ pub struct UpdateTaskResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DeleteTaskRequest {
     #[schemars(description = "The ID of the task to delete (UUID string)")]
     pub task_id: Uuid,
@@ -336,6 +339,7 @@ pub struct McpRepoSummary {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ListReposRequest {
     #[schemars(description = "The ID of the project to list repositories from (UUID string)")]
     pub project_id: Uuid,
@@ -374,6 +378,7 @@ pub struct ListExecutorsResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ListTasksRequest {
     #[schemars(description = "The ID of the project to list tasks from (UUID string)")]
     pub project_id: Uuid,
@@ -454,6 +459,7 @@ pub struct ListTasksResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetTaskRequest {
     #[schemars(description = "The ID of the task to retrieve (UUID string)")]
     pub task_id: Uuid,
@@ -491,6 +497,7 @@ pub struct GetTaskResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ListTaskAttemptsRequest {
     #[schemars(description = "The ID of the task to list attempts for (UUID string)")]
     pub task_id: Uuid,
@@ -527,6 +534,7 @@ pub struct ListTaskAttemptsResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceRepoInput {
     #[schemars(description = "Repo id (UUID string)")]
     pub repo_id: Uuid,
@@ -535,6 +543,7 @@ pub struct WorkspaceRepoInput {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct StartAttemptRequest {
     #[schemars(description = "The task id to start an attempt for (UUID string)")]
     pub task_id: Uuid,
@@ -569,6 +578,7 @@ pub struct StartAttemptResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ClaimAttemptControlRequest {
     #[schemars(description = "Attempt/workspace id (UUID string)")]
     pub attempt_id: Uuid,
@@ -594,6 +604,7 @@ pub struct ClaimAttemptControlResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetAttemptControlRequest {
     pub attempt_id: Uuid,
 }
@@ -608,6 +619,7 @@ pub struct GetAttemptControlResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ReleaseAttemptControlRequest {
     pub attempt_id: Uuid,
     pub control_token: Uuid,
@@ -620,6 +632,7 @@ pub struct ReleaseAttemptControlResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SendFollowUpRequest {
     #[schemars(
         description = "Attempt/workspace id (UUID string). Provide exactly one of attempt_id or session_id."
@@ -652,6 +665,7 @@ pub struct SendFollowUpResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct StopAttemptRequest {
     #[schemars(description = "The attempt/workspace id (UUID string). This is required!")]
     pub attempt_id: Uuid,
@@ -705,6 +719,7 @@ pub struct McpLogHistoryPage {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TailSessionMessagesRequest {
     #[schemars(
         description = "Attempt/workspace id (UUID string). Provide exactly one of attempt_id or session_id."
@@ -744,6 +759,7 @@ pub struct TailSessionMessagesResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TailAttemptFeedRequest {
     #[schemars(description = "Attempt/workspace id (UUID string)")]
     pub attempt_id: Uuid,
@@ -814,6 +830,7 @@ pub struct GetAttemptChangesResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetAttemptChangesRequest {
     pub attempt_id: Uuid,
     pub force: Option<bool>,
@@ -830,6 +847,7 @@ pub enum McpAttemptArtifactBlockedReason {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetAttemptFileRequest {
     pub attempt_id: Uuid,
     pub path: String,
@@ -854,6 +872,7 @@ pub struct GetAttemptFileResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetAttemptPatchRequest {
     pub attempt_id: Uuid,
     pub paths: Vec<String>,
@@ -876,6 +895,7 @@ pub struct GetAttemptPatchResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ListApprovalsRequest {
     pub attempt_id: Uuid,
     #[schemars(description = "Optional status filter: pending|approved|denied|timed_out")]
@@ -894,6 +914,7 @@ pub struct ListApprovalsResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetApprovalRequest {
     pub approval_id: String,
 }
@@ -904,6 +925,7 @@ pub struct GetApprovalResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RespondApprovalRequest {
     pub approval_id: String,
     pub execution_process_id: Uuid,
@@ -921,6 +943,7 @@ pub struct RespondApprovalResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TailProjectActivityRequest {
     pub project_id: Uuid,
     pub limit: Option<u64>,
@@ -929,6 +952,7 @@ pub struct TailProjectActivityRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TailTaskActivityRequest {
     pub task_id: Uuid,
     pub limit: Option<u64>,
@@ -957,6 +981,7 @@ pub struct TailActivityResponse {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CliDependencyPreflightRequest {
     #[schemars(description = "Optional list of binary names to check (default: common deps)")]
     pub binaries: Option<Vec<String>>,
@@ -2311,14 +2336,28 @@ Avoid: Using this as an attempt/session listing (use list_task_attempts)."#,
                 match TaskStatus::from_str(trimmed) {
                     Ok(s) => Some(s),
                     Err(_) => {
+                        let mut details = serde_json::Map::new();
+                        details.insert("tool".to_string(), json!("list_tasks"));
+                        details.insert("path".to_string(), json!("status"));
+                        details.insert("value".to_string(), json!(trimmed));
+                        details.insert(
+                            "valid_values".to_string(),
+                            json!(["todo", "inprogress", "inreview", "done", "cancelled"]),
+                        );
+                        details.insert("next_tools".to_string(), json!([]));
+                        details.insert(
+                            "example_args".to_string(),
+                            json!({ "project_id": project_id, "status": "todo" }),
+                        );
+
                         return Err(ErrorData::invalid_params(
                             "Invalid status filter",
-                            Some(json!({
-                                "code": "invalid_argument",
-                                "retryable": false,
-                                "hint": "Valid values: todo, inprogress, inreview, done, cancelled.",
-                                "details": { "value": trimmed },
-                            })),
+                            Some(crate::mcp::params::invalid_params_payload(
+                                "invalid_argument",
+                                "Valid values: todo, inprogress, inreview, done, cancelled."
+                                    .to_string(),
+                                details,
+                            )),
                         ));
                     }
                 }
@@ -2510,7 +2549,28 @@ Avoid: Calling this just to set status=inprogress (start_attempt already does th
         });
         let status = if let Some(status) = status {
             Some(TaskStatus::from_str(&status).map_err(|_| {
-                ErrorData::invalid_params("Invalid task status", Some(json!({ "value": status })))
+                let mut details = serde_json::Map::new();
+                details.insert("tool".to_string(), json!("update_task"));
+                details.insert("path".to_string(), json!("status"));
+                details.insert("value".to_string(), json!(status));
+                details.insert(
+                    "valid_values".to_string(),
+                    json!(["todo", "inprogress", "inreview", "done", "cancelled"]),
+                );
+                details.insert("next_tools".to_string(), json!([]));
+                details.insert(
+                    "example_args".to_string(),
+                    json!({ "task_id": task_id, "status": "todo" }),
+                );
+
+                ErrorData::invalid_params(
+                    "Invalid task status",
+                    Some(crate::mcp::params::invalid_params_payload(
+                        "invalid_argument",
+                        "Valid values: todo, inprogress, inreview, done, cancelled.".to_string(),
+                        details,
+                    )),
+                )
             })?)
         } else {
             None
@@ -5005,7 +5065,26 @@ impl ServerHandler for TaskServer {
             let cursor = match cursor {
                 None => None,
                 Some(raw) => Some(raw.parse::<i64>().map_err(|_| {
-                    ErrorData::invalid_params("Invalid cursor", Some(json!({ "cursor": raw })))
+                    let mut details = serde_json::Map::new();
+                    details.insert("tool".to_string(), json!("list_tasks"));
+                    details.insert("path".to_string(), json!("cursor"));
+                    details.insert("value".to_string(), json!(raw));
+                    details.insert(
+                        "expected".to_string(),
+                        json!("A signed 64-bit integer cursor"),
+                    );
+                    details.insert("next_tools".to_string(), json!([]));
+                    details.insert("example_args".to_string(), json!({ "cursor": 0 }));
+
+                    ErrorData::invalid_params(
+                        "Invalid cursor",
+                        Some(crate::mcp::params::invalid_params_payload(
+                            "invalid_argument",
+                            "Provide a valid cursor (signed 64-bit integer) or omit it."
+                                .to_string(),
+                            details,
+                        )),
+                    )
                 })?),
             };
 
@@ -5223,6 +5302,7 @@ use axum::response::Json as ResponseJson;
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::HashSet,
         path::Path,
         process::Command,
         sync::{
@@ -5299,6 +5379,20 @@ mod tests {
         assert!(router.map.contains_key("tail_attempt_feed"));
         assert!(router.map.contains_key("respond_approval"));
         assert!(router.map.contains_key("claim_attempt_control"));
+    }
+
+    #[test]
+    fn guidance_registry_only_references_existing_tools() {
+        let tools = TaskServer::tool_router().list_all();
+        let tool_names: HashSet<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
+
+        for name in crate::mcp::params::guidance_referenced_tool_names() {
+            assert!(
+                tool_names.contains(name),
+                "Guidance references missing tool: {}",
+                name
+            );
+        }
     }
 
     #[test]
@@ -5541,6 +5635,184 @@ mod tests {
             .into_call_tool_result()
             .unwrap();
         assert!(list_tasks_result.structured_content.is_some());
+    }
+
+    #[tokio::test]
+    async fn list_tasks_missing_project_id_is_guided_invalid_params_error_over_mcp() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = &deployment.db().pool;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            pool,
+            &db::models::project::CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let client = TestElicitationClient::new(
+            rmcp::model::ClientInfo {
+                meta: None,
+                protocol_version: ProtocolVersion::V_2025_03_26,
+                capabilities: rmcp::model::ClientCapabilities::default(),
+                client_info: rmcp::model::Implementation {
+                    name: "vk-tool-client".to_string(),
+                    title: None,
+                    version: "0.0.42".to_string(),
+                    description: None,
+                    icons: None,
+                    website_url: None,
+                },
+            },
+            serde_json::Value::Null,
+        );
+
+        let server = TaskServer::new(deployment);
+
+        let (server_io, client_io) = tokio::io::duplex(1024 * 1024);
+        let (server_running, client_running) =
+            tokio::join!(server.serve(server_io), client.clone().serve(client_io));
+        let server_running = server_running.unwrap();
+        let client_running = client_running.unwrap();
+
+        let err = client_running
+            .call_tool(rmcp::model::CallToolRequestParams {
+                meta: None,
+                name: "list_tasks".into(),
+                arguments: None,
+                task: None,
+            })
+            .await
+            .expect_err("expected invalid params error");
+
+        let rmcp::service::ServiceError::McpError(err) = err else {
+            panic!("Expected MCP error, got: {err:?}");
+        };
+
+        assert_eq!(
+            err.message,
+            "Missing required field(s): project_id",
+            "Inspector headline should be actionable"
+        );
+
+        let payload = err.data.expect("structured data payload");
+        assert_eq!(
+            payload.get("code").and_then(|v| v.as_str()),
+            Some("missing_required")
+        );
+        assert_eq!(
+            payload.get("retryable").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert!(
+            payload
+                .get("hint")
+                .and_then(|v| v.as_str())
+                .is_some_and(|h| h.contains("list_projects")),
+            "Hint should guide id discovery"
+        );
+
+        let details = payload
+            .get("details")
+            .and_then(|v| v.as_object())
+            .expect("details");
+        assert_eq!(
+            details
+                .get("missing_fields")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>()),
+            Some(vec!["project_id"])
+        );
+        assert!(
+            details
+                .get("next_tools")
+                .and_then(|v| v.as_array())
+                .is_some_and(|steps| {
+                    steps.iter().any(|step| {
+                        step.get("tool")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|name| name == "list_projects")
+                    })
+                }),
+            "next_tools should suggest list_projects"
+        );
+        assert!(details.get("example_args").is_some());
+
+        let mut args = serde_json::Map::new();
+        args.insert("project_id".to_string(), json!(project_id));
+        let result = client_running
+            .call_tool(rmcp::model::CallToolRequestParams {
+                meta: None,
+                name: "list_tasks".into(),
+                arguments: Some(args),
+                task: None,
+            })
+            .await
+            .expect("expected successful tool call");
+
+        assert_eq!(result.is_error, Some(false));
+
+        let _ = client_running.cancel().await;
+        let _ = server_running.cancel().await;
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn list_tasks_invalid_status_is_structured_invalid_argument() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let server = TaskServer::new(deployment);
+
+        let project_id = Uuid::new_v4();
+        let err = server
+            .list_tasks(Parameters(ListTasksRequest {
+                project_id,
+                status: Some("not-a-status".to_string()),
+                limit: None,
+            }))
+            .await
+            .err()
+            .expect("expected invalid status error");
+
+        assert_eq!(err.message, "Invalid status filter");
+
+        let payload = err.data.expect("structured data payload");
+        assert_eq!(
+            payload.get("code").and_then(|v| v.as_str()),
+            Some("invalid_argument")
+        );
+        assert_eq!(
+            payload.get("retryable").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+
+        let details = payload
+            .get("details")
+            .and_then(|v| v.as_object())
+            .expect("details");
+        assert_eq!(
+            details.get("path").and_then(|v| v.as_str()),
+            Some("status")
+        );
+        assert_eq!(
+            details.get("value").and_then(|v| v.as_str()),
+            Some("not-a-status")
+        );
+        assert!(details.get("valid_values").is_some());
+        assert!(details.get("example_args").is_some());
+
+        let _ = std::fs::remove_dir_all(&temp_root);
     }
 
     #[tokio::test]
