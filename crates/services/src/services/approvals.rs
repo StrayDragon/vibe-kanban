@@ -31,7 +31,6 @@ use uuid::Uuid;
 #[derive(Debug)]
 struct PendingApproval {
     execution_process_id: Uuid,
-    tool_name: String,
     tool_call_id: String,
     entry_index: Option<usize>,
     entry: Option<NormalizedEntry>,
@@ -162,7 +161,6 @@ impl Approvals {
                     req_id.clone(),
                     PendingApproval {
                         execution_process_id: request.execution_process_id,
-                        tool_name: request.tool_name.clone(),
                         tool_call_id: request.tool_call_id.clone(),
                         entry_index: Some(idx),
                         entry: Some(matching_tool),
@@ -186,7 +184,6 @@ impl Approvals {
                     req_id.clone(),
                     PendingApproval {
                         execution_process_id: request.execution_process_id,
-                        tool_name: request.tool_name.clone(),
                         tool_call_id: request.tool_call_id.clone(),
                         entry_index: None,
                         entry: None,
@@ -204,7 +201,6 @@ impl Approvals {
                 req_id.clone(),
                 PendingApproval {
                     execution_process_id: request.execution_process_id,
-                    tool_name: request.tool_name.clone(),
                     tool_call_id: request.tool_call_id.clone(),
                     entry_index: None,
                     entry: None,
