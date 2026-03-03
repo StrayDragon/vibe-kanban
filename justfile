@@ -26,6 +26,9 @@ backend-build: # db-prepare
 mcp-build:
     cargo build -p server --release --bin mcp_task_server
 
+mcp-inspector: mcp-build
+    npx @modelcontextprotocol/inspector -- {{target_dir}}/release/mcp_task_server
+
 build: frontend-build backend-build mcp-build
 
 run host="0.0.0.0" port="3001": frontend-build backend-build

@@ -50,6 +50,38 @@ attempt：
 - `get_approval(approval_id)`
 - `respond_approval(approval_id, execution_process_id, status, denial_reason?, responded_by_client_id?, request_id?)`
 
+## MCP Inspector（UI/CLI）
+
+`@modelcontextprotocol/inspector` 可作为“外部客户端视角”的验收工具，用来检查：
+- `tools/list` 的 tools 数量/名称是否符合预期
+- 每个 tool 的 `outputSchema` / `annotations` / `execution.taskSupport`
+
+要求：Node.js `^22.7.5`。
+
+### UI 模式（stdio）
+
+先编译 MCP server：
+```bash
+just mcp-build
+```
+
+启动 Inspector（会运行一个本地 proxy + Web UI）：
+```bash
+TARGET_DIR="$(cargo metadata --format-version=1 --no-deps | node -e 'const fs=require(\"fs\");const data=fs.readFileSync(0,\"utf8\");process.stdout.write(JSON.parse(data).target_directory);')"
+npx @modelcontextprotocol/inspector -- "$TARGET_DIR/release/mcp_task_server"
+```
+
+安全提示：
+- 不要设置 `DANGEROUSLY_OMIT_AUTH=true`（会禁用 proxy auth，风险极高）
+- 默认仅绑定 `localhost` 即可；不要随意用 `HOST=0.0.0.0` 暴露到不可信网络
+
+### CLI 模式（脚本化 smoke test）
+
+```bash
+TARGET_DIR="$(cargo metadata --format-version=1 --no-deps | node -e 'const fs=require(\"fs\");const data=fs.readFileSync(0,\"utf8\");process.stdout.write(JSON.parse(data).target_directory);')"
+npx @modelcontextprotocol/inspector --cli --method tools/list -- "$TARGET_DIR/release/mcp_task_server"
+```
+
 ## 默认参数（建议）
 
 - `tail_attempt_feed`: `limit=50`

@@ -3162,7 +3162,8 @@ Avoid: Providing both attempt_id and session_id; missing prompt."#,
             read_only_hint = false,
             destructive_hint = false,
             idempotent_hint = true
-        )
+        ),
+        execution(task_support = "optional")
     )]
     async fn send_follow_up(
         &self,
@@ -3480,7 +3481,8 @@ Avoid: Expecting this to stop dev servers."#,
             read_only_hint = false,
             destructive_hint = true,
             idempotent_hint = true
-        )
+        ),
+        execution(task_support = "optional")
     )]
     async fn stop_attempt(
         &self,
@@ -5425,6 +5427,31 @@ mod tests {
             "get_attempt_patch",
             "start_attempt",
         ] {
+            let execution = tool(name)
+                .execution
+                .as_ref()
+                .unwrap_or_else(|| panic!("Missing execution for {}", name));
+            assert_eq!(
+                execution.task_support,
+                Some(rmcp::model::TaskSupport::Optional),
+                "Expected taskSupport=optional for {}",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn tool_router_marks_follow_up_and_stop_as_task_optional() {
+        let tools = TaskServer::tool_router().list_all();
+
+        let tool = |name: &str| {
+            tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == name)
+                .unwrap_or_else(|| panic!("Missing tool: {}", name))
+        };
+
+        for name in ["send_follow_up", "stop_attempt"] {
             let execution = tool(name)
                 .execution
                 .as_ref()

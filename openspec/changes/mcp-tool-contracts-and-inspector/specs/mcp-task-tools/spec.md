@@ -21,6 +21,8 @@
 - `get_attempt_patch`
 - `get_attempt_file`
 - `start_attempt`
+- `send_follow_up`
+- `stop_attempt`
 
 #### Scenario: start_attempt is task-capable
 - **WHEN** 客户端请求 MCP tool 列表（`tools/list`）
@@ -29,4 +31,3 @@
 #### Scenario: changes/artifacts tools are task-capable
 - **WHEN** 客户端请求 MCP tool 列表（`tools/list`）
 - **THEN** `get_attempt_changes/get_attempt_patch/get_attempt_file` 的 tool 定义包含 `execution.taskSupport=optional`
-
