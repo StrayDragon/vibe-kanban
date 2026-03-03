@@ -45,8 +45,8 @@ use rmcp::{
     ErrorData, Json, ServerHandler,
     handler::server::tool::ToolRouter,
     model::{
-        CallToolResult, Content, Icon, Implementation, ProtocolVersion, ServerCapabilities,
-        ServerInfo,
+        CallToolResult, Content, EnumSchema, Icon, Implementation, InitializeRequestParams,
+        ProtocolVersion, ServerCapabilities, ServerInfo,
     },
     schemars, tool, tool_handler, tool_router,
 };
@@ -893,7 +893,10 @@ impl TaskServer {
         &self,
         peer: rmcp::service::Peer<rmcp::RoleServer>,
     ) {
-        if !peer.supports_elicitation() {
+        if !peer
+            .supported_elicitation_modes()
+            .contains(&rmcp::service::ElicitationMode::Form)
+        {
             return;
         }
 
@@ -959,11 +962,12 @@ impl TaskServer {
 
                 let timeout = (approval.timeout_at - chrono::Utc::now()).to_std().ok();
 
+                let decision_schema =
+                    EnumSchema::builder(vec!["approved".to_string(), "denied".to_string()])
+                        .build();
+
                 let schema = match rmcp::model::ElicitationSchema::builder()
-                    .required_enum(
-                        "decision",
-                        vec!["approved".to_string(), "denied".to_string()],
-                    )
+                    .required_enum_schema("decision", decision_schema)
                     .optional_string_with("denial_reason", |s| {
                         s.description("Optional denial reason (used when decision=denied)")
                     })
@@ -983,7 +987,8 @@ impl TaskServer {
 
                 let elicitation = match peer
                     .create_elicitation_with_timeout(
-                        rmcp::model::CreateElicitationRequestParam {
+                        rmcp::model::CreateElicitationRequestParams::FormElicitationParams {
+                            meta: None,
                             message,
                             requested_schema: schema,
                         },
@@ -4495,7 +4500,7 @@ Avoid: Mixing cursor with after_event_id."#,
 impl ServerHandler for TaskServer {
     fn initialize(
         &self,
-        request: rmcp::model::InitializeRequestParam,
+        request: InitializeRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> impl std::future::Future<Output = Result<rmcp::model::InitializeResult, rmcp::ErrorData>>
     + Send
@@ -4521,6 +4526,10 @@ impl ServerHandler for TaskServer {
                 name: "vibe-kanban".to_string(),
                 title: Some("Vibe Kanban MCP Server".to_string()),
                 version: env!("CARGO_PKG_VERSION").to_string(),
+                description: Some(
+                    "Local-first Kanban MCP control plane for multi-agent orchestration."
+                        .to_string(),
+                ),
                 icons: Some(vec![Icon {
                     src: "https://raw.githubusercontent.com/StrayDragon/vibe-kanban/main/frontend/public/vibe-kanban-logo.svg".to_string(),
                     mime_type: Some("image/svg+xml".to_string()),
@@ -4590,7 +4599,7 @@ mod tests {
 
         fn create_elicitation(
             &self,
-            request: rmcp::model::CreateElicitationRequestParam,
+            request: rmcp::model::CreateElicitationRequestParams,
             context: rmcp::service::RequestContext<rmcp::RoleClient>,
         ) -> impl std::future::Future<
             Output = Result<rmcp::model::CreateElicitationResult, rmcp::ErrorData>,
@@ -5472,12 +5481,14 @@ mod tests {
 
         let client = TestElicitationClient::new(
             rmcp::model::ClientInfo {
+                meta: None,
                 protocol_version: ProtocolVersion::V_2025_03_26,
                 capabilities: rmcp::model::ClientCapabilities::default(),
                 client_info: rmcp::model::Implementation {
                     name: "vk-tool-client".to_string(),
                     title: None,
                     version: "0.0.42".to_string(),
+                    description: None,
                     icons: None,
                     website_url: None,
                 },
@@ -5586,9 +5597,11 @@ mod tests {
         arguments.insert("status".to_string(), json!("approved"));
 
         let result = client_running
-            .call_tool(rmcp::model::CallToolRequestParam {
+            .call_tool(rmcp::model::CallToolRequestParams {
+                meta: None,
                 name: "respond_approval".into(),
                 arguments: Some(arguments),
+                task: None,
             })
             .await
             .unwrap();
@@ -5869,7 +5882,10 @@ mod tests {
 
         let capabilities = rmcp::model::ClientCapabilities {
             elicitation: Some(rmcp::model::ElicitationCapability {
-                schema_validation: Some(true),
+                form: Some(rmcp::model::FormElicitationCapability {
+                    schema_validation: Some(true),
+                }),
+                url: None,
             }),
             ..Default::default()
         };
@@ -5878,12 +5894,14 @@ mod tests {
             name: "vk-test-client".to_string(),
             title: None,
             version: "0.0.1".to_string(),
+            description: None,
             icons: None,
             website_url: None,
         };
 
         let client = TestElicitationClient::new(
             rmcp::model::ClientInfo {
+                meta: None,
                 protocol_version: ProtocolVersion::V_2025_03_26,
                 capabilities,
                 client_info,
@@ -5899,7 +5917,11 @@ mod tests {
         let server_running = server_running.unwrap();
         let client_running = client_running.unwrap();
 
-        assert!(server_running.supports_elicitation());
+        assert!(
+            server_running
+                .supported_elicitation_modes()
+                .contains(&rmcp::service::ElicitationMode::Form)
+        );
         assert!(
             server_running
                 .service()
@@ -6036,10 +6058,14 @@ mod tests {
 
         let client = TestElicitationClient::new(
             rmcp::model::ClientInfo {
+                meta: None,
                 protocol_version: ProtocolVersion::V_2025_03_26,
                 capabilities: rmcp::model::ClientCapabilities {
                     elicitation: Some(rmcp::model::ElicitationCapability {
-                        schema_validation: Some(true),
+                        form: Some(rmcp::model::FormElicitationCapability {
+                            schema_validation: Some(true),
+                        }),
+                        url: None,
                     }),
                     ..Default::default()
                 },
@@ -6047,6 +6073,7 @@ mod tests {
                     name: "vk-test-client".to_string(),
                     title: None,
                     version: "0.0.2".to_string(),
+                    description: None,
                     icons: None,
                     website_url: None,
                 },
@@ -6062,7 +6089,11 @@ mod tests {
         let server_running = server_running.unwrap();
         let client_running = client_running.unwrap();
 
-        assert!(server_running.supports_elicitation());
+        assert!(
+            server_running
+                .supported_elicitation_modes()
+                .contains(&rmcp::service::ElicitationMode::Form)
+        );
         assert!(
             server_running
                 .service()
@@ -6206,12 +6237,14 @@ mod tests {
 
         let client = TestElicitationClient::new(
             rmcp::model::ClientInfo {
+                meta: None,
                 protocol_version: ProtocolVersion::V_2025_03_26,
                 capabilities: rmcp::model::ClientCapabilities::default(),
                 client_info: rmcp::model::Implementation {
                     name: "vk-test-client".to_string(),
                     title: None,
                     version: "0.0.3".to_string(),
+                    description: None,
                     icons: None,
                     website_url: None,
                 },
