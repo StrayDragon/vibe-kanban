@@ -55,7 +55,7 @@ use rmcp::{
     schemars, tool, tool_handler, tool_router,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use services::services::container::ContainerService;
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
@@ -91,6 +91,16 @@ const MCP_TASK_POLL_INTERVAL_MS_ENV: &str = "VK_MCP_TASK_POLL_INTERVAL_MS";
 
 const DEFAULT_MCP_TASK_MAX_CONCURRENCY: usize = 4;
 const MCP_TASK_MAX_CONCURRENCY_ENV: &str = "VK_MCP_TASK_MAX_CONCURRENCY";
+
+fn tool_output_schema<T: schemars::JsonSchema + 'static>() -> Arc<Map<String, Value>> {
+    rmcp::handler::server::tool::schema_for_output::<T>().unwrap_or_else(|e| {
+        panic!(
+            "Invalid output schema for {}: {}",
+            std::any::type_name::<T>(),
+            e
+        )
+    })
+}
 
 fn idempotency_in_progress_ttl() -> Option<chrono::Duration> {
     let raw = match std::env::var(IDEMPOTENCY_IN_PROGRESS_TTL_ENV) {
@@ -2108,6 +2118,7 @@ Required: (none)
 Optional: binaries[]
 Next: list_projects / list_executors
 Avoid: Using this as a health check for long-running processes."#,
+        output_schema = tool_output_schema::<CliDependencyPreflightResponse>(),
         annotations(read_only_hint = true)
     )]
     async fn cli_dependency_preflight(
@@ -2176,6 +2187,7 @@ Required: (none)
 Optional: (none)
 Next: list_tasks, list_repos
 Avoid: Guessing UUIDs."#,
+        output_schema = tool_output_schema::<ListProjectsResponse>(),
         annotations(read_only_hint = true)
     )]
     async fn list_projects(&self) -> Result<Json<ListProjectsResponse>, ErrorData> {
@@ -2203,6 +2215,7 @@ Required: project_id
 Optional: (none)
 Next: start_attempt
 Avoid: Passing a task_id/attempt_id instead of project_id."#,
+        output_schema = tool_output_schema::<ListReposResponse>(),
         annotations(read_only_hint = true)
     )]
     async fn list_repos(
@@ -2237,6 +2250,7 @@ Required: (none)
 Optional: (none)
 Next: start_attempt
 Avoid: Guessing executor names; passing DEFAULT as a variant (omit variant instead)."#,
+        output_schema = tool_output_schema::<ListExecutorsResponse>(),
         annotations(read_only_hint = true)
     )]
     async fn list_executors(&self) -> Result<CallToolResult, ErrorData> {
@@ -2278,6 +2292,7 @@ Required: project_id
 Optional: status, limit
 Next: get_task, start_attempt, list_task_attempts
 Avoid: Using this as an attempt/session listing (use list_task_attempts)."#,
+        output_schema = tool_output_schema::<ListTasksResponse>(),
         annotations(read_only_hint = true)
     )]
     async fn list_tasks(
@@ -2359,6 +2374,7 @@ Required: task_id
 Optional: (none)
 Next: update_task, start_attempt
 Avoid: Expecting attempt/session info here (use list_tasks/list_task_attempts)."#,
+        output_schema = tool_output_schema::<GetTaskResponse>(),
         annotations(read_only_hint = true)
     )]
     async fn get_task(
@@ -2387,6 +2403,7 @@ Required: project_id, title
 Optional: description, request_id
 Next: start_attempt
 Avoid: Empty title; guessing project_id (use list_projects)."#,
+        output_schema = tool_output_schema::<CreateTaskResponse>(),
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -2454,6 +2471,7 @@ Required: task_id
 Optional: title, description, status
 Next: get_task, start_attempt
 Avoid: Calling this just to set status=inprogress (start_attempt already does that)."#,
+        output_schema = tool_output_schema::<UpdateTaskResponse>(),
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -2538,6 +2556,7 @@ Required: task_id
 Optional: (none)
 Next: list_tasks
 Avoid: Deleting the wrong task (confirm with get_task first)."#,
+        output_schema = tool_output_schema::<DeleteTaskResponse>(),
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -2570,6 +2589,7 @@ Required: task_id
 Optional: (none)
 Next: tail_attempt_feed, send_follow_up, stop_attempt
 Avoid: Assuming a task always has an attempt."#,
+        output_schema = tool_output_schema::<ListTaskAttemptsResponse>(),
         annotations(read_only_hint = true)
     )]
     async fn list_task_attempts(
@@ -2630,11 +2650,13 @@ Required: task_id, executor, repos
 Optional: variant, request_id, prompt
 Next: tail_attempt_feed, send_follow_up, claim_attempt_control
 Avoid: Empty repos; guessing executor (use list_executors)."#,
+        output_schema = tool_output_schema::<StartAttemptResponse>(),
         annotations(
             read_only_hint = false,
             destructive_hint = false,
             idempotent_hint = true
-        )
+        ),
+        execution(task_support = "optional")
     )]
     async fn start_attempt(
         &self,
@@ -2907,15 +2929,7 @@ Required: attempt_id
 Optional: ttl_secs, force, claimed_by_client_id
 Next: send_follow_up, stop_attempt, release_attempt_control
 Avoid: Using long TTLs; forgetting force=true when taking over."#,
-        output_schema =
-            rmcp::handler::server::tool::schema_for_output::<ClaimAttemptControlResponse>()
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "Invalid output schema for {}: {}",
-                        std::any::type_name::<ClaimAttemptControlResponse>(),
-                        e
-                    )
-                }),
+        output_schema = tool_output_schema::<ClaimAttemptControlResponse>(),
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -3008,14 +3022,7 @@ Required: attempt_id
 Optional: (none)
 Next: claim_attempt_control, send_follow_up, stop_attempt
 Avoid: Assuming control_token can be recovered (store it from start_attempt/claim_attempt_control)."#,
-        output_schema = rmcp::handler::server::tool::schema_for_output::<GetAttemptControlResponse>()
-            .unwrap_or_else(|e| {
-                panic!(
-                    "Invalid output schema for {}: {}",
-                    std::any::type_name::<GetAttemptControlResponse>(),
-                    e
-                )
-            }),
+        output_schema = tool_output_schema::<GetAttemptControlResponse>(),
         annotations(read_only_hint = true)
     )]
     async fn get_attempt_control(
@@ -3078,15 +3085,7 @@ Required: attempt_id, control_token
 Optional: (none)
 Next: claim_attempt_control
 Avoid: Releasing with a mismatched token."#,
-        output_schema =
-            rmcp::handler::server::tool::schema_for_output::<ReleaseAttemptControlResponse>()
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "Invalid output schema for {}: {}",
-                        std::any::type_name::<ReleaseAttemptControlResponse>(),
-                        e
-                    )
-                }),
+        output_schema = tool_output_schema::<ReleaseAttemptControlResponse>(),
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -3158,6 +3157,7 @@ Also required (mutating): control_token
 Optional: variant, request_id
 Next: tail_attempt_feed
 Avoid: Providing both attempt_id and session_id; missing prompt."#,
+        output_schema = tool_output_schema::<SendFollowUpResponse>(),
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -3475,6 +3475,7 @@ Also required (mutating): control_token
 Optional: force
 Next: tail_attempt_feed
 Avoid: Expecting this to stop dev servers."#,
+        output_schema = tool_output_schema::<StopAttemptResponse>(),
         annotations(
             read_only_hint = false,
             destructive_hint = true,
@@ -3957,6 +3958,7 @@ Required: exactly one of {attempt_id, session_id}
 Optional: limit, cursor
 Next: send_follow_up
 Avoid: Expecting raw tool logs (use tail_attempt_feed)."#,
+        output_schema = tool_output_schema::<TailSessionMessagesResponse>(),
         annotations(read_only_hint = true)
     )]
     async fn tail_session_messages(
@@ -4020,6 +4022,7 @@ Required: attempt_id
 Optional: force
 Next: get_attempt_patch
 Avoid: Assuming files will be returned when blocked=true; using force unless you accept larger output."#,
+        output_schema = tool_output_schema::<GetAttemptChangesResponse>(),
         annotations(read_only_hint = true),
         execution(task_support = "optional")
     )]
@@ -4135,6 +4138,7 @@ Required: attempt_id, path
 Optional: start, max_bytes
 Next: get_attempt_patch
 Avoid: Absolute paths or .. traversal."#,
+        output_schema = tool_output_schema::<GetAttemptFileResponse>(),
         annotations(read_only_hint = true),
         execution(task_support = "optional")
     )]
@@ -4273,6 +4277,7 @@ Required: attempt_id, paths
 Optional: force, max_bytes
 Next: send_follow_up
 Avoid: Too many paths; huge max_bytes."#,
+        output_schema = tool_output_schema::<GetAttemptPatchResponse>(),
         annotations(read_only_hint = true),
         execution(task_support = "optional")
     )]
@@ -4416,6 +4421,7 @@ Required: attempt_id
 Optional: status, limit, cursor
 Next: get_approval, respond_approval
 Avoid: Guessing attempt_id."#,
+        output_schema = tool_output_schema::<ListApprovalsResponse>(),
         annotations(read_only_hint = true)
     )]
     async fn list_approvals(
@@ -4482,6 +4488,7 @@ Required: approval_id
 Optional: (none)
 Next: respond_approval
 Avoid: Assuming approval exists."#,
+        output_schema = tool_output_schema::<GetApprovalResponse>(),
         annotations(read_only_hint = true)
     )]
     async fn get_approval(
@@ -4510,6 +4517,7 @@ Required: approval_id, execution_process_id, status
 Optional: denial_reason, responded_by_client_id, request_id
 Next: tail_attempt_feed
 Avoid: Responding with mismatched execution_process_id."#,
+        output_schema = tool_output_schema::<RespondApprovalResponse>(),
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -4633,6 +4641,7 @@ Required: project_id
 Optional: limit, cursor, after_event_id
 Next: tail_task_activity
 Avoid: Mixing cursor with after_event_id."#,
+        output_schema = tool_output_schema::<TailActivityResponse>(),
         annotations(read_only_hint = true)
     )]
     async fn tail_project_activity(
@@ -4749,6 +4758,7 @@ Required: task_id
 Optional: limit, cursor, after_event_id
 Next: tail_attempt_feed
 Avoid: Mixing cursor with after_event_id."#,
+        output_schema = tool_output_schema::<TailActivityResponse>(),
         annotations(read_only_hint = true)
     )]
     async fn tail_task_activity(
@@ -5300,13 +5310,46 @@ mod tests {
                 .unwrap_or_else(|| panic!("Missing tool: {}", name))
         };
 
-        for name in ["list_projects", "list_tasks", "tail_attempt_feed"] {
+        let expected_tool_names = [
+            "claim_attempt_control",
+            "cli_dependency_preflight",
+            "create_task",
+            "delete_task",
+            "get_approval",
+            "get_attempt_changes",
+            "get_attempt_control",
+            "get_attempt_file",
+            "get_attempt_patch",
+            "get_task",
+            "list_approvals",
+            "list_executors",
+            "list_projects",
+            "list_repos",
+            "list_task_attempts",
+            "list_tasks",
+            "release_attempt_control",
+            "respond_approval",
+            "send_follow_up",
+            "start_attempt",
+            "stop_attempt",
+            "tail_attempt_feed",
+            "tail_project_activity",
+            "tail_session_messages",
+            "tail_task_activity",
+            "update_task",
+        ];
+
+        for name in expected_tool_names {
             let tool = tool(name);
             assert!(
                 tool.output_schema.is_some(),
                 "Expected outputSchema for {}",
                 name
             );
+        }
+
+        for name in ["list_projects", "list_tasks", "tail_attempt_feed"] {
+            let tool = tool(name);
             assert_eq!(
                 tool.output_schema
                     .as_ref()
@@ -5380,6 +5423,7 @@ mod tests {
             "get_attempt_changes",
             "get_attempt_file",
             "get_attempt_patch",
+            "start_attempt",
         ] {
             let execution = tool(name)
                 .execution
