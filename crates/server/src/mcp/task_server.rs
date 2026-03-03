@@ -17,7 +17,7 @@ use db::{
         ExecutionProcessEventPayload, ProjectEventPayload, TaskEventPayload, WorkspaceEventPayload,
     },
     models::{
-        approval as approval_model,
+        approval as approval_model, attempt_control_lease as attempt_control_lease_model,
         coding_agent_turn::CodingAgentTurn,
         event_outbox::{EventOutbox, EventOutboxEntry},
         execution_process::{ExecutionProcess, ExecutionProcessRunReason, ExecutionProcessStatus},
@@ -66,11 +66,17 @@ const MCP_CODE_IDEMPOTENCY_CONFLICT: &str = "idempotency_conflict";
 const MCP_CODE_IDEMPOTENCY_IN_PROGRESS: &str = "idempotency_in_progress";
 const MCP_CODE_WAIT_MS_TOO_LARGE: &str = "wait_ms_too_large";
 const MCP_CODE_WAIT_MS_REQUIRES_AFTER_LOG_INDEX: &str = "wait_ms_requires_after_log_index";
+const MCP_CODE_ATTEMPT_CLAIM_REQUIRED: &str = "attempt_claim_required";
+const MCP_CODE_ATTEMPT_CLAIM_CONFLICT: &str = "attempt_claim_conflict";
+const MCP_CODE_INVALID_CONTROL_TOKEN: &str = "invalid_control_token";
 
 const TAIL_ATTEMPT_FEED_MAX_WAIT_MS: u64 = 30_000;
 
 const DEFAULT_IDEMPOTENCY_IN_PROGRESS_TTL_SECS: i64 = 60 * 60;
 const IDEMPOTENCY_IN_PROGRESS_TTL_ENV: &str = "VK_IDEMPOTENCY_IN_PROGRESS_TTL_SECS";
+
+const DEFAULT_ATTEMPT_CONTROL_LEASE_TTL_SECS: i64 = 60 * 60;
+const ATTEMPT_CONTROL_LEASE_MAX_TTL_SECS: i64 = 24 * 60 * 60;
 
 fn idempotency_in_progress_ttl() -> Option<chrono::Duration> {
     let raw = match std::env::var(IDEMPOTENCY_IN_PROGRESS_TTL_ENV) {
@@ -433,6 +439,61 @@ pub struct StartAttemptResponse {
     pub session_id: String,
     #[schemars(description = "Initial execution process id (UUID string)")]
     pub execution_process_id: String,
+    #[schemars(description = "Attempt control token (lease bearer token)")]
+    pub control_token: String,
+    #[schemars(description = "When the control lease expires (RFC3339)")]
+    pub control_expires_at: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ClaimAttemptControlRequest {
+    #[schemars(description = "Attempt/workspace id (UUID string)")]
+    pub attempt_id: Uuid,
+    #[schemars(description = "Optional lease TTL in seconds (default: 3600; max: 86400)")]
+    pub ttl_secs: Option<i64>,
+    #[schemars(
+        description = "If true, force-claim even when another client holds an unexpired lease"
+    )]
+    pub force: Option<bool>,
+    #[schemars(
+        description = "Optional client id for audit/coordination (default: derived from MCP peer info)"
+    )]
+    pub claimed_by_client_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ClaimAttemptControlResponse {
+    pub attempt_id: String,
+    pub control_token: String,
+    pub claimed_by_client_id: String,
+    pub expires_at: String,
+    pub token_rotated: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetAttemptControlRequest {
+    pub attempt_id: Uuid,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GetAttemptControlResponse {
+    pub attempt_id: String,
+    pub has_lease: bool,
+    pub claimed_by_client_id: Option<String>,
+    pub expires_at: Option<String>,
+    pub expired: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ReleaseAttemptControlRequest {
+    pub attempt_id: Uuid,
+    pub control_token: Uuid,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReleaseAttemptControlResponse {
+    pub attempt_id: String,
+    pub released: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -445,6 +506,10 @@ pub struct SendFollowUpRequest {
         description = "Session id (UUID string). Provide exactly one of attempt_id or session_id."
     )]
     pub session_id: Option<Uuid>,
+    #[schemars(
+        description = "Attempt control token (lease bearer token). Obtain via start_attempt or claim_attempt_control."
+    )]
+    pub control_token: Option<Uuid>,
     #[schemars(description = "Follow-up prompt to send")]
     pub prompt: String,
     #[schemars(description = "Optional executor variant override")]
@@ -467,6 +532,10 @@ pub struct SendFollowUpResponse {
 pub struct StopAttemptRequest {
     #[schemars(description = "The attempt/workspace id (UUID string). This is required!")]
     pub attempt_id: Uuid,
+    #[schemars(
+        description = "Attempt control token (lease bearer token). Obtain via start_attempt or claim_attempt_control."
+    )]
+    pub control_token: Option<Uuid>,
     #[schemars(description = "If true, perform a hard stop (default: false).")]
     pub force: Option<bool>,
 }
@@ -1335,6 +1404,155 @@ impl TaskServer {
         }
     }
 
+    fn default_peer_client_id(&self) -> Option<String> {
+        let guard = self.peer.read().ok()?;
+        let peer = guard.as_ref()?;
+        peer.peer_info()
+            .map(|info| format!("mcp:{}@{}", info.client_info.name, info.client_info.version))
+    }
+
+    fn normalize_claimed_by_client_id(&self, raw: Option<String>) -> String {
+        let provided = raw.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+
+        provided
+            .or_else(|| self.default_peer_client_id())
+            .unwrap_or_else(|| "mcp:unknown".to_string())
+    }
+
+    fn lease_ttl(ttl_secs: Option<i64>) -> Result<chrono::Duration, CallToolResult> {
+        let ttl_secs = ttl_secs.unwrap_or(DEFAULT_ATTEMPT_CONTROL_LEASE_TTL_SECS);
+        if ttl_secs <= 0 {
+            return Err(Self::err_with(
+                "ttl_secs must be positive.",
+                Some(json!({ "ttl_secs": ttl_secs })),
+                Some("Provide ttl_secs > 0.".to_string()),
+                Some("invalid_argument"),
+                Some(false),
+            )
+            .unwrap());
+        }
+
+        if ttl_secs > ATTEMPT_CONTROL_LEASE_MAX_TTL_SECS {
+            return Err(Self::err_with(
+                "ttl_secs exceeds the server limit.",
+                Some(json!({
+                    "ttl_secs": ttl_secs,
+                    "max_ttl_secs": ATTEMPT_CONTROL_LEASE_MAX_TTL_SECS,
+                })),
+                Some(format!(
+                    "Reduce ttl_secs to <= {}.",
+                    ATTEMPT_CONTROL_LEASE_MAX_TTL_SECS
+                )),
+                Some("invalid_argument"),
+                Some(false),
+            )
+            .unwrap());
+        }
+
+        Ok(chrono::Duration::seconds(ttl_secs))
+    }
+
+    async fn require_attempt_control_token(
+        &self,
+        attempt_id: Uuid,
+        control_token: Option<Uuid>,
+        operation: &'static str,
+    ) -> Result<(), CallToolResult> {
+        let pool = &self.deployment.db().pool;
+        let now = chrono::Utc::now();
+
+        let lease = attempt_control_lease_model::get_by_attempt_id(pool, attempt_id)
+            .await
+            .map_err(|e| {
+                Self::err_with(
+                    "Failed to load attempt control lease",
+                    Some(json!({
+                        "error": e.to_string(),
+                        "attempt_id": attempt_id,
+                        "operation": operation,
+                    })),
+                    None,
+                    Some("internal_error"),
+                    Some(false),
+                )
+                .unwrap()
+            })?;
+
+        let Some(lease) = lease else {
+            return Err(Self::err_with(
+                "Attempt control lease is required for this operation.",
+                Some(json!({
+                    "attempt_id": attempt_id,
+                    "operation": operation,
+                })),
+                Some(
+                    "Call claim_attempt_control(attempt_id) to obtain a control_token.".to_string(),
+                ),
+                Some(MCP_CODE_ATTEMPT_CLAIM_REQUIRED),
+                Some(false),
+            )
+            .unwrap());
+        };
+
+        let expired = lease.is_expired_at(now);
+        if expired {
+            return Err(Self::err_with(
+                "Attempt control lease has expired.",
+                Some(json!({
+                    "attempt_id": attempt_id,
+                    "operation": operation,
+                    "claimed_by_client_id": lease.claimed_by_client_id,
+                    "expires_at": lease.expires_at.to_rfc3339(),
+                })),
+                Some("Call claim_attempt_control(attempt_id) to renew the lease.".to_string()),
+                Some(match control_token {
+                    Some(_) => MCP_CODE_INVALID_CONTROL_TOKEN,
+                    None => MCP_CODE_ATTEMPT_CLAIM_REQUIRED,
+                }),
+                Some(false),
+            )
+            .unwrap());
+        }
+
+        match control_token {
+            None => Err(Self::err_with(
+                "Missing control_token for mutating attempt operation.",
+                Some(json!({
+                    "attempt_id": attempt_id,
+                    "operation": operation,
+                    "claimed_by_client_id": lease.claimed_by_client_id,
+                    "expires_at": lease.expires_at.to_rfc3339(),
+                })),
+                Some("Provide the current control_token, or use claim_attempt_control(force=true) to take over.".to_string()),
+                Some(MCP_CODE_ATTEMPT_CLAIM_CONFLICT),
+                Some(false),
+            )
+            .unwrap()),
+            Some(token) if token == lease.control_token => Ok(()),
+            Some(token) => Err(Self::err_with(
+                "Invalid control_token for attempt operation.",
+                Some(json!({
+                    "attempt_id": attempt_id,
+                    "operation": operation,
+                    "provided_control_token": token,
+                    "claimed_by_client_id": lease.claimed_by_client_id,
+                    "expires_at": lease.expires_at.to_rfc3339(),
+                })),
+                Some("Call claim_attempt_control(attempt_id) to obtain a fresh control_token.".to_string()),
+                Some(MCP_CODE_INVALID_CONTROL_TOKEN),
+                Some(false),
+            )
+            .unwrap()),
+        }
+    }
+
     fn map_attempt_state(
         status: Option<ExecutionProcessStatus>,
     ) -> (McpAttemptState, Option<String>) {
@@ -2053,7 +2271,7 @@ Avoid: Assuming a task always has an attempt."#,
         description = r#"Use when: Create a new attempt/workspace for a task and start the executor.
 Required: task_id, executor, repos
 Optional: variant, request_id, prompt
-Next: tail_attempt_feed, send_follow_up
+Next: tail_attempt_feed, send_follow_up, claim_attempt_control
 Avoid: Empty repos; guessing executor (use list_executors)."#,
         annotations(
             read_only_hint = false,
@@ -2274,10 +2492,46 @@ Avoid: Empty repos; guessing executor (use list_executors)."#,
                         )
                     })?;
 
+                let claimed_by_client_id = self.normalize_claimed_by_client_id(None);
+                let lease_ttl = chrono::Duration::seconds(DEFAULT_ATTEMPT_CONTROL_LEASE_TTL_SECS);
+                let lease = match attempt_control_lease_model::claim(
+                    pool,
+                    workspace.id,
+                    claimed_by_client_id,
+                    lease_ttl,
+                    false,
+                )
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        "Failed to claim attempt control lease",
+                        Some(json!({
+                            "error": e.to_string(),
+                            "attempt_id": workspace.id,
+                            "task_id": task_id,
+                        })),
+                    )
+                })? {
+                    attempt_control_lease_model::ClaimOutcome::Claimed { lease, .. } => lease,
+                    attempt_control_lease_model::ClaimOutcome::Conflict { current } => {
+                        return Err(ErrorData::internal_error(
+                            "Unexpected attempt control lease conflict",
+                            Some(json!({
+                                "attempt_id": workspace.id,
+                                "task_id": task_id,
+                                "claimed_by_client_id": current.claimed_by_client_id,
+                                "expires_at": current.expires_at.to_rfc3339(),
+                            })),
+                        ));
+                    }
+                };
+
                 Ok(StartAttemptResponse {
                     attempt_id: workspace.id.to_string(),
                     session_id: exec.session_id.to_string(),
                     execution_process_id: exec.id.to_string(),
+                    control_token: lease.control_token.to_string(),
+                    control_expires_at: lease.expires_at.to_rfc3339(),
                 })
             })
             .await
@@ -2291,8 +2545,259 @@ Avoid: Empty repos; guessing executor (use list_executors)."#,
     }
 
     #[tool(
+        description = r#"Use when: Claim/renew attempt control (lease) to perform mutating attempt operations.
+Required: attempt_id
+Optional: ttl_secs, force, claimed_by_client_id
+Next: send_follow_up, stop_attempt, release_attempt_control
+Avoid: Using long TTLs; forgetting force=true when taking over."#,
+        output_schema =
+            rmcp::handler::server::tool::schema_for_output::<ClaimAttemptControlResponse>()
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "Invalid output schema for {}: {}",
+                        std::any::type_name::<ClaimAttemptControlResponse>(),
+                        e
+                    )
+                }),
+        annotations(
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false
+        )
+    )]
+    async fn claim_attempt_control(
+        &self,
+        Parameters(ClaimAttemptControlRequest {
+            attempt_id,
+            ttl_secs,
+            force,
+            claimed_by_client_id,
+        }): Parameters<ClaimAttemptControlRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let pool = &self.deployment.db().pool;
+        let _ = Workspace::find_by_id(pool, attempt_id)
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to load workspace",
+                    Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
+                )
+            })?
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    "Attempt not found",
+                    Some(json!({ "attempt_id": attempt_id })),
+                )
+            })?;
+
+        let ttl = match Self::lease_ttl(ttl_secs) {
+            Ok(ttl) => ttl,
+            Err(err) => return Ok(err),
+        };
+
+        let claimed_by_client_id = self.normalize_claimed_by_client_id(claimed_by_client_id);
+        let force = force.unwrap_or(false);
+
+        let outcome = attempt_control_lease_model::claim(
+            pool,
+            attempt_id,
+            claimed_by_client_id.clone(),
+            ttl,
+            force,
+        )
+        .await
+        .map_err(|e| {
+            ErrorData::internal_error(
+                "Failed to claim attempt control lease",
+                Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
+            )
+        })?;
+
+        match outcome {
+            attempt_control_lease_model::ClaimOutcome::Claimed {
+                lease,
+                token_rotated,
+            } => Self::success(&ClaimAttemptControlResponse {
+                attempt_id: attempt_id.to_string(),
+                control_token: lease.control_token.to_string(),
+                claimed_by_client_id: lease.claimed_by_client_id,
+                expires_at: lease.expires_at.to_rfc3339(),
+                token_rotated,
+            }),
+            attempt_control_lease_model::ClaimOutcome::Conflict { current } => {
+                let hint = format!(
+                    "Attempt is controlled by {} until {}. Retry after expiry or call claim_attempt_control(force=true) to take over.",
+                    current.claimed_by_client_id,
+                    current.expires_at.to_rfc3339(),
+                );
+                Self::err_with(
+                    "Attempt control lease is held by another client.",
+                    Some(json!({
+                        "attempt_id": attempt_id,
+                        "claimed_by_client_id": current.claimed_by_client_id,
+                        "expires_at": current.expires_at.to_rfc3339(),
+                    })),
+                    Some(hint),
+                    Some(MCP_CODE_ATTEMPT_CLAIM_CONFLICT),
+                    Some(false),
+                )
+            }
+        }
+    }
+
+    #[tool(
+        description = r#"Use when: Inspect current attempt control lease status (owner + expiry).
+Required: attempt_id
+Optional: (none)
+Next: claim_attempt_control, send_follow_up, stop_attempt
+Avoid: Assuming control_token can be recovered (store it from start_attempt/claim_attempt_control)."#,
+        output_schema = rmcp::handler::server::tool::schema_for_output::<GetAttemptControlResponse>()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "Invalid output schema for {}: {}",
+                    std::any::type_name::<GetAttemptControlResponse>(),
+                    e
+                )
+            }),
+        annotations(read_only_hint = true)
+    )]
+    async fn get_attempt_control(
+        &self,
+        Parameters(GetAttemptControlRequest { attempt_id }): Parameters<GetAttemptControlRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let pool = &self.deployment.db().pool;
+        let _ = Workspace::find_by_id(pool, attempt_id)
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to load workspace",
+                    Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
+                )
+            })?
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    "Attempt not found",
+                    Some(json!({ "attempt_id": attempt_id })),
+                )
+            })?;
+
+        let lease = attempt_control_lease_model::get_by_attempt_id(pool, attempt_id)
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to load attempt control lease",
+                    Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
+                )
+            })?;
+
+        let now = chrono::Utc::now();
+        let response = if let Some(lease) = lease {
+            let expired = lease.is_expired_at(now);
+            let claimed_by_client_id = lease.claimed_by_client_id;
+            let expires_at = lease.expires_at.to_rfc3339();
+            GetAttemptControlResponse {
+                attempt_id: attempt_id.to_string(),
+                has_lease: true,
+                claimed_by_client_id: Some(claimed_by_client_id),
+                expires_at: Some(expires_at),
+                expired: Some(expired),
+            }
+        } else {
+            GetAttemptControlResponse {
+                attempt_id: attempt_id.to_string(),
+                has_lease: false,
+                claimed_by_client_id: None,
+                expires_at: None,
+                expired: None,
+            }
+        };
+
+        Self::success(&response)
+    }
+
+    #[tool(
+        description = r#"Use when: Release attempt control lease after finishing mutating operations.
+Required: attempt_id, control_token
+Optional: (none)
+Next: claim_attempt_control
+Avoid: Releasing with a mismatched token."#,
+        output_schema =
+            rmcp::handler::server::tool::schema_for_output::<ReleaseAttemptControlResponse>()
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "Invalid output schema for {}: {}",
+                        std::any::type_name::<ReleaseAttemptControlResponse>(),
+                        e
+                    )
+                }),
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false
+        )
+    )]
+    async fn release_attempt_control(
+        &self,
+        Parameters(ReleaseAttemptControlRequest {
+            attempt_id,
+            control_token,
+        }): Parameters<ReleaseAttemptControlRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let pool = &self.deployment.db().pool;
+        let _ = Workspace::find_by_id(pool, attempt_id)
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to load workspace",
+                    Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
+                )
+            })?
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    "Attempt not found",
+                    Some(json!({ "attempt_id": attempt_id })),
+                )
+            })?;
+
+        match attempt_control_lease_model::release(pool, attempt_id, control_token).await {
+            Ok(attempt_control_lease_model::ReleaseOutcome::Released) => {
+                Self::success(&ReleaseAttemptControlResponse {
+                    attempt_id: attempt_id.to_string(),
+                    released: true,
+                })
+            }
+            Ok(attempt_control_lease_model::ReleaseOutcome::NotFound) => Self::err_with(
+                "Attempt control lease not found.",
+                Some(json!({ "attempt_id": attempt_id })),
+                Some("Nothing to release. Call claim_attempt_control(attempt_id) to acquire control.".to_string()),
+                Some(MCP_CODE_ATTEMPT_CLAIM_REQUIRED),
+                Some(false),
+            ),
+            Ok(attempt_control_lease_model::ReleaseOutcome::TokenMismatch { current }) => {
+                Self::err_with(
+                    "Invalid control_token for release_attempt_control.",
+                    Some(json!({
+                        "attempt_id": attempt_id,
+                        "provided_control_token": control_token,
+                        "claimed_by_client_id": current.claimed_by_client_id,
+                        "expires_at": current.expires_at.to_rfc3339(),
+                    })),
+                    Some("Re-run claim_attempt_control(attempt_id) to obtain a fresh control_token.".to_string()),
+                    Some(MCP_CODE_INVALID_CONTROL_TOKEN),
+                    Some(false),
+                )
+            }
+            Err(e) => Err(ErrorData::internal_error(
+                "Failed to release attempt control lease",
+                Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
+            )),
+        }
+    }
+
+    #[tool(
         description = r#"Use when: Send a follow-up message to the coding agent for a specific session (or an attempt's latest session).
 Required: exactly one of {attempt_id, session_id}, prompt
+Also required (mutating): control_token
 Optional: variant, request_id
 Next: tail_attempt_feed
 Avoid: Providing both attempt_id and session_id; missing prompt."#,
@@ -2307,6 +2812,7 @@ Avoid: Providing both attempt_id and session_id; missing prompt."#,
         Parameters(SendFollowUpRequest {
             attempt_id,
             session_id,
+            control_token,
             prompt,
             variant,
             request_id,
@@ -2331,15 +2837,60 @@ Avoid: Providing both attempt_id and session_id; missing prompt."#,
             Err(e) => return Ok(e),
         };
 
+        let pool = &self.deployment.db().pool;
+        let attempt_id_for_control = if let Some(attempt_id) = attempt_id {
+            attempt_id
+        } else {
+            let session = Session::find_by_id(pool, session_id)
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        "Failed to load session",
+                        Some(json!({ "error": e.to_string(), "session_id": session_id })),
+                    )
+                })?
+                .ok_or_else(|| {
+                    ErrorData::invalid_params(
+                        "Session not found",
+                        Some(json!({ "session_id": session_id })),
+                    )
+                })?;
+            session.workspace_id
+        };
+
+        let _ = Workspace::find_by_id(pool, attempt_id_for_control)
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to load workspace",
+                    Some(json!({ "error": e.to_string(), "attempt_id": attempt_id_for_control })),
+                )
+            })?
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    "Attempt not found",
+                    Some(json!({ "attempt_id": attempt_id_for_control })),
+                )
+            })?;
+
+        if let Err(err) = self
+            .require_attempt_control_token(attempt_id_for_control, control_token, "send_follow_up")
+            .await
+        {
+            return Ok(err);
+        }
+
         #[derive(Serialize)]
         struct FollowUpIdempotencyPayload<'a> {
             session_id: Uuid,
+            control_token: &'a Option<Uuid>,
             prompt: &'a str,
             variant: &'a Option<String>,
         }
 
         let hash = Self::request_hash(&FollowUpIdempotencyPayload {
             session_id,
+            control_token: &control_token,
             prompt: prompt_trim,
             variant: &variant,
         })?;
@@ -2563,6 +3114,7 @@ Avoid: Providing both attempt_id and session_id; missing prompt."#,
     #[tool(
         description = r#"Use when: Stop a running attempt's non-dev-server execution.
 Required: attempt_id
+Also required (mutating): control_token
 Optional: force
 Next: tail_attempt_feed
 Avoid: Expecting this to stop dev servers."#,
@@ -2574,7 +3126,11 @@ Avoid: Expecting this to stop dev servers."#,
     )]
     async fn stop_attempt(
         &self,
-        Parameters(StopAttemptRequest { attempt_id, force }): Parameters<StopAttemptRequest>,
+        Parameters(StopAttemptRequest {
+            attempt_id,
+            control_token,
+            force,
+        }): Parameters<StopAttemptRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let pool = &self.deployment.db().pool;
         let workspace = Workspace::find_by_id(pool, attempt_id)
@@ -2591,6 +3147,13 @@ Avoid: Expecting this to stop dev servers."#,
                     Some(json!({ "attempt_id": attempt_id })),
                 )
             })?;
+
+        if let Err(err) = self
+            .require_attempt_control_token(attempt_id, control_token, "stop_attempt")
+            .await
+        {
+            return Ok(err);
+        }
 
         if force.unwrap_or(false) {
             self.deployment
@@ -3615,6 +4178,18 @@ Avoid: Responding with mismatched execution_process_id."#,
             );
         }
 
+        let responded_by_client_id = responded_by_client_id
+            .and_then(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            })
+            .or_else(|| self.default_peer_client_id())
+            .or_else(|| Some("mcp:unknown".to_string()));
+
         #[derive(Serialize)]
         struct RespondIdempotencyPayload<'a> {
             approval_id: &'a str,
@@ -4039,6 +4614,7 @@ mod tests {
         let router = TaskServer::tool_router();
         assert!(router.map.contains_key("tail_attempt_feed"));
         assert!(router.map.contains_key("respond_approval"));
+        assert!(router.map.contains_key("claim_attempt_control"));
     }
 
     #[test]
@@ -4124,11 +4700,11 @@ mod tests {
         let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
 
         let deployment = DeploymentImpl::new().await.unwrap();
-        let pool = &deployment.db().pool;
+        let pool = deployment.db().pool.clone();
 
         let project_id = Uuid::new_v4();
         Project::create(
-            pool,
+            &pool,
             &db::models::project::CreateProject {
                 name: "Test project".to_string(),
                 repositories: Vec::new(),
@@ -4140,7 +4716,7 @@ mod tests {
 
         let task_id = Uuid::new_v4();
         Task::create(
-            pool,
+            &pool,
             &CreateTask::from_title_description(
                 project_id,
                 "Test task".to_string(),
@@ -4279,11 +4855,11 @@ mod tests {
         let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
 
         let deployment = DeploymentImpl::new().await.unwrap();
-        let pool = &deployment.db().pool;
+        let pool = deployment.db().pool.clone();
 
         let project_id = Uuid::new_v4();
         Project::create(
-            pool,
+            &pool,
             &db::models::project::CreateProject {
                 name: "Test project".to_string(),
                 repositories: Vec::new(),
@@ -4295,7 +4871,7 @@ mod tests {
 
         let task_id = Uuid::new_v4();
         Task::create(
-            pool,
+            &pool,
             &CreateTask::from_title_description(
                 project_id,
                 "Test task".to_string(),
@@ -4306,13 +4882,13 @@ mod tests {
         .await
         .unwrap();
 
-        let repo = Repo::find_or_create(pool, Path::new("/tmp/vk-test-repo"), "Test repo")
+        let repo = Repo::find_or_create(&pool, Path::new("/tmp/vk-test-repo"), "Test repo")
             .await
             .unwrap();
 
         let attempt_id = Uuid::new_v4();
         let workspace = Workspace::create(
-            pool,
+            &pool,
             &CreateWorkspace {
                 branch: "test-branch".to_string(),
                 agent_working_dir: None,
@@ -4324,7 +4900,7 @@ mod tests {
         .unwrap();
 
         WorkspaceRepo::create_many(
-            pool,
+            &pool,
             workspace.id,
             &[CreateWorkspaceRepo {
                 repo_id: repo.id,
@@ -4335,7 +4911,7 @@ mod tests {
         .unwrap();
 
         let session = Session::create(
-            pool,
+            &pool,
             &CreateSession {
                 executor: Some("CLAUDE_CODE".to_string()),
             },
@@ -4347,7 +4923,7 @@ mod tests {
 
         let execution_process_id = Uuid::new_v4();
         let _execution_process = ExecutionProcess::create(
-            pool,
+            &pool,
             &CreateExecutionProcess {
                 session_id: session.id,
                 executor_action: ExecutorAction::new(
@@ -4376,7 +4952,7 @@ mod tests {
         for idx in 0..=4i64 {
             let entry_json = serde_json::json!({ "type": "test_log", "n": idx });
             db::models::execution_process_log_entries::ExecutionProcessLogEntry::upsert_entry(
-                pool,
+                &pool,
                 execution_process_id,
                 utils::log_entries::LogEntryChannel::Normalized,
                 idx,
@@ -4582,6 +5158,460 @@ mod tests {
         assert_eq!(entries[0]["entry_index"], 5);
         assert_eq!(payload["next_after_log_index"], 5);
 
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn attempt_control_lease_claim_conflict_and_release_are_structured() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = deployment.db().pool.clone();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &pool,
+            &db::models::project::CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &pool,
+            &CreateTask::from_title_description(project_id, "Test task".to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let attempt_id = Uuid::new_v4();
+        Workspace::create(
+            &pool,
+            &CreateWorkspace {
+                branch: "main".to_string(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let server = TaskServer::new(deployment);
+
+        let first = server
+            .claim_attempt_control(Parameters(ClaimAttemptControlRequest {
+                attempt_id,
+                ttl_secs: Some(3600),
+                force: None,
+                claimed_by_client_id: Some("client-a".to_string()),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(first.is_error, Some(false));
+        let first_payload = first.structured_content.clone().unwrap();
+        let control_token = Uuid::parse_str(first_payload["control_token"].as_str().unwrap())
+            .expect("control_token should be a UUID string");
+
+        let conflict = server
+            .claim_attempt_control(Parameters(ClaimAttemptControlRequest {
+                attempt_id,
+                ttl_secs: Some(3600),
+                force: Some(false),
+                claimed_by_client_id: Some("client-b".to_string()),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(conflict.is_error, Some(true));
+        let conflict_payload = conflict.structured_content.clone().unwrap();
+        assert_eq!(
+            conflict_payload["code"].as_str(),
+            Some(MCP_CODE_ATTEMPT_CLAIM_CONFLICT)
+        );
+        assert_eq!(
+            conflict_payload["details"]["claimed_by_client_id"].as_str(),
+            Some("client-a")
+        );
+
+        let status = server
+            .get_attempt_control(Parameters(GetAttemptControlRequest { attempt_id }))
+            .await
+            .unwrap();
+        assert_eq!(status.is_error, Some(false));
+        let status_payload = status.structured_content.clone().unwrap();
+        assert_eq!(status_payload["has_lease"], true);
+        assert_eq!(
+            status_payload["claimed_by_client_id"].as_str(),
+            Some("client-a")
+        );
+
+        let mismatch = server
+            .release_attempt_control(Parameters(ReleaseAttemptControlRequest {
+                attempt_id,
+                control_token: Uuid::new_v4(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(mismatch.is_error, Some(true));
+        let mismatch_payload = mismatch.structured_content.clone().unwrap();
+        assert_eq!(
+            mismatch_payload["code"].as_str(),
+            Some(MCP_CODE_INVALID_CONTROL_TOKEN)
+        );
+
+        let released = server
+            .release_attempt_control(Parameters(ReleaseAttemptControlRequest {
+                attempt_id,
+                control_token,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(released.is_error, Some(false));
+        let released_payload = released.structured_content.clone().unwrap();
+        assert_eq!(released_payload["released"], true);
+
+        let status = server
+            .get_attempt_control(Parameters(GetAttemptControlRequest { attempt_id }))
+            .await
+            .unwrap();
+        let status_payload = status.structured_content.clone().unwrap();
+        assert_eq!(status_payload["has_lease"], false);
+
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn mutating_attempt_tools_require_control_token() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = deployment.db().pool.clone();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &pool,
+            &db::models::project::CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &pool,
+            &CreateTask::from_title_description(project_id, "Test task".to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let attempt_id = Uuid::new_v4();
+        Workspace::create(
+            &pool,
+            &CreateWorkspace {
+                branch: "main".to_string(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let session_id = Uuid::new_v4();
+        Session::create(
+            &pool,
+            &CreateSession {
+                executor: Some("test".to_string()),
+            },
+            session_id,
+            attempt_id,
+        )
+        .await
+        .unwrap();
+
+        let server = TaskServer::new(deployment);
+
+        // No lease yet -> claim required.
+        let result = server
+            .send_follow_up(Parameters(SendFollowUpRequest {
+                attempt_id: Some(attempt_id),
+                session_id: None,
+                control_token: None,
+                prompt: "hi".to_string(),
+                variant: None,
+                request_id: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let payload = result.structured_content.clone().unwrap();
+        assert_eq!(
+            payload["code"].as_str(),
+            Some(MCP_CODE_ATTEMPT_CLAIM_REQUIRED)
+        );
+
+        let ttl = chrono::Duration::seconds(3600);
+        let lease = match attempt_control_lease_model::claim(
+            &pool,
+            attempt_id,
+            "client-a".to_string(),
+            ttl,
+            false,
+        )
+        .await
+        .unwrap()
+        {
+            attempt_control_lease_model::ClaimOutcome::Claimed { lease, .. } => lease,
+            other => panic!("Expected claimed lease, got: {:?}", other),
+        };
+
+        // Lease exists but no token provided -> conflict.
+        let result = server
+            .send_follow_up(Parameters(SendFollowUpRequest {
+                attempt_id: Some(attempt_id),
+                session_id: None,
+                control_token: None,
+                prompt: "hi".to_string(),
+                variant: None,
+                request_id: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let payload = result.structured_content.clone().unwrap();
+        assert_eq!(
+            payload["code"].as_str(),
+            Some(MCP_CODE_ATTEMPT_CLAIM_CONFLICT)
+        );
+
+        // Wrong token -> invalid_control_token.
+        let result = server
+            .send_follow_up(Parameters(SendFollowUpRequest {
+                attempt_id: Some(attempt_id),
+                session_id: None,
+                control_token: Some(Uuid::new_v4()),
+                prompt: "hi".to_string(),
+                variant: None,
+                request_id: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let payload = result.structured_content.clone().unwrap();
+        assert_eq!(
+            payload["code"].as_str(),
+            Some(MCP_CODE_INVALID_CONTROL_TOKEN)
+        );
+
+        // stop_attempt follows the same rules.
+        let result = server
+            .stop_attempt(Parameters(StopAttemptRequest {
+                attempt_id,
+                control_token: None,
+                force: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let payload = result.structured_content.clone().unwrap();
+        assert_eq!(
+            payload["code"].as_str(),
+            Some(MCP_CODE_ATTEMPT_CLAIM_CONFLICT)
+        );
+
+        let result = server
+            .stop_attempt(Parameters(StopAttemptRequest {
+                attempt_id,
+                control_token: Some(Uuid::new_v4()),
+                force: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let payload = result.structured_content.clone().unwrap();
+        assert_eq!(
+            payload["code"].as_str(),
+            Some(MCP_CODE_INVALID_CONTROL_TOKEN)
+        );
+
+        // Correct token passes validation.
+        let result = server
+            .stop_attempt(Parameters(StopAttemptRequest {
+                attempt_id,
+                control_token: Some(lease.control_token),
+                force: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(false));
+
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn respond_approval_derives_responded_by_client_id_from_peer() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = &deployment.db().pool;
+
+        let client = TestElicitationClient::new(
+            rmcp::model::ClientInfo {
+                protocol_version: ProtocolVersion::V_2025_03_26,
+                capabilities: rmcp::model::ClientCapabilities::default(),
+                client_info: rmcp::model::Implementation {
+                    name: "vk-tool-client".to_string(),
+                    title: None,
+                    version: "0.0.42".to_string(),
+                    icons: None,
+                    website_url: None,
+                },
+            },
+            serde_json::Value::Null,
+        );
+
+        let server = TaskServer::new(deployment.clone());
+
+        let (server_io, client_io) = tokio::io::duplex(1024 * 1024);
+        let (server_running, client_running) =
+            tokio::join!(server.serve(server_io), client.clone().serve(client_io));
+        let server_running = server_running.unwrap();
+        let client_running = client_running.unwrap();
+
+        assert!(server_running.service().peer.read().unwrap().is_some());
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            pool,
+            &db::models::project::CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            pool,
+            &CreateTask::from_title_description(project_id, "Test task".to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let attempt_id = Uuid::new_v4();
+        Workspace::create(
+            pool,
+            &CreateWorkspace {
+                branch: "main".to_string(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let session_id = Uuid::new_v4();
+        Session::create(
+            pool,
+            &CreateSession {
+                executor: Some("test".to_string()),
+            },
+            session_id,
+            attempt_id,
+        )
+        .await
+        .unwrap();
+
+        let execution_process_id = Uuid::new_v4();
+        ExecutionProcess::create(
+            pool,
+            &CreateExecutionProcess {
+                session_id,
+                executor_action: ExecutorAction::new(
+                    ExecutorActionType::ScriptRequest(executors::actions::script::ScriptRequest {
+                        script: "echo hi".to_string(),
+                        language: executors::actions::script::ScriptRequestLanguage::Bash,
+                        context: ScriptContext::SetupScript,
+                        working_dir: None,
+                    }),
+                    None,
+                ),
+                run_reason: ExecutionProcessRunReason::CodingAgent,
+            },
+            execution_process_id,
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let request = utils::approvals::ApprovalRequest::from_create(
+            utils::approvals::CreateApprovalRequest {
+                tool_name: "test_tool".to_string(),
+                tool_input: json!({ "x": 1 }),
+                tool_call_id: "call-1".to_string(),
+            },
+            execution_process_id,
+        );
+        let (approval, waiter) = deployment
+            .approvals()
+            .create_with_waiter(pool, request)
+            .await
+            .unwrap();
+
+        let mut arguments = serde_json::Map::new();
+        arguments.insert("approval_id".to_string(), json!(approval.id));
+        arguments.insert(
+            "execution_process_id".to_string(),
+            json!(execution_process_id.to_string()),
+        );
+        arguments.insert("status".to_string(), json!("approved"));
+
+        let result = client_running
+            .call_tool(rmcp::model::CallToolRequestParam {
+                name: "respond_approval".into(),
+                arguments: Some(arguments),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.is_error, Some(false));
+
+        let _ = tokio::time::timeout(Duration::from_secs(2), waiter)
+            .await
+            .expect("approval waiter should resolve")
+            .clone();
+
+        let approval_uuid = Uuid::parse_str(&approval.id).unwrap();
+        let persisted = approval_model::get_by_id(pool, approval_uuid)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            persisted.responded_by_client_id.as_deref(),
+            Some("mcp:vk-tool-client@0.0.42")
+        );
+
+        let _ = client_running.cancel().await;
+        let _ = server_running.cancel().await;
         let _ = std::fs::remove_dir_all(&temp_root);
     }
 
