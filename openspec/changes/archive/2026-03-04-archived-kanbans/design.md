@@ -106,15 +106,14 @@
 - `list_archived_kanbans`
 - `archive_project_kanban`
 - `restore_archived_kanban`
-- `delete_archived_kanban`
 
 **原因：**
 - 与现有 MCP 设计一致（小工具、严格 schema、结构化输出）。
-- 破坏性操作通过 `destructiveHint=true` 明示风险。
+- 写操作通过 `destructiveHint=true` 明示风险。
 
 ## 风险与权衡
 
-- **删除归档导致不可恢复的数据丢失** → UI 高摩擦确认（输入确认文本）、MCP destructive 标注、醒目文案说明永久删除。
+- **删除归档导致不可恢复的数据丢失** → UI 高摩擦确认（输入确认文本）、醒目文案说明永久删除；MCP 不暴露 delete tool。
 - **护栏覆盖不完整（遗漏写路径）** → 将“是否归档”的判断尽量集中，并为每类写操作（update/delete/create-and-start/start_attempt）增加针对性测试。
 - **删除可能较慢/外部清理可能部分失败** → 返回清晰错误 + best-effort 清理；必要时再演进为后台队列。
 - **默认过滤改变旧客户端预期** → 通过显式 query 参数提供包含归档/按归档筛选能力，并同步更新内部调用点与文档。
@@ -135,7 +134,7 @@
    - 为 `tasks` 增加 `archived_kanban_id` nullable FK + index。
 2. 增加 db models 与 server routes；重新生成 TypeScript types。
 3. 增加前端页面与对话框，接入新 API。
-4. 增加 MCP tools，并确保输出包含 `outputSchema` 与 `structuredContent`。
+4. 增加 MCP tools（list/archive/restore），并确保输出包含 `outputSchema` 与 `structuredContent`。
 
 **回滚：** 删除新增表/列并移除路由/工具/UI。若系统中已存在归档数据，回滚会丢失归档分组语义，属于非平凡回滚。
 

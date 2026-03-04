@@ -539,21 +539,6 @@ pub struct RestoreArchivedKanbanResponse {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct DeleteArchivedKanbanRequest {
-    #[schemars(description = "The archived kanban id to delete (UUID string).")]
-    pub archive_id: Uuid,
-}
-
-#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DeleteArchivedKanbanResponse {
-    #[schemars(description = "Archived kanban id (UUID string)")]
-    pub archive_id: String,
-    #[schemars(description = "Number of tasks deleted with the archive.")]
-    pub deleted_task_count: u64,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct GetTaskRequest {
     #[schemars(description = "The ID of the task to retrieve (UUID string)")]
     pub task_id: Uuid,
@@ -2553,7 +2538,7 @@ Avoid: Using this as an attempt/session listing (use list_task_attempts)."#,
         description = r#"Use when: List archived kanban batches for a project.
 Required: project_id
 Optional: (none)
-Next: archive_project_kanban / restore_archived_kanban / delete_archived_kanban
+Next: archive_project_kanban / restore_archived_kanban
 Avoid: Guessing project_id (use list_projects)."#,
         output_schema = tool_output_schema::<ListArchivedKanbansResponse>(),
         annotations(read_only_hint = true)
@@ -2601,14 +2586,15 @@ Avoid: Guessing project_id (use list_projects)."#,
         description = r#"Use when: Archive a project's kanban by moving tasks with selected statuses into a new archived kanban batch.
 Required: project_id, statuses
 Optional: title
-Next: list_archived_kanbans / restore_archived_kanban / delete_archived_kanban
+Next: list_archived_kanbans / restore_archived_kanban
 Avoid: Archiving tasks with running execution processes."#,
         output_schema = tool_output_schema::<ArchiveProjectKanbanResponse>(),
         annotations(
             read_only_hint = false,
             destructive_hint = true,
             idempotent_hint = false
-        )
+        ),
+        execution(task_support = "optional")
     )]
     async fn archive_project_kanban(
         &self,
@@ -2706,14 +2692,15 @@ Avoid: Archiving tasks with running execution processes."#,
         description = r#"Use when: Restore tasks from an archived kanban back to the active set.
 Required: archive_id
 Optional: restore_all, statuses
-Next: list_tasks / list_archived_kanbans / delete_archived_kanban
+Next: list_tasks / list_archived_kanbans
 Avoid: Providing statuses together with restore_all=true."#,
         output_schema = tool_output_schema::<RestoreArchivedKanbanResponse>(),
         annotations(
             read_only_hint = false,
             destructive_hint = true,
             idempotent_hint = true
-        )
+        ),
+        execution(task_support = "optional")
     )]
     async fn restore_archived_kanban(
         &self,
@@ -2812,52 +2799,6 @@ Avoid: Providing statuses together with restore_all=true."#,
         Self::success(&RestoreArchivedKanbanResponse {
             archive_id: archive_id.to_string(),
             restored_task_count: data.restored_task_count,
-        })
-    }
-
-    #[tool(
-        description = r#"Use when: Permanently delete an archived kanban and all contained tasks.
-Required: archive_id
-Optional: (none)
-Next: list_archived_kanbans
-Avoid: Deleting archives without explicit confirmation."#,
-        output_schema = tool_output_schema::<DeleteArchivedKanbanResponse>(),
-        annotations(
-            read_only_hint = false,
-            destructive_hint = true,
-            idempotent_hint = true
-        )
-    )]
-    async fn delete_archived_kanban(
-        &self,
-        Parameters(DeleteArchivedKanbanRequest { archive_id }): Parameters<DeleteArchivedKanbanRequest>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let ResponseJson(response) = match crate::routes::archived_kanbans::delete_archived_kanban(
-            axum::extract::State(self.deployment.clone()),
-            axum::extract::Path(archive_id),
-        )
-        .await
-        {
-            Ok(ok) => ok,
-            Err(err) => {
-                return Self::tool_error_from_api_error(
-                    "delete_archived_kanban",
-                    err,
-                    json!({ "tool": "delete_archived_kanban", "archive_id": archive_id }),
-                );
-            }
-        };
-
-        let data = response.into_data().ok_or_else(|| {
-            ErrorData::internal_error(
-                "Delete response missing data",
-                Some(json!({ "archive_id": archive_id })),
-            )
-        })?;
-
-        Self::success(&DeleteArchivedKanbanResponse {
-            archive_id: archive_id.to_string(),
-            deleted_task_count: data.deleted_task_count,
         })
     }
 
@@ -5943,7 +5884,6 @@ mod tests {
             "claim_attempt_control",
             "cli_dependency_preflight",
             "create_task",
-            "delete_archived_kanban",
             "delete_task",
             "get_approval",
             "get_attempt_changes",
@@ -6059,14 +5999,6 @@ mod tests {
         assert_eq!(restore_archived_kanban.read_only_hint, Some(false));
         assert_eq!(restore_archived_kanban.destructive_hint, Some(true));
         assert_eq!(restore_archived_kanban.idempotent_hint, Some(true));
-
-        let delete_archived_kanban = tool("delete_archived_kanban")
-            .annotations
-            .as_ref()
-            .expect("Missing delete_archived_kanban annotations");
-        assert_eq!(delete_archived_kanban.read_only_hint, Some(false));
-        assert_eq!(delete_archived_kanban.destructive_hint, Some(true));
-        assert_eq!(delete_archived_kanban.idempotent_hint, Some(true));
     }
 
     #[test]
@@ -6122,6 +6054,39 @@ mod tests {
                 name
             );
         }
+    }
+
+    #[test]
+    fn tool_router_marks_archived_kanban_tools_as_task_optional() {
+        let tools = TaskServer::tool_router().list_all();
+
+        let tool = |name: &str| {
+            tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == name)
+                .unwrap_or_else(|| panic!("Missing tool: {}", name))
+        };
+
+        for name in ["archive_project_kanban", "restore_archived_kanban"] {
+            let execution = tool(name)
+                .execution
+                .as_ref()
+                .unwrap_or_else(|| panic!("Missing execution for {}", name));
+            assert_eq!(
+                execution.task_support,
+                Some(rmcp::model::TaskSupport::Optional),
+                "Expected taskSupport=optional for {}",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn tool_router_does_not_expose_delete_archived_kanban() {
+        let tools = TaskServer::tool_router().list_all();
+        assert!(tools
+            .iter()
+            .all(|tool| tool.name.as_ref() != "delete_archived_kanban"));
     }
 
     #[tokio::test]

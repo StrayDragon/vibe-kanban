@@ -32,7 +32,6 @@
   - `list_archived_kanbans(project_id)`
   - `archive_project_kanban(project_id, statuses, title?)`
   - `restore_archived_kanban(archive_id, restore_all?, statuses?)`
-  - `delete_archived_kanban(archive_id)`
   要求 `structuredContent` + `outputSchema`，破坏性 tools 标注 `destructiveHint=true`（验证：在 `crates/server/src/mcp/task_server.rs`（或相邻 test module）增加 MCP tool 测试）
 - [x] 3.2 MCP 路径同样禁止对归档任务执行（验证：增加 MCP 级别测试，断言对归档任务 start attempt 失败且返回结构化错误）
 

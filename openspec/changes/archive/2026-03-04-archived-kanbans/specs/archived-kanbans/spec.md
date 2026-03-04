@@ -182,11 +182,9 @@
 - 列出 Project 下的 ArchivedKanbans
 - 触发归档（创建 archive 并移动 tasks）
 - 触发还原（批量还原）
-- 删除 archive（破坏性）
 
 这些 tools MUST 提供 `structuredContent`，并在 `tools/list` 中发布准确的 `outputSchema`。破坏性 tools MUST 标注 `destructiveHint=true`。
 
 #### Scenario: MCP tools 返回结构化结果
 - **WHEN** 客户端调用任一 archived-kanban MCP tool
 - **THEN** tool result 包含 `structuredContent`，其字段语义与 tool 文档一致
-
