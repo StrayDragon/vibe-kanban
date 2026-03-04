@@ -30,6 +30,7 @@ pub struct Task {
     pub task_group_node_id: Option<String>,
     pub parent_workspace_id: Option<Uuid>,
     pub shared_task_id: Option<Uuid>,
+    pub archived_kanban_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -130,6 +131,10 @@ pub struct UpdateTask {
 }
 
 impl Task {
+    fn archived_task_write_error() -> DbErr {
+        DbErr::Custom("Task is archived. Restore it before modifying.".to_string())
+    }
+
     pub fn to_prompt(&self) -> String {
         if let Some(description) = self.description.as_ref().filter(|d| !d.trim().is_empty()) {
             format!("{}\n\n{}", &self.title, description)
@@ -156,6 +161,15 @@ impl Task {
                 .map(Some)?,
             None => None,
         };
+        let archived_kanban_id = match model.archived_kanban_id {
+            Some(id) => ids::archived_kanban_uuid_by_id(db, id)
+                .await?
+                .ok_or(DbErr::RecordNotFound(
+                    "Archived kanban not found".to_string(),
+                ))
+                .map(Some)?,
+            None => None,
+        };
         let task_group_id = match model.task_group_id {
             Some(id) => ids::task_group_uuid_by_id(db, id)
                 .await?
@@ -175,6 +189,7 @@ impl Task {
             task_group_node_id: model.task_group_node_id,
             parent_workspace_id,
             shared_task_id,
+            archived_kanban_id,
             created_at: model.created_at.into(),
             updated_at: model.updated_at.into(),
         })
@@ -416,6 +431,7 @@ impl Task {
 
         let models = task::Entity::find()
             .filter(task::Column::ProjectId.eq(project_row_id))
+            .filter(task::Column::ArchivedKanbanId.is_null())
             .order_by_desc(task::Column::CreatedAt)
             .all(db)
             .await?;
@@ -462,9 +478,66 @@ impl Task {
         db: &C,
     ) -> Result<Vec<TaskWithAttemptStatus>, DbErr> {
         let models = task::Entity::find()
+            .filter(task::Column::ArchivedKanbanId.is_null())
             .order_by_desc(task::Column::CreatedAt)
             .all(db)
             .await?;
+
+        let mut tasks = Vec::with_capacity(models.len());
+        for model in models {
+            let row_id = model.id;
+            let task = Self::from_model(db, model).await?;
+            let (has_in_progress_attempt, last_attempt_failed, executor) =
+                Self::attempt_status(db, row_id).await?;
+            tasks.push(TaskWithAttemptStatus {
+                task,
+                has_in_progress_attempt,
+                last_attempt_failed,
+                executor,
+            });
+        }
+
+        Ok(tasks)
+    }
+
+    pub async fn find_filtered_with_attempt_status<C: ConnectionTrait>(
+        db: &C,
+        project_id: Option<Uuid>,
+        include_archived: bool,
+        archived_kanban_id: Option<Uuid>,
+    ) -> Result<Vec<TaskWithAttemptStatus>, DbErr> {
+        let project_row_id = match project_id {
+            Some(project_id) => ids::project_id_by_uuid(db, project_id)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Project not found".to_string()))
+                .map(Some)?,
+            None => None,
+        };
+
+        let archived_kanban_row_id = match archived_kanban_id {
+            Some(archived_kanban_id) => {
+                let row_id = ids::archived_kanban_id_by_uuid(db, archived_kanban_id).await?;
+                match row_id {
+                    Some(row_id) => Some(row_id),
+                    None => return Ok(Vec::new()),
+                }
+            }
+            None => None,
+        };
+
+        let mut query = task::Entity::find().order_by_desc(task::Column::CreatedAt);
+
+        if let Some(project_row_id) = project_row_id {
+            query = query.filter(task::Column::ProjectId.eq(project_row_id));
+        }
+
+        if let Some(archived_kanban_row_id) = archived_kanban_row_id {
+            query = query.filter(task::Column::ArchivedKanbanId.eq(archived_kanban_row_id));
+        } else if !include_archived {
+            query = query.filter(task::Column::ArchivedKanbanId.is_null());
+        }
+
+        let models = query.all(db).await?;
 
         let mut tasks = Vec::with_capacity(models.len());
         for model in models {
@@ -597,6 +670,7 @@ impl Task {
             task_group_node_id: Set(task_group_node_id),
             parent_workspace_id: Set(parent_workspace_id),
             shared_task_id: Set(shared_task_id),
+            archived_kanban_id: Set(None),
             created_at: Set(now.into()),
             updated_at: Set(now.into()),
             ..Default::default()
@@ -633,6 +707,10 @@ impl Task {
 
         if record.project_id != project_row_id {
             return Err(DbErr::RecordNotFound("Task not found".to_string()));
+        }
+
+        if record.archived_kanban_id.is_some() {
+            return Err(Self::archived_task_write_error());
         }
 
         let status_changed = record.status != status;
@@ -701,6 +779,11 @@ impl Task {
             .one(db)
             .await?
             .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+
+        if record.archived_kanban_id.is_some() {
+            return Err(Self::archived_task_write_error());
+        }
+
         let project_row_id = record.project_id;
         let task_group_id = record.task_group_id;
         let task_kind = record.task_kind.clone();
@@ -764,6 +847,10 @@ impl Task {
             .one(db)
             .await?
             .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+
+        if record.archived_kanban_id.is_some() {
+            return Err(Self::archived_task_write_error());
+        }
 
         let project_row_id = record.project_id;
         let mut active: task::ActiveModel = record.into();
@@ -877,22 +964,42 @@ impl Task {
             return Ok(0);
         };
 
+        if record.archived_kanban_id.is_some() {
+            return Err(DbErr::Custom(
+                "Task is archived. Delete its archive to remove it.".to_string(),
+            ));
+        }
+
+        Self::delete_allow_archived(db, id).await
+    }
+
+    pub async fn delete_allow_archived<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<u64, DbErr> {
+        let record = task::Entity::find()
+            .filter(task::Column::Uuid.eq(id))
+            .one(db)
+            .await?;
+
+        let Some(record) = record else {
+            return Ok(0);
+        };
+
+        let task_id = record.uuid;
         let project_id = ids::project_uuid_by_id(db, record.project_id)
             .await?
             .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
 
         let result = task::Entity::delete_many()
-            .filter(task::Column::Uuid.eq(id))
+            .filter(task::Column::Uuid.eq(task_id))
             .exec(db)
             .await?;
 
         if result.rows_affected > 0 {
             let payload = serde_json::to_value(TaskEventPayload {
-                task_id: id,
+                task_id,
                 project_id,
             })
             .map_err(|err| DbErr::Custom(err.to_string()))?;
-            EventOutbox::enqueue(db, EVENT_TASK_DELETED, "task", id, payload).await?;
+            EventOutbox::enqueue(db, EVENT_TASK_DELETED, "task", task_id, payload).await?;
         }
 
         Ok(result.rows_affected)
@@ -916,6 +1023,10 @@ impl Task {
             .one(db)
             .await?
             .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+
+        if record.archived_kanban_id.is_some() {
+            return Err(Self::archived_task_write_error());
+        }
 
         let project_row_id = record.project_id;
         let mut active: task::ActiveModel = record.into();

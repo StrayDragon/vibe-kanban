@@ -106,6 +106,7 @@ const getStatusRank = (status: TaskStatus) => STATUS_RANK.get(status) ?? 0;
 
 const STATUS_SET = new Set<TaskStatus>(STATUS_ORDER);
 const COLLAPSED_STATUS_STORAGE_KEY = 'tasksOverview.collapsedStatuses';
+const INCLUDE_ARCHIVED_STORAGE_KEY = 'tasksOverview.includeArchived';
 const DEFAULT_COLLAPSED_STATUSES: TaskStatus[] = ['cancelled', 'done', 'todo'];
 
 const buildStatusGroupKey = (projectId: string, status: TaskStatus) =>
@@ -138,6 +139,23 @@ function saveCollapsedStatuses(statuses: Set<TaskStatus>): void {
       COLLAPSED_STATUS_STORAGE_KEY,
       JSON.stringify([...statuses])
     );
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function loadIncludeArchived(): boolean {
+  try {
+    const raw = localStorage.getItem(INCLUDE_ARCHIVED_STORAGE_KEY);
+    return raw === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function saveIncludeArchived(value: boolean): void {
+  try {
+    localStorage.setItem(INCLUDE_ARCHIVED_STORAGE_KEY, value ? 'true' : 'false');
   } catch {
     // Ignore storage errors
   }
@@ -329,6 +347,9 @@ export function TasksOverview() {
   const [collapsedStatuses, setCollapsedStatuses] = useState<Set<TaskStatus>>(
     () => loadCollapsedStatuses()
   );
+  const [includeArchived, setIncludeArchived] = useState(() =>
+    loadIncludeArchived()
+  );
   const [statusGroupOpenOverrides, setStatusGroupOpenOverrides] = useState<
     Record<string, boolean>
   >({});
@@ -343,7 +364,7 @@ export function TasksOverview() {
     tasksById,
     isLoading: tasksLoading,
     error: streamError,
-  } = useAllTasks();
+  } = useAllTasks({ includeArchived });
 
   const handleCreateProject = useCallback(async () => {
     try {
@@ -360,6 +381,10 @@ export function TasksOverview() {
     saveCollapsedStatuses(collapsedStatuses);
     setStatusGroupOpenOverrides({});
   }, [collapsedStatuses]);
+
+  useEffect(() => {
+    saveIncludeArchived(includeArchived);
+  }, [includeArchived]);
 
   const toggleProjectCollapse = useCallback((projectId: string) => {
     setCollapsedProjects((prev) => {
@@ -777,6 +802,15 @@ export function TasksOverview() {
                   {statusLabels[status]}
                 </DropdownMenuCheckboxItem>
               ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem
+                checked={includeArchived}
+                onCheckedChange={(checked) =>
+                  setIncludeArchived(checked === true)
+                }
+              >
+                {t('overview.includeArchived')}
+              </DropdownMenuCheckboxItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

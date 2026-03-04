@@ -130,7 +130,7 @@ pub async fn delete_task_group(
     Extension(existing): Extension<TaskGroup>,
     State(deployment): State<DeploymentImpl>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
-    task_deletion::delete_task_group_with_cleanup(&deployment, existing, None).await?;
+    task_deletion::delete_task_group_with_cleanup(&deployment, existing, None, false).await?;
     Ok(ResponseJson(ApiResponse::success(())))
 }
 

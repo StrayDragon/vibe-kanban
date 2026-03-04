@@ -15,7 +15,62 @@
     "collapseStatus": "折叠{{status}}",
     "expandStatus": "展开{{status}}",
     "foldStatusButton": "折叠状态",
-    "foldStatusLabel": "自动折叠状态"
+    "foldStatusLabel": "自动折叠状态",
+    "includeArchived": "包含归档任务"
+  },
+  "archives": {
+    "title": "归档",
+    "subtitle": "项目归档看板批次",
+    "subtitleWithProject": "「{{name}}」的归档看板批次",
+    "detailLabel": "归档看板",
+    "archiveButton": "归档",
+    "restoreButton": "还原",
+    "deleteButton": "删除归档",
+    "backToKanban": "返回看板",
+    "backToArchives": "返回归档列表",
+    "empty": "暂无归档。",
+    "tasksCount_one": "{{count}} 个任务",
+    "tasksCount_other": "{{count}} 个任务",
+    "projectMissing": "缺少项目 ID。",
+    "archiveMissing": "缺少归档 ID。",
+    "loadError": "加载归档失败。",
+    "archiveDialog": {
+      "title": "归档看板",
+      "description": "将所选状态的任务移动到新的归档看板批次中。",
+      "warning": "归档后的任务将变为只读，且在还原前无法创建尝试（attempt）。",
+      "optionalTitle": "标题（可选）",
+      "titlePlaceholder": "例如：第 12 周收尾",
+      "statusesLabel": "要归档的状态",
+      "statusRequired": "请至少选择一个要归档的状态。",
+      "confirm": "归档",
+      "submitting": "归档中…",
+      "error": "归档失败"
+    },
+    "restoreDialog": {
+      "title": "还原归档",
+      "description": "将此归档中的任务还原回活跃看板。",
+      "warning": "还原不会改变任务的状态（status）。",
+      "restoreAll": "还原全部任务",
+      "statusesLabel": "仅还原以下状态",
+      "statusRequired": "请至少选择一个状态，或勾选“还原全部任务”。",
+      "confirm": "还原",
+      "submitting": "还原中…",
+      "error": "还原失败"
+    },
+    "deleteDialog": {
+      "title": "删除归档",
+      "description": "永久删除此归档以及其中的所有任务。",
+      "warning": "此操作不可撤销。",
+      "typeToConfirm": "请输入「{{title}}」以确认。",
+      "confirm": "删除",
+      "submitting": "删除中…",
+      "error": "删除失败"
+    },
+    "taskDetails": {
+      "untitled": "未命名任务",
+      "status": "状态",
+      "noDescription": "暂无描述。"
+    }
   },
   "actions": {
     "addTask": "添加任务"

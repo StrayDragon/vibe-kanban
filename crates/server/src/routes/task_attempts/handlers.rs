@@ -1048,6 +1048,11 @@ pub async fn create_task_attempt(
             let task = Task::find_by_id(&deployment.db().pool, payload.task_id)
                 .await?
                 .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+            if task.archived_kanban_id.is_some() {
+                return Err(ApiError::Conflict(
+                    "Task is archived. Restore it before starting an attempt.".to_string(),
+                ));
+            }
             let original_task_status = task.status.clone();
             let mut baseline_ref: Option<String> = None;
             let mut topology_branches: Option<HashMap<Uuid, String>> = None;

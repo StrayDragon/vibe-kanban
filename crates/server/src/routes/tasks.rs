@@ -39,18 +39,22 @@ use crate::{
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TaskQuery {
     pub project_id: Option<Uuid>,
+    pub include_archived: Option<bool>,
+    pub archived_kanban_id: Option<Uuid>,
 }
 
 pub async fn get_tasks(
     State(deployment): State<DeploymentImpl>,
     Query(query): Query<TaskQuery>,
 ) -> Result<ResponseJson<ApiResponse<Vec<TaskWithAttemptStatus>>>, ApiError> {
-    let tasks = match query.project_id {
-        Some(project_id) => {
-            Task::find_by_project_id_with_attempt_status(&deployment.db().pool, project_id).await?
-        }
-        None => Task::find_all_with_attempt_status(&deployment.db().pool).await?,
-    };
+    let include_archived = query.include_archived.unwrap_or(false);
+    let tasks = Task::find_filtered_with_attempt_status(
+        &deployment.db().pool,
+        query.project_id,
+        include_archived,
+        query.archived_kanban_id,
+    )
+    .await?;
 
     Ok(ResponseJson(ApiResponse::success(tasks)))
 }
@@ -61,7 +65,7 @@ pub async fn stream_tasks_ws(
     Query(query): Query<TaskQuery>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_tasks_ws(socket, deployment, query.project_id).await {
+        if let Err(e) = handle_tasks_ws(socket, deployment, query).await {
             tracing::warn!("tasks WS closed: {}", e);
         }
     })
@@ -70,12 +74,13 @@ pub async fn stream_tasks_ws(
 async fn handle_tasks_ws(
     socket: WebSocket,
     deployment: DeploymentImpl,
-    project_id: Option<Uuid>,
+    query: TaskQuery,
 ) -> anyhow::Result<()> {
+    let include_archived = query.include_archived.unwrap_or(false);
     // Get the raw stream and convert LogMsg to WebSocket messages
     let mut stream = deployment
         .events()
-        .stream_tasks_raw(project_id)
+        .stream_tasks_raw(query.project_id, include_archived, query.archived_kanban_id)
         .await?
         .map_ok(|msg| msg.to_ws_message_unchecked());
 
@@ -288,6 +293,11 @@ pub async fn update_task(
 
     Json(payload): Json<UpdateTask>,
 ) -> Result<ResponseJson<ApiResponse<Task>>, ApiError> {
+    if existing_task.archived_kanban_id.is_some() {
+        return Err(ApiError::Conflict(
+            "Task is archived. Restore it before editing.".to_string(),
+        ));
+    }
     // Use existing values if not provided in update
     let title = payload.title.unwrap_or(existing_task.title);
     let description = match payload.description {
@@ -323,6 +333,11 @@ pub async fn delete_task(
     Extension(task): Extension<Task>,
     State(deployment): State<DeploymentImpl>,
 ) -> Result<(StatusCode, ResponseJson<ApiResponse<()>>), ApiError> {
+    if task.archived_kanban_id.is_some() {
+        return Err(ApiError::Conflict(
+            "Task is archived. Delete its archive to remove it.".to_string(),
+        ));
+    }
     task_deletion::delete_task_with_cleanup(
         &deployment,
         task,

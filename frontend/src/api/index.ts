@@ -16,3 +16,4 @@ export * from './images';
 export * from './approvals';
 export * from './scratch';
 export * from './queue';
+export * from './archived-kanbans';

@@ -385,6 +385,11 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
         .route("/search", get(search_project_files))
         .route("/open-editor", post(open_project_in_editor))
         .route(
+            "/archived-kanbans",
+            get(crate::routes::archived_kanbans::list_project_archived_kanbans)
+                .post(crate::routes::archived_kanbans::archive_project_kanban),
+        )
+        .route(
             "/repositories",
             get(get_project_repositories).post(add_project_repository),
         )

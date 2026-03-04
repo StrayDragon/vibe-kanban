@@ -1,4 +1,5 @@
 pub mod approvals;
+pub mod archived_kanbans;
 pub mod config;
 pub mod containers;
 pub mod events;

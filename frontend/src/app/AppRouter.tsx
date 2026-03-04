@@ -6,6 +6,8 @@ import { useUserSystem } from '@/components/ConfigProvider';
 import { Loader } from '@/components/ui/loader';
 import { NormalLayout } from '@/components/layout/NormalLayout';
 import { ProjectTasks } from '@/pages/ProjectTasks';
+import { ProjectArchives } from '@/pages/ProjectArchives';
+import { ProjectArchiveDetail } from '@/pages/ProjectArchiveDetail';
 import { TaskGroupWorkflow } from '@/pages/TaskGroupWorkflow';
 import { TasksOverview } from '@/pages/TasksOverview';
 import { FullAttemptLogsPage } from '@/pages/FullAttemptLogs';
@@ -113,6 +115,14 @@ export function AppRouter() {
               <Route
                 path="/projects/:projectId/tasks"
                 element={<ProjectTasks />}
+              />
+              <Route
+                path="/projects/:projectId/archives"
+                element={<ProjectArchives />}
+              />
+              <Route
+                path="/projects/:projectId/archives/:archiveId"
+                element={<ProjectArchiveDetail />}
               />
               <Route path="/settings/*" element={<SettingsLayout />}>
                 <Route index element={<Navigate to="general" replace />} />

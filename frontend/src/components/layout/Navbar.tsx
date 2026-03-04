@@ -17,6 +17,7 @@ import {
   Kanban,
   List,
   Settings,
+  Archive,
   BookOpen,
   MessageCircleQuestion,
   Menu,
@@ -33,7 +34,7 @@ import { OpenInIdeButton } from '@/components/ide/OpenInIdeButton';
 import { useNavigateWithSearch, useProjectRepos } from '@/hooks';
 import { useEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
 import { ProjectFormDialog } from '@/components/dialogs/projects/ProjectFormDialog';
-import { ConfirmDialog } from '@/components/dialogs';
+import { ArchiveKanbanDialog, ConfirmDialog } from '@/components/dialogs';
 import { projectsApi } from '@/lib/api';
 import { paths } from '@/lib/paths';
 import type { Project } from 'shared/types';
@@ -63,6 +64,7 @@ function NavDivider() {
 
 export function Navbar() {
   const { t } = useTranslation('projects');
+  const { t: tTasks } = useTranslation('tasks');
   const location = useLocation();
   const {
     projectId,
@@ -78,19 +80,29 @@ export function Navbar() {
   const isProjectTasksRoute = /^\/projects\/[^/]+\/tasks/.test(
     location.pathname
   );
+  const isProjectArchiveDetailRoute = /^\/projects\/[^/]+\/archives\/[^/]+\/?$/.test(
+    location.pathname
+  );
 
   const { data: repos } = useProjectRepos(projectId);
   const isSingleRepoProject = repos?.length === 1;
   const showOpenInIde = Boolean(
     projectId && isSingleRepoProject && editorIntegrationEnabled
   );
-  const showCreateTask = Boolean(projectId && !isOverviewRoute);
+  const showCreateTask = Boolean(
+    projectId && !isOverviewRoute && !isProjectArchiveDetailRoute
+  );
   const showProjectActions = showOpenInIde || showCreateTask;
   const hasProjects = projects.length > 0;
   const kanbanPath = projectId
     ? paths.projectTasks(projectId)
     : hasProjects
       ? paths.projectTasks(projects[0].id)
+      : '/tasks';
+  const archivesPath = projectId
+    ? paths.projectArchives(projectId)
+    : hasProjects
+      ? paths.projectArchives(projects[0].id)
       : '/tasks';
   const switcherLabel =
     project?.name ??
@@ -106,6 +118,18 @@ export function Navbar() {
   const handleCreateTask = () => {
     if (projectId) {
       openTaskForm({ mode: 'create', projectId });
+    }
+  };
+
+  const handleArchiveKanban = async () => {
+    if (!projectId) return;
+    try {
+      const result = await ArchiveKanbanDialog.show({ projectId });
+      if (result?.archiveId) {
+        navigateWithSearch(paths.projectArchive(projectId, result.archiveId));
+      }
+    } finally {
+      ArchiveKanbanDialog.hide();
     }
   };
 
@@ -265,6 +289,18 @@ export function Navbar() {
                       className="h-9 w-9"
                     />
                   )}
+                  {isProjectTasksRoute && projectId && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9"
+                      onClick={() => void handleArchiveKanban()}
+                      aria-label={tTasks('archives.archiveButton')}
+                      title={tTasks('archives.archiveButton')}
+                    >
+                      <Archive className="h-4 w-4" />
+                    </Button>
+                  )}
                   {showCreateTask && (
                     <Button
                       variant="ghost"
@@ -340,6 +376,24 @@ export function Navbar() {
                     <DropdownMenuItem disabled>
                       <Kanban className="mr-2 h-4 w-4" />
                       Kanbans
+                    </DropdownMenuItem>
+                  )}
+                  {hasProjects ? (
+                    <DropdownMenuItem
+                      asChild
+                      className={
+                        location.pathname.includes('/archives') ? 'bg-accent' : ''
+                      }
+                    >
+                      <Link to={archivesPath}>
+                        <Archive className="mr-2 h-4 w-4" />
+                        Archives
+                      </Link>
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem disabled>
+                      <Archive className="mr-2 h-4 w-4" />
+                      Archives
                     </DropdownMenuItem>
                   )}
                   {isProjectTasksRoute && (

@@ -74,6 +74,27 @@ export {
 } from './tasks/RemoveWorktreeDialog';
 export { CreateAttemptDialog } from './tasks/CreateAttemptDialog';
 
+// Archived kanban dialogs
+export {
+  ArchiveKanbanDialog,
+  type ArchiveKanbanDialogProps,
+  type ArchiveKanbanDialogResult,
+} from './archived-kanbans/ArchiveKanbanDialog';
+export {
+  RestoreArchivedKanbanDialog,
+  type RestoreArchivedKanbanDialogProps,
+  type RestoreArchivedKanbanDialogResult,
+} from './archived-kanbans/RestoreArchivedKanbanDialog';
+export {
+  DeleteArchivedKanbanDialog,
+  type DeleteArchivedKanbanDialogProps,
+  type DeleteArchivedKanbanDialogResult,
+} from './archived-kanbans/DeleteArchivedKanbanDialog';
+export {
+  ArchivedTaskDetailsDialog,
+  type ArchivedTaskDetailsDialogProps,
+} from './archived-kanbans/ArchivedTaskDetailsDialog';
+
 // Auth dialogs
 export { GhCliSetupDialog } from './auth/GhCliSetupDialog';
 

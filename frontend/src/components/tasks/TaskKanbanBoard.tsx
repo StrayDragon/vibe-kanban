@@ -30,6 +30,7 @@ interface TaskKanbanBoardProps {
   selectedTaskId?: string;
   onCreateTask?: () => void;
   projectId: string;
+  readOnly?: boolean;
 }
 
 function TaskKanbanBoard({
@@ -39,6 +40,7 @@ function TaskKanbanBoard({
   selectedTaskId,
   onCreateTask,
   projectId,
+  readOnly = false,
 }: TaskKanbanBoardProps) {
   const taskGroupTitles = useMemo(() => {
     const map = new Map<string, string>();
@@ -106,7 +108,7 @@ function TaskKanbanBoard({
             <KanbanHeader
               name={statusLabels[statusKey]}
               color={statusBoardColors[statusKey]}
-              onAddTask={onCreateTask}
+              onAddTask={readOnly ? undefined : onCreateTask}
             />
             <KanbanCards>
               {items.map((item) => {
@@ -120,6 +122,7 @@ function TaskKanbanBoard({
                       onViewDetails={onViewTaskDetails}
                       isOpen={selectedTaskId === item.task.id}
                       projectId={projectId}
+                      readOnly={readOnly}
                     />
                   );
                 }
@@ -160,6 +163,7 @@ function TaskKanbanBoard({
                             projectId={projectId}
                             groupSummary={groupSummary}
                             groupTitle={groupTitle}
+                            readOnly={readOnly}
                           />
                         );
 

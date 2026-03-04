@@ -18,6 +18,7 @@ use db::{
     },
     models::{
         approval as approval_model, attempt_control_lease as attempt_control_lease_model,
+        archived_kanban::{ArchivedKanban, ArchivedKanbanWithTaskCount},
         coding_agent_turn::CodingAgentTurn,
         event_outbox::{EventOutbox, EventOutboxEntry},
         execution_process::{ExecutionProcess, ExecutionProcessRunReason, ExecutionProcessStatus},
@@ -61,7 +62,7 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::{DeploymentImpl, mcp::params::Parameters};
+use crate::{DeploymentImpl, error::ApiError, mcp::params::Parameters};
 
 const MCP_CODE_AMBIGUOUS_TARGET: &str = "ambiguous_target";
 const MCP_CODE_NO_SESSION_YET: &str = "no_session_yet";
@@ -456,6 +457,99 @@ pub struct ListTasksResponse {
     pub count: usize,
     #[schemars(description = "The project identifier used for the query (UUID string)")]
     pub project_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListArchivedKanbansRequest {
+    #[schemars(description = "The project identifier to list archives for (UUID string).")]
+    pub project_id: Uuid,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct McpArchivedKanban {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub tasks_count: u64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl McpArchivedKanban {
+    fn from_model(model: ArchivedKanbanWithTaskCount) -> Self {
+        Self {
+            id: model.archived_kanban.id.to_string(),
+            project_id: model.archived_kanban.project_id.to_string(),
+            title: model.archived_kanban.title,
+            tasks_count: model.tasks_count,
+            created_at: model.archived_kanban.created_at.to_rfc3339(),
+            updated_at: model.archived_kanban.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ListArchivedKanbansResponse {
+    #[schemars(description = "Project id (UUID string)")]
+    pub project_id: String,
+    #[schemars(description = "Archived kanban batches (newest first)")]
+    pub archived_kanbans: Vec<McpArchivedKanban>,
+    #[schemars(description = "Number of archived kanbans returned")]
+    pub count: usize,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ArchiveProjectKanbanRequest {
+    #[schemars(description = "The ID of the project to archive tasks from (UUID string).")]
+    pub project_id: Uuid,
+    #[schemars(description = "Task statuses to archive (e.g. done, cancelled).")]
+    pub statuses: Vec<String>,
+    #[schemars(description = "Optional archive title.")]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ArchiveProjectKanbanResponse {
+    #[schemars(description = "The created archived kanban batch.")]
+    pub archived_kanban: McpArchivedKanban,
+    #[schemars(description = "Number of tasks moved into the archive.")]
+    pub moved_task_count: u64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreArchivedKanbanRequest {
+    #[schemars(description = "The archived kanban id to restore from (UUID string).")]
+    pub archive_id: Uuid,
+    #[schemars(description = "If true, restore all tasks in this archive.")]
+    pub restore_all: Option<bool>,
+    #[schemars(description = "Optional status filter when restore_all=false.")]
+    pub statuses: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RestoreArchivedKanbanResponse {
+    #[schemars(description = "Archived kanban id (UUID string)")]
+    pub archive_id: String,
+    #[schemars(description = "Number of tasks restored to active set.")]
+    pub restored_task_count: u64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteArchivedKanbanRequest {
+    #[schemars(description = "The archived kanban id to delete (UUID string).")]
+    pub archive_id: Uuid,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DeleteArchivedKanbanResponse {
+    #[schemars(description = "Archived kanban id (UUID string)")]
+    pub archive_id: String,
+    #[schemars(description = "Number of tasks deleted with the archive.")]
+    pub deleted_task_count: u64,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1552,6 +1646,54 @@ impl TaskServer {
         Self::err_value(Self::err_payload(msg, details, hint, code, retryable))
     }
 
+    fn tool_error_from_api_error(
+        tool: &'static str,
+        err: ApiError,
+        details: Value,
+    ) -> Result<CallToolResult, ErrorData> {
+        match err {
+            ApiError::BadRequest(message) => Self::err_with(
+                message,
+                Some(details),
+                Some("请求参数不合法。".to_string()),
+                Some("invalid_argument"),
+                Some(false),
+            ),
+            ApiError::Conflict(message) => Self::err_with(
+                message,
+                Some(details),
+                Some("操作被阻止：请先解决冲突条件（例如停止运行中的进程或先还原任务）。".to_string()),
+                Some(MCP_CODE_BLOCKED_GUARDRAILS),
+                Some(false),
+            ),
+            ApiError::NotFound(message) => Self::err_with(
+                message,
+                Some(details),
+                Some("目标不存在：请确认 id 是否正确。".to_string()),
+                Some("not_found"),
+                Some(false),
+            ),
+            ApiError::Forbidden(message) => Self::err_with(
+                message,
+                Some(details),
+                Some("无权限执行此操作。".to_string()),
+                Some("forbidden"),
+                Some(false),
+            ),
+            ApiError::Database(DbErr::RecordNotFound(message)) => Self::err_with(
+                message,
+                Some(details),
+                Some("目标不存在：请确认 id 是否正确。".to_string()),
+                Some("not_found"),
+                Some(false),
+            ),
+            other => Err(ErrorData::internal_error(
+                format!("Tool {tool} failed"),
+                Some(json!({ "error": other.to_string(), "tool": tool, "details": details })),
+            )),
+        }
+    }
+
     fn stable_tool_idempotency_key(raw: Option<String>) -> Option<String> {
         raw.and_then(|value| {
             let trimmed = value.trim();
@@ -2408,6 +2550,318 @@ Avoid: Using this as an attempt/session listing (use list_task_attempts)."#,
     }
 
     #[tool(
+        description = r#"Use when: List archived kanban batches for a project.
+Required: project_id
+Optional: (none)
+Next: archive_project_kanban / restore_archived_kanban / delete_archived_kanban
+Avoid: Guessing project_id (use list_projects)."#,
+        output_schema = tool_output_schema::<ListArchivedKanbansResponse>(),
+        annotations(read_only_hint = true)
+    )]
+    async fn list_archived_kanbans(
+        &self,
+        Parameters(ListArchivedKanbansRequest { project_id }): Parameters<ListArchivedKanbansRequest>,
+    ) -> Result<Json<ListArchivedKanbansResponse>, ErrorData> {
+        let pool = &self.deployment.db().pool;
+        let project = Project::find_by_id(pool, project_id)
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to load project",
+                    Some(json!({ "error": e.to_string(), "project_id": project_id })),
+                )
+            })?;
+        if project.is_none() {
+            return Err(ErrorData::invalid_params(
+                "Project not found",
+                Some(json!({ "project_id": project_id })),
+            ));
+        }
+
+        let archives = ArchivedKanban::list_by_project_with_task_counts(pool, project_id)
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to list archived kanbans",
+                    Some(json!({ "error": e.to_string(), "project_id": project_id })),
+                )
+            })?;
+
+        let archived_kanbans: Vec<McpArchivedKanban> =
+            archives.into_iter().map(McpArchivedKanban::from_model).collect();
+
+        Ok(Json(ListArchivedKanbansResponse {
+            project_id: project_id.to_string(),
+            count: archived_kanbans.len(),
+            archived_kanbans,
+        }))
+    }
+
+    #[tool(
+        description = r#"Use when: Archive a project's kanban by moving tasks with selected statuses into a new archived kanban batch.
+Required: project_id, statuses
+Optional: title
+Next: list_archived_kanbans / restore_archived_kanban / delete_archived_kanban
+Avoid: Archiving tasks with running execution processes."#,
+        output_schema = tool_output_schema::<ArchiveProjectKanbanResponse>(),
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false
+        )
+    )]
+    async fn archive_project_kanban(
+        &self,
+        Parameters(ArchiveProjectKanbanRequest {
+            project_id,
+            statuses,
+            title,
+        }): Parameters<ArchiveProjectKanbanRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let pool = &self.deployment.db().pool;
+        let project = Project::find_by_id(pool, project_id)
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to load project",
+                    Some(json!({ "error": e.to_string(), "project_id": project_id })),
+                )
+            })?
+            .ok_or_else(|| {
+                ErrorData::invalid_params("Project not found", Some(json!({ "project_id": project_id })))
+            })?;
+
+        let mut parsed_statuses = Vec::new();
+        for raw in statuses {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let normalized = trimmed.to_lowercase();
+            match TaskStatus::from_str(&normalized) {
+                Ok(status) => parsed_statuses.push(status),
+                Err(_) => {
+                    return Self::err_with(
+                        "Invalid task status.",
+                        Some(json!({
+                            "tool": "archive_project_kanban",
+                            "path": "statuses",
+                            "value": trimmed,
+                            "valid_values": ["todo", "inprogress", "inreview", "done", "cancelled"],
+                        })),
+                        Some("Valid values: todo, inprogress, inreview, done, cancelled.".to_string()),
+                        Some("invalid_argument"),
+                        Some(false),
+                    );
+                }
+            }
+        }
+
+        if parsed_statuses.is_empty() {
+            return Self::err_with(
+                "At least one status is required.",
+                Some(json!({ "tool": "archive_project_kanban", "path": "statuses" })),
+                Some("Provide one or more statuses (e.g. done, cancelled).".to_string()),
+                Some("missing_required"),
+                Some(false),
+            );
+        }
+
+        let req = crate::routes::archived_kanbans::ArchiveProjectKanbanRequest {
+            statuses: parsed_statuses,
+            title,
+        };
+
+        let ResponseJson(response) = match crate::routes::archived_kanbans::archive_project_kanban(
+            axum::Extension(project),
+            axum::extract::State(self.deployment.clone()),
+            axum::Json(req),
+        )
+        .await
+        {
+            Ok(ok) => ok,
+            Err(err) => {
+                return Self::tool_error_from_api_error(
+                    "archive_project_kanban",
+                    err,
+                    json!({ "tool": "archive_project_kanban", "project_id": project_id }),
+                );
+            }
+        };
+
+        let data = response.into_data().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Archive response missing data",
+                Some(json!({ "project_id": project_id })),
+            )
+        })?;
+
+        Self::success(&ArchiveProjectKanbanResponse {
+            archived_kanban: McpArchivedKanban::from_model(data.archived_kanban),
+            moved_task_count: data.moved_task_count,
+        })
+    }
+
+    #[tool(
+        description = r#"Use when: Restore tasks from an archived kanban back to the active set.
+Required: archive_id
+Optional: restore_all, statuses
+Next: list_tasks / list_archived_kanbans / delete_archived_kanban
+Avoid: Providing statuses together with restore_all=true."#,
+        output_schema = tool_output_schema::<RestoreArchivedKanbanResponse>(),
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true
+        )
+    )]
+    async fn restore_archived_kanban(
+        &self,
+        Parameters(RestoreArchivedKanbanRequest {
+            archive_id,
+            restore_all,
+            statuses,
+        }): Parameters<RestoreArchivedKanbanRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let restore_all = restore_all.unwrap_or(false);
+
+        let mut parsed_statuses = Vec::new();
+        if let Some(statuses) = statuses {
+            for raw in statuses {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let normalized = trimmed.to_lowercase();
+                match TaskStatus::from_str(&normalized) {
+                    Ok(status) => parsed_statuses.push(status),
+                    Err(_) => {
+                        return Self::err_with(
+                            "Invalid task status.",
+                            Some(json!({
+                                "tool": "restore_archived_kanban",
+                                "path": "statuses",
+                                "value": trimmed,
+                                "valid_values": ["todo", "inprogress", "inreview", "done", "cancelled"],
+                            })),
+                            Some(
+                                "Valid values: todo, inprogress, inreview, done, cancelled."
+                                    .to_string(),
+                            ),
+                            Some("invalid_argument"),
+                            Some(false),
+                        );
+                    }
+                }
+            }
+        }
+
+        if restore_all && !parsed_statuses.is_empty() {
+            return Self::err_with(
+                "Do not provide statuses when restore_all=true.",
+                Some(json!({ "tool": "restore_archived_kanban" })),
+                Some("Either set restore_all=true, or provide statuses for a partial restore.".to_string()),
+                Some("invalid_argument"),
+                Some(false),
+            );
+        }
+
+        if !restore_all && parsed_statuses.is_empty() {
+            return Self::err_with(
+                "At least one status is required when restore_all=false.",
+                Some(json!({ "tool": "restore_archived_kanban", "path": "statuses" })),
+                Some("Provide one or more statuses, or set restore_all=true.".to_string()),
+                Some("missing_required"),
+                Some(false),
+            );
+        }
+
+        let req = crate::routes::archived_kanbans::RestoreArchivedKanbanRequest {
+            restore_all: Some(restore_all),
+            statuses: if restore_all {
+                None
+            } else {
+                Some(parsed_statuses)
+            },
+        };
+
+        let ResponseJson(response) = match crate::routes::archived_kanbans::restore_archived_kanban(
+            axum::extract::State(self.deployment.clone()),
+            axum::extract::Path(archive_id),
+            axum::Json(req),
+        )
+        .await
+        {
+            Ok(ok) => ok,
+            Err(err) => {
+                return Self::tool_error_from_api_error(
+                    "restore_archived_kanban",
+                    err,
+                    json!({ "tool": "restore_archived_kanban", "archive_id": archive_id }),
+                );
+            }
+        };
+
+        let data = response.into_data().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Restore response missing data",
+                Some(json!({ "archive_id": archive_id })),
+            )
+        })?;
+
+        Self::success(&RestoreArchivedKanbanResponse {
+            archive_id: archive_id.to_string(),
+            restored_task_count: data.restored_task_count,
+        })
+    }
+
+    #[tool(
+        description = r#"Use when: Permanently delete an archived kanban and all contained tasks.
+Required: archive_id
+Optional: (none)
+Next: list_archived_kanbans
+Avoid: Deleting archives without explicit confirmation."#,
+        output_schema = tool_output_schema::<DeleteArchivedKanbanResponse>(),
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true
+        )
+    )]
+    async fn delete_archived_kanban(
+        &self,
+        Parameters(DeleteArchivedKanbanRequest { archive_id }): Parameters<DeleteArchivedKanbanRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let ResponseJson(response) = match crate::routes::archived_kanbans::delete_archived_kanban(
+            axum::extract::State(self.deployment.clone()),
+            axum::extract::Path(archive_id),
+        )
+        .await
+        {
+            Ok(ok) => ok,
+            Err(err) => {
+                return Self::tool_error_from_api_error(
+                    "delete_archived_kanban",
+                    err,
+                    json!({ "tool": "delete_archived_kanban", "archive_id": archive_id }),
+                );
+            }
+        };
+
+        let data = response.into_data().ok_or_else(|| {
+            ErrorData::internal_error(
+                "Delete response missing data",
+                Some(json!({ "archive_id": archive_id })),
+            )
+        })?;
+
+        Self::success(&DeleteArchivedKanbanResponse {
+            archive_id: archive_id.to_string(),
+            deleted_task_count: data.deleted_task_count,
+        })
+    }
+
+    #[tool(
         description = r#"Use when: Fetch full task details (title/description/status).
 Required: task_id
 Optional: (none)
@@ -2539,6 +2993,20 @@ Avoid: Calling this just to set status=inprogress (start_attempt already does th
                 ErrorData::invalid_params("Task not found", Some(json!({ "task_id": task_id })))
             })?;
 
+        if let Some(archive_id) = existing.archived_kanban_id {
+            return Self::err_with(
+                "Task is archived. Restore it before editing.",
+                Some(json!({
+                    "tool": "update_task",
+                    "task_id": task_id,
+                    "archived_kanban_id": archive_id,
+                })),
+                Some("Restore the archived kanban batch first, then retry.".to_string()),
+                Some(MCP_CODE_BLOCKED_GUARDRAILS),
+                Some(false),
+            );
+        }
+
         let status = status.and_then(|s| {
             let trimmed = s.trim();
             if trimmed.is_empty() {
@@ -2627,7 +3095,29 @@ Avoid: Deleting the wrong task (confirm with get_task first)."#,
         &self,
         Parameters(DeleteTaskRequest { task_id }): Parameters<DeleteTaskRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let rows = Task::delete(&self.deployment.db().pool, task_id)
+        let pool = &self.deployment.db().pool;
+        if let Some(task) = Task::find_by_id(pool, task_id).await.map_err(|e| {
+            ErrorData::internal_error(
+                "Failed to load task",
+                Some(json!({ "error": e.to_string(), "task_id": task_id })),
+            )
+        })? {
+            if let Some(archive_id) = task.archived_kanban_id {
+                return Self::err_with(
+                    "Task is archived. Delete its archive to remove it.",
+                    Some(json!({
+                        "tool": "delete_task",
+                        "task_id": task_id,
+                        "archived_kanban_id": archive_id,
+                    })),
+                    Some("Delete the archived kanban batch instead, or restore then delete.".to_string()),
+                    Some(MCP_CODE_BLOCKED_GUARDRAILS),
+                    Some(false),
+                );
+            }
+        }
+
+        let rows = Task::delete(pool, task_id)
             .await
             .map_err(|e| {
                 ErrorData::internal_error(
@@ -2729,6 +3219,41 @@ Avoid: Empty repos; guessing executor (use list_executors)."#,
             prompt,
         }): Parameters<StartAttemptRequest>,
     ) -> Result<CallToolResult, ErrorData> {
+        let pool = &self.deployment.db().pool;
+        let task = Task::find_by_id(pool, task_id)
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to load task",
+                    Some(json!({ "error": e.to_string(), "task_id": task_id })),
+                )
+            })?
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    "Task not found",
+                    Some(json!({
+                        "code": "not_found",
+                        "retryable": false,
+                        "hint": "Call list_tasks to get a valid task_id.",
+                        "task_id": task_id,
+                    })),
+                )
+            })?;
+
+        if let Some(archive_id) = task.archived_kanban_id {
+            return Self::err_with(
+                "Task is archived. Restore it before starting an attempt.",
+                Some(json!({
+                    "tool": "start_attempt",
+                    "task_id": task_id,
+                    "archived_kanban_id": archive_id,
+                })),
+                Some("Use restore_archived_kanban (or the HTTP restore endpoint) to move it back to the active kanban.".to_string()),
+                Some(MCP_CODE_BLOCKED_GUARDRAILS),
+                Some(false),
+            );
+        }
+
         if repos.is_empty() {
             return Self::err_with(
                 "At least one repository must be specified.",
@@ -2851,6 +3376,13 @@ Avoid: Empty repos; guessing executor (use list_executors)."#,
                             })),
                         )
                     })?;
+
+                if let Some(archive_id) = task.archived_kanban_id {
+                    return Err(ErrorData::invalid_params(
+                        "Task is archived. Restore it before starting an attempt.",
+                        Some(json!({ "task_id": task_id, "archived_kanban_id": archive_id })),
+                    ));
+                }
 
                 let project = Project::find_by_id(pool, task.project_id)
                     .await
@@ -5407,9 +5939,11 @@ mod tests {
         };
 
         let expected_tool_names = [
+            "archive_project_kanban",
             "claim_attempt_control",
             "cli_dependency_preflight",
             "create_task",
+            "delete_archived_kanban",
             "delete_task",
             "get_approval",
             "get_attempt_changes",
@@ -5417,6 +5951,7 @@ mod tests {
             "get_attempt_file",
             "get_attempt_patch",
             "get_task",
+            "list_archived_kanbans",
             "list_approvals",
             "list_executors",
             "list_projects",
@@ -5425,6 +5960,7 @@ mod tests {
             "list_tasks",
             "release_attempt_control",
             "respond_approval",
+            "restore_archived_kanban",
             "send_follow_up",
             "start_attempt",
             "stop_attempt",
@@ -5502,6 +6038,35 @@ mod tests {
         assert_eq!(delete_task.read_only_hint, Some(false));
         assert_eq!(delete_task.destructive_hint, Some(true));
         assert_eq!(delete_task.idempotent_hint, Some(true));
+
+        let list_archived_kanbans = tool("list_archived_kanbans")
+            .annotations
+            .as_ref()
+            .expect("Missing list_archived_kanbans annotations");
+        assert_eq!(list_archived_kanbans.read_only_hint, Some(true));
+
+        let archive_project_kanban = tool("archive_project_kanban")
+            .annotations
+            .as_ref()
+            .expect("Missing archive_project_kanban annotations");
+        assert_eq!(archive_project_kanban.read_only_hint, Some(false));
+        assert_eq!(archive_project_kanban.destructive_hint, Some(true));
+
+        let restore_archived_kanban = tool("restore_archived_kanban")
+            .annotations
+            .as_ref()
+            .expect("Missing restore_archived_kanban annotations");
+        assert_eq!(restore_archived_kanban.read_only_hint, Some(false));
+        assert_eq!(restore_archived_kanban.destructive_hint, Some(true));
+        assert_eq!(restore_archived_kanban.idempotent_hint, Some(true));
+
+        let delete_archived_kanban = tool("delete_archived_kanban")
+            .annotations
+            .as_ref()
+            .expect("Missing delete_archived_kanban annotations");
+        assert_eq!(delete_archived_kanban.read_only_hint, Some(false));
+        assert_eq!(delete_archived_kanban.destructive_hint, Some(true));
+        assert_eq!(delete_archived_kanban.idempotent_hint, Some(true));
     }
 
     #[test]
@@ -5635,6 +6200,70 @@ mod tests {
             .into_call_tool_result()
             .unwrap();
         assert!(list_tasks_result.structured_content.is_some());
+    }
+
+    #[tokio::test]
+    async fn start_attempt_rejects_archived_tasks_with_structured_error() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = deployment.db().pool.clone();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &pool,
+            &db::models::project::CreateProject {
+                name: "Archive guard".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &pool,
+            &CreateTask::from_title_description(project_id, "Archived task".to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let project = Project::find_by_id(&pool, project_id).await.unwrap().unwrap();
+        let _ = crate::routes::archived_kanbans::archive_project_kanban(
+            axum::Extension(project),
+            axum::extract::State(deployment.clone()),
+            axum::Json(crate::routes::archived_kanbans::ArchiveProjectKanbanRequest {
+                statuses: vec![TaskStatus::Todo],
+                title: Some("Test archive".to_string()),
+            }),
+        )
+        .await
+        .unwrap();
+
+        let server = TaskServer::new(deployment);
+        let result = server
+            .start_attempt(Parameters(StartAttemptRequest {
+                task_id,
+                executor: "CLAUDE_CODE".to_string(),
+                variant: None,
+                repos: Vec::new(),
+                request_id: None,
+                prompt: None,
+            }))
+            .await
+            .into_call_tool_result()
+            .unwrap();
+
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured content");
+        assert_eq!(
+            structured.get("code").and_then(|v| v.as_str()),
+            Some(MCP_CODE_BLOCKED_GUARDRAILS)
+        );
     }
 
     #[tokio::test]

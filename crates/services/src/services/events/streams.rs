@@ -11,6 +11,7 @@ use db::{
     },
 };
 use futures::StreamExt;
+use json_patch::{PatchOperation, RemoveOperation};
 use serde_json::json;
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
@@ -24,6 +25,8 @@ impl EventService {
     pub async fn stream_tasks_raw(
         &self,
         project_id: Option<Uuid>,
+        include_archived: bool,
+        archived_kanban_id: Option<Uuid>,
     ) -> Result<futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>, EventError>
     {
         fn build_tasks_snapshot(tasks: Vec<TaskWithAttemptStatus>) -> LogMsg {
@@ -66,12 +69,13 @@ impl EventService {
         let receiver = self.msg_store.get_receiver();
 
         // Get initial snapshot of tasks
-        let tasks = match project_id {
-            Some(project_id) => {
-                Task::find_by_project_id_with_attempt_status(&self.db.pool, project_id).await?
-            }
-            None => Task::find_all_with_attempt_status(&self.db.pool).await?,
-        };
+        let tasks = Task::find_filtered_with_attempt_status(
+            &self.db.pool,
+            project_id,
+            include_archived,
+            archived_kanban_id,
+        )
+        .await?;
 
         let initial_msg = build_tasks_snapshot(tasks);
 
@@ -85,6 +89,19 @@ impl EventService {
                 match msg_result {
                     Ok(LogMsg::JsonPatch(patch)) => {
                         let project_filter = project_id;
+                        let include_archived = include_archived;
+                        let archived_kanban_filter = archived_kanban_id;
+
+                        let matches_filter = |task: &TaskWithAttemptStatus| {
+                            let project_ok =
+                                project_filter.is_none_or(|id| task.project_id == id);
+                            let archived_ok = match archived_kanban_filter {
+                                Some(want) => task.archived_kanban_id == Some(want),
+                                None => include_archived || task.archived_kanban_id.is_none(),
+                            };
+                            project_ok && archived_ok
+                        };
+
                         // Filter events based on project_id
                         if let Some(patch_op) = patch.0.first() {
                             // Check if this is a direct task patch (new format)
@@ -96,9 +113,17 @@ impl EventService {
                                             serde_json::from_value::<TaskWithAttemptStatus>(
                                                 op.value.clone(),
                                             )
-                                            && project_filter.is_none_or(|id| task.project_id == id)
                                         {
-                                            return Some(Ok(LogMsg::JsonPatch(patch)));
+                                            if matches_filter(&task) {
+                                                return Some(Ok(LogMsg::JsonPatch(patch)));
+                                            }
+
+                                            let remove_patch = json_patch::Patch(vec![
+                                                PatchOperation::Remove(RemoveOperation {
+                                                    path: op.path.clone(),
+                                                }),
+                                            ]);
+                                            return Some(Ok(LogMsg::JsonPatch(remove_patch)));
                                         }
                                     }
                                     json_patch::PatchOperation::Replace(op) => {
@@ -107,9 +132,17 @@ impl EventService {
                                             serde_json::from_value::<TaskWithAttemptStatus>(
                                                 op.value.clone(),
                                             )
-                                            && project_filter.is_none_or(|id| task.project_id == id)
                                         {
-                                            return Some(Ok(LogMsg::JsonPatch(patch)));
+                                            if matches_filter(&task) {
+                                                return Some(Ok(LogMsg::JsonPatch(patch)));
+                                            }
+
+                                            let remove_patch = json_patch::Patch(vec![
+                                                PatchOperation::Remove(RemoveOperation {
+                                                    path: op.path.clone(),
+                                                }),
+                                            ]);
+                                            return Some(Ok(LogMsg::JsonPatch(remove_patch)));
                                         }
                                     }
                                     json_patch::PatchOperation::Remove(_) => {
@@ -131,13 +164,13 @@ impl EventService {
                             skipped = skipped,
                             "tasks stream lagged; resyncing snapshot"
                         );
-                        let tasks = match project_id {
-                            Some(project_id) => {
-                                Task::find_by_project_id_with_attempt_status(&db_pool, project_id)
-                                    .await
-                            }
-                            None => Task::find_all_with_attempt_status(&db_pool).await,
-                        };
+                        let tasks = Task::find_filtered_with_attempt_status(
+                            &db_pool,
+                            project_id,
+                            include_archived,
+                            archived_kanban_id,
+                        )
+                        .await;
 
                         match tasks {
                             Ok(tasks) => Some(Ok(build_tasks_snapshot(tasks))),

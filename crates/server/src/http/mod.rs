@@ -11,6 +11,7 @@ pub fn router(deployment: DeploymentImpl) -> Router {
         .merge(routes::containers::router(&deployment))
         .merge(routes::projects::router(&deployment))
         .merge(routes::tasks::router(&deployment))
+        .merge(routes::archived_kanbans::router(&deployment))
         .merge(routes::task_groups::router(&deployment))
         .merge(routes::task_attempts::router(&deployment))
         .merge(routes::execution_processes::router(&deployment))

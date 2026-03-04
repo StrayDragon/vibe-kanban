@@ -35,6 +35,23 @@ pub async fn delete_task_with_cleanup(
     task: Task,
     mode: DeleteTaskMode,
 ) -> Result<(), ApiError> {
+    delete_task_with_cleanup_inner(deployment, task, mode, false).await
+}
+
+pub async fn delete_task_with_cleanup_allow_archived(
+    deployment: &DeploymentImpl,
+    task: Task,
+    mode: DeleteTaskMode,
+) -> Result<(), ApiError> {
+    delete_task_with_cleanup_inner(deployment, task, mode, true).await
+}
+
+async fn delete_task_with_cleanup_inner(
+    deployment: &DeploymentImpl,
+    task: Task,
+    mode: DeleteTaskMode,
+    allow_archived: bool,
+) -> Result<(), ApiError> {
     if mode == DeleteTaskMode::CascadeGroup
         && task.task_kind == TaskKind::Group
         && let Some(task_group_id) = task.task_group_id
@@ -43,17 +60,24 @@ pub async fn delete_task_with_cleanup(
             .await
             .map_err(map_task_group_error)?;
         if let Some(task_group) = task_group {
-            return delete_task_group_with_cleanup(deployment, task_group, Some(task)).await;
+            return delete_task_group_with_cleanup(
+                deployment,
+                task_group,
+                Some(task),
+                allow_archived,
+            )
+            .await;
         }
     }
 
-    delete_single_task_with_cleanup(deployment, task).await
+    delete_single_task_with_cleanup(deployment, task, allow_archived).await
 }
 
 pub async fn delete_task_group_with_cleanup(
     deployment: &DeploymentImpl,
     task_group: TaskGroup,
     entry_task_override: Option<Task>,
+    allow_archived: bool,
 ) -> Result<(), ApiError> {
     let tasks = Task::find_by_task_group_id(&deployment.db().pool, task_group.id).await?;
     let mut entry_task = entry_task_override;
@@ -92,16 +116,16 @@ pub async fn delete_task_group_with_cleanup(
 
     for task_id in ordered_task_ids.into_iter().rev() {
         if let Some(task) = tasks_by_id.remove(&task_id) {
-            delete_single_task_with_cleanup(deployment, task).await?;
+            delete_single_task_with_cleanup(deployment, task, allow_archived).await?;
         }
     }
 
     for (_, task) in tasks_by_id {
-        delete_single_task_with_cleanup(deployment, task).await?;
+        delete_single_task_with_cleanup(deployment, task, allow_archived).await?;
     }
 
     if let Some(task) = entry_task {
-        delete_single_task_with_cleanup(deployment, task).await?;
+        delete_single_task_with_cleanup(deployment, task, allow_archived).await?;
     }
 
     let rows = TaskGroup::delete(&deployment.db().pool, task_group.id)
@@ -179,6 +203,7 @@ fn topo_sorted_task_ids(graph: &TaskGroupGraph) -> Vec<uuid::Uuid> {
 async fn delete_single_task_with_cleanup(
     deployment: &DeploymentImpl,
     task: Task,
+    allow_archived: bool,
 ) -> Result<(), ApiError> {
     if deployment
         .container()
@@ -211,7 +236,11 @@ async fn delete_single_task_with_cleanup(
         total_children_affected += children_affected;
     }
 
-    let rows_affected = Task::delete(&tx, task.id).await?;
+    let rows_affected = if allow_archived {
+        Task::delete_allow_archived(&tx, task.id).await?
+    } else {
+        Task::delete(&tx, task.id).await?
+    };
 
     if rows_affected == 0 {
         return Err(ApiError::Database(DbErr::RecordNotFound(

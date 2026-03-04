@@ -1,6 +1,7 @@
 #![allow(clippy::useless_conversion)]
 
 pub mod approval;
+pub mod archived_kanban;
 pub mod attempt_control_lease;
 pub mod coding_agent_turn;
 pub mod event_outbox;

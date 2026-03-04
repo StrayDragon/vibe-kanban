@@ -1,14 +1,14 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Operation } from 'rfc6902';
-import { useJsonPatchWsStream } from '../useJsonPatchWsStream';
-import { normalizeIdMapPatches } from '../jsonPatchUtils';
+import { useJsonPatchWsStream } from '@/hooks/useJsonPatchWsStream';
+import { normalizeIdMapPatches } from '@/hooks/jsonPatchUtils';
 import type { TaskStatus, TaskWithAttemptStatus } from 'shared/types';
 
 type TasksState = {
   tasks: Record<string, TaskWithAttemptStatus>;
 };
 
-export interface UseAllTasksResult {
+export interface UseArchivedKanbanTasksResult {
   tasks: TaskWithAttemptStatus[];
   tasksById: Record<string, TaskWithAttemptStatus>;
   tasksByStatus: Record<TaskStatus, TaskWithAttemptStatus[]>;
@@ -17,18 +17,20 @@ export interface UseAllTasksResult {
   error: string | null;
 }
 
-export interface UseAllTasksOptions {
-  includeArchived?: boolean;
-}
+export const useArchivedKanbanTasks = (
+  archiveId: string
+): UseArchivedKanbanTasksResult => {
+  const endpoint = `/api/tasks/stream/ws?archived_kanban_id=${encodeURIComponent(
+    archiveId
+  )}&include_archived=true`;
+  const [connectEnabled, setConnectEnabled] = useState(false);
 
-/**
- * Stream tasks across all projects via WebSocket (JSON Patch).
- */
-export const useAllTasks = (options?: UseAllTasksOptions): UseAllTasksResult => {
-  const includeArchived = options?.includeArchived ?? false;
-  const endpoint = includeArchived
-    ? '/api/tasks/stream/ws?include_archived=true'
-    : '/api/tasks/stream/ws';
+  useEffect(() => {
+    setConnectEnabled(false);
+    if (!archiveId) return;
+    const timer = window.setTimeout(() => setConnectEnabled(true), 200);
+    return () => window.clearTimeout(timer);
+  }, [archiveId]);
 
   const initialData = useCallback((): TasksState => ({ tasks: {} }), []);
   const deduplicatePatches = useCallback(
@@ -37,9 +39,9 @@ export const useAllTasks = (options?: UseAllTasksOptions): UseAllTasksResult => 
     []
   );
 
-  const { data, isConnected, error } = useJsonPatchWsStream(
+  const { data, isConnected, error } = useJsonPatchWsStream<TasksState>(
     endpoint,
-    true,
+    connectEnabled,
     initialData,
     { deduplicatePatches }
   );
@@ -77,7 +79,7 @@ export const useAllTasks = (options?: UseAllTasksOptions): UseAllTasksResult => 
     return { tasks: sorted, tasksById: merged, tasksByStatus: byStatus };
   }, [localTasksById]);
 
-  const isLoading = !data && !error; // until first snapshot
+  const isLoading = !!archiveId && !data && !error;
 
   return {
     tasks,
@@ -88,3 +90,4 @@ export const useAllTasks = (options?: UseAllTasksOptions): UseAllTasksResult => 
     error,
   };
 };
+

@@ -21,6 +21,7 @@ interface TaskCardProps {
   onViewDetails: (task: Task) => void;
   isOpen?: boolean;
   projectId: string;
+  readOnly?: boolean;
   groupSummary?: {
     subtaskCount: number;
   };
@@ -34,6 +35,7 @@ export function TaskCard({
   onViewDetails,
   isOpen,
   projectId,
+  readOnly = false,
   groupSummary,
   groupTitle,
 }: TaskCardProps) {
@@ -112,6 +114,7 @@ export function TaskCard({
       onClick={handleClick}
       isOpen={isOpen}
       forwardedRef={localRef}
+      dragDisabled={readOnly}
     >
       <div className="flex flex-col gap-2">
         <TaskCardHeader
@@ -124,7 +127,7 @@ export function TaskCard({
               {task.last_attempt_failed && (
                 <XCircle className="h-4 w-4 text-destructive" />
               )}
-              {task.parent_workspace_id && (
+              {!readOnly && task.parent_workspace_id && (
                 <Button
                   variant="icon"
                   onClick={handleParentClick}
@@ -136,7 +139,7 @@ export function TaskCard({
                   <Link className="h-4 w-4" />
                 </Button>
               )}
-              <ActionsDropdown task={task} />
+              {!readOnly && <ActionsDropdown task={task} />}
             </>
           }
         />
@@ -156,7 +159,7 @@ export function TaskCard({
             {t('taskGroupSubtaskCount', { count: groupSummary.subtaskCount })}
           </div>
         )}
-        {isGroupedTask && (
+        {!readOnly && isGroupedTask && (
           <Button
             variant="link"
             size="xs"

@@ -40,9 +40,13 @@ export type TaskStatus = "todo" | "inprogress" | "inreview" | "done" | "cancelle
 
 export type TaskKind = "default" | "group";
 
-export type Task = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, shared_task_id: string | null, created_at: string, updated_at: string, };
+export type Task = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
 
-export type TaskWithAttemptStatus = { has_in_progress_attempt: boolean, last_attempt_failed: boolean, executor: string, id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, shared_task_id: string | null, created_at: string, updated_at: string, };
+export type TaskWithAttemptStatus = { has_in_progress_attempt: boolean, last_attempt_failed: boolean, executor: string, id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
+
+export type ArchivedKanban = { id: string, project_id: string, title: string, created_at: string, updated_at: string, };
+
+export type ArchivedKanbanWithTaskCount = { tasks_count: bigint, id: string, project_id: string, title: string, created_at: string, updated_at: string, };
 
 export type TaskRelationships = { parent_task: Task | null, current_workspace: Workspace, children: Array<Task>, };
 
@@ -193,6 +197,18 @@ export type OpenEditorRequest = { editor_type: string | null, file_path: string 
 export type OpenEditorResponse = { url: string | null, };
 
 export type CreateAndStartTaskRequest = { task: CreateTask, executor_profile_id: ExecutorProfileId, repos: Array<WorkspaceRepoInput>, };
+
+export type ArchiveProjectKanbanRequest = { statuses: Array<TaskStatus>, title: string | null, };
+
+export type ArchiveProjectKanbanResponse = { archived_kanban: ArchivedKanbanWithTaskCount, moved_task_count: bigint, };
+
+export type GetArchivedKanbanResponse = { archived_kanban: ArchivedKanbanWithTaskCount, };
+
+export type RestoreArchivedKanbanRequest = { restore_all: boolean | null, statuses: Array<TaskStatus> | null, };
+
+export type RestoreArchivedKanbanResponse = { restored_task_count: bigint, };
+
+export type DeleteArchivedKanbanResponse = { deleted_task_count: bigint, };
 
 export type CreateGitHubPrRequest = { title: string, body: string | null, target_branch: string | null, draft: boolean | null, repo_id: string, auto_generate_description: boolean, };
 

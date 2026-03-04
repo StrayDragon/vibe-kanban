@@ -2,6 +2,9 @@ export const paths = {
   projects: () => '/projects',
   overview: () => '/tasks',
   projectTasks: (projectId: string) => `/projects/${projectId}/tasks`,
+  projectArchives: (projectId: string) => `/projects/${projectId}/archives`,
+  projectArchive: (projectId: string, archiveId: string) =>
+    `/projects/${projectId}/archives/${archiveId}`,
   task: (projectId: string, taskId: string) =>
     `/projects/${projectId}/tasks/${taskId}`,
   attempt: (projectId: string, taskId: string, attemptId: string) =>

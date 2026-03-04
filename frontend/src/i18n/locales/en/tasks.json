@@ -15,7 +15,62 @@
     "collapseStatus": "Collapse {{status}}",
     "expandStatus": "Expand {{status}}",
     "foldStatusButton": "Fold statuses",
-    "foldStatusLabel": "Auto-fold statuses"
+    "foldStatusLabel": "Auto-fold statuses",
+    "includeArchived": "Include archived tasks"
+  },
+  "archives": {
+    "title": "Archives",
+    "subtitle": "Archived kanban batches",
+    "subtitleWithProject": "Archived kanban batches for {{name}}",
+    "detailLabel": "Archived kanban",
+    "archiveButton": "Archive",
+    "restoreButton": "Restore",
+    "deleteButton": "Delete archive",
+    "backToKanban": "Back to Kanban",
+    "backToArchives": "Back to archives",
+    "empty": "No archives yet.",
+    "tasksCount_one": "{{count}} task",
+    "tasksCount_other": "{{count}} tasks",
+    "projectMissing": "Missing project id.",
+    "archiveMissing": "Missing archive id.",
+    "loadError": "Failed to load archives.",
+    "archiveDialog": {
+      "title": "Archive kanban",
+      "description": "Move tasks with selected statuses into a new archived kanban batch.",
+      "warning": "Archived tasks become read-only and cannot start attempts until restored.",
+      "optionalTitle": "Title (optional)",
+      "titlePlaceholder": "e.g. Sprint 12 wrap-up",
+      "statusesLabel": "Statuses to archive",
+      "statusRequired": "Select at least one status to archive.",
+      "confirm": "Archive",
+      "submitting": "Archiving…",
+      "error": "Failed to archive tasks"
+    },
+    "restoreDialog": {
+      "title": "Restore archive",
+      "description": "Restore tasks from this archive back to the active kanban.",
+      "warning": "Restore keeps each task’s status unchanged.",
+      "restoreAll": "Restore all tasks",
+      "statusesLabel": "Restore only these statuses",
+      "statusRequired": "Select at least one status, or enable restore all.",
+      "confirm": "Restore",
+      "submitting": "Restoring…",
+      "error": "Failed to restore archive"
+    },
+    "deleteDialog": {
+      "title": "Delete archive",
+      "description": "Permanently delete this archive and all tasks inside it.",
+      "warning": "This action cannot be undone.",
+      "typeToConfirm": "Type \"{{title}}\" to confirm.",
+      "confirm": "Delete",
+      "submitting": "Deleting…",
+      "error": "Failed to delete archive"
+    },
+    "taskDetails": {
+      "untitled": "Untitled task",
+      "status": "Status",
+      "noDescription": "No description."
+    }
   },
   "taskGroup": {
     "workflowMissing": "Workflow not found."

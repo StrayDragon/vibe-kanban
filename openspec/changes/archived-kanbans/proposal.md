@@ -1,83 +1,90 @@
-## Why（为什么）
+# archived-kanbans 提案
 
-当前 Vibe Kanban 的任务主要有两个入口：**All Tasks**（全部任务）以及按 Project 展示的 **Kanbans**。用户希望能够快速“一键清理当前看板”，同时保留历史上下文。现在要清空看板只能删除任务，或把历史任务继续混在活跃任务里，时间久了会让看板越来越嘈杂、难以聚焦当前工作。
+## 背景与动机
 
-因此需要引入一个一等公民的、只读的“归档看板快照”概念：用户可以将一批任务归档到一个 **ArchivedKanban**（静态 Kanban 布局面板）中，之后需要时还能批量还原。
+Vibe Kanban 的活跃看板以 `Task.status` 分列展示。当一个 Project 的任务长期累积后，“已完成/已取消”的任务会持续占用视野与筛选结果：
 
-## What Changes（会改什么）
+- 活跃看板变得拥挤，拖拽与浏览效率下降
+- All Tasks 变成“历史列表”，默认视图噪声变大
+- 用户希望保留历史以便追溯，但不希望历史持续干扰当前工作
 
-- 引入 **ArchivedKanban** 概念：Project 作用域的归档看板，包含从活跃看板“移动”过去的一批任务。
-- 在 Project Kanban 视图新增 **Archive** 一键归档动作：
-  - 用户选择要归档哪些 `status`（默认：`done`、`cancelled`；可配置）。
-  - 系统创建新的 ArchivedKanban，并将匹配的任务移动到其中，从而从活跃看板中移除这些任务。
-- 新增 **Archives** UI：
-  - 列出某 Project 下的 ArchivedKanbans。
-  - ArchivedKanban 详情页以 Kanban 列布局展示任务，但**完全只读**（不可拖拽、不可编辑）。
-- 新增 **Restore** 还原动作：
-  - 支持按选定 `status` 或 restore-all 的方式批量还原任务回活跃看板。
-- 支持 **硬删除** ArchivedKanban：
-  - 删除 ArchivedKanban 会永久删除其中任务（前端必须提供强确认与明确风险提示）。
-- 强制不可变性（immutability）：
-  - ArchivedKanban 内的任务不可更新、不可删除、不可执行（不可创建 attempt）；若要继续操作必须先还原。
-- 调整任务列表/流式默认行为：
-  - **All Tasks** 与 Project **Kanbans** 默认不包含归档任务；需要时通过显式 toggle/query 参数包含归档数据。
-- 增加 MCP 聚合：
-  - 新增 MCP tools 用于列出/归档/还原/删除 ArchivedKanbans，语义与 HTTP 路由对齐。
+因此需要一个“把一批任务冻结成只读快照”的能力：把选中的任务从活跃集合移入一个只读的归档看板（ArchivedKanban），并支持之后批量还原或整体删除。
 
-## Capabilities（能力）
+## 目标
 
-### New Capabilities（新增能力）
-- `archived-kanbans`：Project 作用域的归档看板快照，提供 archive/restore/delete 流程、严格只读语义，以及 MCP/HTTP/UI 支持。
+- 引入 `ArchivedKanban` 领域模型，表示某个 Project 下的一次归档批次（归档看板）。
+- 支持按 `status` 批量归档、按 `status` 批量还原、还原全部、删除归档。
+- 归档任务在服务端层面强制“不可变 + 不可执行”（HTTP + MCP + DB 写路径统一护栏），避免仅靠前端只读导致的绕过。
+- 任务列表与实时任务流默认排除归档任务，保持“当前工作”视图干净；需要时可显式包含或只看某个归档。
+- 对 `task_group_id`（任务组）实行原子处理：命中组内任一任务即按组整体处理；检测到组被拆分时拒绝操作，作为安全阀防止隐性数据丢失。
 
-### Modified Capabilities（修改既有能力）
-- （无）
+## 非目标
 
-## Impact（影响面）
+- 不引入“真正的 Kanban 实体 / 列配置 / 列内顺序持久化”（v1 只按 `status` 分列）。
+- 不提供逐个勾选 task 的归档/还原 UI（v1 以按 `status` 批量为主）。
+- 不提供归档看板元数据更新（如重命名）路径（删除除外）。
+- 不做跨 Project 的归档聚合。
 
-- 数据库 / 模型：
-  - 新增 `archived_kanbans` 表（Project 作用域）。
-  - 为 `tasks` 增加可空外键 `archived_kanban_id`，将任务关联到某个 ArchivedKanban。
-- 后端 API：
-  - 新增路由：`/api/projects/:project_id/archived-kanbans` 与 `/api/archived-kanbans/:id/*`。
-  - 扩展 `/api/tasks` 与 `/api/tasks/stream/ws` 的 query 语义，用于过滤/包含归档任务。
-  - 增加服务端 guard：阻止归档任务的 update/delete/attempt 创建。
-- MCP：
-  - 为 `mcp_task_server` 增加 archived-kanban 工具（只读列举 + 可控的破坏性操作）。
-- 前端：
-  - 新增 Project 作用域路由：`/projects/:projectId/archives` 与 `/projects/:projectId/archives/:archiveId`。
-  - 增加 Archive/Restore/Delete 对话框（强确认、清晰警告）。
-- 类型：
-  - 更新 Rust 类型并通过 `pnpm run generate-types` 重新生成 `shared/types.ts`（禁止直接编辑生成文件）。
+## 方案概述
 
-## Goals（目标）
+### 数据模型
 
-- 用户可以一键把当前 Project 看板的一批任务归档到新的 ArchivedKanban 中。
-- ArchivedKanban 页面静态只读，适合安全地浏览历史。
-- 归档任务在服务端强制不可变、不可执行，直到被还原。
-- 还原支持批量且行为可预测。
-- All Tasks 默认仅展示活跃任务，避免历史噪声。
+- 新增 `archived_kanbans` 表（Project 作用域、记录标题与时间戳）。
+- 在 `tasks` 增加可空外键 `archived_kanban_id`：
+  - `NULL` 表示活跃任务
+  - 非 `NULL` 表示归档任务，归属于某个 ArchivedKanban
 
-## Non-goals（非目标）
+### 核心语义（对用户可见）
 
-- 不引入“Milestone 里程碑规划”能力（日期、目标、进度等）。
-- 不支持单 Project 下多个并行活跃 Kanban。
-- 不保留列内任务顺序（只保证 `status` 阶段准确即可）。
-- 不做跨 Project 的归档分组（仅 Project 内归档）。
-- v1 不提供逐个 task 勾选的归档/还原 UI（按 `status` 批量足够）。
+- **归档**：创建一个新的 ArchivedKanban，并将匹配任务移动进去（写入 `archived_kanban_id`）。
+- **查看归档**：归档看板以只读 Kanban 形式展示（按 `status` 分列）。
+- **还原**：将归档中的任务批量移回活跃集合（将 `archived_kanban_id` 置为 `NULL`），且不改变任务原有 `status`。
+- **删除归档（破坏性）**：永久删除该归档及其包含任务（复用既有任务删除清理逻辑，避免 workspace/container 等资源泄漏）。
 
-## Risks（风险）
+### API / UI / MCP
 
-- 删除 ArchivedKanban 会导致不可恢复的数据丢失（包含其内部任务）→ 必须提供强确认与清晰警告文案。
-- 客户端对 “All Tasks” 默认行为的预期可能变化 → 默认过滤策略需要显式参数与文档说明。
-- Guardrail 覆盖不完整会导致历史被改写 → 需要覆盖所有写路径并加测试。
+- HTTP 提供归档列表、详情、归档、还原、删除接口。
+- 前端新增 Project 级别归档列表与归档详情页面；归档详情为强只读视图，仅提供“还原/删除归档”动作。
+- MCP 提供小而专一的 tools（list/archive/restore/delete），并为破坏性操作标注 `destructiveHint=true`。
 
-## Verification（验证）
+## 不确定性与未知情况处理（细化）
 
-- 后端测试：
-  - 归档只移动选定状态的任务，并且归档任务默认不会出现在任务列表/流中。
-  - 对归档任务的更新、删除与 attempt 创建会被服务端拒绝。
-  - 还原会把任务放回活跃集合且不改变 `status`。
-  - 删除归档会永久删除归档内任务并执行标准清理流程。
-- 前端检查：
-  - Archive/restore/delete 流程可用，archives 页面只读。
-  - All Tasks 的 “include archived” 开关能正确包含/排除归档任务。
+本变更把“归档”定义为强一致语义，因此必须面对一些不确定/未知情况，并给出可预测的处理策略：
+
+1) **任务组原子性与拆分检测（安全阀）**
+   - 归档/还原/删除任一操作只要命中某个 `task_group_id`，就以“整组”为最小原子单元执行。
+   - 一旦检测到同一任务组被拆分到活跃集合与归档集合（或多个归档）中，系统直接返回冲突错误，要求先把该组恢复到一致状态后再继续。
+
+2) **运行中执行进程**
+   - 归档与删除归档都会在执行前检查目标任务是否存在运行中执行进程（attempt/execution process）。
+   - 若存在，系统拒绝操作并返回冲突错误，避免把“仍在运行的工作”冻结或强删。
+
+3) **并发/竞态**
+   - 在归档/还原的数据库写入阶段，系统仅对仍满足前置条件的 tasks 执行条件更新，并校验受影响行数；若不一致则返回冲突错误，提示刷新后重试。
+   - 这使得在多客户端并发操作、状态突变等不可预期情况下，不会出现“悄悄覆盖别人刚完成的归档/还原”的结果。
+
+4) **实时流（WS）与过滤一致性**
+   - 任务流会按订阅过滤条件生成初始快照。
+   - 当增量 patch 里的 task 不再匹配过滤条件时，服务端会将其收敛为“从客户端视图移除该 task”的效果，避免出现“幽灵任务”（例如用户未包含归档，但任务被归档后仍残留在客户端列表里）。
+
+5) **删除清理的不确定性**
+   - 删除归档复用既有任务删除清理逻辑（包含外部资源清理）。外部资源可能失败或超时，系统应返回清晰错误，并保持 DB 侧不进入半完成状态（以事务边界与明确的顺序保证）。
+
+## 风险
+
+- 误删导致不可恢复的数据丢失 → UI 高摩擦确认 + MCP destructive 标注 + 文案强调“永久删除”。
+- 遗漏写路径护栏导致归档任务被修改 → 将“是否归档”判断尽量集中，并为 update/delete/start attempt 等路径增加测试覆盖。
+- 删除归档清理耗时 → 明确为用户触发的破坏性操作，允许更长耗时；必要时再演进为后台队列。
+
+## 验证
+
+- Rust：`cargo test --workspace`
+- 后端：`pnpm run backend:check`
+- 前端：`pnpm -C frontend run check`、`pnpm -C frontend run lint`
+- OpenSpec：`openspec instructions apply --change "archived-kanbans" --json`
+
+## 迁移与回滚
+
+- 迁移：新增 `archived_kanbans` 表；为 `tasks` 增加 `archived_kanban_id` 外键与索引；发布后即可使用。
+- 回滚：移除新增表/列与路由/UI/MCP。若线上已有归档数据，回滚会丢失“归档批次”分组语义，属于非平凡回滚。
+
