@@ -92,6 +92,7 @@ Notes:
 | `HOST` | string | 127.0.0.1 | server, mcp_task_server | Bind address for the backend HTTP server. |
 | `PORT` | int | 0 (auto-assign if unset) | server, mcp_task_server | Fallback alias for BACKEND_PORT. |
 | `RUST_LOG` | string | info | server | Controls module log levels. Used to build the tracing filter for the backend. |
+| `VK_OPEN_BROWSER_STARTUP` | bool | false | server | When true, attempts to open the local server URL in the default browser on startup. |
 
 ## Storage
 
@@ -126,24 +127,24 @@ Notes:
 The list below shows where each env var name appears in the repo (best-effort).
 
 - `BACKEND_HOST`: `frontend/vite.config.ts`
-- `BACKEND_PORT`: `crates/server/src/bin/mcp_task_server.rs`, `crates/server/src/main.rs`, `crates/server/src/mcp/task_server.rs`, `frontend/vite.config.ts`, `package.json`
+- `BACKEND_PORT`: `crates/server/src/main.rs`, `frontend/vite.config.ts`, `package.json`
 - `DATABASE_URL`: `crates/db/src/lib.rs`, `crates/server/src/test_support.rs`, `scripts/prepare-db.js`
 - `DISABLE_WORKSPACE_EXPIRED_CLEANUP`: `crates/local-deployment/src/container.rs`
 - `DISABLE_WORKTREE_ORPHAN_CLEANUP`: `crates/services/src/services/workspace_manager.rs`, `package.json`
 - `FRONTEND_PORT`: `frontend/vite.config.ts`, `package.json`
-- `HOST`: `crates/server/src/bin/mcp_task_server.rs`, `crates/server/src/http/mod.rs`, `crates/server/src/main.rs`, `justfile`
+- `HOST`: `crates/server/src/http/mod.rs`, `crates/server/src/main.rs`, `justfile`
 - `KANBAN_OPENAI_API_BASE`: `crates/server/src/routes/translation.rs`
 - `KANBAN_OPENAI_API_KEY`: `crates/server/src/routes/translation.rs`
 - `KANBAN_OPENAI_DEFAULT_MODEL`: `crates/server/src/routes/translation.rs`
 - `OPENAI_API_BASE`: `crates/server/src/routes/translation.rs`
 - `OPENAI_API_KEY`: `crates/server/src/routes/translation.rs`
 - `OPENAI_DEFAULT_MODEL`: `crates/server/src/routes/translation.rs`
-- `PORT`: `crates/server/src/bin/mcp_task_server.rs`, `crates/server/src/main.rs`, `justfile`, `scripts/setup-dev-environment.js`
+- `PORT`: `crates/server/src/main.rs`, `justfile`, `scripts/setup-dev-environment.js`
 - `POSTHOG_API_ENDPOINT`: `crates/server/build.rs`
 - `POSTHOG_API_KEY`: `crates/server/build.rs`
 - `RUST_LOG`: `crates/executors/src/executors/codex.rs`, `crates/server/src/main.rs`, `package.json`
 - `VIBE_ASSET_DIR`: `crates/server/src/test_support.rs`, `crates/utils/src/assets.rs`
-- `VIBE_BACKEND_URL`: `crates/server/src/bin/mcp_task_server.rs`, `crates/server/src/mcp/task_server.rs`
+- `VIBE_BACKEND_URL`: —
 - `VIBE_DB_RESET_ON_MIGRATION_ERROR`: `crates/db/src/lib.rs`
 - `VIBE_FAKE_AGENT_CONFIG`: `crates/executors/src/executors/fake_agent.rs`
 - `VIBE_FAKE_AGENT_PATH`: `crates/executors/src/executors/fake_agent.rs`
@@ -161,7 +162,7 @@ The list below shows where each env var name appears in the repo (best-effort).
 - `VK_FILE_STATS_CACHE_MAX_REPOS`: `crates/services/src/services/cache_budget.rs`
 - `VK_FILE_STATS_CACHE_TTL_SECS`: `crates/services/src/services/cache_budget.rs`
 - `VK_IDEMPOTENCY_COMPLETED_TTL_SECS`: `crates/server/src/main.rs`
-- `VK_IDEMPOTENCY_IN_PROGRESS_TTL_SECS`: `crates/server/src/main.rs`, `crates/server/src/routes/idempotency.rs`
+- `VK_IDEMPOTENCY_IN_PROGRESS_TTL_SECS`: `crates/server/src/main.rs`, `crates/server/src/mcp/task_server.rs`, `crates/server/src/routes/idempotency.rs`
 - `VK_LEGACY_JSONL_RETENTION_DAYS`: `crates/services/src/services/container/mod.rs`
 - `VK_LOG_BACKFILL_COMPLETION_MAX_ENTRIES`: `crates/services/src/services/cache_budget.rs`
 - `VK_LOG_BACKFILL_COMPLETION_TTL_SECS`: `crates/services/src/services/cache_budget.rs`
@@ -170,6 +171,7 @@ The list below shows where each env var name appears in the repo (best-effort).
 - `VK_LOG_HISTORY_MAX_ENTRIES`: `crates/utils/src/msg_store.rs`
 - `VK_LOG_PERSISTENCE_MODE`: `crates/services/src/services/container/mod.rs`
 - `VK_NORMALIZED_LOG_HISTORY_PAGE_SIZE`: `crates/server/src/routes/execution_processes.rs`
+- `VK_OPEN_BROWSER_STARTUP`: `crates/server/src/main.rs`, `justfile`
 - `VK_PROJECT_ID`: `crates/local-deployment/src/container.rs`
 - `VK_PROJECT_NAME`: `crates/executors/src/env.rs`, `crates/local-deployment/src/container.rs`
 - `VK_QUEUED_MESSAGES_TTL_SECS`: `crates/services/src/services/cache_budget.rs`

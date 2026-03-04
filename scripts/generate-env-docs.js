@@ -43,6 +43,15 @@ const ENV_VARS = [
       'Controls module log levels. Used to build the tracing filter for the backend.',
   },
   {
+    category: 'Server',
+    name: 'VK_OPEN_BROWSER_STARTUP',
+    type: 'bool',
+    defaultValue: 'false',
+    appliesTo: ['server'],
+    description:
+      'When true, attempts to open the local server URL in the default browser on startup.',
+  },
+  {
     category: 'Storage',
     name: 'VIBE_ASSET_DIR',
     type: 'path',
@@ -673,4 +682,3 @@ function main() {
 }
 
 main();
-

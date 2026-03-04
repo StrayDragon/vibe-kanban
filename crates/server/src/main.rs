@@ -19,6 +19,7 @@ const DEFAULT_IDEMPOTENCY_IN_PROGRESS_TTL_SECS: i64 = 60 * 60;
 const DEFAULT_IDEMPOTENCY_COMPLETED_TTL_SECS: i64 = 60 * 60 * 24 * 7;
 const IDEMPOTENCY_IN_PROGRESS_TTL_ENV: &str = "VK_IDEMPOTENCY_IN_PROGRESS_TTL_SECS";
 const IDEMPOTENCY_COMPLETED_TTL_ENV: &str = "VK_IDEMPOTENCY_COMPLETED_TTL_SECS";
+const OPEN_BROWSER_STARTUP_ENV: &str = "VK_OPEN_BROWSER_STARTUP";
 
 #[derive(Debug, Error)]
 pub enum VibeKanbanError {
@@ -37,6 +38,31 @@ where
     F: Future<Output = ()> + Send + 'static,
 {
     tokio::spawn(task)
+}
+
+fn env_var_truthy(name: &str) -> bool {
+    let raw = match std::env::var(name) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let value = raw.trim();
+    if value.is_empty() {
+        return false;
+    }
+
+    let normalized = value.to_ascii_lowercase();
+    match normalized.as_str() {
+        "1" | "true" | "t" | "yes" | "y" | "on" => true,
+        "0" | "false" | "f" | "no" | "n" | "off" => false,
+        _ => {
+            tracing::warn!(
+                env = name,
+                value = value,
+                "Unrecognized boolean env var value, treating as false"
+            );
+            false
+        }
+    }
 }
 
 #[tokio::main]
@@ -158,10 +184,12 @@ async fn main() -> Result<(), VibeKanbanError> {
         tracing::warn!("Failed to write port file: {}", e);
     }
 
-    tracing::info!("Server running on http://{host}:{actual_port}");
-
-    if !cfg!(debug_assertions) {
-        tracing::info!("Opening browser...");
+    tracing::info!("Server listening on http://{host}:{actual_port}");
+    // `HOST` defaults to 0.0.0.0 in `just run`, which isn't directly openable as a URL.
+    // Always print a local URL that's clickable in most terminals.
+    tracing::info!("Open http://127.0.0.1:{actual_port}");
+    if env_var_truthy(OPEN_BROWSER_STARTUP_ENV) {
+        tracing::info!("{OPEN_BROWSER_STARTUP_ENV}=true, opening browser...");
         tokio::spawn(async move {
             if let Err(e) = open_browser(&format!("http://127.0.0.1:{actual_port}")).await {
                 tracing::warn!(

@@ -106,8 +106,8 @@ mcp-inspector: mcp-build
 
 build: frontend-build backend-build mcp-build
 
-run host="0.0.0.0" port="3001": frontend-build backend-build
-    HOST={{host}} PORT={{port}} {{target_dir}}/release/server
+run host="0.0.0.0" port="3001" open="0": frontend-build backend-build
+    HOST={{host}} PORT={{port}} VK_OPEN_BROWSER_STARTUP={{open}} {{target_dir}}/release/server
 
 run-force host="0.0.0.0" port="3001":
     just install 1
