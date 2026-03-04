@@ -2,6 +2,7 @@ use std::{path::Path, process::Stdio, sync::Arc};
 
 use async_trait::async_trait;
 use command_group::AsyncCommandGroup;
+use executors_protocol::BaseCodingAgent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, process::Command};
@@ -14,7 +15,7 @@ use crate::{
     command::{CmdOverrides, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
     executors::{
-        AppendPrompt, BaseCodingAgent, ExecutorError, SpawnedChild, StandardCodingAgentExecutor,
+        AppendPrompt, ExecutorError, SpawnedChild, StandardCodingAgentExecutor,
         claude::{ClaudeLogProcessor, HistoryStrategy},
     },
     logs::{stderr_processor::normalize_stderr_logs, utils::EntryIndexProvider},

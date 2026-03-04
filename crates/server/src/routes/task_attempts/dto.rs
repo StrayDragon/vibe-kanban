@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use db::models::{merge::Merge, session::Session, workspace::Workspace};
-use executors::profile::ExecutorProfileId;
+use executors_protocol::ExecutorProfileId;
 use serde::{Deserialize, Serialize};
 use services::services::git::ConflictOp;
 use ts_rs::TS;

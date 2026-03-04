@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 workspace_utils = { path = "../utils", package = "utils" }
+executors-protocol = { path = "../executors-protocol" }
 tokio = { workspace = true }
 tokio-util = { version = "0.7", features = ["io", "compat"] }
 bytes = "1.0"

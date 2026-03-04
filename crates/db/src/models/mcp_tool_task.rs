@@ -65,6 +65,7 @@ fn compute_expires_at(
     Some(last_updated_at + Duration::milliseconds(ttl_ms))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_working<C: ConnectionTrait>(
     db: &C,
     task_id: String,

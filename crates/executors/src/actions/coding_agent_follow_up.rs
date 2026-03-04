@@ -1,47 +1,15 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use ts_rs::TS;
+use executors_protocol::actions::coding_agent_follow_up::CodingAgentFollowUpRequest;
 
 use crate::{
     actions::Executable,
     approvals::ExecutorApprovalService,
     env::ExecutionEnv,
-    executors::{BaseCodingAgent, ExecutorError, SpawnedChild, StandardCodingAgentExecutor},
-    profile::{ExecutorConfigs, ExecutorProfileId},
+    executors::{ExecutorError, SpawnedChild, StandardCodingAgentExecutor},
+    profile::ExecutorConfigs,
 };
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
-pub struct CodingAgentFollowUpRequest {
-    pub prompt: String,
-    pub session_id: String,
-    /// Executor profile specification
-    #[serde(alias = "profile_variant_label")]
-    // Backwards compatability with ProfileVariantIds, esp stored in DB under ExecutorAction
-    pub executor_profile_id: ExecutorProfileId,
-    /// Optional relative path to execute the agent in (relative to container_ref).
-    /// If None, uses the container_ref directory directly.
-    #[serde(default)]
-    pub working_dir: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image_paths: Option<HashMap<String, PathBuf>>,
-}
-
-impl CodingAgentFollowUpRequest {
-    /// Get the executor profile ID
-    pub fn get_executor_profile_id(&self) -> ExecutorProfileId {
-        self.executor_profile_id.clone()
-    }
-
-    pub fn base_executor(&self) -> BaseCodingAgent {
-        self.executor_profile_id.executor
-    }
-}
 
 #[async_trait]
 impl Executable for CodingAgentFollowUpRequest {
@@ -56,7 +24,7 @@ impl Executable for CodingAgentFollowUpRequest {
             None => current_dir.to_path_buf(),
         };
 
-        let executor_profile_id = self.get_executor_profile_id();
+        let executor_profile_id = self.executor_profile_id.clone();
         let mut agent = ExecutorConfigs::get_cached()
             .get_coding_agent(&executor_profile_id)
             .ok_or(ExecutorError::UnknownExecutorType(

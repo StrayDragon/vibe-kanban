@@ -19,7 +19,7 @@ use db::{
     },
 };
 use deployment::Deployment;
-use executors::actions::{
+use executors_protocol::actions::{
     ExecutorAction, ExecutorActionType, coding_agent_follow_up::CodingAgentFollowUpRequest,
     coding_agent_initial::CodingAgentInitialRequest,
 };

@@ -93,8 +93,7 @@ impl EventService {
                         let archived_kanban_filter = archived_kanban_id;
 
                         let matches_filter = |task: &TaskWithAttemptStatus| {
-                            let project_ok =
-                                project_filter.is_none_or(|id| task.project_id == id);
+                            let project_ok = project_filter.is_none_or(|id| task.project_id == id);
                             let archived_ok = match archived_kanban_filter {
                                 Some(want) => task.archived_kanban_id == Some(want),
                                 None => include_archived || task.archived_kanban_id.is_none(),
@@ -118,11 +117,12 @@ impl EventService {
                                                 return Some(Ok(LogMsg::JsonPatch(patch)));
                                             }
 
-                                            let remove_patch = json_patch::Patch(vec![
-                                                PatchOperation::Remove(RemoveOperation {
-                                                    path: op.path.clone(),
-                                                }),
-                                            ]);
+                                            let remove_patch =
+                                                json_patch::Patch(vec![PatchOperation::Remove(
+                                                    RemoveOperation {
+                                                        path: op.path.clone(),
+                                                    },
+                                                )]);
                                             return Some(Ok(LogMsg::JsonPatch(remove_patch)));
                                         }
                                     }
@@ -137,11 +137,12 @@ impl EventService {
                                                 return Some(Ok(LogMsg::JsonPatch(patch)));
                                             }
 
-                                            let remove_patch = json_patch::Patch(vec![
-                                                PatchOperation::Remove(RemoveOperation {
-                                                    path: op.path.clone(),
-                                                }),
-                                            ]);
+                                            let remove_patch =
+                                                json_patch::Patch(vec![PatchOperation::Remove(
+                                                    RemoveOperation {
+                                                        path: op.path.clone(),
+                                                    },
+                                                )]);
                                             return Some(Ok(LogMsg::JsonPatch(remove_patch)));
                                         }
                                     }

@@ -2,9 +2,8 @@ use std::{path::Path, sync::Arc};
 
 use async_trait::async_trait;
 use command_group::AsyncCommandGroup;
-use serde::{Deserialize, Serialize};
+use executors_protocol::actions::script::{ScriptContext, ScriptRequest};
 use tokio::process::Command;
-use ts_rs::TS;
 use workspace_utils::shell::get_shell_command;
 
 use crate::{
@@ -13,30 +12,6 @@ use crate::{
     env::ExecutionEnv,
     executors::{ExecutorError, SpawnedChild},
 };
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
-pub enum ScriptRequestLanguage {
-    Bash,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
-pub enum ScriptContext {
-    SetupScript,
-    CleanupScript,
-    DevServer,
-    ToolInstallScript,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
-pub struct ScriptRequest {
-    pub script: String,
-    pub language: ScriptRequestLanguage,
-    pub context: ScriptContext,
-    /// Optional relative path to execute the script in (relative to container_ref).
-    /// If None, uses the container_ref directory directly.
-    #[serde(default)]
-    pub working_dir: Option<String>,
-}
 
 #[async_trait]
 impl Executable for ScriptRequest {

@@ -91,6 +91,7 @@ pub async fn find_pending_by_execution_tool_call<C: ConnectionTrait>(
     record.map(Approval::from_model).transpose()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_pending<C: ConnectionTrait>(
     db: &C,
     approval_id: Uuid,

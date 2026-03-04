@@ -21,11 +21,12 @@ use db::{
     },
 };
 use deployment::Deployment;
-use executors::{
+use executors_protocol::{
+    ExecutorProfileId,
     actions::{
         ExecutorAction, ExecutorActionType, coding_agent_follow_up::CodingAgentFollowUpRequest,
+        coding_agent_initial::CodingAgentInitialRequest,
     },
-    profile::ExecutorProfileId,
 };
 use serde::{Deserialize, Serialize};
 use services::services::container::ContainerService;
@@ -281,14 +282,12 @@ pub async fn follow_up(
                     image_paths: image_paths.clone(),
                 })
             } else {
-                ExecutorActionType::CodingAgentInitialRequest(
-                    executors::actions::coding_agent_initial::CodingAgentInitialRequest {
-                        prompt,
-                        executor_profile_id: executor_profile_id.clone(),
-                        working_dir,
-                        image_paths,
-                    },
-                )
+                ExecutorActionType::CodingAgentInitialRequest(CodingAgentInitialRequest {
+                    prompt,
+                    executor_profile_id: executor_profile_id.clone(),
+                    working_dir,
+                    image_paths,
+                })
             };
 
             let action = ExecutorAction::new(action_type, cleanup_action.map(Box::new));

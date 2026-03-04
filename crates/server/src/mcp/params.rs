@@ -278,7 +278,7 @@ fn best_effort_field_from_path(path: &str) -> Option<&str> {
         return None;
     }
 
-    let last = path.split('.').last().unwrap_or(path);
+    let last = path.split('.').next_back().unwrap_or(path);
     Some(last.split('[').next().unwrap_or(last))
 }
 
@@ -325,7 +325,7 @@ fn parse_expected_fields(error: &str) -> Vec<String> {
     Vec::new()
 }
 
-fn classify_invalid_params<P: DeserializeOwned + JsonSchema>(
+fn classify_invalid_params(
     tool_name: &str,
     provided: &Map<String, Value>,
     path: &str,
@@ -509,7 +509,7 @@ fn parse_parameters<P: DeserializeOwned + JsonSchema>(
             let path = err.path().to_string();
             let inner = err.into_inner();
             let error_text = inner.to_string();
-            Err(classify_invalid_params::<P>(
+            Err(classify_invalid_params(
                 tool_name,
                 &arguments,
                 &path,
@@ -525,7 +525,7 @@ where
 {
     fn from_context_part(context: &mut ToolCallContext<'_, S>) -> Result<Self, ErrorData> {
         let arguments = context.arguments.take().unwrap_or_default();
-        parse_parameters::<P>(&context.name.to_string(), arguments).map(Parameters)
+        parse_parameters::<P>(context.name.as_ref(), arguments).map(Parameters)
     }
 }
 
@@ -533,6 +533,7 @@ where
 mod tests {
     use super::*;
 
+    #[allow(dead_code)]
     #[derive(Debug, Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
     struct TestListTasksRequest {

@@ -40,7 +40,10 @@ impl ArchivedKanban {
         }
     }
 
-    async fn from_model<C: ConnectionTrait>(db: &C, model: archived_kanban::Model) -> Result<Self, DbErr> {
+    async fn from_model<C: ConnectionTrait>(
+        db: &C,
+        model: archived_kanban::Model,
+    ) -> Result<Self, DbErr> {
         let project_uuid = ids::project_uuid_by_id(db, model.project_id)
             .await?
             .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
@@ -117,9 +120,12 @@ impl ArchivedKanban {
     }
 
     pub async fn tasks_count<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<u64, DbErr> {
-        let archive_row_id = ids::archived_kanban_id_by_uuid(db, id)
-            .await?
-            .ok_or(DbErr::RecordNotFound("Archived kanban not found".to_string()))?;
+        let archive_row_id =
+            ids::archived_kanban_id_by_uuid(db, id)
+                .await?
+                .ok_or(DbErr::RecordNotFound(
+                    "Archived kanban not found".to_string(),
+                ))?;
         task::Entity::find()
             .filter(task::Column::ArchivedKanbanId.eq(archive_row_id))
             .count(db)

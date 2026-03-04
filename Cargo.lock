@@ -1090,7 +1090,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "db-migration",
- "executors",
+ "executors-protocol",
  "sea-orm",
  "sea-orm-migration",
  "serde",
@@ -1110,7 +1110,9 @@ name = "db-migration"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "executors-protocol",
  "sea-orm-migration",
+ "serde_json",
  "tokio",
 ]
 
@@ -1501,6 +1503,7 @@ dependencies = [
  "directories",
  "dirs 5.0.1",
  "enum_dispatch",
+ "executors-protocol",
  "fork_stream",
  "futures",
  "futures-io",
@@ -1528,6 +1531,14 @@ dependencies = [
  "uuid",
  "winsplit",
  "xdg",
+]
+
+[[package]]
+name = "executors-protocol"
+version = "0.0.143"
+dependencies = [
+ "serde",
+ "ts-rs 11.0.1",
 ]
 
 [[package]]
@@ -2698,6 +2709,7 @@ dependencies = [
  "db",
  "deployment",
  "executors",
+ "executors-protocol",
  "futures",
  "globwalk",
  "json-patch",
@@ -4632,6 +4644,7 @@ dependencies = [
  "deployment",
  "dotenv",
  "executors",
+ "executors-protocol",
  "futures-util",
  "git2",
  "ignore",
@@ -4685,6 +4698,7 @@ dependencies = [
  "dirs 5.0.1",
  "dunce",
  "executors",
+ "executors-protocol",
  "fst",
  "futures",
  "futures-util",

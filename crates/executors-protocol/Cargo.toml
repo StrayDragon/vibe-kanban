@@ -1,0 +1,9 @@
+[package]
+name = "executors-protocol"
+version = "0.0.143"
+edition = "2024"
+
+[dependencies]
+serde = { workspace = true }
+ts-rs = { workspace = true }
+

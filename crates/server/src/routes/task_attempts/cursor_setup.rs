@@ -1,17 +1,16 @@
 use db::models::{
     execution_process::{ExecutionProcess, ExecutionProcessRunReason},
     session::{CreateSession, Session},
-    workspace::{Workspace, WorkspaceError},
+    workspace::Workspace,
 };
 use deployment::Deployment;
-use executors::actions::ExecutorAction;
 #[cfg(unix)]
-use executors::{
-    actions::{
-        ExecutorActionType,
-        script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
-    },
-    executors::cursor::CursorAgent,
+use executors::executors::cursor::CursorAgent;
+use executors_protocol::actions::ExecutorAction;
+#[cfg(unix)]
+use executors_protocol::actions::{
+    ExecutorActionType,
+    script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
 };
 use services::services::container::ContainerService;
 use uuid::Uuid;
@@ -30,9 +29,7 @@ pub async fn run_cursor_setup(
     .await?;
 
     let executor_action = if let Some(latest_process) = latest_process {
-        let latest_action = latest_process
-            .executor_action()
-            .map_err(|e| ApiError::Workspace(WorkspaceError::ValidationError(e.to_string())))?;
+        let latest_action = latest_process.executor_action();
         get_setup_helper_action()
             .await?
             .append_action(latest_action.to_owned())

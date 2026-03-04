@@ -15,6 +15,7 @@ use codex_protocol::{
 };
 use command_group::AsyncCommandGroup;
 use derivative::Derivative;
+use executors_protocol::BaseCodingAgent;
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -37,8 +38,8 @@ use crate::{
     command::{CmdOverrides, CommandBuilder, CommandParts, apply_overrides},
     env::ExecutionEnv,
     executors::{
-        AppendPrompt, AvailabilityInfo, BaseCodingAgent, ExecutorError, ExecutorExitResult,
-        SpawnedChild, StandardCodingAgentExecutor,
+        AppendPrompt, AvailabilityInfo, ExecutorError, ExecutorExitResult, SpawnedChild,
+        StandardCodingAgentExecutor,
         codex::{jsonrpc::ExitSignalSender, normalize_logs::Error},
     },
     stdout_dup::create_stdout_pipe_writer,

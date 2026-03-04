@@ -211,4 +211,3 @@ enum Tasks {
     Table,
     ArchivedKanbanId,
 }
-

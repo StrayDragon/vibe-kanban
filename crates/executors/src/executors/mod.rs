@@ -3,16 +3,16 @@ use std::{path::Path, sync::Arc};
 use async_trait::async_trait;
 use command_group::AsyncGroupChild;
 use enum_dispatch::enum_dispatch;
+use executors_protocol::{BaseCodingAgent, actions::ExecutorAction};
 use futures_io::Error as FuturesIoError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use strum_macros::{Display, EnumDiscriminants, EnumString, VariantNames};
+use strum_macros::Display;
 use thiserror::Error;
 use ts_rs::TS;
 use workspace_utils::msg_store::MsgStore;
 
 use crate::{
-    actions::ExecutorAction,
     approvals::ExecutorApprovalService,
     auto_retry::AutoRetryConfig,
     command::CommandBuildError,
@@ -74,19 +74,9 @@ pub enum ExecutorError {
 }
 
 #[enum_dispatch]
-#[derive(
-    Debug, Clone, Serialize, Deserialize, PartialEq, TS, Display, EnumDiscriminants, VariantNames,
-)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS, Display)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
-#[strum_discriminants(
-    name(BaseCodingAgent),
-    // Only add Hash; Eq/PartialEq are already provided by EnumDiscriminants.
-    derive(EnumString, Hash, strum_macros::Display, Serialize, Deserialize, TS),
-    strum(serialize_all = "SCREAMING_SNAKE_CASE"),
-    ts(use_ts_enum),
-    serde(rename_all = "SCREAMING_SNAKE_CASE")
-)]
 pub enum CodingAgent {
     ClaudeCode,
     Amp,
@@ -94,9 +84,6 @@ pub enum CodingAgent {
     Codex,
     FakeAgent,
     Opencode,
-    #[serde(alias = "CURSOR")]
-    #[strum_discriminants(serde(alias = "CURSOR"))]
-    #[strum_discriminants(strum(serialize = "CURSOR", serialize = "CURSOR_AGENT"))]
     CursorAgent,
     QwenCode,
     Copilot,
@@ -104,6 +91,21 @@ pub enum CodingAgent {
 }
 
 impl CodingAgent {
+    pub fn base_agent(&self) -> BaseCodingAgent {
+        match self {
+            Self::ClaudeCode(_) => BaseCodingAgent::ClaudeCode,
+            Self::Amp(_) => BaseCodingAgent::Amp,
+            Self::Gemini(_) => BaseCodingAgent::Gemini,
+            Self::Codex(_) => BaseCodingAgent::Codex,
+            Self::FakeAgent(_) => BaseCodingAgent::FakeAgent,
+            Self::Opencode(_) => BaseCodingAgent::Opencode,
+            Self::CursorAgent(_) => BaseCodingAgent::CursorAgent,
+            Self::QwenCode(_) => BaseCodingAgent::QwenCode,
+            Self::Copilot(_) => BaseCodingAgent::Copilot,
+            Self::Droid(_) => BaseCodingAgent::Droid,
+        }
+    }
+
     pub fn auto_retry_config(&self) -> &AutoRetryConfig {
         match self {
             Self::ClaudeCode(cfg) => &cfg.auto_retry,
@@ -324,22 +326,17 @@ mod tests {
         assert!(result.is_ok(), "CURSOR_AGENT should be valid");
         assert_eq!(result.unwrap(), BaseCodingAgent::CursorAgent);
 
-        // Test that legacy CURSOR is still accepted for backwards compatibility
+        // Legacy CURSOR is no longer accepted (protocol is strict)
         let result = BaseCodingAgent::from_str("CURSOR");
-        assert!(
-            result.is_ok(),
-            "CURSOR should be valid for backwards compatibility"
-        );
-        assert_eq!(result.unwrap(), BaseCodingAgent::CursorAgent);
+        assert!(result.is_err(), "CURSOR should be rejected");
 
         // Test serde deserialization for CURSOR_AGENT
         let result: Result<BaseCodingAgent, _> = serde_json::from_str(r#""CURSOR_AGENT""#);
         assert!(result.is_ok(), "CURSOR_AGENT should deserialize via serde");
         assert_eq!(result.unwrap(), BaseCodingAgent::CursorAgent);
 
-        // Test serde deserialization for legacy CURSOR
+        // Test serde deserialization rejects legacy CURSOR
         let result: Result<BaseCodingAgent, _> = serde_json::from_str(r#""CURSOR""#);
-        assert!(result.is_ok(), "CURSOR should deserialize via serde");
-        assert_eq!(result.unwrap(), BaseCodingAgent::CursorAgent);
+        assert!(result.is_err(), "CURSOR should be rejected via serde");
     }
 }

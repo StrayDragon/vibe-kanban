@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Error;
-use executors::{executors::BaseCodingAgent, profile::ExecutorProfileId};
+use executors_protocol::{BaseCodingAgent, ExecutorProfileId};
 use serde::{Deserialize, Serialize};
 use strum_macros::EnumString;
 use ts_rs::TS;

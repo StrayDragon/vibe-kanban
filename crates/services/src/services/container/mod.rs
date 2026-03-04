@@ -32,14 +32,17 @@ use db::{
     },
 };
 use executors::{
+    executors::{ExecutorError, StandardCodingAgentExecutor},
+    logs::{NormalizedEntry, NormalizedEntryError, NormalizedEntryType, utils::ConversationPatch},
+    profile::ExecutorConfigs,
+};
+use executors_protocol::{
+    ExecutorProfileId,
     actions::{
         ExecutorAction, ExecutorActionType,
         coding_agent_initial::CodingAgentInitialRequest,
         script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
     },
-    executors::{ExecutorError, StandardCodingAgentExecutor},
-    logs::{NormalizedEntry, NormalizedEntryError, NormalizedEntryType, utils::ConversationPatch},
-    profile::{ExecutorConfigs, ExecutorProfileId},
 };
 use futures::{StreamExt, future};
 use moka::sync::Cache;
@@ -289,17 +292,7 @@ pub trait ContainerService {
         // Never finalize setup scripts without a next_action (parallel mode).
         // In sequential mode, setup scripts have next_action pointing to coding agent,
         // so they won't finalize anyway (handled by next_action.is_none() check below).
-        let action = match ctx.execution_process.executor_action() {
-            Ok(action) => action,
-            Err(err) => {
-                tracing::error!(
-                    "Failed to parse executor action for execution {}: {}",
-                    ctx.execution_process.id,
-                    err
-                );
-                return true;
-            }
-        };
+        let action = ctx.execution_process.executor_action();
         if matches!(
             ctx.execution_process.run_reason,
             ExecutionProcessRunReason::SetupScript
@@ -1259,16 +1252,7 @@ pub trait ContainerService {
             }
 
             let current_dir = self.workspace_to_current_dir(&workspace);
-
-            let executor_action = if let Ok(executor_action) = process.executor_action() {
-                executor_action
-            } else {
-                tracing::error!(
-                    "Failed to parse executor action: {:?}",
-                    process.executor_action()
-                );
-                return None;
-            };
+            let executor_action = process.executor_action();
 
             // Spawn normalizer on populated store
             match executor_action.typ() {
@@ -1285,7 +1269,7 @@ pub trait ContainerService {
                 _ => {
                     tracing::debug!(
                         "Executor action doesn't support log normalization: {:?}",
-                        process.executor_action()
+                        executor_action
                     );
                     return None;
                 }
@@ -2184,7 +2168,7 @@ pub trait ContainerService {
     }
 
     async fn try_start_next_action(&self, ctx: &ExecutionContext) -> Result<(), ContainerError> {
-        let action = ctx.execution_process.executor_action()?;
+        let action = ctx.execution_process.executor_action();
         let next_action = if let Some(next_action) = action.next_action() {
             next_action
         } else {

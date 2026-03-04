@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
-use executors::{
+use executors_protocol::{
+    ExecutorProfileId,
     actions::{ExecutorAction, ExecutorActionType},
-    profile::ExecutorProfileId,
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
@@ -9,7 +9,6 @@ use sea_orm::{
     sea_query::{Expr, ExprTrait, JoinType, Order, Query},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use thiserror::Error;
 use ts_rs::TS;
 use uuid::Uuid;
@@ -57,8 +56,7 @@ pub struct ExecutionProcess {
     pub id: Uuid,
     pub session_id: Uuid,
     pub run_reason: ExecutionProcessRunReason,
-    #[ts(type = "ExecutorAction")]
-    pub executor_action: ExecutorActionField,
+    pub executor_action: ExecutorAction,
     pub status: ExecutionProcessStatus,
     pub exit_code: Option<i64>,
     /// dropped: true if this process is excluded from the current
@@ -96,13 +94,6 @@ pub struct ExecutionContext {
     pub repos: Vec<Repo>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ExecutorActionField {
-    ExecutorAction(ExecutorAction),
-    Other(Value),
-}
-
 #[derive(Debug, Clone)]
 pub struct MissingBeforeContext {
     pub id: Uuid,
@@ -119,8 +110,13 @@ impl ExecutionProcess {
         db: &C,
         model: execution_process::Model,
     ) -> Result<Self, DbErr> {
-        let executor_action = serde_json::from_value(model.executor_action.clone())
-            .unwrap_or(ExecutorActionField::Other(model.executor_action));
+        let executor_action: ExecutorAction = serde_json::from_value(model.executor_action.clone())
+            .map_err(|err| {
+                DbErr::Custom(format!(
+                    "Failed to deserialize executor_action for execution_process {}: {err}",
+                    model.uuid
+                ))
+            })?;
         let session_id = ids::session_uuid_by_id(db, model.session_id)
             .await?
             .ok_or(DbErr::RecordNotFound("Session not found".to_string()))?;
@@ -643,13 +639,8 @@ impl ExecutionProcess {
         Ok(())
     }
 
-    pub fn executor_action(&self) -> Result<&ExecutorAction, anyhow::Error> {
-        match &self.executor_action {
-            ExecutorActionField::ExecutorAction(action) => Ok(action),
-            ExecutorActionField::Other(_) => Err(anyhow::anyhow!(
-                "Executor action is not a valid ExecutorAction JSON object"
-            )),
-        }
+    pub fn executor_action(&self) -> &ExecutorAction {
+        &self.executor_action
     }
 
     /// Soft-drop processes at and after the specified boundary (inclusive)
@@ -855,9 +846,7 @@ impl ExecutionProcess {
             )
         })?;
 
-        let action = latest_execution_process
-            .executor_action()
-            .map_err(|e| ExecutionProcessError::ValidationError(e.to_string()))?;
+        let action = latest_execution_process.executor_action();
 
         match &action.typ {
             ExecutorActionType::CodingAgentInitialRequest(request) => {

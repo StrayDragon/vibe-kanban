@@ -19,8 +19,8 @@ use db::{
 use deployment::Deployment;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, sea_query::Expr};
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 use services::services::container::ContainerService;
+use ts_rs::TS;
 use utils::response::ApiResponse;
 use uuid::Uuid;
 
@@ -94,7 +94,8 @@ pub async fn list_project_archived_kanbans(
     Extension(project): Extension<Project>,
     State(deployment): State<DeploymentImpl>,
 ) -> Result<ResponseJson<ApiResponse<Vec<ArchivedKanbanWithTaskCount>>>, ApiError> {
-    let archives = ArchivedKanban::list_by_project_with_task_counts(&deployment.db().pool, project.id).await?;
+    let archives =
+        ArchivedKanban::list_by_project_with_task_counts(&deployment.db().pool, project.id).await?;
     Ok(ResponseJson(ApiResponse::success(archives)))
 }
 
@@ -105,8 +106,8 @@ pub async fn archive_project_kanban(
 ) -> Result<ResponseJson<ApiResponse<ArchiveProjectKanbanResponse>>, ApiError> {
     ensure_statuses_non_empty(&payload.statuses)?;
 
-    let title = normalize_title(payload.title)
-        .unwrap_or_else(|| default_archive_title(chrono::Utc::now()));
+    let title =
+        normalize_title(payload.title).unwrap_or_else(|| default_archive_title(chrono::Utc::now()));
 
     let pool = &deployment.db().pool;
     let project_row_id = db::models::ids::project_id_by_uuid(pool, project.id)
@@ -127,10 +128,7 @@ pub async fn archive_project_kanban(
     }
 
     // Expand any selected task group ids into full-group atomic selection.
-    let mut group_row_ids: Vec<i64> = selected
-        .iter()
-        .filter_map(|t| t.task_group_id)
-        .collect();
+    let mut group_row_ids: Vec<i64> = selected.iter().filter_map(|t| t.task_group_id).collect();
     group_row_ids.sort_unstable();
     group_row_ids.dedup();
 
@@ -144,9 +142,9 @@ pub async fn archive_project_kanban(
 
         // Reject archiving if any selected group is already split (some tasks already archived).
         for group_row_id in &group_row_ids {
-            let split = group_tasks.iter().any(|t| {
-                t.task_group_id == Some(*group_row_id) && t.archived_kanban_id.is_some()
-            });
+            let split = group_tasks
+                .iter()
+                .any(|t| t.task_group_id == Some(*group_row_id) && t.archived_kanban_id.is_some());
             if split {
                 return Err(ApiError::Conflict(
                     "Task group is already archived/split. Restore the group first before archiving again.".to_string(),
@@ -201,7 +199,9 @@ pub async fn archive_project_kanban(
     let archive = ArchivedKanban::create(&tx, project.id, title).await?;
     let archive_row_id = ArchivedKanban::row_id_by_uuid(&tx, archive.id)
         .await?
-        .ok_or(DbErr::RecordNotFound("Archived kanban not found".to_string()))?;
+        .ok_or(DbErr::RecordNotFound(
+            "Archived kanban not found".to_string(),
+        ))?;
 
     let now = chrono::Utc::now();
     let task_row_ids: Vec<i64> = to_archive.iter().map(|t| t.id).collect();
@@ -261,12 +261,14 @@ pub async fn get_archived_kanban(
 
     let tasks_count = ArchivedKanban::tasks_count(pool, archive_id).await?;
 
-    Ok(ResponseJson(ApiResponse::success(GetArchivedKanbanResponse {
-        archived_kanban: ArchivedKanbanWithTaskCount {
-            archived_kanban: archive,
-            tasks_count,
+    Ok(ResponseJson(ApiResponse::success(
+        GetArchivedKanbanResponse {
+            archived_kanban: ArchivedKanbanWithTaskCount {
+                archived_kanban: archive,
+                tasks_count,
+            },
         },
-    })))
+    )))
 }
 
 pub async fn restore_archived_kanban(
@@ -292,9 +294,12 @@ pub async fn restore_archived_kanban(
         .ok_or_else(|| ApiError::NotFound("Archived kanban not found".to_string()))?;
     let archive_row_id = ArchivedKanban::row_id_by_uuid(pool, archive_id)
         .await?
-        .ok_or(DbErr::RecordNotFound("Archived kanban not found".to_string()))?;
+        .ok_or(DbErr::RecordNotFound(
+            "Archived kanban not found".to_string(),
+        ))?;
 
-    let mut selected_query = task::Entity::find().filter(task::Column::ArchivedKanbanId.eq(archive_row_id));
+    let mut selected_query =
+        task::Entity::find().filter(task::Column::ArchivedKanbanId.eq(archive_row_id));
     if !restore_all {
         selected_query = selected_query.filter(task::Column::Status.is_in(statuses.clone()));
     }
@@ -312,8 +317,11 @@ pub async fn restore_archived_kanban(
     group_row_ids.sort_unstable();
     group_row_ids.dedup();
 
-    let mut by_row_id: std::collections::HashMap<i64, task::Model> =
-        selected.into_iter().filter(|t| t.task_group_id.is_none()).map(|t| (t.id, t)).collect();
+    let mut by_row_id: std::collections::HashMap<i64, task::Model> = selected
+        .into_iter()
+        .filter(|t| t.task_group_id.is_none())
+        .map(|t| (t.id, t))
+        .collect();
 
     if !group_row_ids.is_empty() {
         let group_tasks = task::Entity::find()
@@ -323,7 +331,8 @@ pub async fn restore_archived_kanban(
 
         for group_row_id in &group_row_ids {
             let split = group_tasks.iter().any(|t| {
-                t.task_group_id == Some(*group_row_id) && t.archived_kanban_id != Some(archive_row_id)
+                t.task_group_id == Some(*group_row_id)
+                    && t.archived_kanban_id != Some(archive_row_id)
             });
             if split {
                 return Err(ApiError::Conflict(
@@ -393,9 +402,14 @@ pub async fn delete_archived_kanban(
 
     // Reject delete if any contained task has running processes.
     for task in &tasks {
-        if deployment.container().has_running_processes(task.id).await? {
+        if deployment
+            .container()
+            .has_running_processes(task.id)
+            .await?
+        {
             return Err(ApiError::Conflict(
-                "Archived kanban contains tasks with running execution processes. Stop them first.".to_string(),
+                "Archived kanban contains tasks with running execution processes. Stop them first."
+                    .to_string(),
             ));
         }
     }
@@ -454,9 +468,9 @@ pub async fn delete_archived_kanban(
         return Err(ApiError::NotFound("Archived kanban not found".to_string()));
     }
 
-    Ok(ResponseJson(ApiResponse::success(DeleteArchivedKanbanResponse {
-        deleted_task_count,
-    })))
+    Ok(ResponseJson(ApiResponse::success(
+        DeleteArchivedKanbanResponse { deleted_task_count },
+    )))
 }
 
 pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {

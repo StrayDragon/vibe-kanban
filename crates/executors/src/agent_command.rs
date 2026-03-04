@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
+use executors_protocol::BaseCodingAgent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -13,7 +14,7 @@ use tokio::{
 use ts_rs::TS;
 use workspace_utils::shell::resolve_executable_path;
 
-use crate::{command::CmdOverrides, executors::BaseCodingAgent};
+use crate::command::CmdOverrides;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]

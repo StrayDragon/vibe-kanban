@@ -5,6 +5,7 @@ members = [
     "crates/db",
     "crates/db/migration",
     "crates/executors",
+    "crates/executors-protocol",
     "crates/services",
     "crates/utils",
     "crates/local-deployment",

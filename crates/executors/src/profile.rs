@@ -1,18 +1,16 @@
 use std::{
     collections::HashMap,
     fs,
-    str::FromStr,
     sync::{LazyLock, RwLock},
 };
 
 use convert_case::{Case, Casing};
-use serde::{Deserialize, Deserializer, Serialize, de::Error as DeError};
+use executors_protocol::{BaseCodingAgent, ExecutorProfileId};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
 
-use crate::executors::{
-    AvailabilityInfo, BaseCodingAgent, CodingAgent, StandardCodingAgentExecutor,
-};
+use crate::executors::{AvailabilityInfo, CodingAgent, StandardCodingAgentExecutor};
 
 /// Return the canonical form for variant keys.
 /// – "DEFAULT" is kept as-is  
@@ -56,65 +54,6 @@ static EXECUTOR_PROFILES_CACHE: LazyLock<RwLock<ExecutorConfigs>> =
 
 // New format default profiles (v3 - flattened)
 const DEFAULT_PROFILES_JSON: &str = include_str!("../default_profiles.json");
-
-// Executor-centric profile identifier
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS, Hash, Eq)]
-pub struct ExecutorProfileId {
-    /// The executor type (e.g., "CLAUDE_CODE", "AMP")
-    #[serde(alias = "profile", deserialize_with = "de_base_coding_agent_kebab")]
-    // Backwards compatability with ProfileVariantIds, esp stored in DB under ExecutorAction
-    pub executor: BaseCodingAgent,
-    /// Optional variant name (e.g., "PLAN", "ROUTER")
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
-}
-
-// Convert legacy profile/executor names from kebab-case to SCREAMING_SNAKE_CASE, can be deleted 14 days from 3/9/25
-fn de_base_coding_agent_kebab<'de, D>(de: D) -> Result<BaseCodingAgent, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let raw = String::deserialize(de)?;
-    // kebab-case -> SCREAMING_SNAKE_CASE
-    let norm = raw.replace('-', "_").to_ascii_uppercase();
-    BaseCodingAgent::from_str(&norm)
-        .map_err(|_| D::Error::custom(format!("unknown executor '{raw}' (normalized to '{norm}')")))
-}
-
-impl ExecutorProfileId {
-    /// Create a new executor profile ID with default variant
-    pub fn new(executor: BaseCodingAgent) -> Self {
-        Self {
-            executor,
-            variant: None,
-        }
-    }
-
-    /// Create a new executor profile ID with specific variant
-    pub fn with_variant(executor: BaseCodingAgent, variant: String) -> Self {
-        Self {
-            executor,
-            variant: Some(variant),
-        }
-    }
-
-    /// Get cache key for this executor profile
-    pub fn cache_key(&self) -> String {
-        match &self.variant {
-            Some(variant) => format!("{}:{}", self.executor, variant),
-            None => self.executor.clone().to_string(),
-        }
-    }
-}
-
-impl std::fmt::Display for ExecutorProfileId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.variant {
-            Some(variant) => write!(f, "{}:{}", self.executor, variant),
-            None => write!(f, "{}", self.executor),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 pub struct ExecutorConfig {
@@ -206,6 +145,52 @@ impl ExecutorConfigs {
         *cache = Self::load();
     }
 
+    fn migrate_profiles_json(raw: &str) -> Result<Option<String>, serde_json::Error> {
+        fn rename_key(
+            obj: &mut serde_json::Map<String, serde_json::Value>,
+            from: &str,
+            to: &str,
+        ) -> bool {
+            let Some(value) = obj.remove(from) else {
+                return false;
+            };
+            obj.insert(to.to_string(), value);
+            true
+        }
+
+        let mut value: serde_json::Value = serde_json::from_str(raw)?;
+        let mut changed = false;
+
+        let Some(executors) = value
+            .get_mut("executors")
+            .and_then(|executors| executors.as_object_mut())
+        else {
+            return Ok(None);
+        };
+
+        changed |= rename_key(executors, "CURSOR", "CURSOR_AGENT");
+
+        for executor_config in executors.values_mut() {
+            let Some(variants) = executor_config.as_object_mut() else {
+                continue;
+            };
+            for agent_value in variants.values_mut() {
+                let Some(agent_obj) = agent_value.as_object_mut() else {
+                    continue;
+                };
+                if rename_key(agent_obj, "CURSOR", "CURSOR_AGENT") {
+                    changed = true;
+                }
+            }
+        }
+
+        if !changed {
+            return Ok(None);
+        }
+
+        Ok(Some(serde_json::to_string_pretty(&value)?))
+    }
+
     /// Load executor profiles from file or defaults
     pub fn load() -> Self {
         let profiles_path = workspace_utils::assets::profiles_path();
@@ -224,20 +209,49 @@ impl ExecutorConfigs {
         };
 
         // Parse user overrides
-        match serde_json::from_str::<Self>(&content) {
-            Ok(mut user_overrides) => {
-                tracing::info!("Loaded user profile overrides from profiles.json");
-                user_overrides.canonicalise();
-                Self::merge_with_defaults(defaults, user_overrides)
-            }
-            Err(e) => {
-                tracing::error!(
-                    "Failed to parse user profiles.json: {}, using defaults only",
-                    e
-                );
-                defaults
-            }
-        }
+        let mut user_overrides = match serde_json::from_str::<Self>(&content) {
+            Ok(user_overrides) => user_overrides,
+            Err(parse_err) => match Self::migrate_profiles_json(&content) {
+                Ok(Some(migrated)) => match serde_json::from_str::<Self>(&migrated) {
+                    Ok(mut migrated_overrides) => {
+                        tracing::info!("Migrated legacy profiles.json to current format");
+                        migrated_overrides.canonicalise();
+                        if let Ok(serialized) = serde_json::to_string_pretty(&migrated_overrides)
+                            && let Err(err) = fs::write(&profiles_path, serialized)
+                        {
+                            tracing::error!("Failed to write migrated profiles.json: {}", err);
+                        }
+                        migrated_overrides
+                    }
+                    Err(err) => {
+                        tracing::error!(
+                            "Failed to parse migrated profiles.json: {}, using defaults only",
+                            err
+                        );
+                        return defaults;
+                    }
+                },
+                Ok(None) => {
+                    tracing::error!(
+                        "Failed to parse user profiles.json: {}, using defaults only",
+                        parse_err
+                    );
+                    return defaults;
+                }
+                Err(err) => {
+                    tracing::error!(
+                        "Failed to parse user profiles.json: {}, migration failed: {}, using defaults only",
+                        parse_err,
+                        err
+                    );
+                    return defaults;
+                }
+            },
+        };
+
+        tracing::info!("Loaded user profile overrides from profiles.json");
+        user_overrides.canonicalise();
+        Self::merge_with_defaults(defaults, user_overrides)
     }
 
     /// Save user profile overrides to file (only saves what differs from defaults)
@@ -361,7 +375,7 @@ impl ExecutorConfigs {
             })?;
 
             // Validate that the default agent type matches the executor key
-            if BaseCodingAgent::from(default_config) != *executor_key {
+            if default_config.base_agent() != *executor_key {
                 return Err(ProfileError::Validation(format!(
                     "Executor key '{executor_key}' does not match the agent variant '{default_config}'"
                 )));

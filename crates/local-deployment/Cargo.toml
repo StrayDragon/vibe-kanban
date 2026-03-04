@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 db = { path = "../db" }
 executors = { path="../executors" }
+executors-protocol = { path = "../executors-protocol" }
 deployment = { path = "../deployment" }
 services = { path = "../services" }
 utils = { path = "../utils" }

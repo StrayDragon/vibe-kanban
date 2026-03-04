@@ -2,6 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use async_trait::async_trait;
 use derivative::Derivative;
+use executors_protocol::BaseCodingAgent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -15,8 +16,7 @@ use crate::{
     command::{CmdOverrides, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
     executors::{
-        AppendPrompt, AvailabilityInfo, BaseCodingAgent, ExecutorError, SpawnedChild,
-        StandardCodingAgentExecutor,
+        AppendPrompt, AvailabilityInfo, ExecutorError, SpawnedChild, StandardCodingAgentExecutor,
     },
 };
 

@@ -7,3 +7,5 @@ edition = "2024"
 sea-orm-migration = { version = "2.0.0-rc.28", features = ["runtime-tokio-rustls", "sqlx-sqlite", "sqlx-postgres"] }
 async-trait = { workspace = true }
 tokio = { workspace = true }
+serde_json = { workspace = true }
+executors-protocol = { path = "../../executors-protocol" }

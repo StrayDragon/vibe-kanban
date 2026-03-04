@@ -2,6 +2,7 @@ use std::{path::Path, process::Stdio, sync::Arc};
 
 use async_trait::async_trait;
 use command_group::AsyncCommandGroup;
+use executors_protocol::BaseCodingAgent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum_macros::AsRefStr;
@@ -14,9 +15,7 @@ use crate::{
     auto_retry::AutoRetryConfig,
     command::CommandParts,
     env::ExecutionEnv,
-    executors::{
-        AppendPrompt, BaseCodingAgent, ExecutorError, SpawnedChild, StandardCodingAgentExecutor,
-    },
+    executors::{AppendPrompt, ExecutorError, SpawnedChild, StandardCodingAgentExecutor},
     logs::utils::EntryIndexProvider,
 };
 

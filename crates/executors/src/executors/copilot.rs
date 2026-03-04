@@ -7,6 +7,7 @@ use std::{
 
 use async_trait::async_trait;
 use command_group::AsyncCommandGroup;
+use executors_protocol::BaseCodingAgent;
 use futures::StreamExt;
 use regex::Regex;
 use schemars::JsonSchema;
@@ -27,8 +28,7 @@ use crate::{
     command::{CmdOverrides, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
     executors::{
-        AppendPrompt, AvailabilityInfo, BaseCodingAgent, ExecutorError, SpawnedChild,
-        StandardCodingAgentExecutor,
+        AppendPrompt, AvailabilityInfo, ExecutorError, SpawnedChild, StandardCodingAgentExecutor,
     },
     logs::{
         NormalizedEntry, NormalizedEntryType, plain_text_processor::PlainTextLogProcessor,

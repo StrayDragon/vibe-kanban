@@ -3,6 +3,7 @@ use std::{collections::HashMap, path::Path, process::Stdio, sync::Arc, time::Dur
 
 use async_trait::async_trait;
 use command_group::AsyncCommandGroup;
+use executors_protocol::BaseCodingAgent;
 use futures::StreamExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -21,8 +22,7 @@ use crate::{
     command::{CmdOverrides, CommandBuilder, apply_overrides},
     env::ExecutionEnv,
     executors::{
-        AppendPrompt, AvailabilityInfo, BaseCodingAgent, ExecutorError, SpawnedChild,
-        StandardCodingAgentExecutor,
+        AppendPrompt, AvailabilityInfo, ExecutorError, SpawnedChild, StandardCodingAgentExecutor,
     },
     logs::{
         ActionType, FileChange, NormalizedEntry, NormalizedEntryError, NormalizedEntryType,

@@ -29,12 +29,15 @@ use db::{
 };
 use deployment::Deployment;
 use executors::{
+    executors::{CodingAgent, ExecutorError},
+    profile::ExecutorConfigs,
+};
+use executors_protocol::{
+    ExecutorProfileId,
     actions::{
         ExecutorAction, ExecutorActionType,
         script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
     },
-    executors::{CodingAgent, ExecutorError},
-    profile::{ExecutorConfigs, ExecutorProfileId},
 };
 use git2::BranchType;
 use services::services::{
@@ -851,7 +854,7 @@ pub async fn get_task_attempt_patch(
     } else {
         patch
     };
-    let bytes = patch.as_bytes().len();
+    let bytes = patch.len();
 
     Ok(ResponseJson(ApiResponse::success(AttemptPatchResponse {
         blocked: false,
@@ -2490,13 +2493,12 @@ mod tests {
     };
     use db_migration::Migrator;
     use deployment::Deployment;
-    use executors::{
+    use executors_protocol::{
+        BaseCodingAgent, ExecutorProfileId,
         actions::{
             ExecutorAction, ExecutorActionType,
             script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
         },
-        executors::BaseCodingAgent,
-        profile::ExecutorProfileId,
     };
     use local_deployment::container::LocalContainerService;
     use sea_orm::Database;

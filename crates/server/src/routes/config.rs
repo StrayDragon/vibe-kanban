@@ -11,14 +11,12 @@ use axum::{
 use deployment::{Deployment, DeploymentError};
 use executors::{
     agent_command::{AgentCommandResolution, agent_command_resolver},
-    executors::{
-        AvailabilityInfo, BaseAgentCapability, BaseCodingAgent, CodingAgent,
-        StandardCodingAgentExecutor,
-    },
+    executors::{AvailabilityInfo, BaseAgentCapability, CodingAgent, StandardCodingAgentExecutor},
     llman,
     mcp_config::{McpConfig, read_agent_config, write_agent_config},
-    profile::{ExecutorConfigs, ExecutorProfileId, canonical_variant_key},
+    profile::{ExecutorConfigs, canonical_variant_key},
 };
+use executors_protocol::{BaseCodingAgent, ExecutorProfileId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use services::services::{

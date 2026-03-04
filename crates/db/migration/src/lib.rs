@@ -9,6 +9,7 @@ mod m20260302000001_approvals;
 mod m20260302000002_attempt_control_leases;
 mod m20260303000000_mcp_tool_tasks;
 mod m20260304000000_archived_kanbans;
+mod m20260304000001_executor_protocol_strict;
 
 pub struct Migrator;
 
@@ -25,6 +26,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260302000002_attempt_control_leases::Migration),
             Box::new(m20260303000000_mcp_tool_tasks::Migration),
             Box::new(m20260304000000_archived_kanbans::Migration),
+            Box::new(m20260304000001_executor_protocol_strict::Migration),
         ]
     }
 }

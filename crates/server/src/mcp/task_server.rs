@@ -17,8 +17,9 @@ use db::{
         ExecutionProcessEventPayload, ProjectEventPayload, TaskEventPayload, WorkspaceEventPayload,
     },
     models::{
-        approval as approval_model, attempt_control_lease as attempt_control_lease_model,
+        approval as approval_model,
         archived_kanban::{ArchivedKanban, ArchivedKanbanWithTaskCount},
+        attempt_control_lease as attempt_control_lease_model,
         coding_agent_turn::CodingAgentTurn,
         event_outbox::{EventOutbox, EventOutboxEntry},
         execution_process::{ExecutionProcess, ExecutionProcessRunReason, ExecutionProcessStatus},
@@ -34,13 +35,12 @@ use db::{
     },
 };
 use deployment::Deployment;
-use executors::{
+use executors_protocol::{
+    BaseCodingAgent, ExecutorProfileId,
     actions::{
         ExecutorAction, ExecutorActionType, coding_agent_follow_up::CodingAgentFollowUpRequest,
         coding_agent_initial::CodingAgentInitialRequest,
     },
-    executors::BaseCodingAgent,
-    profile::ExecutorProfileId,
 };
 use regex::Regex;
 use rmcp::{
@@ -199,7 +199,7 @@ fn mcp_task_poll_interval_ms() -> u64 {
     }
 
     match trimmed.parse::<u64>() {
-        Ok(value) if value == 0 => DEFAULT_MCP_TASK_POLL_INTERVAL_MS,
+        Ok(0) => DEFAULT_MCP_TASK_POLL_INTERVAL_MS,
         Ok(value) => value,
         Err(err) => {
             tracing::warn!(
@@ -232,7 +232,7 @@ fn mcp_task_max_concurrency() -> usize {
     }
 
     match trimmed.parse::<usize>() {
-        Ok(value) if value == 0 => DEFAULT_MCP_TASK_MAX_CONCURRENCY,
+        Ok(0) => DEFAULT_MCP_TASK_MAX_CONCURRENCY,
         Ok(value) => value,
         Err(err) => {
             tracing::warn!(
@@ -1124,14 +1124,13 @@ impl TaskServer {
             resumer_started: AtomicBool::new(false),
         });
 
-        let server = Self {
+        Self {
             deployment,
             tool_router: Self::tool_router(),
             peer: Arc::new(std::sync::RwLock::new(None)),
             approvals_elicitation_started: Arc::new(AtomicBool::new(false)),
             mcp_tasks: runtime,
-        };
-        server
+        }
     }
 
     fn record_peer(&self, peer: rmcp::service::Peer<rmcp::RoleServer>) {
@@ -1647,7 +1646,10 @@ impl TaskServer {
             ApiError::Conflict(message) => Self::err_with(
                 message,
                 Some(details),
-                Some("操作被阻止：请先解决冲突条件（例如停止运行中的进程或先还原任务）。".to_string()),
+                Some(
+                    "操作被阻止：请先解决冲突条件（例如停止运行中的进程或先还原任务）。"
+                        .to_string(),
+                ),
                 Some(MCP_CODE_BLOCKED_GUARDRAILS),
                 Some(false),
             ),
@@ -1945,6 +1947,7 @@ impl TaskServer {
             .unwrap_or_else(|| "mcp:unknown".to_string())
     }
 
+    #[allow(clippy::result_large_err)]
     fn lease_ttl(ttl_secs: Option<i64>) -> Result<chrono::Duration, CallToolResult> {
         let ttl_secs = ttl_secs.unwrap_or(DEFAULT_ATTEMPT_CONTROL_LEASE_TTL_SECS);
         if ttl_secs <= 0 {
@@ -2545,17 +2548,17 @@ Avoid: Guessing project_id (use list_projects)."#,
     )]
     async fn list_archived_kanbans(
         &self,
-        Parameters(ListArchivedKanbansRequest { project_id }): Parameters<ListArchivedKanbansRequest>,
+        Parameters(ListArchivedKanbansRequest { project_id }): Parameters<
+            ListArchivedKanbansRequest,
+        >,
     ) -> Result<Json<ListArchivedKanbansResponse>, ErrorData> {
         let pool = &self.deployment.db().pool;
-        let project = Project::find_by_id(pool, project_id)
-            .await
-            .map_err(|e| {
-                ErrorData::internal_error(
-                    "Failed to load project",
-                    Some(json!({ "error": e.to_string(), "project_id": project_id })),
-                )
-            })?;
+        let project = Project::find_by_id(pool, project_id).await.map_err(|e| {
+            ErrorData::internal_error(
+                "Failed to load project",
+                Some(json!({ "error": e.to_string(), "project_id": project_id })),
+            )
+        })?;
         if project.is_none() {
             return Err(ErrorData::invalid_params(
                 "Project not found",
@@ -2572,8 +2575,10 @@ Avoid: Guessing project_id (use list_projects)."#,
                 )
             })?;
 
-        let archived_kanbans: Vec<McpArchivedKanban> =
-            archives.into_iter().map(McpArchivedKanban::from_model).collect();
+        let archived_kanbans: Vec<McpArchivedKanban> = archives
+            .into_iter()
+            .map(McpArchivedKanban::from_model)
+            .collect();
 
         Ok(Json(ListArchivedKanbansResponse {
             project_id: project_id.to_string(),
@@ -2614,7 +2619,10 @@ Avoid: Archiving tasks with running execution processes."#,
                 )
             })?
             .ok_or_else(|| {
-                ErrorData::invalid_params("Project not found", Some(json!({ "project_id": project_id })))
+                ErrorData::invalid_params(
+                    "Project not found",
+                    Some(json!({ "project_id": project_id })),
+                )
             })?;
 
         let mut parsed_statuses = Vec::new();
@@ -2635,7 +2643,10 @@ Avoid: Archiving tasks with running execution processes."#,
                             "value": trimmed,
                             "valid_values": ["todo", "inprogress", "inreview", "done", "cancelled"],
                         })),
-                        Some("Valid values: todo, inprogress, inreview, done, cancelled.".to_string()),
+                        Some(
+                            "Valid values: todo, inprogress, inreview, done, cancelled."
+                                .to_string(),
+                        ),
                         Some("invalid_argument"),
                         Some(false),
                     );
@@ -2747,7 +2758,10 @@ Avoid: Providing statuses together with restore_all=true."#,
             return Self::err_with(
                 "Do not provide statuses when restore_all=true.",
                 Some(json!({ "tool": "restore_archived_kanban" })),
-                Some("Either set restore_all=true, or provide statuses for a partial restore.".to_string()),
+                Some(
+                    "Either set restore_all=true, or provide statuses for a partial restore."
+                        .to_string(),
+                ),
                 Some("invalid_argument"),
                 Some(false),
             );
@@ -3042,30 +3056,29 @@ Avoid: Deleting the wrong task (confirm with get_task first)."#,
                 "Failed to load task",
                 Some(json!({ "error": e.to_string(), "task_id": task_id })),
             )
-        })? {
-            if let Some(archive_id) = task.archived_kanban_id {
-                return Self::err_with(
-                    "Task is archived. Delete its archive to remove it.",
-                    Some(json!({
-                        "tool": "delete_task",
-                        "task_id": task_id,
-                        "archived_kanban_id": archive_id,
-                    })),
-                    Some("Delete the archived kanban batch instead, or restore then delete.".to_string()),
-                    Some(MCP_CODE_BLOCKED_GUARDRAILS),
-                    Some(false),
-                );
-            }
+        })? && let Some(archive_id) = task.archived_kanban_id
+        {
+            return Self::err_with(
+                "Task is archived. Delete its archive to remove it.",
+                Some(json!({
+                    "tool": "delete_task",
+                    "task_id": task_id,
+                    "archived_kanban_id": archive_id,
+                })),
+                Some(
+                    "Delete the archived kanban batch instead, or restore then delete.".to_string(),
+                ),
+                Some(MCP_CODE_BLOCKED_GUARDRAILS),
+                Some(false),
+            );
         }
 
-        let rows = Task::delete(pool, task_id)
-            .await
-            .map_err(|e| {
-                ErrorData::internal_error(
-                    "Failed to delete task",
-                    Some(json!({ "error": e.to_string() })),
-                )
-            })?;
+        let rows = Task::delete(pool, task_id).await.map_err(|e| {
+            ErrorData::internal_error(
+                "Failed to delete task",
+                Some(json!({ "error": e.to_string() })),
+            )
+        })?;
         let deleted_task_id = if rows > 0 {
             Some(task_id.to_string())
         } else {
@@ -4703,7 +4716,7 @@ Avoid: Absolute paths or .. traversal."#,
 
         let query = crate::routes::task_attempts::AttemptFileQuery {
             path: Some(path.clone()),
-            start: start.map(|s| s as u64),
+            start,
             max_bytes,
         };
         let ResponseJson(response) = crate::routes::task_attempts::get_task_attempt_file(
@@ -5398,6 +5411,7 @@ Avoid: Mixing cursor with after_event_id."#,
 
 #[tool_handler]
 impl ServerHandler for TaskServer {
+    #[allow(clippy::manual_async_fn)]
     fn enqueue_task(
         &self,
         request: CallToolRequestParams,
@@ -5432,12 +5446,12 @@ impl ServerHandler for TaskServer {
 
             let mut kanban_task_id = None;
             let mut project_id = None;
-            if let Some(attempt_id) = attempt_id {
-                if let Ok(Some(workspace)) = Workspace::find_by_id(pool, attempt_id).await {
-                    kanban_task_id = Some(workspace.task_id);
-                    if let Ok(Some(task)) = Task::find_by_id(pool, workspace.task_id).await {
-                        project_id = Some(task.project_id);
-                    }
+            if let Some(attempt_id) = attempt_id
+                && let Ok(Some(workspace)) = Workspace::find_by_id(pool, attempt_id).await
+            {
+                kanban_task_id = Some(workspace.task_id);
+                if let Ok(Some(task)) = Task::find_by_id(pool, workspace.task_id).await {
+                    project_id = Some(task.project_id);
                 }
             }
 
@@ -5483,6 +5497,7 @@ impl ServerHandler for TaskServer {
         }
     }
 
+    #[allow(clippy::manual_async_fn)]
     fn list_tasks(
         &self,
         request: Option<PaginatedRequestParams>,
@@ -5500,33 +5515,32 @@ impl ServerHandler for TaskServer {
             let mut project_id = None;
             let mut limit = 20_u64;
 
-            if let Some(params) = request.as_ref() {
-                if let Some(meta) = params.meta.as_ref() {
-                    if let Some(vk) = meta.get("vk").and_then(|v| v.as_object()) {
-                        status = vk
-                            .get("status")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-                        attempt_id = vk
-                            .get("attempt_id")
-                            .and_then(|v| v.as_str())
-                            .and_then(|raw| Uuid::parse_str(raw).ok());
-                        project_id = vk
-                            .get("project_id")
-                            .and_then(|v| v.as_str())
-                            .and_then(|raw| Uuid::parse_str(raw).ok());
-                        kanban_task_id = vk
-                            .get("kanban_task_id")
-                            .or_else(|| vk.get("task_id"))
-                            .and_then(|v| v.as_str())
-                            .and_then(|raw| Uuid::parse_str(raw).ok());
-                        limit = vk
-                            .get("limit")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(limit)
-                            .clamp(1, 200);
-                    }
-                }
+            if let Some(params) = request.as_ref()
+                && let Some(meta) = params.meta.as_ref()
+                && let Some(vk) = meta.get("vk").and_then(|v| v.as_object())
+            {
+                status = vk
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                attempt_id = vk
+                    .get("attempt_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|raw| Uuid::parse_str(raw).ok());
+                project_id = vk
+                    .get("project_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|raw| Uuid::parse_str(raw).ok());
+                kanban_task_id = vk
+                    .get("kanban_task_id")
+                    .or_else(|| vk.get("task_id"))
+                    .and_then(|v| v.as_str())
+                    .and_then(|raw| Uuid::parse_str(raw).ok());
+                limit = vk
+                    .get("limit")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(limit)
+                    .clamp(1, 200);
             }
 
             let cursor = request
@@ -5589,6 +5603,7 @@ impl ServerHandler for TaskServer {
         }
     }
 
+    #[allow(clippy::manual_async_fn)]
     fn get_task_info(
         &self,
         request: GetTaskInfoParams,
@@ -5620,6 +5635,7 @@ impl ServerHandler for TaskServer {
         }
     }
 
+    #[allow(clippy::manual_async_fn)]
     fn get_task_result(
         &self,
         request: GetTaskResultParams,
@@ -5659,6 +5675,7 @@ impl ServerHandler for TaskServer {
         }
     }
 
+    #[allow(clippy::manual_async_fn)]
     fn cancel_task(
         &self,
         request: CancelTaskParams,
@@ -5789,7 +5806,7 @@ mod tests {
         execution_process::CreateExecutionProcess, repo::Repo, session::CreateSession,
     };
     use deployment::Deployment;
-    use executors::actions::{ExecutorActionType, script::ScriptContext};
+    use executors_protocol::actions::{ExecutorActionType, script::ScriptContext};
     use rmcp::{
         ServiceExt,
         handler::{client::ClientHandler, server::tool::IntoCallToolResult},
@@ -6084,9 +6101,11 @@ mod tests {
     #[test]
     fn tool_router_does_not_expose_delete_archived_kanban() {
         let tools = TaskServer::tool_router().list_all();
-        assert!(tools
-            .iter()
-            .all(|tool| tool.name.as_ref() != "delete_archived_kanban"));
+        assert!(
+            tools
+                .iter()
+                .all(|tool| tool.name.as_ref() != "delete_archived_kanban")
+        );
     }
 
     #[tokio::test]
@@ -6197,14 +6216,19 @@ mod tests {
         .await
         .unwrap();
 
-        let project = Project::find_by_id(&pool, project_id).await.unwrap().unwrap();
+        let project = Project::find_by_id(&pool, project_id)
+            .await
+            .unwrap()
+            .unwrap();
         let _ = crate::routes::archived_kanbans::archive_project_kanban(
             axum::Extension(project),
             axum::extract::State(deployment.clone()),
-            axum::Json(crate::routes::archived_kanbans::ArchiveProjectKanbanRequest {
-                statuses: vec![TaskStatus::Todo],
-                title: Some("Test archive".to_string()),
-            }),
+            axum::Json(
+                crate::routes::archived_kanbans::ArchiveProjectKanbanRequest {
+                    statuses: vec![TaskStatus::Todo],
+                    title: Some("Test archive".to_string()),
+                },
+            ),
         )
         .await
         .unwrap();
@@ -6584,12 +6608,15 @@ mod tests {
             &CreateExecutionProcess {
                 session_id: session.id,
                 executor_action: ExecutorAction::new(
-                    ExecutorActionType::ScriptRequest(executors::actions::script::ScriptRequest {
-                        language: executors::actions::script::ScriptRequestLanguage::Bash,
-                        script: "echo hello".to_string(),
-                        context: ScriptContext::SetupScript,
-                        working_dir: None,
-                    }),
+                    ExecutorActionType::ScriptRequest(
+                        executors_protocol::actions::script::ScriptRequest {
+                            language:
+                                executors_protocol::actions::script::ScriptRequestLanguage::Bash,
+                            script: "echo hello".to_string(),
+                            context: ScriptContext::SetupScript,
+                            working_dir: None,
+                        },
+                    ),
                     None,
                 ),
                 run_reason: ExecutionProcessRunReason::CodingAgent,
@@ -6743,12 +6770,15 @@ mod tests {
             &CreateExecutionProcess {
                 session_id: session.id,
                 executor_action: ExecutorAction::new(
-                    ExecutorActionType::ScriptRequest(executors::actions::script::ScriptRequest {
-                        language: executors::actions::script::ScriptRequestLanguage::Bash,
-                        script: "echo hello".to_string(),
-                        context: ScriptContext::SetupScript,
-                        working_dir: None,
-                    }),
+                    ExecutorActionType::ScriptRequest(
+                        executors_protocol::actions::script::ScriptRequest {
+                            language:
+                                executors_protocol::actions::script::ScriptRequestLanguage::Bash,
+                            script: "echo hello".to_string(),
+                            context: ScriptContext::SetupScript,
+                            working_dir: None,
+                        },
+                    ),
                     None,
                 ),
                 run_reason: ExecutionProcessRunReason::CodingAgent,
@@ -7206,12 +7236,15 @@ mod tests {
             &CreateExecutionProcess {
                 session_id,
                 executor_action: ExecutorAction::new(
-                    ExecutorActionType::ScriptRequest(executors::actions::script::ScriptRequest {
-                        script: "echo hi".to_string(),
-                        language: executors::actions::script::ScriptRequestLanguage::Bash,
-                        context: ScriptContext::SetupScript,
-                        working_dir: None,
-                    }),
+                    ExecutorActionType::ScriptRequest(
+                        executors_protocol::actions::script::ScriptRequest {
+                            script: "echo hi".to_string(),
+                            language:
+                                executors_protocol::actions::script::ScriptRequestLanguage::Bash,
+                            context: ScriptContext::SetupScript,
+                            working_dir: None,
+                        },
+                    ),
                     None,
                 ),
                 run_reason: ExecutionProcessRunReason::CodingAgent,
@@ -7631,9 +7664,10 @@ mod tests {
                 session_id,
                 executor_action: ExecutorAction {
                     typ: ExecutorActionType::ScriptRequest(
-                        executors::actions::script::ScriptRequest {
+                        executors_protocol::actions::script::ScriptRequest {
                             script: "echo hi".to_string(),
-                            language: executors::actions::script::ScriptRequestLanguage::Bash,
+                            language:
+                                executors_protocol::actions::script::ScriptRequestLanguage::Bash,
                             context: ScriptContext::SetupScript,
                             working_dir: None,
                         },
@@ -7803,9 +7837,10 @@ mod tests {
                 session_id,
                 executor_action: ExecutorAction {
                     typ: ExecutorActionType::ScriptRequest(
-                        executors::actions::script::ScriptRequest {
+                        executors_protocol::actions::script::ScriptRequest {
                             script: "echo hi".to_string(),
-                            language: executors::actions::script::ScriptRequestLanguage::Bash,
+                            language:
+                                executors_protocol::actions::script::ScriptRequestLanguage::Bash,
                             context: ScriptContext::SetupScript,
                             working_dir: None,
                         },
@@ -7961,9 +7996,10 @@ mod tests {
                 session_id,
                 executor_action: ExecutorAction {
                     typ: ExecutorActionType::ScriptRequest(
-                        executors::actions::script::ScriptRequest {
+                        executors_protocol::actions::script::ScriptRequest {
                             script: "echo hi".to_string(),
-                            language: executors::actions::script::ScriptRequestLanguage::Bash,
+                            language:
+                                executors_protocol::actions::script::ScriptRequestLanguage::Bash,
                             context: ScriptContext::SetupScript,
                             working_dir: None,
                         },

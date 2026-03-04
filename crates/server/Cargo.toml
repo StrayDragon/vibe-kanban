@@ -10,6 +10,7 @@ uninlined-format-args = "allow"
 [dependencies]
 deployment = { path = "../deployment" }
 executors = { path = "../executors" }
+executors-protocol = { path = "../executors-protocol" }
 local-deployment = { path = "../local-deployment" }
 utils = { path = "../utils" }
 db = { path = "../db" }

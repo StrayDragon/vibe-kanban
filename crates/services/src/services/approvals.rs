@@ -391,19 +391,14 @@ impl Approvals {
 
             let is_timeout = matches!(&status, ApprovalStatus::TimedOut);
 
-            if is_timeout {
-                if let Ok(approval_uuid) = Uuid::parse_str(&id)
-                    && let Ok(Some(current)) = approval_model::get_by_id(&pool, approval_uuid).await
-                    && matches!(current.status, ApprovalStatus::Pending)
-                {
-                    let _ = approval_model::respond(
-                        &pool,
-                        approval_uuid,
-                        ApprovalStatus::TimedOut,
-                        None,
-                    )
-                    .await;
-                }
+            if is_timeout
+                && let Ok(approval_uuid) = Uuid::parse_str(&id)
+                && let Ok(Some(current)) = approval_model::get_by_id(&pool, approval_uuid).await
+                && matches!(current.status, ApprovalStatus::Pending)
+            {
+                let _ =
+                    approval_model::respond(&pool, approval_uuid, ApprovalStatus::TimedOut, None)
+                        .await;
             }
 
             if is_timeout && let Some((_, pending_approval)) = pending.remove(&id) {
@@ -625,12 +620,14 @@ mod tests {
             &db.pool,
             &CreateExecutionProcess {
                 session_id: session.id,
-                executor_action: executors::actions::ExecutorAction::new(
-                    executors::actions::ExecutorActionType::ScriptRequest(
-                        executors::actions::script::ScriptRequest {
-                            language: executors::actions::script::ScriptRequestLanguage::Bash,
+                executor_action: executors_protocol::actions::ExecutorAction::new(
+                    executors_protocol::actions::ExecutorActionType::ScriptRequest(
+                        executors_protocol::actions::script::ScriptRequest {
+                            language:
+                                executors_protocol::actions::script::ScriptRequestLanguage::Bash,
                             script: "echo hello".to_string(),
-                            context: executors::actions::script::ScriptContext::SetupScript,
+                            context:
+                                executors_protocol::actions::script::ScriptContext::SetupScript,
                             working_dir: None,
                         },
                     ),

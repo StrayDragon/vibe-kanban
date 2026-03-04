@@ -29,22 +29,25 @@ use db::{
 };
 use deployment::DeploymentError;
 use executors::{
-    actions::{
-        Executable, ExecutorAction, ExecutorActionType,
-        coding_agent_follow_up::CodingAgentFollowUpRequest,
-        coding_agent_initial::CodingAgentInitialRequest,
-    },
+    actions::Executable,
     approvals::{ExecutorApprovalService, NoopExecutorApprovalService},
     auto_retry::AutoRetryConfig,
     env::ExecutionEnv,
-    executors::{BaseCodingAgent, ExecutorExitResult, ExecutorExitSignal, InterruptSender},
+    executors::{ExecutorExitResult, ExecutorExitSignal, InterruptSender},
     logs::{
         NormalizedEntry, NormalizedEntryType,
         utils::{
             ConversationPatch, EntryIndexProvider, patch::extract_normalized_entry_from_patch,
         },
     },
-    profile::{ExecutorConfigs, ExecutorProfileId},
+    profile::ExecutorConfigs,
+};
+use executors_protocol::{
+    BaseCodingAgent, ExecutorProfileId,
+    actions::{
+        ExecutorAction, ExecutorActionType, coding_agent_follow_up::CodingAgentFollowUpRequest,
+        coding_agent_initial::CodingAgentInitialRequest,
+    },
 };
 use futures::{FutureExt, StreamExt, TryStreamExt, stream::select};
 use serde_json::json;
@@ -735,7 +738,7 @@ impl LocalContainerService {
             return Ok(false);
         }
 
-        let action = ctx.execution_process.executor_action()?;
+        let action = ctx.execution_process.executor_action();
         let (executor_profile_id, prompt) = match action.typ() {
             ExecutorActionType::CodingAgentInitialRequest(request) => {
                 (request.executor_profile_id.clone(), request.prompt.clone())

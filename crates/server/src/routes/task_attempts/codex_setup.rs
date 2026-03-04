@@ -1,17 +1,20 @@
 use db::models::{
     execution_process::{ExecutionProcess, ExecutionProcessRunReason},
     session::{CreateSession, Session},
-    workspace::{Workspace, WorkspaceError},
+    workspace::Workspace,
 };
 use deployment::Deployment;
 use executors::{
+    agent_command::{AgentCommandKey, agent_command_resolver, command_identity_for_agent},
+    command::{CommandBuilder, apply_overrides},
+    executors::{ExecutorError, codex::Codex},
+};
+use executors_protocol::{
+    BaseCodingAgent,
     actions::{
         ExecutorAction, ExecutorActionType,
         script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
     },
-    agent_command::{AgentCommandKey, agent_command_resolver, command_identity_for_agent},
-    command::{CommandBuilder, apply_overrides},
-    executors::{BaseCodingAgent, ExecutorError, codex::Codex},
 };
 use services::services::container::ContainerService;
 use uuid::Uuid;
@@ -31,9 +34,7 @@ pub async fn run_codex_setup(
     .await?;
 
     let executor_action = if let Some(latest_process) = latest_process {
-        let latest_action = latest_process
-            .executor_action()
-            .map_err(|e| ApiError::Workspace(WorkspaceError::ValidationError(e.to_string())))?;
+        let latest_action = latest_process.executor_action();
         get_setup_helper_action(codex)
             .await?
             .append_action(latest_action.to_owned())

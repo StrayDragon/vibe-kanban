@@ -4,14 +4,13 @@ use db::models::{
     workspace::Workspace,
 };
 use deployment::Deployment;
-use executors::actions::ExecutorAction;
 #[cfg(unix)]
-use executors::{
-    actions::{
-        ExecutorActionType,
-        script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
-    },
-    executors::ExecutorError,
+use executors::executors::ExecutorError;
+use executors_protocol::actions::ExecutorAction;
+#[cfg(unix)]
+use executors_protocol::actions::{
+    ExecutorActionType,
+    script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
 };
 use serde::{Deserialize, Serialize};
 use services::services::container::ContainerService;

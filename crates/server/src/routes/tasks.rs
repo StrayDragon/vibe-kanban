@@ -21,7 +21,7 @@ use db::{
     },
 };
 use deployment::Deployment;
-use executors::profile::ExecutorProfileId;
+use executors_protocol::ExecutorProfileId;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use services::services::container::ContainerService;
