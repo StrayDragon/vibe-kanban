@@ -51,6 +51,7 @@ The system SHALL map `ApiError` variants to HTTP status codes and SHALL return a
 - `attempt_claim_required`：请求的写操作需要有效 lease，但当前无有效 lease。
 - `attempt_claim_conflict`：lease 被其他 client 持有且未过期（提示 owner/expires_at）。
 - `invalid_control_token`：提供的 `control_token` 不匹配或已过期。
+- `mixed_pagination`：同时提供 `cursor` 与 `after_*`（混用分页模式）。
 - `wait_ms_too_large`：`wait_ms` 超出服务器允许上限。
 - `wait_ms_requires_after_log_index`：`wait_ms` 仅允许与 `after_log_index` 一起使用。
 

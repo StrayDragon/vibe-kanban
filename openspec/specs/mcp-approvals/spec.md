@@ -3,7 +3,7 @@
 ## Purpose
 为外部编排器（OpenClaw 类）提供纯 MCP 的 approvals 闭环，并确保响应审计字段在“外部编排器弹窗批准”的场景下可用且一致。
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Approvals are persisted and attempt-scoped
 The system SHALL persist tool approvals in durable storage. Each approval SHALL be associated with an `attempt_id` and an `execution_process_id`.
@@ -42,14 +42,16 @@ The system SHALL expose an MCP tool to respond to an approval with `status` in `
 - **THEN** the server returns the previously recorded result without applying a duplicate transition
 
 ### Requirement: Approvals tools SHALL return structuredContent
-系统 SHALL 为 approvals 相关 tools（`list_approvals/get_approval/respond_approval`）返回 `structuredContent`，并确保包含渲染审批 UI 所需的字段（tool_name/tool_input/tool_call_id/timestamps 等）。
+系统 SHALL 为 approvals 相关 tools（`list_approvals/get_approval/respond_approval`）返回 `structuredContent`，并遵循 `mcp-task-tools` 中对 MCP JSON 输出的规范要求。
+
+为渲染审批 UI，approvals 的 `structuredContent` SHALL 至少包含 `tool_name/tool_input/tool_call_id` 与必要时间戳字段。
 
 #### Scenario: Approval details are machine-readable
 - **WHEN** 客户端调用 `get_approval`
 - **THEN** 返回包含 `structuredContent`，且其中包含 `tool_name` 与 `tool_input`
 
 ### Requirement: Approval responses SHOULD capture responder identity
-系统 SHOULD 支持在 approvals 响应中记录响应方身份（例如 `responded_by_client_id`），以支持审计与“外部编排器弹窗批准”的场景。
+系统 SHOULD 支持在 approvals 响应中记录响应方身份（例如 `responded_by_client_id`），以支持审计与“外部编排器弹窗批准”的场景。该字段一旦写入，系统 SHALL 将其持久化并可在后续 `get_approval` 中读取。
 
 当客户端未提供 `responded_by_client_id` 时，系统 SHALL 从 MCP peer info 派生默认值并写入持久化存储。
 

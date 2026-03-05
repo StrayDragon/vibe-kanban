@@ -10,12 +10,11 @@ The effective value SHALL be computed as:
 - If a project override value is explicitly set, it takes precedence.
 - Otherwise, the global default is used.
 
-#### Scenario: Project override disables hook skipping
+#### Scenario: Project override takes precedence
 - **WHEN** the global `git_no_verify` setting is enabled
 - **AND** the project override value is `false`
 - **THEN** the effective setting is disabled
 
-#### Scenario: Project override enables hook skipping
 - **WHEN** the global `git_no_verify` setting is disabled
 - **AND** the project override value is `true`
 - **THEN** the effective setting is enabled
@@ -45,4 +44,3 @@ The Settings UI SHALL communicate that a project-specific configuration override
 #### Scenario: Project settings exposes inherit/enabled/disabled
 - **WHEN** viewing a project’s settings
 - **THEN** the UI provides a control with at least: inherit, enabled, and disabled options for hook skipping
-

@@ -32,19 +32,15 @@ When access control mode is `disabled`, the system SHALL allow HTTP, SSE, and We
 When access control mode is `token`, the system SHALL require a valid token for `/api/**` HTTP requests and SHALL return `401` with an `ApiResponse` error payload on unauthorized access. `/health` MUST remain public.
 
 #### Scenario: Non-localhost requires token
-- **WHEN** access control mode is `token` and `allowLocalhostBypass` is `false`
+- **WHEN** access control mode is `token`
 - **AND** a non-localhost `/api/**` request is missing a valid token
 - **THEN** the system returns `401` with an `ApiResponse` error payload
+- **AND** `allowLocalhostBypass` does not affect non-localhost requests
 
 #### Scenario: Localhost bypass applies
 - **WHEN** access control mode is `token` and `allowLocalhostBypass` is `true`
 - **AND** a localhost `/api/**` request provides no token
 - **THEN** the request is accepted
-
-#### Scenario: Non-localhost still requires token
-- **WHEN** access control mode is `token` and `allowLocalhostBypass` is `true`
-- **AND** a non-localhost `/api/**` request provides no token
-- **THEN** the system returns `401` with an `ApiResponse` error payload
 
 #### Scenario: Header token is accepted
 - **WHEN** a `/api/**` request includes `Authorization: Bearer <token>`
@@ -99,4 +95,3 @@ When a token is configured locally, the frontend SHALL attach the token to API, 
 #### Scenario: No token means no injection
 - **WHEN** the frontend has no local token
 - **THEN** HTTP requests do not attach Authorization and stream URLs do not include `token`
-

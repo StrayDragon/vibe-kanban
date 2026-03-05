@@ -281,11 +281,10 @@ Task group entry tasks SHALL NOT create execution attempts. Starting an entry ta
 ### Requirement: Task group deletion cascades tasks
 Deleting a TaskGroup SHALL delete all linked node Tasks using the standard Task deletion flow, then delete the entry Task. Deleting the entry Task SHALL delete the TaskGroup and linked node Tasks.
 
-#### Scenario: Delete TaskGroup cascades tasks
+#### Scenario: Delete cascades between TaskGroup and entry task
 - **WHEN** a user deletes a TaskGroup
 - **THEN** linked node tasks are deleted via the standard Task deletion flow and the entry task is removed
 
-#### Scenario: Delete entry task cascades TaskGroup
 - **WHEN** a user deletes a task group entry task
 - **THEN** the TaskGroup and its linked node tasks are deleted
 
@@ -313,11 +312,10 @@ The workflow view SHALL display the linked Task detail (including conversation) 
 ### Requirement: Node interruption controls
 The workflow view SHALL allow users to stop or force stop a running node task. Stop is best-effort and MAY fall back to force stop when the executor does not support graceful interrupt.
 
-#### Scenario: Stop node execution
+#### Scenario: Stop and force stop node execution
 - **WHEN** a user chooses Stop on a running node
 - **THEN** the system requests a stop for the current attempt without the force flag
 
-#### Scenario: Force stop node execution
 - **WHEN** a user chooses Force Stop on a running node
 - **THEN** the system requests a stop for the current attempt with the force flag
 
@@ -334,4 +332,3 @@ The workflow view MUST preserve unsaved TaskGroup draft edits when refreshed Tas
 #### Scenario: Refresh while editing preserves draft
 - **WHEN** the workflow view receives updated TaskGroup data while the user has unsaved edits
 - **THEN** the UI preserves the local draft and does not overwrite unsaved changes
-

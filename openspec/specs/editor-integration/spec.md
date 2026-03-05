@@ -31,11 +31,9 @@ When editor integration is disabled, the UI SHALL NOT show editor availability c
 ### Requirement: Open-editor endpoints reject requests when disabled
 The API SHALL reject “open editor” requests when editor integration is disabled.
 
-#### Scenario: Open task attempt in editor while disabled
+#### Scenario: Open-editor endpoints reject requests when disabled
 - **WHEN** a client calls `POST /api/task-attempts/{attempt_id}/open-editor` while editor integration is disabled
 - **THEN** the server returns a `400 Bad Request` (or equivalent validation error) indicating editor integration is disabled
 
-#### Scenario: Open project in editor while disabled
 - **WHEN** a client calls `POST /api/projects/{project_id}/open-editor` while editor integration is disabled
 - **THEN** the server returns a `400 Bad Request` (or equivalent validation error) indicating editor integration is disabled
-
