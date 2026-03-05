@@ -23,7 +23,7 @@ use std::{
 };
 
 use thiserror::Error;
-use utils::shell::resolve_executable_path_blocking; // TODO: make GitCli async
+use utils_core::shell::resolve_executable_path_blocking; // TODO: make GitCli async
 
 use crate::services::{
     filesystem_watcher::ALWAYS_SKIP_DIRS,

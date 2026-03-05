@@ -10,7 +10,7 @@ use services::services::{
     github::{GitHubRepoInfo, GitHubServiceError},
 };
 use tempfile::TempDir;
-use utils::diff::DiffChangeKind;
+use utils_core::diff::DiffChangeKind;
 
 fn add_path(repo_path: &Path, path: &str) {
     let git = GitCli::new();

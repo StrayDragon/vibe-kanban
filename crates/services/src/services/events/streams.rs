@@ -12,10 +12,10 @@ use db::{
 };
 use futures::StreamExt;
 use json_patch::{PatchOperation, RemoveOperation};
+use logs_protocol::LogMsg;
 use serde_json::json;
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
-use utils::log_msg::LogMsg;
 use uuid::Uuid;
 
 use super::{EventService, patches::execution_process_patch, types::EventError};

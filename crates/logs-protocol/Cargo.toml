@@ -1,0 +1,10 @@
+[package]
+name = "logs-protocol"
+version = "0.0.143"
+edition = "2024"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+json-patch = "2.0"
+

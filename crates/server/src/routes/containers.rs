@@ -7,7 +7,7 @@ use axum::{
 use db::models::workspace::{Workspace, WorkspaceContext};
 use deployment::Deployment;
 use serde::{Deserialize, Serialize};
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 
 use crate::{DeploymentImpl, error::ApiError};
 

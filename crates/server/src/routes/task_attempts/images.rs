@@ -15,7 +15,7 @@ use serde::Deserialize;
 use services::services::{container::ContainerService, image::ImageError};
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{
@@ -66,7 +66,7 @@ pub async fn get_image_metadata(
     Query(query): Query<ImageMetadataQuery>,
 ) -> Result<ResponseJson<ApiResponse<ImageMetadata>>, ApiError> {
     // Validate path starts with .vibe-images/
-    let vibe_images_prefix = format!("{}/", utils::path::VIBE_IMAGES_DIR);
+    let vibe_images_prefix = format!("{}/", utils_core::path::VIBE_IMAGES_DIR);
     if !query.path.starts_with(&vibe_images_prefix) {
         return Ok(ResponseJson(ApiResponse::success(ImageMetadata {
             exists: false,
@@ -155,7 +155,7 @@ pub async fn serve_image(
         .await?;
     let workspace_path = std::path::PathBuf::from(container_ref);
 
-    let vibe_images_dir = workspace_path.join(utils::path::VIBE_IMAGES_DIR);
+    let vibe_images_dir = workspace_path.join(utils_core::path::VIBE_IMAGES_DIR);
     let full_path = vibe_images_dir.join(&path);
 
     // Security: Canonicalize and verify path is within .vibe-images

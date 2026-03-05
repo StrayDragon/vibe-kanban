@@ -9,7 +9,7 @@ use deployment::Deployment;
 use serde::Deserialize;
 use services::services::git::GitBranch;
 use ts_rs::TS;
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};

@@ -1,0 +1,10 @@
+[package]
+name = "utils-assets"
+version = "0.0.143"
+edition = "2024"
+
+[dependencies]
+utils-core = { path = "../utils-core" }
+directories = "6.0.0"
+rust-embed = "8.2"
+

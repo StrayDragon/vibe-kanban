@@ -72,6 +72,7 @@ jobs:
       - name: Checks
         run: |
           cargo fmt --all -- --check
+          ./scripts/check-crate-boundaries.sh
           npm run generate-types:check
           npm run generate-env-docs:check
           npm run prepare-db:check

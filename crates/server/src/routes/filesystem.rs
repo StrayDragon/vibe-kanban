@@ -19,7 +19,7 @@ use services::services::{
     workspace_manager::WorkspaceManager,
 };
 use tokio::sync::RwLock;
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 
 use crate::{DeploymentImpl, error::ApiError};
 

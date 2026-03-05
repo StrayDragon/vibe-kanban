@@ -1,0 +1,19 @@
+[package]
+name = "executor-qwen"
+version = "0.0.143"
+edition = "2024"
+
+[dependencies]
+executors-core = { path = "../executors-core" }
+executors-protocol = { path = "../executors-protocol" }
+logs-store = { path = "../logs-store" }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+serde = { workspace = true, features = ["derive"] }
+schemars = { workspace = true }
+ts-rs = { workspace = true }
+derivative = "2.2.0"
+dirs = "5.0"
+tracing = { workspace = true }

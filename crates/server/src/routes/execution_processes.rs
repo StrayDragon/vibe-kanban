@@ -18,10 +18,12 @@ use db::models::{
 use deployment::Deployment;
 use executors::logs::utils::patch::PatchType;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
+use logs_axum::LogMsgAxumExt;
+use logs_store::LogEntryEvent;
 use serde::{Deserialize, Serialize};
 use services::services::container::ContainerService;
 use ts_rs::TS;
-use utils::{log_entries::LogEntryChannel, msg_store::LogEntryEvent, response::ApiResponse};
+use utils_core::{log_entries::LogEntryChannel, response::ApiResponse};
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError, middleware::load_execution_process_middleware};

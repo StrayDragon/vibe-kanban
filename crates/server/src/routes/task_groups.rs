@@ -11,7 +11,7 @@ use db::{
 };
 use deployment::Deployment;
 use serde::Deserialize;
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{

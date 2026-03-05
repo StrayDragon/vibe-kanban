@@ -7,7 +7,7 @@ use sea_orm::{
     ConnectOptions, ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement,
 };
 use sea_orm_migration::MigratorTrait;
-use utils::assets::asset_dir;
+use utils_assets::asset_dir;
 
 pub mod entities;
 pub mod events;

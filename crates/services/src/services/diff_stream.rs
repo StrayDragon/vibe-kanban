@@ -10,14 +10,12 @@ use std::{
 
 use executors::logs::utils::{ConversationPatch, patch::escape_json_pointer_segment};
 use futures::StreamExt;
+use logs_protocol::LogMsg;
 use notify_debouncer_full::DebouncedEvent;
 use thiserror::Error;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_stream::wrappers::ReceiverStream;
-use utils::{
-    diff::{self, Diff, DiffSummary},
-    log_msg::LogMsg,
-};
+use utils_core::diff::{self, Diff, DiffSummary};
 
 use crate::services::{
     config::DiffPreviewGuardPreset,

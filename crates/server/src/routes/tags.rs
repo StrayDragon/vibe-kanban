@@ -12,7 +12,7 @@ use db::{
 use deployment::Deployment;
 use serde::Deserialize;
 use ts_rs::TS;
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 
 use crate::{DeploymentImpl, error::ApiError, middleware::load_tag_middleware};
 

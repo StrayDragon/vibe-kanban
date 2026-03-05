@@ -1,0 +1,8 @@
+[package]
+name = "utils-git"
+version = "0.0.143"
+edition = "2024"
+
+[dependencies]
+git2 = "0.18"
+

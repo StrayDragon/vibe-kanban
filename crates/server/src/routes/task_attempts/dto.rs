@@ -4,7 +4,7 @@ use executors_protocol::ExecutorProfileId;
 use serde::{Deserialize, Serialize};
 use services::services::git::ConflictOp;
 use ts_rs::TS;
-use utils::diff::DiffSummary;
+use utils_core::diff::DiffSummary;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Serialize, TS)]

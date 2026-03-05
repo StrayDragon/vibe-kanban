@@ -50,6 +50,8 @@ use executors_protocol::{
     },
 };
 use futures::{FutureExt, StreamExt, TryStreamExt, stream::select};
+use logs_protocol::LogMsg;
+use logs_store::MsgStore;
 use serde_json::json;
 use services::services::{
     approvals::{Approvals, executor_approvals::ExecutorApprovalBridge},
@@ -64,10 +66,8 @@ use services::services::{
 };
 use tokio::{sync::RwLock, task::JoinHandle};
 use tokio_util::io::ReaderStream;
-use utils::{
+use utils_core::{
     diff::DiffSummary,
-    log_msg::LogMsg,
-    msg_store::MsgStore,
     text::{git_branch_id, short_uuid, truncate_to_char_boundary},
 };
 use uuid::Uuid;

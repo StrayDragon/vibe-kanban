@@ -2,7 +2,7 @@ use axum::{http::HeaderMap, response::Json as ResponseJson};
 use chrono::Duration as ChronoDuration;
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 
 use crate::error::ApiError;
 

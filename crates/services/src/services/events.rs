@@ -21,8 +21,8 @@ use db::{
         workspace::Workspace,
     },
 };
+use logs_store::MsgStore;
 use tokio::sync::RwLock;
-use utils::msg_store::MsgStore;
 use uuid::Uuid;
 
 #[path = "events/patches.rs"]
@@ -334,9 +334,9 @@ impl EventService {
 
 #[cfg(test)]
 mod tests {
+    use logs_protocol::LogMsg;
     use sea_orm::Database;
     use sea_orm_migration::MigratorTrait;
-    use utils::log_msg::LogMsg;
 
     use super::*;
 

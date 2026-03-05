@@ -41,7 +41,7 @@ pub struct ImageService {
 
 impl ImageService {
     pub fn new(pool: db::DbPool) -> Result<Self, ImageError> {
-        let cache_dir = utils::cache_dir().join("images");
+        let cache_dir = utils_core::cache_dir().join("images");
         fs::create_dir_all(&cache_dir)?;
         Ok(Self {
             cache_dir,
@@ -181,7 +181,7 @@ impl ImageService {
         let images = Image::find_by_task_id(&self.pool, task_id).await?;
         let mut map = HashMap::with_capacity(images.len());
         for image in images {
-            let key = format!("{}/{}", utils::path::VIBE_IMAGES_DIR, image.file_path);
+            let key = format!("{}/{}", utils_core::path::VIBE_IMAGES_DIR, image.file_path);
             map.insert(key, self.get_absolute_path(&image));
         }
         Ok(map)
@@ -207,7 +207,7 @@ impl ImageService {
             return Ok(());
         }
 
-        let images_dir = worktree_path.join(utils::path::VIBE_IMAGES_DIR);
+        let images_dir = worktree_path.join(utils_core::path::VIBE_IMAGES_DIR);
 
         // Fast path: check if all images exist before doing anything
         let all_exist = images

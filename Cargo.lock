@@ -1091,6 +1091,7 @@ dependencies = [
  "chrono",
  "db-migration",
  "executors-protocol",
+ "logs-protocol",
  "sea-orm",
  "sea-orm-migration",
  "serde",
@@ -1101,7 +1102,8 @@ dependencies = [
  "tokio",
  "tracing",
  "ts-rs 11.0.1",
- "utils",
+ "utils-assets",
+ "utils-core",
  "uuid",
 ]
 
@@ -1127,12 +1129,12 @@ dependencies = [
  "executors",
  "futures",
  "git2",
+ "logs-axum",
  "serde_json",
  "services",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
- "utils",
 ]
 
 [[package]]
@@ -1399,18 +1401,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3d8a32ae18130a3c84dd492d4215c3d913c3b07c6b63c2eb3eb7ff1101ab7bf"
 
 [[package]]
-name = "enum_dispatch"
-version = "0.3.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa18ce2bc66555b3218614519ac839ddb759a7d6720732f979ef8d13be147ecd"
-dependencies = [
- "once_cell",
- "proc-macro2",
- "quote",
- "syn 2.0.108",
-]
-
-[[package]]
 name = "enumflags2"
 version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1486,40 +1476,294 @@ dependencies = [
 ]
 
 [[package]]
-name = "executors"
+name = "executor-amp"
 version = "0.0.143"
 dependencies = [
- "agent-client-protocol",
  "async-trait",
- "axum",
- "bon",
- "bytes",
+ "command-group",
+ "dirs 5.0.1",
+ "executor-claude",
+ "executors-core",
+ "executors-protocol",
+ "logs-store",
+ "schemars 1.0.4",
+ "serde",
+ "tokio",
+ "tracing",
+ "ts-rs 11.0.1",
+]
+
+[[package]]
+name = "executor-claude"
+version = "0.0.143"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "command-group",
+ "derivative",
+ "dirs 5.0.1",
+ "executors-core",
+ "executors-protocol",
+ "futures",
+ "json-patch",
+ "logs-protocol",
+ "logs-store",
+ "regex",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "strip-ansi-escapes",
+ "strum",
+ "strum_macros",
+ "thiserror 2.0.17",
+ "tokio",
+ "toml",
+ "tracing",
+ "ts-rs 11.0.1",
+ "utils-core",
+ "uuid",
+]
+
+[[package]]
+name = "executor-codex"
+version = "0.0.143"
+dependencies = [
+ "async-trait",
  "chrono",
  "codex-app-server-protocol",
  "codex-protocol",
  "command-group",
- "convert_case",
  "derivative",
- "directories",
  "dirs 5.0.1",
- "enum_dispatch",
+ "executors-core",
  "executors-protocol",
- "fork_stream",
  "futures",
- "futures-io",
- "json-patch",
+ "logs-protocol",
+ "logs-store",
  "mcp-types",
- "os_pipe",
+ "regex",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "strip-ansi-escapes",
+ "strum",
+ "strum_macros",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "ts-rs 11.0.1",
+ "utils-core",
+ "uuid",
+]
+
+[[package]]
+name = "executor-copilot"
+version = "0.0.143"
+dependencies = [
+ "async-trait",
+ "command-group",
+ "dirs 5.0.1",
+ "executors-core",
+ "executors-protocol",
+ "futures",
+ "logs-store",
+ "regex",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "strip-ansi-escapes",
+ "tokio",
+ "tracing",
+ "ts-rs 11.0.1",
+ "utils-core",
+ "uuid",
+]
+
+[[package]]
+name = "executor-cursor"
+version = "0.0.143"
+dependencies = [
+ "async-trait",
+ "command-group",
+ "dirs 5.0.1",
+ "executors-core",
+ "executors-protocol",
+ "futures",
+ "logs-protocol",
+ "logs-store",
  "regex",
  "schemars 1.0.4",
  "serde",
  "serde_json",
  "sha2",
- "shlex",
+ "strip-ansi-escapes",
+ "tokio",
+ "tracing",
+ "ts-rs 11.0.1",
+ "utils-core",
+]
+
+[[package]]
+name = "executor-droid"
+version = "0.0.143"
+dependencies = [
+ "async-trait",
+ "command-group",
+ "dirs 5.0.1",
+ "executors-core",
+ "executors-protocol",
+ "futures",
+ "logs-store",
+ "regex",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
  "strip-ansi-escapes",
  "strum",
  "strum_macros",
+ "tokio",
+ "tracing",
+ "ts-rs 11.0.1",
+ "utils-core",
+ "uuid",
+]
+
+[[package]]
+name = "executor-fake-agent"
+version = "0.0.143"
+dependencies = [
+ "async-trait",
+ "codex-app-server-protocol",
+ "codex-protocol",
+ "command-group",
+ "derivative",
+ "executor-codex",
+ "executors-core",
+ "logs-store",
+ "mcp-types",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "ts-rs 11.0.1",
+ "utils-core",
+ "uuid",
+]
+
+[[package]]
+name = "executor-gemini"
+version = "0.0.143"
+dependencies = [
+ "async-trait",
+ "derivative",
+ "dirs 5.0.1",
+ "executors-core",
+ "executors-protocol",
+ "logs-store",
+ "schemars 1.0.4",
+ "serde",
+ "tokio",
+ "tracing",
+ "ts-rs 11.0.1",
+]
+
+[[package]]
+name = "executor-opencode"
+version = "0.0.143"
+dependencies = [
+ "async-trait",
+ "derivative",
+ "dirs 5.0.1",
+ "executors-core",
+ "executors-protocol",
+ "logs-store",
+ "schemars 1.0.4",
+ "serde",
+ "tokio",
+ "tracing",
+ "ts-rs 11.0.1",
+ "xdg",
+]
+
+[[package]]
+name = "executor-qwen"
+version = "0.0.143"
+dependencies = [
+ "async-trait",
+ "derivative",
+ "dirs 5.0.1",
+ "executors-core",
+ "executors-protocol",
+ "logs-store",
+ "schemars 1.0.4",
+ "serde",
+ "tokio",
+ "tracing",
+ "ts-rs 11.0.1",
+]
+
+[[package]]
+name = "executors"
+version = "0.0.143"
+dependencies = [
+ "async-trait",
+ "command-group",
+ "convert_case",
+ "dirs 5.0.1",
+ "executor-amp",
+ "executor-claude",
+ "executor-codex",
+ "executor-copilot",
+ "executor-cursor",
+ "executor-droid",
+ "executor-fake-agent",
+ "executor-gemini",
+ "executor-opencode",
+ "executor-qwen",
+ "executors-core",
+ "executors-protocol",
+ "logs-store",
+ "serde",
+ "serde_json",
+ "shlex",
+ "strum",
+ "strum_macros",
  "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "toml",
+ "tracing",
+ "ts-rs 11.0.1",
+ "utils-assets",
+ "utils-core",
+]
+
+[[package]]
+name = "executors-core"
+version = "0.0.143"
+dependencies = [
+ "agent-client-protocol",
+ "async-trait",
+ "bon",
+ "chrono",
+ "command-group",
+ "dirs 5.0.1",
+ "executors-protocol",
+ "futures",
+ "futures-io",
+ "json-patch",
+ "logs-protocol",
+ "logs-store",
+ "os_pipe",
+ "regex",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "shlex",
+ "strip-ansi-escapes",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
@@ -1527,10 +1771,9 @@ dependencies = [
  "toml",
  "tracing",
  "ts-rs 11.0.1",
- "utils",
+ "utils-core",
  "uuid",
  "winsplit",
- "xdg",
 ]
 
 [[package]]
@@ -1672,16 +1915,6 @@ name = "foreign-types-shared"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
-
-[[package]]
-name = "fork_stream"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc54cf296aa5a82dfffcc911fc7a37b0dcba605725bbb4db486f7b24d7667f9d"
-dependencies = [
- "futures",
- "pin-project",
-]
 
 [[package]]
 name = "form_urlencoded"
@@ -2713,6 +2946,8 @@ dependencies = [
  "futures",
  "globwalk",
  "json-patch",
+ "logs-protocol",
+ "logs-store",
  "nix 0.29.0",
  "openssl-sys",
  "reqwest",
@@ -2723,7 +2958,8 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "utils",
+ "utils-assets",
+ "utils-core",
  "uuid",
 ]
 
@@ -2741,6 +2977,41 @@ name = "log"
 version = "0.4.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
+
+[[package]]
+name = "logs-axum"
+version = "0.0.143"
+dependencies = [
+ "axum",
+ "futures",
+ "logs-protocol",
+ "logs-store",
+ "serde_json",
+]
+
+[[package]]
+name = "logs-protocol"
+version = "0.0.143"
+dependencies = [
+ "json-patch",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "logs-store"
+version = "0.0.143"
+dependencies = [
+ "bytes",
+ "futures",
+ "json-patch",
+ "logs-protocol",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+]
 
 [[package]]
 name = "lru"
@@ -3389,26 +3660,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc58e2d255979a31caa7cabfa7aac654af0354220719ab7a68520ae7a91e8c0b"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "pin-project"
-version = "1.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "677f1add503faace112b9f1373e43e9e054bfdd22ff1a63c1bc485eaec6a6a8a"
-dependencies = [
- "pin-project-internal",
-]
-
-[[package]]
-name = "pin-project-internal"
-version = "1.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e918e4ff8c4549eb882f14b3a4bc8c8bc93de829416eacf579f1207a8fbf861"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.108",
 ]
 
 [[package]]
@@ -4649,6 +4900,9 @@ dependencies = [
  "git2",
  "ignore",
  "local-deployment",
+ "logs-axum",
+ "logs-protocol",
+ "logs-store",
  "mime_guess",
  "nix 0.29.0",
  "openssl-sys",
@@ -4678,7 +4932,9 @@ dependencies = [
  "tracing-subscriber",
  "ts-rs 11.0.1",
  "url",
- "utils",
+ "utils-assets",
+ "utils-core",
+ "utils-git",
  "uuid",
 ]
 
@@ -4688,7 +4944,6 @@ version = "0.0.143"
 dependencies = [
  "anyhow",
  "async-trait",
- "axum",
  "backon",
  "base64",
  "chrono",
@@ -4705,6 +4960,8 @@ dependencies = [
  "git2",
  "ignore",
  "json-patch",
+ "logs-protocol",
+ "logs-store",
  "moka",
  "notify",
  "notify-debouncer-full",
@@ -4733,7 +4990,9 @@ dependencies = [
  "tracing",
  "ts-rs 11.0.1",
  "url",
- "utils",
+ "utils-assets",
+ "utils-core",
+ "utils-git",
  "uuid",
 ]
 
@@ -5837,23 +6096,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
-name = "utils"
+name = "utils-assets"
 version = "0.0.143"
 dependencies = [
- "axum",
+ "directories",
+ "rust-embed",
+ "utils-core",
+]
+
+[[package]]
+name = "utils-core"
+version = "0.0.143"
+dependencies = [
  "bytes",
  "chrono",
  "directories",
  "dirs 5.0.1",
  "futures",
- "futures-util",
- "git2",
- "json-patch",
- "jsonwebtoken",
  "open",
  "regex",
- "reqwest",
- "rust-embed",
  "serde",
  "serde_json",
  "shellexpand",
@@ -5861,16 +6122,29 @@ dependencies = [
  "similar",
  "thiserror 2.0.17",
  "tokio",
- "tokio-stream",
  "tokio-util",
  "tracing",
- "tracing-subscriber",
  "ts-rs 11.0.1",
- "url",
  "uuid",
  "which",
- "windows-sys 0.61.2",
- "winreg",
+]
+
+[[package]]
+name = "utils-git"
+version = "0.0.143"
+dependencies = [
+ "git2",
+]
+
+[[package]]
+name = "utils-jwt"
+version = "0.0.143"
+dependencies = [
+ "chrono",
+ "jsonwebtoken",
+ "serde",
+ "thiserror 2.0.17",
+ "uuid",
 ]
 
 [[package]]
@@ -6488,16 +6762,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "21a0236b59786fed61e2a80582dd500fe61f18b5dca67a4a067d0bc9039339cf"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "winreg"
-version = "0.55.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb5a765337c50e9ec252c2069be9bf91c7df47afb103b642ba3a53bf8101be97"
-dependencies = [
- "cfg-if",
- "windows-sys 0.59.0",
 ]
 
 [[package]]

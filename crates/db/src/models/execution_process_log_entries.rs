@@ -4,7 +4,7 @@ use sea_orm::{
     QuerySelect, Set,
 };
 use serde::{Deserialize, Serialize};
-use utils::log_entries::LogEntryChannel;
+use utils_core::log_entries::LogEntryChannel;
 use uuid::Uuid;
 
 use crate::{entities::execution_process_log_entry, models::ids};

@@ -23,10 +23,11 @@ use db::{
 use deployment::Deployment;
 use executors_protocol::ExecutorProfileId;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
+use logs_axum::LogMsgAxumExt;
 use serde::{Deserialize, Serialize};
 use services::services::container::ContainerService;
 use ts_rs::TS;
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{

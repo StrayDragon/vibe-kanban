@@ -1,6 +1,6 @@
 use axum::{Json, Router, response::Json as ResponseJson, routing::post};
 use serde::{Deserialize, Serialize};
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 
 use crate::{DeploymentImpl, error::ApiError};
 

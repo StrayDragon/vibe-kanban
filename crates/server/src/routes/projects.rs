@@ -18,8 +18,9 @@ use db::models::{
 };
 use deployment::Deployment;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
+use logs_axum::LogMsgAxumExt;
 use services::services::{file_search_cache::SearchQuery, project::ProjectServiceError};
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError, middleware::load_project_middleware};

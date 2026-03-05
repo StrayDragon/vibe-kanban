@@ -38,7 +38,8 @@ async fn handle_task_attempt_diff_ws(
     options: services::services::container::DiffStreamOptions,
 ) -> anyhow::Result<()> {
     use futures_util::{SinkExt, StreamExt, TryStreamExt};
-    use utils::log_msg::LogMsg;
+    use logs_axum::LogMsgAxumExt;
+    use logs_protocol::LogMsg;
 
     let stream = deployment
         .container()

@@ -26,7 +26,7 @@ use services::services::{
     worktree_manager::WorktreeError,
 };
 use thiserror::Error;
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 
 #[derive(Debug, Error, ts_rs::TS)]
 #[ts(type = "string")]

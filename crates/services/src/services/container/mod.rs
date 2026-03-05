@@ -45,14 +45,14 @@ use executors_protocol::{
     },
 };
 use futures::{StreamExt, future};
+use logs_protocol::LogMsg;
+use logs_store::{LogEntryEvent, LogEntrySnapshot, MsgStore};
 use moka::sync::Cache;
 use once_cell::sync::Lazy;
 use thiserror::Error;
 use tokio::{sync::RwLock, task::JoinHandle};
-use utils::{
+use utils_core::{
     log_entries::LogEntryChannel,
-    log_msg::LogMsg,
-    msg_store::{LogEntryEvent, LogEntrySnapshot, MsgStore},
     text::{git_branch_id, short_uuid},
 };
 use uuid::Uuid;

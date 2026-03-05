@@ -7,7 +7,7 @@ use deployment::Deployment;
 use serde::{Deserialize, Serialize};
 use services::services::queued_message::QueueStatus;
 use ts_rs::TS;
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 
 use crate::{DeploymentImpl, error::ApiError, middleware::load_session_middleware};
 

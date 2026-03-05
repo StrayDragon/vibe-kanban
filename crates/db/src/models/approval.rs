@@ -3,7 +3,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, Set,
 };
-use utils::approvals::ApprovalStatus;
+use utils_core::approvals::ApprovalStatus;
 use uuid::Uuid;
 
 use crate::entities::approval;

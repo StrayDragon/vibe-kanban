@@ -19,13 +19,11 @@ use executors::{
     },
 };
 use futures::future::{BoxFuture, FutureExt, Shared};
+use logs_protocol::LogMsg;
+use logs_store::MsgStore;
 use thiserror::Error;
 use tokio::sync::{RwLock, broadcast, oneshot};
-use utils::{
-    approvals::{ApprovalRequest, ApprovalResponse, ApprovalStatus},
-    log_msg::LogMsg,
-    msg_store::MsgStore,
-};
+use utils_core::approvals::{ApprovalRequest, ApprovalResponse, ApprovalStatus};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -534,9 +532,10 @@ mod tests {
         types::ExecutionProcessRunReason,
     };
     use executors::logs::{ActionType, NormalizedEntry, NormalizedEntryType, ToolStatus};
+    use logs_store::MsgStore;
     use sea_orm::Database;
     use sea_orm_migration::MigratorTrait;
-    use utils::{approvals::CreateApprovalRequest, msg_store::MsgStore};
+    use utils_core::approvals::CreateApprovalRequest;
 
     use super::*;
 

@@ -70,7 +70,7 @@ pub async fn run_gh_cli_setup(
 async fn get_gh_cli_setup_helper_action() -> Result<ExecutorAction, ApiError> {
     #[cfg(unix)]
     {
-        use utils::shell::resolve_executable_path;
+        use utils_core::shell::resolve_executable_path;
 
         if resolve_executable_path("brew").await.is_none() {
             return Err(ApiError::Executor(ExecutorError::ExecutableNotFound {

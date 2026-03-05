@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
+use logs_protocol::LogMsg;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, Set,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
-use utils::log_msg::LogMsg;
 use uuid::Uuid;
 
 use crate::{
@@ -217,7 +217,7 @@ impl ExecutionProcessLogs {
 mod tests {
     use sea_orm::{ActiveModelTrait, Database};
     use sea_orm_migration::MigratorTrait;
-    use utils::log_entries::LogEntryChannel;
+    use utils_core::log_entries::LogEntryChannel;
 
     use super::*;
     use crate::{

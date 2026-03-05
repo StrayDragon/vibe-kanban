@@ -14,6 +14,7 @@ use db::{
 use executors::executors::ExecutorError;
 use futures::{StreamExt, TryStreamExt};
 use git2::Error as Git2Error;
+use logs_axum::LogMsgAxumExt;
 use services::services::{
     approvals::Approvals,
     config::{Config, ConfigError},

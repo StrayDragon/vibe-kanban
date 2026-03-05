@@ -1,0 +1,27 @@
+[package]
+name = "executor-fake-agent"
+version = "0.0.143"
+edition = "2024"
+
+[dependencies]
+executors-core = { path = "../executors-core" }
+executor-codex = { path = "../executor-codex" }
+logs-store = { path = "../logs-store" }
+utils-core = { path = "../utils-core" }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+command-group = { version = "5.0", features = ["with-tokio"] }
+
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+ts-rs = { workspace = true }
+thiserror = { workspace = true }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+derivative = "2.2.0"
+tracing = { workspace = true }
+
+codex-protocol = { git = "https://github.com/openai/codex.git", package = "codex-protocol", rev = "d67aa9eaa0c895b62926b6cf9e83f9535fd94d28" }
+codex-app-server-protocol = { git = "https://github.com/openai/codex.git", package = "codex-app-server-protocol", rev = "d67aa9eaa0c895b62926b6cf9e83f9535fd94d28" }
+codex-mcp-types = { git = "https://github.com/openai/codex.git", package = "mcp-types", rev = "d67aa9eaa0c895b62926b6cf9e83f9535fd94d28" }

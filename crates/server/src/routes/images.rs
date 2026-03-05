@@ -22,7 +22,7 @@ use services::services::image::ImageError;
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
 use ts_rs::TS;
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};
@@ -42,7 +42,7 @@ pub struct ImageResponse {
 impl ImageResponse {
     pub fn from_image(image: Image) -> Self {
         // special relative path for images
-        let markdown_path = format!("{}/{}", utils::path::VIBE_IMAGES_DIR, image.file_path);
+        let markdown_path = format!("{}/{}", utils_core::path::VIBE_IMAGES_DIR, image.file_path);
         Self {
             id: image.id,
             file_path: markdown_path,
@@ -199,7 +199,7 @@ pub async fn get_task_image_metadata(
     };
 
     // Validate path starts with .vibe-images/
-    let vibe_images_prefix = format!("{}/", utils::path::VIBE_IMAGES_DIR);
+    let vibe_images_prefix = format!("{}/", utils_core::path::VIBE_IMAGES_DIR);
     if !query.path.starts_with(&vibe_images_prefix) {
         return Ok(ResponseJson(ApiResponse::success(not_found_response())));
     }

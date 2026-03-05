@@ -10,8 +10,9 @@ use axum::{
 use db::models::scratch::{CreateScratch, Scratch, ScratchType, UpdateScratch};
 use deployment::Deployment;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
+use logs_axum::LogMsgAxumExt;
 use serde::Deserialize;
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};

@@ -1,0 +1,28 @@
+[package]
+name = "executor-cursor"
+version = "0.0.143"
+edition = "2024"
+
+[dependencies]
+executors-core = { path = "../executors-core" }
+executors-protocol = { path = "../executors-protocol" }
+logs-store = { path = "../logs-store" }
+utils-core = { path = "../utils-core" }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+command-group = { version = "5.0", features = ["with-tokio"] }
+futures = "0.3.31"
+
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+ts-rs = { workspace = true }
+regex = "1.11.1"
+dirs = "5.0"
+sha2 = "0.10"
+tracing = { workspace = true }
+strip-ansi-escapes = "0.2.1"
+
+[dev-dependencies]
+logs-protocol = { path = "../logs-protocol" }

@@ -31,7 +31,7 @@ use services::services::{
     github::{CreatePrRequest, GitHubService, GitHubServiceError, UnifiedPrComment},
 };
 use ts_rs::TS;
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};
@@ -341,7 +341,7 @@ pub async fn create_github_pr(
             }
 
             // Auto-open PR in browser
-            if let Err(e) = utils::browser::open_browser(&pr_info.url).await {
+            if let Err(e) = utils_core::browser::open_browser(&pr_info.url).await {
                 tracing::warn!("Failed to open PR in browser: {}", e);
             }
             // Trigger auto-description follow-up if enabled

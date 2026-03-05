@@ -8,13 +8,16 @@ default = []
 cloud = []
 
 [dependencies]
-utils = { path = "../utils" }
 executors = { path = "../executors" }
 executors-protocol = { path = "../executors-protocol" }
+logs-protocol = { path = "../logs-protocol" }
+logs-store = { path = "../logs-store" }
 db = { path = "../db" }
+utils-core = { path = "../utils-core" }
+utils-assets = { path = "../utils-assets" }
+utils-git = { path = "../utils-git" }
 tokio = { workspace = true }
 tokio-util = { version = "0.7", features = ["io"] }
-axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 url = "2.5"

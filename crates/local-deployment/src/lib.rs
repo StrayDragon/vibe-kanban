@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use db::DBService;
 use deployment::{Deployment, DeploymentError};
 use executors::profile::ExecutorConfigs;
+use logs_store::MsgStore;
 use services::services::{
     approvals::Approvals,
     cache_budget::cache_budgets,
@@ -20,7 +21,7 @@ use services::services::{
     repo::RepoService,
 };
 use tokio::sync::RwLock;
-use utils::{assets::config_path, msg_store::MsgStore};
+use utils_assets::config_path;
 use uuid::Uuid;
 
 use crate::container::LocalContainerService;
@@ -166,7 +167,7 @@ impl LocalDeployment {
             raw_config.executor_profile = recommended_executor;
         }
 
-        Self::update_release_notes_flags(&mut raw_config, utils::version::APP_VERSION);
+        Self::update_release_notes_flags(&mut raw_config, utils_core::version::APP_VERSION);
         save_config_to_file(&raw_config, &config_path()).await?;
 
         Ok(Arc::new(RwLock::new(raw_config)))

@@ -9,7 +9,7 @@ use axum::{
 };
 use deployment::Deployment;
 use url::form_urlencoded;
-use utils::response::ApiResponse;
+use utils_core::response::ApiResponse;
 
 use crate::DeploymentImpl;
 

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use db::{DbErr, models::repo::Repo as RepoModel};
 use thiserror::Error;
-use utils::path::expand_tilde;
+use utils_core::path::expand_tilde;
 use uuid::Uuid;
 
 use super::git::{GitService, GitServiceError};

@@ -1,0 +1,12 @@
+[package]
+name = "utils-jwt"
+version = "0.0.143"
+edition = "2024"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+jsonwebtoken = { version = "10.2.0", features = ["rust_crypto"] }
+serde = { workspace = true }
+thiserror = { workspace = true }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+

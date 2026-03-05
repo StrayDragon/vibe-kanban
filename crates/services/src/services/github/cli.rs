@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 use ts_rs::TS;
-use utils::shell::resolve_executable_path_blocking;
+use utils_core::shell::resolve_executable_path_blocking;
 
 use crate::services::github::{CreatePrRequest, GitHubRepoInfo};
 

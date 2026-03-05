@@ -29,7 +29,8 @@ use services::services::{
 };
 use tokio::fs;
 use ts_rs::TS;
-use utils::{assets::config_path, response::ApiResponse};
+use utils_assets::config_path;
+use utils_core::response::ApiResponse;
 
 use crate::{DeploymentImpl, error::ApiError};
 
@@ -124,7 +125,7 @@ async fn update_config(
     let config_path = config_path();
 
     // Validate git branch prefix
-    if !utils::git::is_valid_branch_prefix(&new_config.git_branch_prefix) {
+    if !utils_git::is_valid_branch_prefix(&new_config.git_branch_prefix) {
         return Err(ApiError::BadRequest(
             "Invalid git branch prefix. Must be a valid git branch name component without slashes."
                 .to_string(),
@@ -411,7 +412,7 @@ pub struct ImportLlmanProfilesResponse {
 async fn get_profiles(
     State(_deployment): State<DeploymentImpl>,
 ) -> ResponseJson<ApiResponse<ProfilesContent>> {
-    let profiles_path = utils::assets::profiles_path();
+    let profiles_path = utils_assets::profiles_path();
 
     // Use cached data to ensure consistency with runtime and PUT updates
     let profiles = ExecutorConfigs::get_cached();

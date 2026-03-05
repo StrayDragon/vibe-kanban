@@ -49,7 +49,7 @@ use services::services::{
     },
     github::GitHubService,
 };
-use utils::{
+use utils_core::{
     diff::{DiffSummary, create_unified_diff},
     response::ApiResponse,
     text::truncate_to_char_boundary,

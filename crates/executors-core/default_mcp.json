@@ -1,0 +1,14 @@
+{
+  "vibe_kanban": {
+    "command": "mcp_task_server",
+    "args": []
+  },
+  "meta": {
+    "vibe_kanban": {
+      "name": "Vibe Kanban",
+      "description": "Create, update and delete Vibe Kanban tasks",
+      "url": "https://www.vibekanban.com/docs/integrations/vibe-kanban-mcp-server",
+      "icon": "favicon-vk-light.svg"
+    }
+  }
+}

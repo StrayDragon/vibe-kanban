@@ -1,122 +1,144 @@
 use std::{path::Path, sync::Arc};
 
 use async_trait::async_trait;
-use command_group::AsyncGroupChild;
-use enum_dispatch::enum_dispatch;
+pub use executors_core::executors::{
+    AppendPrompt, AvailabilityInfo, BaseAgentCapability, ExecutorError, ExecutorExitResult,
+    ExecutorExitSignal, InterruptSender, SpawnedChild, StandardCodingAgentExecutor, acp,
+};
+use executors_core::{
+    approvals::ExecutorApprovalService, auto_retry::AutoRetryConfig, env::ExecutionEnv,
+};
 use executors_protocol::{BaseCodingAgent, actions::ExecutorAction};
-use futures_io::Error as FuturesIoError;
-use schemars::JsonSchema;
+use logs_store::MsgStore;
 use serde::{Deserialize, Serialize};
 use strum_macros::Display;
-use thiserror::Error;
 use ts_rs::TS;
-use workspace_utils::msg_store::MsgStore;
 
-use crate::{
-    approvals::ExecutorApprovalService,
-    auto_retry::AutoRetryConfig,
-    command::CommandBuildError,
-    env::ExecutionEnv,
-    executors::{
-        amp::Amp, claude::ClaudeCode, codex::Codex, copilot::Copilot, cursor::CursorAgent,
-        droid::Droid, fake_agent::FakeAgent, gemini::Gemini, opencode::Opencode, qwen::QwenCode,
-    },
-    mcp_config::McpConfig,
-};
+use crate::mcp_config::{Adapter, McpConfig, preconfigured_mcp};
 
-pub mod acp;
-pub mod amp;
-pub mod claude;
-pub mod codex;
-pub mod copilot;
-pub mod cursor;
-pub mod droid;
-pub mod fake_agent;
-pub mod gemini;
-pub mod opencode;
-pub mod qwen;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-#[ts(use_ts_enum)]
-pub enum BaseAgentCapability {
-    SessionFork,
-    /// Agent requires a setup script before it can run (e.g., login, installation)
-    SetupHelper,
+#[cfg(feature = "amp")]
+pub mod amp {
+    pub use executor_amp::amp::*;
 }
 
-#[derive(Debug, Error)]
-pub enum ExecutorError {
-    #[error("Follow-up is not supported: {0}")]
-    FollowUpNotSupported(String),
-    #[error(transparent)]
-    SpawnError(#[from] FuturesIoError),
-    #[error("Unknown executor type: {0}")]
-    UnknownExecutorType(String),
-    #[error("I/O error: {0}")]
-    Io(std::io::Error),
-    #[error(transparent)]
-    Json(#[from] serde_json::Error),
-    #[error(transparent)]
-    TomlSerialize(#[from] toml::ser::Error),
-    #[error(transparent)]
-    TomlDeserialize(#[from] toml::de::Error),
-    #[error(transparent)]
-    ExecutorApprovalError(#[from] crate::approvals::ExecutorApprovalError),
-    #[error(transparent)]
-    CommandBuild(#[from] CommandBuildError),
-    #[error("Executable `{program}` not found in PATH")]
-    ExecutableNotFound { program: String },
-    #[error("Setup helper not supported")]
-    SetupHelperNotSupported,
-    #[error("Auth required: {0}")]
-    AuthRequired(String),
+#[cfg(feature = "claude")]
+pub mod claude {
+    pub use executor_claude::claude::*;
 }
 
-#[enum_dispatch]
+#[cfg(feature = "codex")]
+pub mod codex {
+    pub use executor_codex::codex::*;
+}
+
+#[cfg(feature = "copilot")]
+pub mod copilot {
+    pub use executor_copilot::copilot::*;
+}
+
+#[cfg(feature = "cursor")]
+pub mod cursor {
+    pub use executor_cursor::cursor::*;
+}
+
+#[cfg(feature = "droid")]
+pub mod droid {
+    pub use executor_droid::droid::*;
+}
+
+#[cfg(feature = "fake-agent")]
+pub mod fake_agent {
+    pub use executor_fake_agent::fake_agent::*;
+}
+
+#[cfg(feature = "gemini")]
+pub mod gemini {
+    pub use executor_gemini::gemini::*;
+}
+
+#[cfg(feature = "opencode")]
+pub mod opencode {
+    pub use executor_opencode::opencode::*;
+}
+
+#[cfg(feature = "qwen")]
+pub mod qwen {
+    pub use executor_qwen::qwen::*;
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS, Display)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum CodingAgent {
-    ClaudeCode,
-    Amp,
-    Gemini,
-    Codex,
-    FakeAgent,
-    Opencode,
-    CursorAgent,
-    QwenCode,
-    Copilot,
-    Droid,
+    #[cfg(feature = "claude")]
+    ClaudeCode(claude::ClaudeCode),
+    #[cfg(feature = "amp")]
+    Amp(amp::Amp),
+    #[cfg(feature = "gemini")]
+    Gemini(gemini::Gemini),
+    #[cfg(feature = "codex")]
+    Codex(codex::Codex),
+    #[cfg(feature = "fake-agent")]
+    FakeAgent(fake_agent::FakeAgent),
+    #[cfg(feature = "opencode")]
+    Opencode(opencode::Opencode),
+    #[cfg(feature = "cursor")]
+    CursorAgent(cursor::CursorAgent),
+    #[cfg(feature = "qwen")]
+    QwenCode(qwen::QwenCode),
+    #[cfg(feature = "copilot")]
+    Copilot(copilot::Copilot),
+    #[cfg(feature = "droid")]
+    Droid(droid::Droid),
 }
 
 impl CodingAgent {
     pub fn base_agent(&self) -> BaseCodingAgent {
         match self {
+            #[cfg(feature = "claude")]
             Self::ClaudeCode(_) => BaseCodingAgent::ClaudeCode,
+            #[cfg(feature = "amp")]
             Self::Amp(_) => BaseCodingAgent::Amp,
+            #[cfg(feature = "gemini")]
             Self::Gemini(_) => BaseCodingAgent::Gemini,
+            #[cfg(feature = "codex")]
             Self::Codex(_) => BaseCodingAgent::Codex,
+            #[cfg(feature = "fake-agent")]
             Self::FakeAgent(_) => BaseCodingAgent::FakeAgent,
+            #[cfg(feature = "opencode")]
             Self::Opencode(_) => BaseCodingAgent::Opencode,
+            #[cfg(feature = "cursor")]
             Self::CursorAgent(_) => BaseCodingAgent::CursorAgent,
+            #[cfg(feature = "qwen")]
             Self::QwenCode(_) => BaseCodingAgent::QwenCode,
+            #[cfg(feature = "copilot")]
             Self::Copilot(_) => BaseCodingAgent::Copilot,
+            #[cfg(feature = "droid")]
             Self::Droid(_) => BaseCodingAgent::Droid,
         }
     }
 
     pub fn auto_retry_config(&self) -> &AutoRetryConfig {
         match self {
+            #[cfg(feature = "claude")]
             Self::ClaudeCode(cfg) => &cfg.auto_retry,
+            #[cfg(feature = "amp")]
             Self::Amp(cfg) => &cfg.auto_retry,
+            #[cfg(feature = "gemini")]
             Self::Gemini(cfg) => &cfg.auto_retry,
+            #[cfg(feature = "codex")]
             Self::Codex(cfg) => &cfg.auto_retry,
+            #[cfg(feature = "fake-agent")]
             Self::FakeAgent(cfg) => &cfg.auto_retry,
+            #[cfg(feature = "opencode")]
             Self::Opencode(cfg) => &cfg.auto_retry,
+            #[cfg(feature = "cursor")]
             Self::CursorAgent(cfg) => &cfg.auto_retry,
+            #[cfg(feature = "qwen")]
             Self::QwenCode(cfg) => &cfg.auto_retry,
+            #[cfg(feature = "copilot")]
             Self::Copilot(cfg) => &cfg.auto_retry,
+            #[cfg(feature = "droid")]
             Self::Droid(cfg) => &cfg.auto_retry,
         }
     }
@@ -125,8 +147,36 @@ impl CodingAgent {
         self.auto_retry_config().validate()
     }
 
+    fn preconfigured_mcp(&self) -> serde_json::Value {
+        let adapter = match self {
+            #[cfg(feature = "claude")]
+            Self::ClaudeCode(_) => Adapter::Passthrough,
+            #[cfg(feature = "amp")]
+            Self::Amp(_) => Adapter::Passthrough,
+            #[cfg(feature = "droid")]
+            Self::Droid(_) => Adapter::Passthrough,
+            #[cfg(feature = "fake-agent")]
+            Self::FakeAgent(_) => Adapter::Passthrough,
+            #[cfg(feature = "qwen")]
+            Self::QwenCode(_) => Adapter::Gemini,
+            #[cfg(feature = "gemini")]
+            Self::Gemini(_) => Adapter::Gemini,
+            #[cfg(feature = "cursor")]
+            Self::CursorAgent(_) => Adapter::Cursor,
+            #[cfg(feature = "codex")]
+            Self::Codex(_) => Adapter::Codex,
+            #[cfg(feature = "opencode")]
+            Self::Opencode(_) => Adapter::Opencode,
+            #[cfg(feature = "copilot")]
+            Self::Copilot(..) => Adapter::Copilot,
+        };
+
+        preconfigured_mcp(adapter)
+    }
+
     pub fn get_mcp_config(&self) -> McpConfig {
         match self {
+            #[cfg(feature = "codex")]
             Self::Codex(_) => McpConfig::new(
                 vec!["mcp_servers".to_string()],
                 serde_json::json!({
@@ -135,6 +185,7 @@ impl CodingAgent {
                 self.preconfigured_mcp(),
                 true,
             ),
+            #[cfg(feature = "amp")]
             Self::Amp(_) => McpConfig::new(
                 vec!["amp.mcpServers".to_string()],
                 serde_json::json!({
@@ -143,6 +194,7 @@ impl CodingAgent {
                 self.preconfigured_mcp(),
                 false,
             ),
+            #[cfg(feature = "opencode")]
             Self::Opencode(_) => McpConfig::new(
                 vec!["mcp".to_string()],
                 serde_json::json!({
@@ -152,6 +204,7 @@ impl CodingAgent {
                 self.preconfigured_mcp(),
                 false,
             ),
+            #[cfg(feature = "droid")]
             Self::Droid(_) => McpConfig::new(
                 vec!["mcpServers".to_string()],
                 serde_json::json!({
@@ -172,171 +225,263 @@ impl CodingAgent {
     }
 
     pub fn supports_mcp(&self) -> bool {
-        self.default_mcp_config_path().is_some()
+        StandardCodingAgentExecutor::default_mcp_config_path(self).is_some()
     }
 
     pub fn capabilities(&self) -> Vec<BaseAgentCapability> {
         match self {
-            Self::ClaudeCode(_)
-            | Self::Amp(_)
-            | Self::Gemini(_)
-            | Self::QwenCode(_)
-            | Self::Droid(_)
-            | Self::FakeAgent(_)
-            | Self::Opencode(_) => vec![BaseAgentCapability::SessionFork],
+            #[cfg(feature = "claude")]
+            Self::ClaudeCode(_) => vec![BaseAgentCapability::SessionFork],
+            #[cfg(feature = "amp")]
+            Self::Amp(_) => vec![BaseAgentCapability::SessionFork],
+            #[cfg(feature = "gemini")]
+            Self::Gemini(_) => vec![BaseAgentCapability::SessionFork],
+            #[cfg(feature = "qwen")]
+            Self::QwenCode(_) => vec![BaseAgentCapability::SessionFork],
+            #[cfg(feature = "droid")]
+            Self::Droid(_) => vec![BaseAgentCapability::SessionFork],
+            #[cfg(feature = "fake-agent")]
+            Self::FakeAgent(_) => vec![BaseAgentCapability::SessionFork],
+            #[cfg(feature = "opencode")]
+            Self::Opencode(_) => vec![BaseAgentCapability::SessionFork],
+            #[cfg(feature = "codex")]
             Self::Codex(_) => vec![
                 BaseAgentCapability::SessionFork,
                 BaseAgentCapability::SetupHelper,
             ],
+            #[cfg(feature = "cursor")]
             Self::CursorAgent(_) => vec![BaseAgentCapability::SetupHelper],
+            #[cfg(feature = "copilot")]
             Self::Copilot(_) => vec![],
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
-#[ts(export)]
-pub enum AvailabilityInfo {
-    LoginDetected { last_auth_timestamp: i64 },
-    InstallationFound,
-    NotFound,
-}
-
-impl AvailabilityInfo {
-    pub fn is_available(&self) -> bool {
-        matches!(
-            self,
-            AvailabilityInfo::LoginDetected { .. } | AvailabilityInfo::InstallationFound
-        )
-    }
-}
-
 #[async_trait]
-#[enum_dispatch(CodingAgent)]
-pub trait StandardCodingAgentExecutor {
-    fn use_approvals(&mut self, _approvals: Arc<dyn ExecutorApprovalService>) {}
+impl StandardCodingAgentExecutor for CodingAgent {
+    fn use_approvals(&mut self, approvals: Arc<dyn ExecutorApprovalService>) {
+        match self {
+            #[cfg(feature = "claude")]
+            Self::ClaudeCode(agent) => agent.use_approvals(approvals),
+            #[cfg(feature = "amp")]
+            Self::Amp(agent) => agent.use_approvals(approvals),
+            #[cfg(feature = "gemini")]
+            Self::Gemini(agent) => agent.use_approvals(approvals),
+            #[cfg(feature = "codex")]
+            Self::Codex(agent) => agent.use_approvals(approvals),
+            #[cfg(feature = "fake-agent")]
+            Self::FakeAgent(agent) => agent.use_approvals(approvals),
+            #[cfg(feature = "opencode")]
+            Self::Opencode(agent) => agent.use_approvals(approvals),
+            #[cfg(feature = "cursor")]
+            Self::CursorAgent(agent) => agent.use_approvals(approvals),
+            #[cfg(feature = "qwen")]
+            Self::QwenCode(agent) => agent.use_approvals(approvals),
+            #[cfg(feature = "copilot")]
+            Self::Copilot(agent) => agent.use_approvals(approvals),
+            #[cfg(feature = "droid")]
+            Self::Droid(agent) => agent.use_approvals(approvals),
+        }
+    }
 
     async fn spawn(
         &self,
         current_dir: &Path,
         prompt: &str,
         env: &ExecutionEnv,
-    ) -> Result<SpawnedChild, ExecutorError>;
+    ) -> Result<SpawnedChild, ExecutorError> {
+        match self {
+            #[cfg(feature = "claude")]
+            Self::ClaudeCode(agent) => agent.spawn(current_dir, prompt, env).await,
+            #[cfg(feature = "amp")]
+            Self::Amp(agent) => agent.spawn(current_dir, prompt, env).await,
+            #[cfg(feature = "gemini")]
+            Self::Gemini(agent) => agent.spawn(current_dir, prompt, env).await,
+            #[cfg(feature = "codex")]
+            Self::Codex(agent) => agent.spawn(current_dir, prompt, env).await,
+            #[cfg(feature = "fake-agent")]
+            Self::FakeAgent(agent) => agent.spawn(current_dir, prompt, env).await,
+            #[cfg(feature = "opencode")]
+            Self::Opencode(agent) => agent.spawn(current_dir, prompt, env).await,
+            #[cfg(feature = "cursor")]
+            Self::CursorAgent(agent) => agent.spawn(current_dir, prompt, env).await,
+            #[cfg(feature = "qwen")]
+            Self::QwenCode(agent) => agent.spawn(current_dir, prompt, env).await,
+            #[cfg(feature = "copilot")]
+            Self::Copilot(agent) => agent.spawn(current_dir, prompt, env).await,
+            #[cfg(feature = "droid")]
+            Self::Droid(agent) => agent.spawn(current_dir, prompt, env).await,
+        }
+    }
+
     async fn spawn_follow_up(
         &self,
         current_dir: &Path,
         prompt: &str,
         session_id: &str,
         env: &ExecutionEnv,
-    ) -> Result<SpawnedChild, ExecutorError>;
-    fn normalize_logs(&self, _raw_logs_event_store: Arc<MsgStore>, _worktree_path: &Path);
+    ) -> Result<SpawnedChild, ExecutorError> {
+        match self {
+            #[cfg(feature = "claude")]
+            Self::ClaudeCode(agent) => {
+                agent
+                    .spawn_follow_up(current_dir, prompt, session_id, env)
+                    .await
+            }
+            #[cfg(feature = "amp")]
+            Self::Amp(agent) => {
+                agent
+                    .spawn_follow_up(current_dir, prompt, session_id, env)
+                    .await
+            }
+            #[cfg(feature = "gemini")]
+            Self::Gemini(agent) => {
+                agent
+                    .spawn_follow_up(current_dir, prompt, session_id, env)
+                    .await
+            }
+            #[cfg(feature = "codex")]
+            Self::Codex(agent) => {
+                agent
+                    .spawn_follow_up(current_dir, prompt, session_id, env)
+                    .await
+            }
+            #[cfg(feature = "fake-agent")]
+            Self::FakeAgent(agent) => {
+                agent
+                    .spawn_follow_up(current_dir, prompt, session_id, env)
+                    .await
+            }
+            #[cfg(feature = "opencode")]
+            Self::Opencode(agent) => {
+                agent
+                    .spawn_follow_up(current_dir, prompt, session_id, env)
+                    .await
+            }
+            #[cfg(feature = "cursor")]
+            Self::CursorAgent(agent) => {
+                agent
+                    .spawn_follow_up(current_dir, prompt, session_id, env)
+                    .await
+            }
+            #[cfg(feature = "qwen")]
+            Self::QwenCode(agent) => {
+                agent
+                    .spawn_follow_up(current_dir, prompt, session_id, env)
+                    .await
+            }
+            #[cfg(feature = "copilot")]
+            Self::Copilot(agent) => {
+                agent
+                    .spawn_follow_up(current_dir, prompt, session_id, env)
+                    .await
+            }
+            #[cfg(feature = "droid")]
+            Self::Droid(agent) => {
+                agent
+                    .spawn_follow_up(current_dir, prompt, session_id, env)
+                    .await
+            }
+        }
+    }
 
-    // MCP configuration methods
-    fn default_mcp_config_path(&self) -> Option<std::path::PathBuf>;
+    fn normalize_logs(&self, raw_logs_event_store: Arc<MsgStore>, worktree_path: &Path) {
+        match self {
+            #[cfg(feature = "claude")]
+            Self::ClaudeCode(agent) => agent.normalize_logs(raw_logs_event_store, worktree_path),
+            #[cfg(feature = "amp")]
+            Self::Amp(agent) => agent.normalize_logs(raw_logs_event_store, worktree_path),
+            #[cfg(feature = "gemini")]
+            Self::Gemini(agent) => agent.normalize_logs(raw_logs_event_store, worktree_path),
+            #[cfg(feature = "codex")]
+            Self::Codex(agent) => agent.normalize_logs(raw_logs_event_store, worktree_path),
+            #[cfg(feature = "fake-agent")]
+            Self::FakeAgent(agent) => agent.normalize_logs(raw_logs_event_store, worktree_path),
+            #[cfg(feature = "opencode")]
+            Self::Opencode(agent) => agent.normalize_logs(raw_logs_event_store, worktree_path),
+            #[cfg(feature = "cursor")]
+            Self::CursorAgent(agent) => agent.normalize_logs(raw_logs_event_store, worktree_path),
+            #[cfg(feature = "qwen")]
+            Self::QwenCode(agent) => agent.normalize_logs(raw_logs_event_store, worktree_path),
+            #[cfg(feature = "copilot")]
+            Self::Copilot(agent) => agent.normalize_logs(raw_logs_event_store, worktree_path),
+            #[cfg(feature = "droid")]
+            Self::Droid(agent) => agent.normalize_logs(raw_logs_event_store, worktree_path),
+        }
+    }
+
+    fn default_mcp_config_path(&self) -> Option<std::path::PathBuf> {
+        match self {
+            #[cfg(feature = "claude")]
+            Self::ClaudeCode(agent) => agent.default_mcp_config_path(),
+            #[cfg(feature = "amp")]
+            Self::Amp(agent) => agent.default_mcp_config_path(),
+            #[cfg(feature = "gemini")]
+            Self::Gemini(agent) => agent.default_mcp_config_path(),
+            #[cfg(feature = "codex")]
+            Self::Codex(agent) => agent.default_mcp_config_path(),
+            #[cfg(feature = "fake-agent")]
+            Self::FakeAgent(agent) => agent.default_mcp_config_path(),
+            #[cfg(feature = "opencode")]
+            Self::Opencode(agent) => agent.default_mcp_config_path(),
+            #[cfg(feature = "cursor")]
+            Self::CursorAgent(agent) => agent.default_mcp_config_path(),
+            #[cfg(feature = "qwen")]
+            Self::QwenCode(agent) => agent.default_mcp_config_path(),
+            #[cfg(feature = "copilot")]
+            Self::Copilot(agent) => agent.default_mcp_config_path(),
+            #[cfg(feature = "droid")]
+            Self::Droid(agent) => agent.default_mcp_config_path(),
+        }
+    }
 
     async fn get_setup_helper_action(&self) -> Result<ExecutorAction, ExecutorError> {
-        Err(ExecutorError::SetupHelperNotSupported)
+        match self {
+            #[cfg(feature = "claude")]
+            Self::ClaudeCode(agent) => agent.get_setup_helper_action().await,
+            #[cfg(feature = "amp")]
+            Self::Amp(agent) => agent.get_setup_helper_action().await,
+            #[cfg(feature = "gemini")]
+            Self::Gemini(agent) => agent.get_setup_helper_action().await,
+            #[cfg(feature = "codex")]
+            Self::Codex(agent) => agent.get_setup_helper_action().await,
+            #[cfg(feature = "fake-agent")]
+            Self::FakeAgent(agent) => agent.get_setup_helper_action().await,
+            #[cfg(feature = "opencode")]
+            Self::Opencode(agent) => agent.get_setup_helper_action().await,
+            #[cfg(feature = "cursor")]
+            Self::CursorAgent(agent) => agent.get_setup_helper_action().await,
+            #[cfg(feature = "qwen")]
+            Self::QwenCode(agent) => agent.get_setup_helper_action().await,
+            #[cfg(feature = "copilot")]
+            Self::Copilot(agent) => agent.get_setup_helper_action().await,
+            #[cfg(feature = "droid")]
+            Self::Droid(agent) => agent.get_setup_helper_action().await,
+        }
     }
 
     fn get_availability_info(&self) -> AvailabilityInfo {
-        let config_files_found = self
-            .default_mcp_config_path()
-            .map(|path| path.exists())
-            .unwrap_or(false);
-
-        if config_files_found {
-            AvailabilityInfo::InstallationFound
-        } else {
-            AvailabilityInfo::NotFound
-        }
-    }
-}
-
-/// Result communicated through the exit signal
-#[derive(Debug, Clone, Copy)]
-pub enum ExecutorExitResult {
-    /// Process completed successfully (exit code 0)
-    Success,
-    /// Process should be marked as failed (non-zero exit)
-    Failure,
-}
-
-/// Optional exit notification from an executor.
-/// When this receiver resolves, the container should gracefully stop the process
-/// and mark it according to the result.
-pub type ExecutorExitSignal = tokio::sync::oneshot::Receiver<ExecutorExitResult>;
-
-/// Sender for requesting graceful interrupt of an executor.
-/// When sent, the executor should attempt to interrupt gracefully before being killed.
-pub type InterruptSender = tokio::sync::oneshot::Sender<()>;
-
-#[derive(Debug)]
-pub struct SpawnedChild {
-    pub child: AsyncGroupChild,
-    /// Executor → Container: signals when executor wants to exit
-    pub exit_signal: Option<ExecutorExitSignal>,
-    /// Container → Executor: signals when container wants to interrupt
-    pub interrupt_sender: Option<InterruptSender>,
-}
-
-impl From<AsyncGroupChild> for SpawnedChild {
-    fn from(child: AsyncGroupChild) -> Self {
-        Self {
-            child,
-            exit_signal: None,
-            interrupt_sender: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS, JsonSchema)]
-#[serde(transparent)]
-#[schemars(
-    title = "Append Prompt",
-    description = "Extra text appended to the prompt",
-    extend("format" = "textarea")
-)]
-#[derive(Default)]
-pub struct AppendPrompt(pub Option<String>);
-
-impl AppendPrompt {
-    pub fn get(&self) -> Option<String> {
-        self.0.clone()
-    }
-
-    pub fn combine_prompt(&self, prompt: &str) -> String {
         match self {
-            AppendPrompt(Some(value)) => format!("{prompt}{value}"),
-            AppendPrompt(None) => prompt.to_string(),
+            #[cfg(feature = "claude")]
+            Self::ClaudeCode(agent) => agent.get_availability_info(),
+            #[cfg(feature = "amp")]
+            Self::Amp(agent) => agent.get_availability_info(),
+            #[cfg(feature = "gemini")]
+            Self::Gemini(agent) => agent.get_availability_info(),
+            #[cfg(feature = "codex")]
+            Self::Codex(agent) => agent.get_availability_info(),
+            #[cfg(feature = "fake-agent")]
+            Self::FakeAgent(agent) => agent.get_availability_info(),
+            #[cfg(feature = "opencode")]
+            Self::Opencode(agent) => agent.get_availability_info(),
+            #[cfg(feature = "cursor")]
+            Self::CursorAgent(agent) => agent.get_availability_info(),
+            #[cfg(feature = "qwen")]
+            Self::QwenCode(agent) => agent.get_availability_info(),
+            #[cfg(feature = "copilot")]
+            Self::Copilot(agent) => agent.get_availability_info(),
+            #[cfg(feature = "droid")]
+            Self::Droid(agent) => agent.get_availability_info(),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::str::FromStr;
-
-    use super::*;
-
-    #[test]
-    fn test_cursor_agent_deserialization() {
-        // Test that CURSOR_AGENT is accepted
-        let result = BaseCodingAgent::from_str("CURSOR_AGENT");
-        assert!(result.is_ok(), "CURSOR_AGENT should be valid");
-        assert_eq!(result.unwrap(), BaseCodingAgent::CursorAgent);
-
-        // Legacy CURSOR is no longer accepted (protocol is strict)
-        let result = BaseCodingAgent::from_str("CURSOR");
-        assert!(result.is_err(), "CURSOR should be rejected");
-
-        // Test serde deserialization for CURSOR_AGENT
-        let result: Result<BaseCodingAgent, _> = serde_json::from_str(r#""CURSOR_AGENT""#);
-        assert!(result.is_ok(), "CURSOR_AGENT should deserialize via serde");
-        assert_eq!(result.unwrap(), BaseCodingAgent::CursorAgent);
-
-        // Test serde deserialization rejects legacy CURSOR
-        let result: Result<BaseCodingAgent, _> = serde_json::from_str(r#""CURSOR""#);
-        assert!(result.is_err(), "CURSOR should be rejected via serde");
     }
 }

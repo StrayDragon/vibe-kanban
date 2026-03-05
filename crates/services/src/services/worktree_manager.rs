@@ -8,7 +8,7 @@ use std::{
 use git2::{BranchType, Error as GitError, Repository};
 use thiserror::Error;
 use tracing::{debug, info, trace};
-use utils::{path::normalize_macos_private_alias, shell::resolve_executable_path};
+use utils_core::{path::normalize_macos_private_alias, shell::resolve_executable_path};
 
 use super::git::{GitService, GitServiceError};
 
@@ -536,7 +536,7 @@ impl WorktreeManager {
 
     /// Get the base directory for vibe-kanban worktrees
     pub fn get_worktree_base_dir() -> std::path::PathBuf {
-        utils::path::get_vibe_kanban_temp_dir().join("worktrees")
+        utils_core::path::get_vibe_kanban_temp_dir().join("worktrees")
     }
 
     fn maybe_remove_worktree_lock(path_str: &str, lock: &Arc<tokio::sync::Mutex<()>>) {

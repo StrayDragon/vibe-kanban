@@ -1,0 +1,20 @@
+[package]
+name = "executor-amp"
+version = "0.0.143"
+edition = "2024"
+
+[dependencies]
+executors-core = { path = "../executors-core" }
+executors-protocol = { path = "../executors-protocol" }
+logs-store = { path = "../logs-store" }
+executor-claude = { path = "../executor-claude" }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+command-group = { version = "5.0", features = ["with-tokio"] }
+
+serde = { workspace = true, features = ["derive"] }
+schemars = { workspace = true }
+ts-rs = { workspace = true }
+dirs = "5.0"
+tracing = { workspace = true }

@@ -317,7 +317,11 @@ mod tests {
             .pointer("/data/current_path")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
-        assert!(current_path.starts_with(allowed_root.to_string_lossy().as_ref()));
+        let allowed_root_canon =
+            std::fs::canonicalize(&allowed_root).unwrap_or_else(|_| allowed_root.clone());
+        let current_path_canon =
+            std::fs::canonicalize(current_path).unwrap_or_else(|_| current_path.into());
+        assert!(current_path_canon.starts_with(&allowed_root_canon));
 
         let _ = fs::remove_dir_all(&allowed_root);
     }

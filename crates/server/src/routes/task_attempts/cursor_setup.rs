@@ -74,7 +74,7 @@ async fn get_setup_helper_action() -> Result<ExecutorAction, ApiError> {
     #[cfg(unix)]
     {
         use shlex::try_quote;
-        use utils::shell::UnixShell;
+        use utils_core::shell::UnixShell;
         let base_command = CursorAgent::base_command();
 
         // Install script with PATH setup

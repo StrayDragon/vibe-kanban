@@ -5,9 +5,9 @@ edition = "2024"
 
 [dependencies]
 db = { path = "../db" }
-utils = { path = "../utils" }
 services = { path = "../services" }
 executors = { path = "../executors" }
+logs-axum = { path = "../logs-axum" }
 async-trait = { workspace = true } 
 thiserror = { workspace = true } 
 anyhow = { workspace = true }

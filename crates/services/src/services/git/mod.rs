@@ -8,7 +8,9 @@ use git2::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
-use utils::diff::{Diff, DiffChangeKind, DiffSummary, FileDiffDetails, compute_line_change_counts};
+use utils_core::diff::{
+    Diff, DiffChangeKind, DiffSummary, FileDiffDetails, compute_line_change_counts,
+};
 
 mod cli;
 

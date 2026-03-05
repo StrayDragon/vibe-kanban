@@ -5,7 +5,8 @@ use executors_protocol::{BaseCodingAgent, ExecutorProfileId};
 use serde::{Deserialize, Serialize};
 use strum_macros::EnumString;
 use ts_rs::TS;
-use utils::{assets::SoundAssets, cache_dir};
+use utils_assets::SoundAssets;
+use utils_core::cache_dir;
 
 use super::editor::EditorConfig;
 
@@ -283,7 +284,7 @@ impl Config {
     pub fn normalized(mut self) -> Self {
         self.config_version = CURRENT_CONFIG_VERSION.to_string();
 
-        if !utils::git::is_valid_branch_prefix(&self.git_branch_prefix) {
+        if !utils_git::is_valid_branch_prefix(&self.git_branch_prefix) {
             tracing::warn!(
                 "Invalid git branch prefix '{}', resetting to default",
                 self.git_branch_prefix

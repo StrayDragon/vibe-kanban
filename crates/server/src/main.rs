@@ -10,7 +10,8 @@ use strip_ansi_escapes::strip;
 use thiserror::Error;
 use tokio::sync::watch;
 use tracing_subscriber::{EnvFilter, prelude::*};
-use utils::{assets::asset_dir, browser::open_browser, port_file::write_port_file};
+use utils_assets::asset_dir;
+use utils_core::{browser::open_browser, port_file::write_port_file};
 
 const GRACEFUL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
