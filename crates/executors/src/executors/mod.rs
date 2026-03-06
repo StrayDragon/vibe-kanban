@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use strum_macros::Display;
 use ts_rs::TS;
 
-use crate::mcp_config::{Adapter, McpConfig, preconfigured_mcp};
+use executors_core::mcp_config::{Adapter, McpConfig, preconfigured_mcp};
 
 #[cfg(feature = "amp")]
 pub mod amp {

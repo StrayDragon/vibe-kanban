@@ -8,8 +8,9 @@ use db::{
         workspace_repo::WorkspaceRepo,
     },
 };
-use deployment::Deployment;
-use services::services::{container::ContainerService, git::WorktreeResetOptions};
+use app_runtime::Deployment;
+use execution::container::ContainerService;
+use repos::git::WorktreeResetOptions;
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};

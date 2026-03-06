@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, State},
     routing::post,
 };
-use deployment::Deployment;
+use app_runtime::Deployment;
 use utils_core::approvals::{ApprovalResponse, ApprovalStatus};
 
 use crate::{DeploymentImpl, error::ApiError};

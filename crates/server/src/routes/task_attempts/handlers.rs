@@ -10,8 +10,10 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::Json as ResponseJson,
 };
+#[cfg(test)]
+use db::models::task_group::{TaskGroupGraph, TaskGroupNode};
 use db::{
-    DbErr, DbPool, TransactionTrait,
+    DbErr,
     models::{
         execution_process::{ExecutionProcess, ExecutionProcessRunReason, ExecutionProcessStatus},
         merge::{Merge, MergeStatus, PrMerge, PullRequestInfo},
@@ -20,35 +22,28 @@ use db::{
         repo::{Repo, RepoError},
         session::{CreateSession, Session},
         task::{Task, TaskRelationships, TaskStatus},
-        task_group::{
-            TaskGroup, TaskGroupError, TaskGroupGraph, TaskGroupNode, TaskGroupNodeBaseStrategy,
-        },
-        workspace::{CreateWorkspace, Workspace, WorkspaceError},
+        workspace::{Workspace, WorkspaceError},
         workspace_repo::{CreateWorkspaceRepo, RepoWithTargetBranch, WorkspaceRepo},
     },
 };
-use deployment::Deployment;
+use app_runtime::Deployment;
+use execution::{container::ContainerService, diff_stream, github::GitHubService};
 use executors::{
     executors::{CodingAgent, ExecutorError},
     profile::ExecutorConfigs,
 };
-use executors_protocol::{
-    ExecutorProfileId,
-    actions::{
-        ExecutorAction, ExecutorActionType,
-        script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
-    },
+#[cfg(test)]
+#[cfg(test)]
+use executors_protocol::ExecutorProfileId;
+use executors_protocol::actions::{
+    ExecutorAction, ExecutorActionType,
+    script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
 };
-use git2::BranchType;
-use services::services::{
-    container::ContainerService,
-    diff_stream,
-    git::{
-        ConflictOp, DiffContentPolicy, DiffTarget, GitCliError, GitMergeOptions, GitService,
-        GitServiceError,
-    },
-    github::GitHubService,
+use repos::git::{
+    ConflictOp, DiffContentPolicy, DiffTarget, GitBranchType, GitCliError, GitMergeOptions,
+    GitService, GitServiceError,
 };
+use tasks::orchestration::{self, CreateTaskAttemptInput};
 use utils_core::{
     diff::{DiffSummary, create_unified_diff},
     response::ApiResponse,
@@ -59,6 +54,7 @@ use uuid::Uuid;
 use super::{codex_setup, cursor_setup, dto::*, gh_cli_setup};
 use crate::{
     DeploymentImpl, error::ApiError, routes::task_attempts::gh_cli_setup::GhCliSetupError,
+    task_runtime::DeploymentTaskRuntime,
 };
 
 async fn run_git_operation<T, F>(git: GitService, op: F) -> Result<T, GitServiceError>
@@ -866,38 +862,7 @@ pub async fn get_task_attempt_patch(
     })))
 }
 
-fn map_task_group_error(err: TaskGroupError) -> ApiError {
-    match err {
-        TaskGroupError::Database(db_err) => ApiError::Database(db_err),
-        _ => ApiError::BadRequest(err.to_string()),
-    }
-}
-
-fn map_workspace_error(err: WorkspaceError) -> ApiError {
-    match err {
-        WorkspaceError::Database(db_err) => ApiError::Database(db_err),
-        _ => ApiError::BadRequest(err.to_string()),
-    }
-}
-
-fn find_task_group_node<'a>(
-    graph: &'a TaskGroupGraph,
-    node_id: &str,
-) -> Result<&'a TaskGroupNode, ApiError> {
-    let node_key = node_id.trim();
-    if node_key.is_empty() {
-        return Err(ApiError::BadRequest(
-            "Task group node id cannot be empty".to_string(),
-        ));
-    }
-
-    graph
-        .nodes
-        .iter()
-        .find(|node| node.id.trim() == node_key)
-        .ok_or_else(|| ApiError::BadRequest("Task group node not found in graph".to_string()))
-}
-
+#[cfg(test)]
 fn resolve_executor_profile_id(
     task_group_node: &TaskGroupNode,
     fallback: ExecutorProfileId,
@@ -908,8 +873,9 @@ fn resolve_executor_profile_id(
         .unwrap_or(fallback)
 }
 
+#[cfg(test)]
 async fn resolve_topology_base_branches(
-    pool: &DbPool,
+    pool: &db::DbPool,
     graph: &TaskGroupGraph,
     node_id: &str,
 ) -> Result<Option<HashMap<Uuid, String>>, ApiError> {
@@ -938,9 +904,7 @@ async fn resolve_topology_base_branches(
             continue;
         }
 
-        let workspaces = Workspace::fetch_all(pool, Some(predecessor.task_id))
-            .await
-            .map_err(map_workspace_error)?;
+        let workspaces = Workspace::fetch_all(pool, Some(predecessor.task_id)).await?;
         let Some(workspace) = workspaces.first() else {
             continue;
         };
@@ -965,9 +929,7 @@ async fn resolve_topology_base_branches(
         return Ok(None);
     };
 
-    let repos = WorkspaceRepo::find_by_workspace_id(pool, workspace_id)
-        .await
-        .map_err(ApiError::Database)?;
+    let repos = WorkspaceRepo::find_by_workspace_id(pool, workspace_id).await?;
     if repos.is_empty() {
         return Ok(None);
     }
@@ -980,6 +942,7 @@ async fn resolve_topology_base_branches(
     Ok(Some(base_branches))
 }
 
+#[cfg(test)]
 fn blocked_predecessors(graph: &TaskGroupGraph, node_id: &str) -> Result<Vec<String>, ApiError> {
     let node_key = node_id.trim();
     if node_key.is_empty() {
@@ -1045,143 +1008,29 @@ pub async fn create_task_attempt(
         key,
         hash,
         || async {
-            let mut executor_profile_id = payload.executor_profile_id.clone();
-
-            let pool = &deployment.db().pool;
-            let task = Task::find_by_id(&deployment.db().pool, payload.task_id)
-                .await?
-                .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
-            if task.archived_kanban_id.is_some() {
-                return Err(ApiError::Conflict(
-                    "Task is archived. Restore it before starting an attempt.".to_string(),
-                ));
-            }
-            let original_task_status = task.status.clone();
-            let mut baseline_ref: Option<String> = None;
-            let mut topology_branches: Option<HashMap<Uuid, String>> = None;
-            if let (Some(task_group_id), Some(node_id)) =
-                (task.task_group_id, task.task_group_node_id.as_ref())
-            {
-                let task_group = TaskGroup::find_by_id(pool, task_group_id)
-                    .await
-                    .map_err(map_task_group_error)?
-                    .ok_or_else(|| ApiError::BadRequest("Task group not found".to_string()))?;
-
-                let blocked = blocked_predecessors(&task_group.graph, node_id)?;
-                if !blocked.is_empty() {
-                    return Err(ApiError::Conflict(format!(
-                        "Task is blocked by incomplete predecessors: {}",
-                        blocked.join(", ")
-                    )));
-                }
-
-                let task_group_node = find_task_group_node(&task_group.graph, node_id)?;
-                executor_profile_id =
-                    resolve_executor_profile_id(task_group_node, executor_profile_id);
-
-                match &task_group_node.base_strategy {
-                    TaskGroupNodeBaseStrategy::Baseline => {
-                        let trimmed = task_group.baseline_ref.trim();
-                        if !trimmed.is_empty() {
-                            baseline_ref = Some(trimmed.to_string());
-                        }
-                    }
-                    TaskGroupNodeBaseStrategy::Topology => {
-                        topology_branches =
-                            resolve_topology_base_branches(pool, &task_group.graph, node_id)
-                                .await?;
-                        if topology_branches.is_none() {
-                            let trimmed = task_group.baseline_ref.trim();
-                            if !trimmed.is_empty() {
-                                baseline_ref = Some(trimmed.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-
-            let project = task
-                .parent_project(pool)
-                .await?
-                .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
-
-            let agent_working_dir = project
-                .default_agent_working_dir
-                .as_ref()
-                .filter(|dir| !dir.is_empty())
-                .cloned();
-
-            let attempt_id = Uuid::new_v4();
-            let git_branch_name = deployment
-                .container()
-                .git_branch_from_workspace(&attempt_id, &task.title)
-                .await;
-
-            let tx = pool.begin().await?;
-            let workspace = Workspace::create(
-                &tx,
-                &CreateWorkspace {
-                    branch: git_branch_name.clone(),
-                    agent_working_dir,
+            let runtime = DeploymentTaskRuntime::new(deployment.container());
+            let workspace = orchestration::create_task_attempt(
+                &runtime,
+                &deployment.db().pool,
+                &CreateTaskAttemptInput {
+                    task_id: payload.task_id,
+                    executor_profile_id: payload.executor_profile_id.clone(),
+                    repos: payload
+                        .repos
+                        .iter()
+                        .map(|repo| CreateWorkspaceRepo {
+                            repo_id: repo.repo_id,
+                            target_branch: repo.target_branch.clone(),
+                        })
+                        .collect(),
                 },
-                attempt_id,
-                payload.task_id,
             )
             .await?;
-
-            let workspace_repos: Vec<CreateWorkspaceRepo> = payload
-                .repos
-                .iter()
-                .map(|r| {
-                    let target_branch = topology_branches
-                        .as_ref()
-                        .and_then(|branches| branches.get(&r.repo_id))
-                        .cloned()
-                        .or_else(|| baseline_ref.clone())
-                        .unwrap_or_else(|| r.target_branch.clone());
-                    CreateWorkspaceRepo {
-                        repo_id: r.repo_id,
-                        target_branch,
-                    }
-                })
-                .collect();
-
-            WorkspaceRepo::create_many(&tx, workspace.id, &workspace_repos).await?;
-            tx.commit().await?;
-
-            if let Err(err) = deployment
-                .container()
-                .start_workspace(&workspace, executor_profile_id.clone(), None)
-                .await
-            {
-                tracing::error!(
-                    task_id = %task.id,
-                    workspace_id = %workspace.id,
-                    error = %err,
-                    "Failed to start task attempt"
-                );
-                if let Err(cleanup_err) = cleanup_failed_attempt_start(
-                    &deployment,
-                    &task,
-                    &workspace,
-                    &original_task_status,
-                )
-                .await
-                {
-                    tracing::error!(
-                        task_id = %task.id,
-                        workspace_id = %workspace.id,
-                        error = %cleanup_err,
-                        "Failed to cleanup attempt after start failure"
-                    );
-                }
-                return Err(ApiError::from(err));
-            }
 
             tracing::info!(
                 "Created and started attempt {} for task {}",
                 workspace.id,
-                task.id
+                payload.task_id
             );
             Ok(workspace)
         },
@@ -1189,6 +1038,7 @@ pub async fn create_task_attempt(
     .await
 }
 
+#[cfg(test)]
 async fn cleanup_failed_attempt_start(
     deployment: &DeploymentImpl,
     task: &Task,
@@ -1634,7 +1484,7 @@ pub async fn get_task_attempt_branch_status(
             };
 
             let (commits_ahead, commits_behind) = match target_branch_type {
-                Some(BranchType::Local) => {
+                Some(GitBranchType::Local) => {
                     match git.get_branch_status(
                         &repo_path,
                         &workspace_branch,
@@ -1651,7 +1501,7 @@ pub async fn get_task_attempt_branch_status(
                         }
                     }
                 }
-                Some(BranchType::Remote) => {
+                Some(GitBranchType::Remote) => {
                     match git.get_remote_branch_status(
                         &repo_path,
                         &workspace_branch,
@@ -2011,7 +1861,7 @@ pub async fn rebase_task_attempt(
     })
     .await;
     if let Err(e) = result {
-        use services::services::git::GitServiceError;
+        use repos::git::GitServiceError;
         return match e {
             GitServiceError::MergeConflicts(msg) => Ok(ResponseJson(ApiResponse::<
                 (),
@@ -2474,6 +2324,7 @@ mod tests {
         response::Json as ResponseJson,
     };
     use chrono::Utc;
+    use config::DiffPreviewGuardPreset;
     use db::models::{
         execution_process::{
             CreateExecutionProcess, ExecutionProcess, ExecutionProcessRunReason,
@@ -2492,7 +2343,8 @@ mod tests {
         workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
     };
     use db_migration::Migrator;
-    use deployment::Deployment;
+    use app_runtime::Deployment;
+    use execution::container::LocalContainerService;
     use executors_protocol::{
         BaseCodingAgent, ExecutorProfileId,
         actions::{
@@ -2500,14 +2352,12 @@ mod tests {
             script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
         },
     };
-    use local_deployment::container::LocalContainerService;
-    use sea_orm::Database;
-    use sea_orm_migration::MigratorTrait;
-    use services::services::{
-        config::DiffPreviewGuardPreset,
+    use repos::{
         git::{GitService, GitServiceError},
         workspace_manager::WorkspaceManager,
     };
+    use sea_orm::Database;
+    use sea_orm_migration::MigratorTrait;
     use tokio::time::{Duration, sleep};
     use uuid::Uuid;
 
@@ -3347,12 +3197,10 @@ mod tests {
         let workspace_dir = WorkspaceManager::get_workspace_base_dir().join(&workspace_dir_name);
         let _container = WorkspaceManager::create_workspace(
             &workspace_dir,
-            &[
-                services::services::workspace_manager::RepoWorkspaceInput::new(
-                    repo.clone(),
-                    "main".to_string(),
-                ),
-            ],
+            &[repos::workspace_manager::RepoWorkspaceInput::new(
+                repo.clone(),
+                "main".to_string(),
+            )],
             &branch_name,
         )
         .await

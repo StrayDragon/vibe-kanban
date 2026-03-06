@@ -4,6 +4,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use config::{ConfigError, EditorOpenError};
 use db::{
     DbErr,
     models::{
@@ -12,19 +13,14 @@ use db::{
         session::SessionError, workspace::WorkspaceError,
     },
 };
-use deployment::DeploymentError;
+use app_runtime::DeploymentError;
+use execution::{container::ContainerError, github::GitHubServiceError, image::ImageError};
 use executors::executors::ExecutorError;
-use git2::Error as Git2Error;
-use services::services::{
-    config::{ConfigError, EditorOpenError},
-    container::ContainerError,
-    git::GitServiceError,
-    github::GitHubServiceError,
-    image::ImageError,
-    project::ProjectServiceError,
-    repo::RepoError as RepoServiceError,
+use repos::{
+    git::GitServiceError, project::ProjectServiceError, repo::RepoError as RepoServiceError,
     worktree_manager::WorktreeError,
 };
+use tasks::orchestration::TasksError;
 use thiserror::Error;
 use utils_core::response::ApiResponse;
 
@@ -87,12 +83,6 @@ impl From<&'static str> for ApiError {
     }
 }
 
-impl From<Git2Error> for ApiError {
-    fn from(err: Git2Error) -> Self {
-        ApiError::GitService(GitServiceError::from(err))
-    }
-}
-
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status_code, error_type) = match &self {
@@ -137,10 +127,10 @@ impl IntoResponse for ApiError {
             },
             // Promote certain GitService errors to conflict status with concise messages
             ApiError::GitService(git_err) => match git_err {
-                services::services::git::GitServiceError::MergeConflicts(_) => {
+                repos::git::GitServiceError::MergeConflicts(_) => {
                     (StatusCode::CONFLICT, "GitServiceError")
                 }
-                services::services::git::GitServiceError::RebaseInProgress => {
+                repos::git::GitServiceError::RebaseInProgress => {
                     (StatusCode::CONFLICT, "GitServiceError")
                 }
                 _ => (StatusCode::INTERNAL_SERVER_ERROR, "GitServiceError"),
@@ -194,8 +184,8 @@ impl IntoResponse for ApiError {
                 }
             },
             ApiError::GitService(git_err) => match git_err {
-                services::services::git::GitServiceError::MergeConflicts(msg) => msg.clone(),
-                services::services::git::GitServiceError::RebaseInProgress => {
+                repos::git::GitServiceError::MergeConflicts(msg) => msg.clone(),
+                repos::git::GitServiceError::RebaseInProgress => {
                     "A rebase is already in progress. Resolve conflicts or abort the rebase, then retry.".to_string()
                 }
                 _ => format!("{}: {}", error_type, self),
@@ -364,5 +354,19 @@ mod tests {
                 .status(),
             StatusCode::NOT_FOUND
         );
+    }
+}
+
+impl From<TasksError> for ApiError {
+    fn from(err: TasksError) -> Self {
+        match err {
+            TasksError::Database(err) => ApiError::Database(err),
+            TasksError::Project(err) => ApiError::Project(err),
+            TasksError::Workspace(err) => ApiError::Workspace(err),
+            TasksError::Conflict(msg) => ApiError::Conflict(msg),
+            TasksError::NotFound(msg) => ApiError::NotFound(msg),
+            TasksError::BadRequest(msg) => ApiError::BadRequest(msg),
+            TasksError::Runtime(msg) => ApiError::Internal(msg),
+        }
     }
 }

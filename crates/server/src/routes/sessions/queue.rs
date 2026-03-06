@@ -3,9 +3,9 @@ use axum::{
     response::Json as ResponseJson, routing::get,
 };
 use db::models::{scratch::DraftFollowUpData, session::Session};
-use deployment::Deployment;
+use app_runtime::Deployment;
+use execution::queued_message::QueueStatus;
 use serde::{Deserialize, Serialize};
-use services::services::queued_message::QueueStatus;
 use ts_rs::TS;
 use utils_core::response::ApiResponse;
 

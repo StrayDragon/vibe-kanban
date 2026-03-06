@@ -34,7 +34,8 @@ use db::{
         workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
     },
 };
-use deployment::Deployment;
+use app_runtime::Deployment;
+use execution::container::ContainerService;
 use executors_protocol::{
     BaseCodingAgent, ExecutorProfileId,
     actions::{
@@ -57,7 +58,6 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value, json};
-use services::services::container::ContainerService;
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;

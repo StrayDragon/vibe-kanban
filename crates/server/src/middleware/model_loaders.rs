@@ -13,7 +13,7 @@ use db::{
         task::Task, task_group::TaskGroup, workspace::Workspace,
     },
 };
-use deployment::Deployment;
+use app_runtime::Deployment;
 use uuid::Uuid;
 
 pub trait ModelLoaderDeps {

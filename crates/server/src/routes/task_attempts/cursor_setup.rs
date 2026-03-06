@@ -3,7 +3,8 @@ use db::models::{
     session::{CreateSession, Session},
     workspace::Workspace,
 };
-use deployment::Deployment;
+use app_runtime::Deployment;
+use execution::container::ContainerService;
 #[cfg(unix)]
 use executors::executors::cursor::CursorAgent;
 use executors_protocol::actions::ExecutorAction;
@@ -12,7 +13,6 @@ use executors_protocol::actions::{
     ExecutorActionType,
     script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
 };
-use services::services::container::ContainerService;
 use uuid::Uuid;
 
 use crate::error::ApiError;

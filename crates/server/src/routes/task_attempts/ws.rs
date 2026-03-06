@@ -7,8 +7,8 @@ use axum::{
     response::IntoResponse,
 };
 use db::models::workspace::Workspace;
-use deployment::Deployment;
-use services::services::container::ContainerService;
+use app_runtime::Deployment;
+use execution::container::ContainerService;
 
 use super::DiffStreamQuery;
 use crate::DeploymentImpl;
@@ -20,7 +20,7 @@ pub async fn stream_task_attempt_diff_ws(
     Extension(workspace): Extension<Workspace>,
     State(deployment): State<DeploymentImpl>,
 ) -> impl IntoResponse {
-    let options = services::services::container::DiffStreamOptions {
+    let options = execution::container::DiffStreamOptions {
         stats_only: params.stats_only,
         force: params.force,
     };
@@ -35,7 +35,7 @@ async fn handle_task_attempt_diff_ws(
     socket: WebSocket,
     deployment: DeploymentImpl,
     workspace: Workspace,
-    options: services::services::container::DiffStreamOptions,
+    options: execution::container::DiffStreamOptions,
 ) -> anyhow::Result<()> {
     use futures_util::{SinkExt, StreamExt, TryStreamExt};
     use logs_axum::LogMsgAxumExt;

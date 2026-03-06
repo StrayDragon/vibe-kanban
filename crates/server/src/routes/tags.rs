@@ -9,7 +9,7 @@ use db::{
     DbErr,
     models::tag::{CreateTag, Tag, UpdateTag},
 };
-use deployment::Deployment;
+use app_runtime::Deployment;
 use serde::Deserialize;
 use ts_rs::TS;
 use utils_core::response::ApiResponse;

@@ -1,9 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/app-runtime",
+    "crates/config",
     "crates/server",
     "crates/db",
     "crates/db/migration",
+    "crates/events",
+    "crates/execution",
     "crates/executors",
     "crates/executors-core",
     "crates/executor-codex",
@@ -19,14 +23,13 @@ members = [
     "crates/executors-protocol",
     "crates/logs-protocol",
     "crates/logs-store",
+    "crates/repos",
     "crates/logs-axum",
-    "crates/services",
+    "crates/tasks",
     "crates/utils-core",
     "crates/utils-assets",
     "crates/utils-git",
     "crates/utils-jwt",
-    "crates/local-deployment",
-    "crates/deployment",
     "crates/review"
 ]
 

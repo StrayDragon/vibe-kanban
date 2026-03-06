@@ -11,13 +11,13 @@ use axum::{
     response::Json as ResponseJson,
     routing::get,
 };
-use deployment::Deployment;
-use serde::Deserialize;
-use services::services::{
-    config::Config,
+use config::Config;
+use app_runtime::Deployment;
+use repos::{
     filesystem::{DirectoryEntry, DirectoryListResponse, FilesystemError, FilesystemService},
     workspace_manager::WorkspaceManager,
 };
+use serde::Deserialize;
 use tokio::sync::RwLock;
 use utils_core::response::ApiResponse;
 

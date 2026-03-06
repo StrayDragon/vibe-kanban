@@ -49,8 +49,8 @@ mod tests {
         extract::ConnectInfo,
         http::{Request, StatusCode, header},
     };
-    use deployment::Deployment;
-    use services::services::config::AccessControlMode;
+    use config::AccessControlMode;
+    use app_runtime::Deployment;
     use tower::ServiceExt;
     use uuid::Uuid;
 

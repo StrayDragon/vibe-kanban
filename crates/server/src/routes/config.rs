@@ -8,7 +8,13 @@ use axum::{
     response::{Json as ResponseJson, Response},
     routing::{get, post, put},
 };
-use deployment::{Deployment, DeploymentError};
+use config::{
+    Config, ConfigError, SoundFile,
+    editor::{EditorConfig, EditorType},
+    save_config_to_file,
+};
+use app_runtime::{Deployment, DeploymentError};
+use execution::github::GitHubService;
 use executors::{
     agent_command::{AgentCommandResolution, agent_command_resolver},
     executors::{AvailabilityInfo, BaseAgentCapability, CodingAgent, StandardCodingAgentExecutor},
@@ -19,14 +25,6 @@ use executors::{
 use executors_protocol::{BaseCodingAgent, ExecutorProfileId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use services::services::{
-    config::{
-        Config, ConfigError, SoundFile,
-        editor::{EditorConfig, EditorType},
-        save_config_to_file,
-    },
-    github::GitHubService,
-};
 use tokio::fs;
 use ts_rs::TS;
 use utils_assets::config_path;
@@ -136,7 +134,7 @@ async fn update_config(
 
     if matches!(
         new_config.access_control.mode,
-        services::services::config::AccessControlMode::Token
+        config::AccessControlMode::Token
     ) && new_config
         .access_control
         .token
@@ -594,13 +592,13 @@ pub struct CliDependencyPreflightResponse {
 }
 
 fn map_github_cli_preflight_status(
-    err: &services::services::github::GitHubServiceError,
+    err: &execution::github::GitHubServiceError,
 ) -> GhCliPreflightStatus {
     match err {
-        services::services::github::GitHubServiceError::GhCliNotInstalled(_) => {
+        execution::github::GitHubServiceError::GhCliNotInstalled(_) => {
             GhCliPreflightStatus::NotInstalled
         }
-        services::services::github::GitHubServiceError::AuthFailed(_) => {
+        execution::github::GitHubServiceError::AuthFailed(_) => {
             GhCliPreflightStatus::NotAuthenticated
         }
         _ => GhCliPreflightStatus::Error {
@@ -751,7 +749,7 @@ mod tests {
 
     #[test]
     fn github_cli_preflight_maps_statuses() {
-        use services::services::github::{GhCliError, GitHubServiceError};
+        use execution::github::{GhCliError, GitHubServiceError};
 
         let not_installed = GitHubServiceError::GhCliNotInstalled(GhCliError::NotAvailable);
         assert!(matches!(

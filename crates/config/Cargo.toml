@@ -1,0 +1,22 @@
+[package]
+name = "config"
+version = "0.0.143"
+edition = "2024"
+
+[dependencies]
+executors = { path = "../executors" }
+executors-core = { path = "../executors-core" }
+executors-protocol = { path = "../executors-protocol" }
+utils-git = { path = "../utils-git" }
+utils-core = { path = "../utils-core" }
+utils-assets = { path = "../utils-assets" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+ts-rs = { workspace = true }
+thiserror = { workspace = true }
+strum_macros = "0.27.2"
+strum = "0.27.2"
+rust-embed = "8.2"
+once_cell = "1.20"

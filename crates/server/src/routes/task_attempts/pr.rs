@@ -18,18 +18,17 @@ use db::{
         workspace_repo::WorkspaceRepo,
     },
 };
-use deployment::Deployment;
+use app_runtime::Deployment;
+use execution::{
+    container::ContainerService,
+    github::{CreatePrRequest, GitHubService, GitHubServiceError, UnifiedPrComment},
+};
 use executors_protocol::actions::{
     ExecutorAction, ExecutorActionType, coding_agent_follow_up::CodingAgentFollowUpRequest,
     coding_agent_initial::CodingAgentInitialRequest,
 };
-use git2::BranchType;
+use repos::git::{GitBranchType, GitCliError, GitServiceError};
 use serde::{Deserialize, Serialize};
-use services::services::{
-    container::ContainerService,
-    git::{GitCliError, GitServiceError},
-    github::{CreatePrRequest, GitHubService, GitHubServiceError, UnifiedPrComment},
-};
 use ts_rs::TS;
 use utils_core::response::ApiResponse;
 use uuid::Uuid;
@@ -296,7 +295,7 @@ pub async fn create_github_pr(
         deployment
             .git()
             .find_branch_type(&repo_path, &target_branch)?,
-        BranchType::Remote
+        GitBranchType::Remote
     ) {
         // Remote branches are formatted as {remote}/{branch} locally.
         // For PR APIs, we must provide just the branch name.

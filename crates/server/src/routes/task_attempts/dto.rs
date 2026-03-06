@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 use db::models::{merge::Merge, session::Session, workspace::Workspace};
 use executors_protocol::ExecutorProfileId;
+use repos::git::ConflictOp;
 use serde::{Deserialize, Serialize};
-use services::services::git::ConflictOp;
 use ts_rs::TS;
 use utils_core::diff::DiffSummary;
 use uuid::Uuid;

@@ -15,13 +15,13 @@ use db::models::{
     execution_process::{ExecutionProcess, ExecutionProcessError, ExecutionProcessStatus},
     execution_process_repo_state::ExecutionProcessRepoState,
 };
-use deployment::Deployment;
+use app_runtime::Deployment;
+use execution::container::ContainerService;
 use executors::logs::utils::patch::PatchType;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use logs_axum::LogMsgAxumExt;
 use logs_store::LogEntryEvent;
 use serde::{Deserialize, Serialize};
-use services::services::container::ContainerService;
 use ts_rs::TS;
 use utils_core::{log_entries::LogEntryChannel, response::ApiResponse};
 use uuid::Uuid;

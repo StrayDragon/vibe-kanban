@@ -23,4 +23,5 @@ shellexpand = "3.1.1"
 which = "8.0.0"
 similar = "2"
 thiserror = { workspace = true }
+async-trait = { workspace = true }
 

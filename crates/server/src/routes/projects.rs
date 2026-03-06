@@ -16,10 +16,10 @@ use db::models::{
     project_repo::{CreateProjectRepo, ProjectRepo, UpdateProjectRepo},
     repo::Repo,
 };
-use deployment::Deployment;
+use app_runtime::Deployment;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use logs_axum::LogMsgAxumExt;
-use services::services::{file_search_cache::SearchQuery, project::ProjectServiceError};
+use repos::{file_search_cache::SearchQuery, project::ProjectServiceError};
 use utils_core::response::ApiResponse;
 use uuid::Uuid;
 
@@ -425,8 +425,8 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
 #[cfg(test)]
 mod tests {
     use axum::{body::to_bytes, http::StatusCode};
-    use deployment::Deployment;
-    use services::services::git::GitService;
+    use app_runtime::Deployment;
+    use repos::git::GitService;
 
     use super::*;
     use crate::test_support::TestEnvGuard;

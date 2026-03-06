@@ -136,6 +136,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
+name = "app-runtime"
+version = "0.0.143"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "config",
+ "db",
+ "events",
+ "execution",
+ "executors",
+ "executors-core",
+ "futures",
+ "git2",
+ "logs-axum",
+ "logs-store",
+ "notify-rust",
+ "openssl-sys",
+ "repos",
+ "serde_json",
+ "tasks",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "utils-assets",
+ "utils-core",
+ "uuid",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -792,6 +824,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "config"
+version = "0.0.143"
+dependencies = [
+ "anyhow",
+ "executors",
+ "executors-core",
+ "executors-protocol",
+ "once_cell",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "strum",
+ "strum_macros",
+ "thiserror 2.0.17",
+ "tracing",
+ "ts-rs 11.0.1",
+ "utils-assets",
+ "utils-core",
+ "utils-git",
+]
+
+[[package]]
 name = "console"
 version = "0.15.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1116,26 +1170,6 @@ dependencies = [
  "sea-orm-migration",
  "serde_json",
  "tokio",
-]
-
-[[package]]
-name = "deployment"
-version = "0.0.143"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "db",
- "executors",
- "futures",
- "git2",
- "logs-axum",
- "serde_json",
- "services",
- "thiserror 2.0.17",
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]
@@ -1474,6 +1508,82 @@ checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
  "event-listener",
  "pin-project-lite",
+]
+
+[[package]]
+name = "events"
+version = "0.0.143"
+dependencies = [
+ "anyhow",
+ "db",
+ "db-migration",
+ "futures",
+ "json-patch",
+ "logs-protocol",
+ "logs-store",
+ "sea-orm",
+ "sea-orm-migration",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "execution"
+version = "0.0.143"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "backon",
+ "base64",
+ "bytes",
+ "chrono",
+ "command-group",
+ "config",
+ "dashmap",
+ "db",
+ "dunce",
+ "executors",
+ "executors-core",
+ "executors-protocol",
+ "futures",
+ "futures-util",
+ "git2",
+ "globwalk",
+ "json-patch",
+ "logs-protocol",
+ "logs-store",
+ "moka",
+ "nix 0.29.0",
+ "notify",
+ "notify-debouncer-full",
+ "once_cell",
+ "openssl-sys",
+ "rand 0.8.5",
+ "regex",
+ "repos",
+ "reqwest",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "sha2",
+ "shlex",
+ "strip-ansi-escapes",
+ "tasks",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "ts-rs 11.0.1",
+ "utils-assets",
+ "utils-core",
+ "uuid",
 ]
 
 [[package]]
@@ -2932,39 +3042,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6373607a59f0be73a39b6fe456b8192fcc3585f602af20751600e974dd455e77"
 
 [[package]]
-name = "local-deployment"
-version = "0.0.143"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "chrono",
- "command-group",
- "db",
- "deployment",
- "executors",
- "executors-protocol",
- "futures",
- "globwalk",
- "json-patch",
- "logs-protocol",
- "logs-store",
- "nix 0.29.0",
- "openssl-sys",
- "reqwest",
- "serde_json",
- "services",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
- "tokio-util",
- "tracing",
- "utils-assets",
- "utils-core",
- "uuid",
-]
-
-[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4139,6 +4216,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "repos"
+version = "0.0.143"
+dependencies = [
+ "chrono",
+ "config",
+ "dashmap",
+ "db",
+ "db-migration",
+ "dirs 5.0.1",
+ "dunce",
+ "fst",
+ "futures",
+ "git2",
+ "ignore",
+ "moka",
+ "notify",
+ "notify-debouncer-full",
+ "once_cell",
+ "regex",
+ "sea-orm",
+ "sea-orm-migration",
+ "serde",
+ "shlex",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "ts-rs 11.0.1",
+ "utils-core",
+ "uuid",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.12.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4889,18 +5000,20 @@ name = "server"
 version = "0.0.143"
 dependencies = [
  "anyhow",
+ "app-runtime",
+ "async-trait",
  "axum",
  "chrono",
+ "config",
  "db",
  "db-migration",
- "deployment",
  "dotenv",
+ "events",
+ "execution",
  "executors",
  "executors-protocol",
  "futures-util",
- "git2",
  "ignore",
- "local-deployment",
  "logs-axum",
  "logs-protocol",
  "logs-store",
@@ -4910,6 +5023,7 @@ dependencies = [
  "os_info",
  "rand 0.8.5",
  "regex",
+ "repos",
  "reqwest",
  "rmcp",
  "rust-embed",
@@ -4920,75 +5034,17 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
- "services",
  "sha2",
  "shlex",
  "strip-ansi-escapes",
  "strum",
+ "tasks",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
  "tower",
  "tracing",
  "tracing-subscriber",
- "ts-rs 11.0.1",
- "url",
- "utils-assets",
- "utils-core",
- "utils-git",
- "uuid",
-]
-
-[[package]]
-name = "services"
-version = "0.0.143"
-dependencies = [
- "anyhow",
- "async-trait",
- "backon",
- "base64",
- "chrono",
- "dashmap",
- "db",
- "db-migration",
- "dirs 5.0.1",
- "dunce",
- "executors",
- "executors-protocol",
- "fst",
- "futures",
- "futures-util",
- "git2",
- "ignore",
- "json-patch",
- "logs-protocol",
- "logs-store",
- "moka",
- "notify",
- "notify-debouncer-full",
- "notify-rust",
- "once_cell",
- "openssl-sys",
- "os_info",
- "regex",
- "reqwest",
- "rust-embed",
- "sea-orm",
- "sea-orm-migration",
- "secrecy",
- "security-framework",
- "serde",
- "serde_json",
- "sha2",
- "shlex",
- "strum",
- "strum_macros",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
  "ts-rs 11.0.1",
  "url",
  "utils-assets",
@@ -5502,6 +5558,35 @@ dependencies = [
  "filetime",
  "libc",
  "xattr",
+]
+
+[[package]]
+name = "tasks"
+version = "0.0.143"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dashmap",
+ "db",
+ "db-migration",
+ "executors",
+ "executors-core",
+ "executors-protocol",
+ "futures",
+ "logs-protocol",
+ "logs-store",
+ "repos",
+ "sea-orm",
+ "sea-orm-migration",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "ts-rs 11.0.1",
+ "utils-core",
+ "uuid",
 ]
 
 [[package]]
@@ -6109,6 +6194,7 @@ dependencies = [
 name = "utils-core"
 version = "0.0.143"
 dependencies = [
+ "async-trait",
  "bytes",
  "chrono",
  "directories",

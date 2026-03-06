@@ -3,7 +3,8 @@ use db::models::{
     session::{CreateSession, Session},
     workspace::Workspace,
 };
-use deployment::Deployment;
+use app_runtime::Deployment;
+use execution::container::ContainerService;
 use executors::{
     agent_command::{AgentCommandKey, agent_command_resolver, command_identity_for_agent},
     command::{CommandBuilder, apply_overrides},
@@ -16,7 +17,6 @@ use executors_protocol::{
         script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
     },
 };
-use services::services::container::ContainerService;
 use uuid::Uuid;
 
 use crate::error::ApiError;

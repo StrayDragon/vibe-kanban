@@ -1,0 +1,24 @@
+[package]
+name = "events"
+version = "0.0.143"
+edition = "2024"
+
+[dependencies]
+db = { path = "../db" }
+logs-protocol = { path = "../logs-protocol" }
+logs-store = { path = "../logs-store" }
+tokio = { workspace = true }
+tokio-util = { version = "0.7", features = ["io"] }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+futures = "0.3.31"
+tokio-stream = "0.1.17"
+json-patch = "2.0"
+thiserror = { workspace = true }
+
+[dev-dependencies]
+sea-orm = { version = "2.0.0-rc.28", features = ["runtime-tokio-rustls", "sqlx-sqlite"] }
+sea-orm-migration = { version = "2.0.0-rc.28" }
+db-migration = { path = "../db/migration" }

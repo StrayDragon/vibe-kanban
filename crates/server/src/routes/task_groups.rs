@@ -9,7 +9,7 @@ use db::{
     TransactionTrait,
     models::task_group::{CreateTaskGroup, TaskGroup, TaskGroupError, UpdateTaskGroup},
 };
-use deployment::Deployment;
+use app_runtime::Deployment;
 use serde::Deserialize;
 use utils_core::response::ApiResponse;
 use uuid::Uuid;

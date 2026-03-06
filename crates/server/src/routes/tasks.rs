@@ -10,22 +10,17 @@ use axum::{
     response::{IntoResponse, Json as ResponseJson},
     routing::{delete, get, post, put},
 };
-use db::{
-    DbErr, TransactionTrait,
-    models::{
-        image::TaskImage,
-        project::{Project, ProjectError},
-        task::{CreateTask, Task, TaskKind, TaskWithAttemptStatus, UpdateTask},
-        workspace::{CreateWorkspace, Workspace},
-        workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
-    },
+use db::models::{
+    image::TaskImage,
+    task::{CreateTask, Task, TaskWithAttemptStatus, UpdateTask},
+    workspace_repo::CreateWorkspaceRepo,
 };
-use deployment::Deployment;
+use app_runtime::Deployment;
 use executors_protocol::ExecutorProfileId;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use logs_axum::LogMsgAxumExt;
 use serde::{Deserialize, Serialize};
-use services::services::container::ContainerService;
+use tasks::orchestration::{self, CreateAndStartTaskInput};
 use ts_rs::TS;
 use utils_core::response::ApiResponse;
 use uuid::Uuid;
@@ -35,6 +30,7 @@ use crate::{
     error::ApiError,
     middleware::load_task_middleware,
     routes::{task_attempts::WorkspaceRepoInput, task_deletion},
+    task_runtime::DeploymentTaskRuntime,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -140,21 +136,9 @@ pub async fn create_task(
         key,
         hash,
         || async {
-            let id = Uuid::new_v4();
-
-            tracing::debug!(
-                "Creating task '{}' in project {}",
-                payload.title,
-                payload.project_id
-            );
-
-            let task = Task::create(&deployment.db().pool, &payload, id).await?;
-
-            if let Some(image_ids) = &payload.image_ids {
-                TaskImage::associate_many_dedup(&deployment.db().pool, task.id, image_ids).await?;
-            }
-
-            Ok(task)
+            orchestration::create_task(&deployment.db().pool, &payload)
+                .await
+                .map_err(ApiError::from)
         },
     )
     .await
@@ -171,131 +155,28 @@ pub async fn create_task_and_start(
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<CreateAndStartTaskRequest>,
 ) -> Result<ResponseJson<ApiResponse<TaskWithAttemptStatus>>, ApiError> {
-    if matches!(payload.task.task_kind, Some(TaskKind::Group)) {
-        return Err(ApiError::BadRequest(
-            "Task group entry tasks cannot be started".to_string(),
-        ));
-    }
-    if payload.repos.is_empty() {
-        return Err(ApiError::BadRequest(
-            "At least one repository is required".to_string(),
-        ));
-    }
+    let runtime = DeploymentTaskRuntime::new(deployment.container());
+    let repos: Vec<CreateWorkspaceRepo> = payload
+        .repos
+        .iter()
+        .map(|repo| CreateWorkspaceRepo {
+            repo_id: repo.repo_id,
+            target_branch: repo.target_branch.clone(),
+        })
+        .collect();
 
-    let pool = &deployment.db().pool;
-
-    let task_id = Uuid::new_v4();
-    let attempt_id = Uuid::new_v4();
-    let git_branch_name = deployment
-        .container()
-        .git_branch_from_workspace(&attempt_id, &payload.task.title)
-        .await;
-
-    let tx = pool.begin().await?;
-    let task = Task::create(&tx, &payload.task, task_id).await?;
-
-    if let Some(image_ids) = &payload.task.image_ids {
-        TaskImage::associate_many_dedup(&tx, task.id, image_ids).await?;
-    }
-
-    let project = Project::find_by_id(&tx, task.project_id)
-        .await?
-        .ok_or(ProjectError::ProjectNotFound)?;
-
-    let agent_working_dir = project
-        .default_agent_working_dir
-        .as_ref()
-        .filter(|dir: &&String| !dir.is_empty())
-        .cloned();
-
-    let workspace = Workspace::create(
-        &tx,
-        &CreateWorkspace {
-            branch: git_branch_name,
-            agent_working_dir,
+    let task = orchestration::create_task_and_start(
+        &runtime,
+        &deployment.db().pool,
+        &CreateAndStartTaskInput {
+            task: payload.task,
+            executor_profile_id: payload.executor_profile_id,
+            repos,
         },
-        attempt_id,
-        task.id,
     )
     .await?;
 
-    let workspace_repos: Vec<CreateWorkspaceRepo> = payload
-        .repos
-        .iter()
-        .map(|r| CreateWorkspaceRepo {
-            repo_id: r.repo_id,
-            target_branch: r.target_branch.clone(),
-        })
-        .collect();
-    WorkspaceRepo::create_many(&tx, workspace.id, &workspace_repos).await?;
-    tx.commit().await?;
-
-    if let Err(err) = deployment
-        .container()
-        .start_workspace(&workspace, payload.executor_profile_id.clone(), None)
-        .await
-    {
-        tracing::error!(
-            task_id = %task.id,
-            workspace_id = %workspace.id,
-            error = %err,
-            "Failed to start task attempt"
-        );
-        if let Err(cleanup_err) = cleanup_failed_task_start(&deployment, &task, &workspace).await {
-            tracing::error!(
-                task_id = %task.id,
-                workspace_id = %workspace.id,
-                error = %cleanup_err,
-                "Failed to cleanup task after start failure"
-            );
-        }
-        return Err(ApiError::from(err));
-    }
-
-    let task = Task::find_by_id(pool, task.id)
-        .await?
-        .ok_or(ApiError::Database(DbErr::RecordNotFound(
-            "Task not found".to_string(),
-        )))?;
-
-    tracing::info!("Started attempt for task {}", task.id);
-    Ok(ResponseJson(ApiResponse::success(TaskWithAttemptStatus {
-        task,
-        has_in_progress_attempt: true,
-        last_attempt_failed: false,
-        executor: payload.executor_profile_id.executor.to_string(),
-    })))
-}
-
-async fn cleanup_failed_task_start(
-    deployment: &DeploymentImpl,
-    task: &Task,
-    workspace: &Workspace,
-) -> Result<(), ApiError> {
-    let pool = &deployment.db().pool;
-    let workspace_for_cleanup = Workspace::find_by_id(pool, workspace.id)
-        .await?
-        .unwrap_or_else(|| workspace.clone());
-
-    if let Err(err) = deployment.container().delete(&workspace_for_cleanup).await {
-        tracing::error!(
-            task_id = %task.id,
-            workspace_id = %workspace.id,
-            error = %err,
-            "Failed to delete workspace worktree after start failure"
-        );
-    }
-
-    let rows = Task::delete(pool, task.id).await?;
-    if rows == 0 {
-        tracing::warn!(
-            task_id = %task.id,
-            workspace_id = %workspace.id,
-            "Task cleanup skipped because task no longer exists"
-        );
-    }
-
-    Ok(())
+    Ok(ResponseJson(ApiResponse::success(task)))
 }
 
 pub async fn update_task(
@@ -389,7 +270,7 @@ mod tests {
         project::{CreateProject, Project},
         task::{CreateTask, Task},
     };
-    use deployment::Deployment;
+    use app_runtime::Deployment;
     use uuid::Uuid;
 
     use super::create_task;

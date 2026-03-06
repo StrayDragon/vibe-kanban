@@ -1,0 +1,32 @@
+[package]
+name = "tasks"
+version = "0.0.143"
+edition = "2024"
+
+[dependencies]
+db = { path = "../db" }
+executors = { path = "../executors" }
+executors-core = { path = "../executors-core" }
+executors-protocol = { path = "../executors-protocol" }
+logs-protocol = { path = "../logs-protocol" }
+logs-store = { path = "../logs-store" }
+repos = { path = "../repos" }
+utils-core = { path = "../utils-core" }
+serde = { workspace = true }
+ts-rs = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+dashmap = "6.1"
+futures = "0.3"
+async-trait = { workspace = true }
+sea-orm = { version = "2.0.0-rc.28", features = ["runtime-tokio-rustls", "sqlx-sqlite"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+sea-orm = { version = "2.0.0-rc.28", features = ["runtime-tokio-rustls", "sqlx-sqlite"] }
+sea-orm-migration = { version = "2.0.0-rc.28" }
+db-migration = { path = "../db/migration" }

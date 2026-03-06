@@ -6,6 +6,7 @@ pub mod approvals;
 pub mod browser;
 pub mod diff;
 pub mod log_entries;
+pub mod notifications;
 pub mod path;
 pub mod port_file;
 pub mod response;

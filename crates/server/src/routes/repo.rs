@@ -5,9 +5,9 @@ use axum::{
     routing::{get, post},
 };
 use db::models::repo::Repo;
-use deployment::Deployment;
+use app_runtime::Deployment;
+use repos::git::{GitBranch, GitServiceError};
 use serde::Deserialize;
-use services::services::git::GitBranch;
 use ts_rs::TS;
 use utils_core::response::ApiResponse;
 use uuid::Uuid;
@@ -70,7 +70,10 @@ pub async fn get_repo_branches(
         .get_by_id(&deployment.db().pool, repo_id)
         .await?;
 
-    let branches = deployment.git().get_all_branches(&repo.path)?;
+    let branches = deployment
+        .git()
+        .get_all_branches(&repo.path)
+        .map_err(GitServiceError::from)?;
     Ok(ResponseJson(ApiResponse::success(branches)))
 }
 

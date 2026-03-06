@@ -7,7 +7,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use deployment::Deployment;
+use app_runtime::Deployment;
 use url::form_urlencoded;
 use utils_core::response::ApiResponse;
 
@@ -99,10 +99,7 @@ pub async fn require_api_auth(
         config.access_control.clone()
     };
 
-    if matches!(
-        access_control.mode,
-        services::services::config::AccessControlMode::Disabled
-    ) {
+    if matches!(access_control.mode, config::AccessControlMode::Disabled) {
         return next.run(req).await;
     }
 

@@ -11,9 +11,9 @@ use executors_protocol::actions::{
 use tokio::process::Command;
 use utils_core::shell::get_shell_command;
 
+use executors_core::{approvals::ExecutorApprovalService, env::ExecutionEnv};
+
 use crate::{
-    approvals::ExecutorApprovalService,
-    env::ExecutionEnv,
     executors::{CodingAgent, ExecutorError, SpawnedChild, StandardCodingAgentExecutor},
     profile::ExecutorConfigs,
 };

@@ -3163,16 +3163,16 @@ mod tests {
         time::Duration,
     };
 
+    use config::DiffPreviewGuardPreset;
     use db::models::{
         execution_process::CreateExecutionProcess, repo::Repo, session::CreateSession,
     };
-    use deployment::Deployment;
+    use app_runtime::Deployment;
     use executors_protocol::actions::{ExecutorActionType, script::ScriptContext};
     use rmcp::{
         ServiceExt,
         handler::{client::ClientHandler, server::tool::IntoCallToolResult},
     };
-    use services::services::config::DiffPreviewGuardPreset;
 
     use super::*;
     use crate::test_support::TestEnvGuard;

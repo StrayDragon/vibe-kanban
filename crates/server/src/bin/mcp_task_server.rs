@@ -1,4 +1,4 @@
-use deployment::Deployment;
+use app_runtime::Deployment;
 use rmcp::{ServiceExt, transport::stdio};
 use server::{DeploymentImpl, mcp::task_server::TaskServer};
 use tracing_subscriber::{EnvFilter, prelude::*};
