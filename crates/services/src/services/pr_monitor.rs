@@ -10,6 +10,7 @@ use db::{
 };
 use thiserror::Error;
 use tokio::time::interval;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use crate::services::github::{GitHubRepoInfo, GitHubService, GitHubServiceError};
@@ -28,13 +29,18 @@ enum PrMonitorError {
 pub struct PrMonitorService {
     db: DBService,
     poll_interval: Duration,
+    shutdown_token: CancellationToken,
 }
 
 impl PrMonitorService {
-    pub async fn spawn(db: DBService) -> tokio::task::JoinHandle<()> {
+    pub async fn spawn(
+        db: DBService,
+        shutdown_token: CancellationToken,
+    ) -> tokio::task::JoinHandle<()> {
         let service = Self {
             db,
             poll_interval: Duration::from_secs(60), // Check every minute
+            shutdown_token,
         };
         tokio::spawn(async move {
             service.start().await;
@@ -50,7 +56,13 @@ impl PrMonitorService {
         let mut interval = interval(self.poll_interval);
 
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = self.shutdown_token.cancelled() => {
+                    info!("Stopping PR monitoring service");
+                    break;
+                }
+                _ = interval.tick() => {}
+            }
             if let Err(e) = self.check_all_open_prs().await {
                 error!("Error checking open PRs: {}", e);
             }

@@ -12,6 +12,7 @@ async-trait = { workspace = true }
 thiserror = { workspace = true } 
 anyhow = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { version = "0.7", features = ["io"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 git2 = "^0.18.1"

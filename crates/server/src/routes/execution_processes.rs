@@ -196,6 +196,7 @@ pub async fn stream_raw_logs_v2_ws(
     State(deployment): State<DeploymentImpl>,
     Path(exec_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let shutdown = deployment.shutdown_token();
     let stream = deployment
         .container()
         .stream_raw_log_entries(&exec_id)
@@ -205,7 +206,7 @@ pub async fn stream_raw_logs_v2_ws(
         })?;
 
     Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_log_entries_ws(socket, stream).await {
+        if let Err(e) = handle_log_entries_ws(socket, stream, shutdown).await {
             tracing::warn!("raw logs WS closed: {}", e);
         }
     }))
@@ -216,6 +217,7 @@ pub async fn stream_normalized_logs_v2_ws(
     State(deployment): State<DeploymentImpl>,
     Path(exec_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let shutdown = deployment.shutdown_token();
     let stream = deployment
         .container()
         .stream_normalized_log_entries(&exec_id)
@@ -225,7 +227,7 @@ pub async fn stream_normalized_logs_v2_ws(
         })?;
 
     Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_log_entries_ws(socket, stream).await {
+        if let Err(e) = handle_log_entries_ws(socket, stream, shutdown).await {
             tracing::warn!("normalized logs WS closed: {}", e);
         }
     }))
@@ -237,28 +239,40 @@ async fn handle_log_entries_ws(
     + Unpin
     + Send
     + 'static,
+    shutdown: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
     let mut stream = stream;
 
     let (mut sender, mut receiver) = socket.split();
-    tokio::spawn(async move { while let Some(Ok(_)) = receiver.next().await {} });
-
-    while let Some(item) = stream.next().await {
-        match item {
-            Ok(event) => {
-                if let Some(message) = log_entry_event_to_message(event) {
-                    let is_finished = matches!(message.event, LogStreamEvent::Finished);
-                    if sender.send(message.ws_message).await.is_err() {
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => {
+                break;
+            }
+            item = stream.next() => {
+                match item {
+                    Some(Ok(event)) => {
+                        if let Some(message) = log_entry_event_to_message(event) {
+                            let is_finished = matches!(message.event, LogStreamEvent::Finished);
+                            if sender.send(message.ws_message).await.is_err() {
+                                break;
+                            }
+                            if is_finished {
+                                break;
+                            }
+                        }
+                    }
+                    Some(Err(e)) => {
+                        tracing::error!("log entry stream error: {}", e);
                         break;
                     }
-                    if is_finished {
-                        break;
-                    }
+                    None => break,
                 }
             }
-            Err(e) => {
-                tracing::error!("log entry stream error: {}", e);
-                break;
+            msg = receiver.next() => {
+                if msg.is_none() {
+                    break;
+                }
             }
         }
     }
@@ -344,6 +358,7 @@ async fn handle_execution_processes_ws(
     workspace_id: uuid::Uuid,
     show_soft_deleted: bool,
 ) -> anyhow::Result<()> {
+    let shutdown = deployment.shutdown_token();
     // Get the raw stream and convert LogMsg to WebSocket messages
     let mut stream = deployment
         .events()
@@ -351,23 +366,31 @@ async fn handle_execution_processes_ws(
         .await?
         .map_ok(|msg| msg.to_ws_message_unchecked());
 
-    // Split socket into sender and receiver
     let (mut sender, mut receiver) = socket.split();
 
-    // Drain (and ignore) any client->server messages so pings/pongs work
-    tokio::spawn(async move { while let Some(Ok(_)) = receiver.next().await {} });
-
-    // Forward server messages
-    while let Some(item) = stream.next().await {
-        match item {
-            Ok(msg) => {
-                if sender.send(msg).await.is_err() {
-                    break; // client disconnected
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => {
+                break;
+            }
+            item = stream.next() => {
+                match item {
+                    Some(Ok(msg)) => {
+                        if sender.send(msg).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Err(e)) => {
+                        tracing::error!("stream error: {}", e);
+                        continue;
+                    }
+                    None => break,
                 }
             }
-            Err(e) => {
-                tracing::error!("stream error: {}", e);
-                continue;
+            msg = receiver.next() => {
+                if msg.is_none() {
+                    break;
+                }
             }
         }
     }

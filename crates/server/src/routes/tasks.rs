@@ -77,6 +77,7 @@ async fn handle_tasks_ws(
     deployment: DeploymentImpl,
     query: TaskQuery,
 ) -> anyhow::Result<()> {
+    let shutdown = deployment.shutdown_token();
     let include_archived = query.include_archived.unwrap_or(false);
     // Get the raw stream and convert LogMsg to WebSocket messages
     let mut stream = deployment
@@ -88,20 +89,29 @@ async fn handle_tasks_ws(
     // Split socket into sender and receiver
     let (mut sender, mut receiver) = socket.split();
 
-    // Drain (and ignore) any client->server messages so pings/pongs work
-    tokio::spawn(async move { while let Some(Ok(_)) = receiver.next().await {} });
-
-    // Forward server messages
-    while let Some(item) = stream.next().await {
-        match item {
-            Ok(msg) => {
-                if sender.send(msg).await.is_err() {
-                    break; // client disconnected
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => {
+                break;
+            }
+            item = stream.next() => {
+                match item {
+                    Some(Ok(msg)) => {
+                        if sender.send(msg).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Err(e)) => {
+                        tracing::error!("stream error: {}", e);
+                        continue;
+                    }
+                    None => break,
                 }
             }
-            Err(e) => {
-                tracing::error!("stream error: {}", e);
-                continue;
+            msg = receiver.next() => {
+                if msg.is_none() {
+                    break;
+                }
             }
         }
     }

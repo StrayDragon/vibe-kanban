@@ -131,6 +131,7 @@ async fn main() -> Result<(), VibeKanbanError> {
     });
 
     let idempotency_pool = deployment.db().pool.clone();
+    let idempotency_shutdown = deployment.shutdown_token();
     spawn_background(async move {
         let in_progress_ttl_secs = read_ttl_secs(
             IDEMPOTENCY_IN_PROGRESS_TTL_ENV,
@@ -147,16 +148,29 @@ async fn main() -> Result<(), VibeKanbanError> {
         );
 
         loop {
-            if let Err(err) = prune_idempotency_keys_once(
-                &idempotency_pool,
-                in_progress_ttl_secs,
-                completed_ttl_secs,
-            )
-            .await
-            {
+            let prune_result = tokio::select! {
+                _ = idempotency_shutdown.cancelled() => {
+                    tracing::info!("Stopping idempotency key retention job");
+                    break;
+                }
+                result = prune_idempotency_keys_once(
+                    &idempotency_pool,
+                    in_progress_ttl_secs,
+                    completed_ttl_secs,
+                ) => result,
+            };
+
+            if let Err(err) = prune_result {
                 tracing::warn!(error = %err, "Failed to prune idempotency keys");
             }
-            tokio::time::sleep(IDEMPOTENCY_PRUNE_INTERVAL).await;
+
+            tokio::select! {
+                _ = idempotency_shutdown.cancelled() => {
+                    tracing::info!("Stopping idempotency key retention job");
+                    break;
+                }
+                _ = tokio::time::sleep(IDEMPOTENCY_PRUNE_INTERVAL) => {}
+            }
         }
     });
 
@@ -203,6 +217,12 @@ async fn main() -> Result<(), VibeKanbanError> {
     }
 
     let (shutdown_rx, force_exit_rx) = spawn_shutdown_watchers();
+    let deployment_for_shutdown = deployment.clone();
+    let shutdown_bridge_rx = shutdown_rx.clone();
+    tokio::spawn(async move {
+        wait_for_watch_true(shutdown_bridge_rx).await;
+        deployment_for_shutdown.begin_shutdown();
+    });
 
     let server = axum::serve(
         listener,

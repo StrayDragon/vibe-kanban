@@ -65,7 +65,7 @@ use services::services::{
     workspace_manager::{RepoWorkspaceInput, WorkspaceManager},
 };
 use tokio::{sync::RwLock, task::JoinHandle};
-use tokio_util::io::ReaderStream;
+use tokio_util::{io::ReaderStream, sync::CancellationToken};
 use utils_core::{
     diff::DiffSummary,
     text::{git_branch_id, short_uuid, truncate_to_char_boundary},
@@ -176,6 +176,7 @@ pub struct LocalContainerService {
     approvals: Approvals,
     queued_message_service: QueuedMessageService,
     notification_service: NotificationService,
+    shutdown_token: CancellationToken,
 }
 
 impl LocalContainerService {
@@ -188,6 +189,7 @@ impl LocalContainerService {
         image_service: ImageService,
         approvals: Approvals,
         queued_message_service: QueuedMessageService,
+        shutdown_token: CancellationToken,
     ) -> Self {
         let child_store = Arc::new(RwLock::new(HashMap::new()));
         let interrupt_senders = Arc::new(RwLock::new(HashMap::new()));
@@ -208,6 +210,7 @@ impl LocalContainerService {
             approvals,
             queued_message_service,
             notification_service,
+            shutdown_token,
         };
 
         container.spawn_workspace_cleanup().await;
@@ -317,6 +320,7 @@ impl LocalContainerService {
 
     pub async fn spawn_workspace_cleanup(&self) {
         let db = self.db.clone();
+        let shutdown_token = self.shutdown_token.clone();
         let interval_secs = read_env_u64(
             WORKSPACE_CLEANUP_INTERVAL_ENV,
             DEFAULT_WORKSPACE_CLEANUP_INTERVAL_SECS,
@@ -333,7 +337,13 @@ impl LocalContainerService {
         WorkspaceManager::cleanup_orphan_workspaces(&self.db.pool).await;
         tokio::spawn(async move {
             loop {
-                cleanup_interval.tick().await;
+                tokio::select! {
+                    _ = shutdown_token.cancelled() => {
+                        tracing::info!("Stopping periodic workspace cleanup");
+                        break;
+                    }
+                    _ = cleanup_interval.tick() => {}
+                }
                 tracing::info!("Starting periodic workspace cleanup...");
                 Self::cleanup_expired_workspaces(&db)
                     .await

@@ -16,11 +16,13 @@ use services::services::{
     filesystem::FilesystemService,
     git::GitService,
     image::ImageService,
+    pr_monitor::PrMonitorService,
     project::ProjectService,
     queued_message::QueuedMessageService,
     repo::RepoService,
 };
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use utils_assets::config_path;
 use uuid::Uuid;
 
@@ -43,6 +45,7 @@ pub struct LocalDeployment {
     file_search_cache: Arc<FileSearchCache>,
     approvals: Approvals,
     queued_message_service: QueuedMessageService,
+    shutdown_token: CancellationToken,
 }
 
 struct CoreServices {
@@ -61,6 +64,7 @@ struct RuntimeServices {
     image: ImageService,
     events: EventService,
     container: LocalContainerService,
+    shutdown_token: CancellationToken,
 }
 
 #[async_trait]
@@ -86,6 +90,7 @@ impl Deployment for LocalDeployment {
             image,
             events,
             container,
+            shutdown_token,
         } = runtime;
 
         let deployment = Self {
@@ -101,6 +106,7 @@ impl Deployment for LocalDeployment {
             file_search_cache,
             approvals,
             queued_message_service,
+            shutdown_token,
         };
 
         Ok(deployment)
@@ -153,6 +159,10 @@ impl Deployment for LocalDeployment {
     fn queued_message_service(&self) -> &QueuedMessageService {
         &self.queued_message_service
     }
+
+    fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown_token.clone()
+    }
 }
 
 impl LocalDeployment {
@@ -202,6 +212,7 @@ impl LocalDeployment {
         config: Arc<RwLock<Config>>,
         core: &CoreServices,
     ) -> Result<RuntimeServices, DeploymentError> {
+        let shutdown_token = CancellationToken::new();
         let db = DBService::new().await?;
         let image = ImageService::new(db.clone().pool)?;
         Self::spawn_orphaned_image_cleanup(image.clone());
@@ -210,6 +221,7 @@ impl LocalDeployment {
             db.clone(),
             Arc::new(MsgStore::new()),
             Arc::new(RwLock::new(0)),
+            shutdown_token.clone(),
         );
 
         let container = LocalContainerService::new(
@@ -220,6 +232,7 @@ impl LocalDeployment {
             image.clone(),
             core.approvals.clone(),
             core.queued_message_service.clone(),
+            shutdown_token.clone(),
         )
         .await;
 
@@ -228,6 +241,7 @@ impl LocalDeployment {
             image,
             events,
             container,
+            shutdown_token,
         })
     }
 
@@ -294,6 +308,18 @@ impl LocalDeployment {
             sample_secs = budgets.cache_warn_sample.as_secs(),
             "Cache warning thresholds"
         );
+    }
+
+    pub fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown_token.clone()
+    }
+
+    pub fn begin_shutdown(&self) {
+        self.shutdown_token.cancel();
+    }
+
+    pub async fn spawn_pr_monitor_service(&self) -> tokio::task::JoinHandle<()> {
+        PrMonitorService::spawn(self.db.clone(), self.shutdown_token()).await
     }
 }
 

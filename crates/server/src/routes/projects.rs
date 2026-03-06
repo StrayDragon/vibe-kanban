@@ -44,29 +44,38 @@ pub async fn stream_projects_ws(
 }
 
 async fn handle_projects_ws(socket: WebSocket, deployment: DeploymentImpl) -> anyhow::Result<()> {
+    let shutdown = deployment.shutdown_token();
     let mut stream = deployment
         .events()
         .stream_projects_raw()
         .await?
         .map_ok(|msg| msg.to_ws_message_unchecked());
 
-    // Split socket into sender and receiver
     let (mut sender, mut receiver) = socket.split();
 
-    // Drain (and ignore) any client->server messages so pings/pongs work
-    tokio::spawn(async move { while let Some(Ok(_)) = receiver.next().await {} });
-
-    // Forward server messages
-    while let Some(item) = stream.next().await {
-        match item {
-            Ok(msg) => {
-                if sender.send(msg).await.is_err() {
-                    break; // client disconnected
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => {
+                break;
+            }
+            item = stream.next() => {
+                match item {
+                    Some(Ok(msg)) => {
+                        if sender.send(msg).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Err(e)) => {
+                        tracing::error!("stream error: {}", e);
+                        continue;
+                    }
+                    None => break,
                 }
             }
-            Err(e) => {
-                tracing::error!("stream error: {}", e);
-                continue;
+            msg = receiver.next() => {
+                if msg.is_none() {
+                    break;
+                }
             }
         }
     }

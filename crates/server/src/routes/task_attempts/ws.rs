@@ -41,6 +41,7 @@ async fn handle_task_attempt_diff_ws(
     use logs_axum::LogMsgAxumExt;
     use logs_protocol::LogMsg;
 
+    let shutdown = deployment.shutdown_token();
     let stream = deployment
         .container()
         .stream_diff(&workspace, options)
@@ -52,6 +53,9 @@ async fn handle_task_attempt_diff_ws(
 
     loop {
         tokio::select! {
+            _ = shutdown.cancelled() => {
+                break;
+            }
             item = stream.next() => {
                 match item {
                     Some(Ok(msg)) => {

@@ -33,6 +33,7 @@ use services::services::{
 };
 use thiserror::Error;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Error)]
 pub enum DeploymentError {
@@ -94,9 +95,13 @@ pub trait Deployment: Clone + Send + Sync + 'static {
 
     fn queued_message_service(&self) -> &QueuedMessageService;
 
+    fn shutdown_token(&self) -> CancellationToken {
+        CancellationToken::new()
+    }
+
     async fn spawn_pr_monitor_service(&self) -> tokio::task::JoinHandle<()> {
         let db = self.db().clone();
-        PrMonitorService::spawn(db).await
+        PrMonitorService::spawn(db, self.shutdown_token()).await
     }
 
     /// Trigger background auto-setup of default projects for new users

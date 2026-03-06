@@ -8,7 +8,7 @@ use axum::{
     routing::get,
 };
 use deployment::Deployment;
-use futures_util::TryStreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 
 use crate::DeploymentImpl;
 
@@ -18,7 +18,13 @@ pub async fn events(
 {
     // Ask the container service for a combined "history + live" stream
     let stream = deployment.stream_events().await;
-    Ok(Sse::new(stream.map_err(|e| -> BoxError { e.into() })).keep_alive(KeepAlive::default()))
+    let shutdown = deployment.shutdown_token();
+    let stream = stream
+        .map_err(|e| -> BoxError { e.into() })
+        .take_until(async move {
+            shutdown.cancelled().await;
+        });
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 pub fn router(_: &DeploymentImpl) -> Router<DeploymentImpl> {

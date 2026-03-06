@@ -119,6 +119,7 @@ async fn handle_scratch_ws(
     id: Uuid,
     scratch_type: ScratchType,
 ) -> anyhow::Result<()> {
+    let shutdown = deployment.shutdown_token();
     let mut stream = deployment
         .events()
         .stream_scratch_raw(id, &scratch_type)
@@ -127,18 +128,29 @@ async fn handle_scratch_ws(
 
     let (mut sender, mut receiver) = socket.split();
 
-    tokio::spawn(async move { while let Some(Ok(_)) = receiver.next().await {} });
-
-    while let Some(item) = stream.next().await {
-        match item {
-            Ok(msg) => {
-                if sender.send(msg).await.is_err() {
-                    break;
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => {
+                break;
+            }
+            item = stream.next() => {
+                match item {
+                    Some(Ok(msg)) => {
+                        if sender.send(msg).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(Err(e)) => {
+                        tracing::error!("scratch stream error: {}", e);
+                        continue;
+                    }
+                    None => break,
                 }
             }
-            Err(e) => {
-                tracing::error!("scratch stream error: {}", e);
-                continue;
+            msg = receiver.next() => {
+                if msg.is_none() {
+                    break;
+                }
             }
         }
     }

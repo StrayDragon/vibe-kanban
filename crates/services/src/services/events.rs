@@ -23,6 +23,7 @@ use db::{
 };
 use logs_store::MsgStore;
 use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 #[path = "events/patches.rs"]
@@ -46,6 +47,7 @@ pub struct EventService {
     db: DBService,
     #[allow(dead_code)]
     entry_count: Arc<RwLock<usize>>,
+    shutdown_token: CancellationToken,
 }
 
 enum PatchKind {
@@ -55,11 +57,17 @@ enum PatchKind {
 }
 
 impl EventService {
-    pub fn new(db: DBService, msg_store: Arc<MsgStore>, entry_count: Arc<RwLock<usize>>) -> Self {
+    pub fn new(
+        db: DBService,
+        msg_store: Arc<MsgStore>,
+        entry_count: Arc<RwLock<usize>>,
+        shutdown_token: CancellationToken,
+    ) -> Self {
         let service = Self {
             msg_store,
             db,
             entry_count,
+            shutdown_token,
         };
         service.spawn_outbox_worker();
         service
@@ -73,10 +81,26 @@ impl EventService {
     }
 
     async fn run_outbox_loop(&self) {
+        let shutdown_token = self.shutdown_token.clone();
+
         loop {
-            match self.flush_pending().await {
+            let result = tokio::select! {
+                _ = shutdown_token.cancelled() => {
+                    tracing::info!("Stopping event outbox worker");
+                    break;
+                }
+                result = self.flush_pending() => result,
+            };
+
+            match result {
                 Ok(0) => {
-                    tokio::time::sleep(OUTBOX_POLL_INTERVAL).await;
+                    tokio::select! {
+                        _ = shutdown_token.cancelled() => {
+                            tracing::info!("Stopping event outbox worker");
+                            break;
+                        }
+                        _ = tokio::time::sleep(OUTBOX_POLL_INTERVAL) => {}
+                    }
                 }
                 Ok(_) => {
                     // Drain as fast as possible when backlog exists, but yield to avoid starving
@@ -85,7 +109,13 @@ impl EventService {
                 }
                 Err(err) => {
                     tracing::error!(error = %err, "event outbox flush failed");
-                    tokio::time::sleep(OUTBOX_POLL_INTERVAL).await;
+                    tokio::select! {
+                        _ = shutdown_token.cancelled() => {
+                            tracing::info!("Stopping event outbox worker");
+                            break;
+                        }
+                        _ = tokio::time::sleep(OUTBOX_POLL_INTERVAL) => {}
+                    }
                 }
             }
         }
@@ -390,6 +420,7 @@ mod tests {
             msg_store: msg_store.clone(),
             db: db.clone(),
             entry_count: Arc::new(RwLock::new(0)),
+            shutdown_token: CancellationToken::new(),
         };
 
         let before_flush = EventOutbox::fetch_unpublished(&service.db.pool, 10)
