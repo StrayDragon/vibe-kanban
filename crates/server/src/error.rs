@@ -243,6 +243,7 @@ impl From<ProjectServiceError> for ApiError {
             ProjectServiceError::InvalidDevScript(msg) => ApiError::BadRequest(msg),
             ProjectServiceError::InvalidDevScriptWorkingDir(msg) => ApiError::BadRequest(msg),
             ProjectServiceError::InvalidSchedulerSetting(msg) => ApiError::BadRequest(msg),
+            ProjectServiceError::InvalidWorkspaceLifecycleHook(msg) => ApiError::BadRequest(msg),
         }
     }
 }

@@ -81,3 +81,12 @@ The system SHALL periodically clean up expired workspaces that have no running p
 #### Scenario: TTL-based cleanup can be disabled
 - **WHEN** `DISABLE_WORKSPACE_EXPIRED_CLEANUP` is set
 - **THEN** the system SHALL NOT perform TTL-based expired workspace cleanup
+
+### Requirement: Workspace removal honors configured cleanup hooks
+Workspace removal flows SHALL honor configured project cleanup hooks.
+
+#### Scenario: Remove-worktree action runs before-cleanup hook first
+- **WHEN** a user confirms worktree removal for a project with a configured `before_cleanup` hook
+- **THEN** the hook executes before workspace deletion begins
+- **AND** the outcome follows the project's configured failure policy
+

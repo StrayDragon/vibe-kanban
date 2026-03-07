@@ -79,6 +79,8 @@ mod tests {
             execution_mode: ProjectExecutionMode::Auto,
             scheduler_max_concurrent: 2,
             scheduler_max_retries: 3,
+            after_prepare_hook: None,
+            before_cleanup_hook: None,
             remote_project_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),

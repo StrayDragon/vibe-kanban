@@ -473,6 +473,74 @@
         "unsavedChanges": "• 您有未保存的更改",
         "discard": "放弃",
         "confirmSwitch": "您有未保存的更改。您确定要切换项目吗？您的更改将丢失。"
+      },
+      "lifecycleHooks": {
+        "title": "工作区生命周期 Hook",
+        "description": "可选的项目级命令：在工作区准备完成后运行，或在清理前运行。",
+        "shared": {
+          "command": {
+            "label": "命令",
+            "helper": "命令会在工作区内执行。请保持为项目级、可审计的命令。"
+          },
+          "workingDir": {
+            "label": "工作目录",
+            "placeholder": "例如 my-repo",
+            "helper": "相对于工作区根目录。留空则直接在工作区根目录执行。"
+          },
+          "failurePolicy": {
+            "label": "失败策略",
+            "options": {
+              "warnOnly": "仅警告"
+            }
+          }
+        },
+        "afterPrepare": {
+          "title": "准备后",
+          "description": "在工作区准备完成且 VK 已写入生成文件后运行。",
+          "command": {
+            "placeholder": "pnpm install --frozen-lockfile"
+          },
+          "failurePolicy": {
+            "options": {
+              "blockStart": "阻止任务启动"
+            }
+          },
+          "runMode": {
+            "label": "运行模式",
+            "options": {
+              "oncePerWorkspace": "每个工作区一次",
+              "everyPrepare": "每次准备都运行"
+            }
+          }
+        },
+        "beforeCleanup": {
+          "title": "清理前",
+          "description": "在 VK 删除工作区或移除 worktree 之前运行。",
+          "command": {
+            "placeholder": "pnpm run clean:local"
+          },
+          "failurePolicy": {
+            "options": {
+              "blockCleanup": "阻止清理"
+            }
+          }
+        },
+        "summary": {
+          "title": "生命周期 Hook 摘要",
+          "description": "展示当前配置的准备 / 清理 Hook，以及最近一次工作区 Hook 结果。",
+          "enabled": "已启用",
+          "disabled": "未启用",
+          "workspaceRoot": "工作区根目录",
+          "loadingLatest": "正在加载最近一次 Hook 结果...",
+          "latestTask": "最近一次运行来自任务：{{task}}",
+          "untitledTask": "未命名任务",
+          "noRuns": "暂未记录到 Hook 运行结果。",
+          "noneConfigured": "尚未配置生命周期 Hook。"
+        },
+        "validation": {
+          "afterPrepareCommandRequired": "请填写“准备后”命令，或先关闭该 Hook 再保存。",
+          "beforeCleanupCommandRequired": "请填写“清理前”命令，或先关闭该 Hook 再保存。"
+        }
       }
     }
   },

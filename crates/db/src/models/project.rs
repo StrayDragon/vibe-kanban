@@ -18,7 +18,10 @@ use crate::{
         ProjectEventPayload, TaskEventPayload,
     },
     models::event_outbox::EventOutbox,
-    types::ProjectExecutionMode,
+    types::{
+        ProjectExecutionMode, WorkspaceLifecycleHookFailurePolicy,
+        WorkspaceLifecycleHookRunMode,
+    },
 };
 
 #[derive(Debug, Error)]
@@ -42,11 +45,21 @@ pub struct Project {
     pub execution_mode: ProjectExecutionMode,
     pub scheduler_max_concurrent: i32,
     pub scheduler_max_retries: i32,
+    pub after_prepare_hook: Option<WorkspaceLifecycleHookConfig>,
+    pub before_cleanup_hook: Option<WorkspaceLifecycleHookConfig>,
     pub remote_project_id: Option<Uuid>,
     #[ts(type = "Date")]
     pub created_at: DateTime<Utc>,
     #[ts(type = "Date")]
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct WorkspaceLifecycleHookConfig {
+    pub command: String,
+    pub working_dir: Option<String>,
+    pub failure_policy: WorkspaceLifecycleHookFailurePolicy,
+    pub run_mode: Option<WorkspaceLifecycleHookRunMode>,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
@@ -66,6 +79,10 @@ pub struct UpdateProject {
     pub execution_mode: Option<ProjectExecutionMode>,
     pub scheduler_max_concurrent: Option<i32>,
     pub scheduler_max_retries: Option<i32>,
+    #[serde(default, deserialize_with = "deserialize_optional_hook_config_as_double_option")]
+    pub after_prepare_hook: Option<Option<WorkspaceLifecycleHookConfig>>,
+    #[serde(default, deserialize_with = "deserialize_optional_hook_config_as_double_option")]
+    pub before_cleanup_hook: Option<Option<WorkspaceLifecycleHookConfig>>,
 }
 
 fn deserialize_optional_bool_as_double_option<'de, D>(
@@ -74,12 +91,16 @@ fn deserialize_optional_bool_as_double_option<'de, D>(
 where
     D: serde::Deserializer<'de>,
 {
-    // `Option<T>` treats `null` and "missing" the same (`None`). For update payloads
-    // we need to distinguish:
-    // - missing key: outer `None` => don't change
-    // - present `null`: `Some(None)` => clear override (inherit global)
-    // - present `true/false`: `Some(Some(v))` => set override
     Ok(Some(Option::<bool>::deserialize(deserializer)?))
+}
+
+fn deserialize_optional_hook_config_as_double_option<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<WorkspaceLifecycleHookConfig>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(Option::<WorkspaceLifecycleHookConfig>::deserialize(deserializer)?))
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -103,6 +124,59 @@ pub enum SearchMatchType {
     FullPath,
 }
 
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value.and_then(|raw| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn build_hook_config(
+    command: Option<String>,
+    working_dir: Option<String>,
+    failure_policy: Option<WorkspaceLifecycleHookFailurePolicy>,
+    run_mode: Option<WorkspaceLifecycleHookRunMode>,
+) -> Option<WorkspaceLifecycleHookConfig> {
+    let command = normalize_optional_string(command)?;
+    Some(WorkspaceLifecycleHookConfig {
+        command,
+        working_dir: normalize_optional_string(working_dir),
+        failure_policy: failure_policy.unwrap_or(WorkspaceLifecycleHookFailurePolicy::WarnOnly),
+        run_mode,
+    })
+}
+
+fn apply_hook_update(
+    active: &mut project::ActiveModel,
+    hook: Option<WorkspaceLifecycleHookConfig>,
+    is_after_prepare: bool,
+) {
+    let (command, working_dir, failure_policy, run_mode) = match hook {
+        Some(hook) => (
+            Some(hook.command),
+            hook.working_dir,
+            Some(hook.failure_policy),
+            hook.run_mode,
+        ),
+        None => (None, None, None, None),
+    };
+
+    if is_after_prepare {
+        active.after_prepare_hook_command = Set(command);
+        active.after_prepare_hook_working_dir = Set(working_dir);
+        active.after_prepare_hook_failure_policy = Set(failure_policy);
+        active.after_prepare_hook_run_mode = Set(run_mode);
+    } else {
+        active.before_cleanup_hook_command = Set(command);
+        active.before_cleanup_hook_working_dir = Set(working_dir);
+        active.before_cleanup_hook_failure_policy = Set(failure_policy);
+    }
+}
+
 impl Project {
     fn from_model(model: project::Model) -> Self {
         Self {
@@ -115,6 +189,18 @@ impl Project {
             execution_mode: model.execution_mode,
             scheduler_max_concurrent: model.scheduler_max_concurrent,
             scheduler_max_retries: model.scheduler_max_retries,
+            after_prepare_hook: build_hook_config(
+                model.after_prepare_hook_command,
+                model.after_prepare_hook_working_dir,
+                model.after_prepare_hook_failure_policy,
+                model.after_prepare_hook_run_mode,
+            ),
+            before_cleanup_hook: build_hook_config(
+                model.before_cleanup_hook_command,
+                model.before_cleanup_hook_working_dir,
+                model.before_cleanup_hook_failure_policy,
+                None,
+            ),
             remote_project_id: model.remote_project_id,
             created_at: model.created_at.into(),
             updated_at: model.updated_at.into(),
@@ -240,6 +326,13 @@ impl Project {
             execution_mode: Set(ProjectExecutionMode::Manual),
             scheduler_max_concurrent: Set(1),
             scheduler_max_retries: Set(3),
+            after_prepare_hook_command: Set(None),
+            after_prepare_hook_working_dir: Set(None),
+            after_prepare_hook_failure_policy: Set(None),
+            after_prepare_hook_run_mode: Set(None),
+            before_cleanup_hook_command: Set(None),
+            before_cleanup_hook_working_dir: Set(None),
+            before_cleanup_hook_failure_policy: Set(None),
             remote_project_id: Set(None),
             created_at: Set(now.into()),
             updated_at: Set(now.into()),
@@ -288,6 +381,12 @@ impl Project {
         }
         if let Some(scheduler_max_retries) = payload.scheduler_max_retries {
             active.scheduler_max_retries = Set(std::cmp::max(scheduler_max_retries, 0));
+        }
+        if let Some(hook) = payload.after_prepare_hook.clone() {
+            apply_hook_update(&mut active, hook, true);
+        }
+        if let Some(hook) = payload.before_cleanup_hook.clone() {
+            apply_hook_update(&mut active, hook, false);
         }
         active.updated_at = Set(Utc::now().into());
 
@@ -407,6 +506,8 @@ mod tests {
             execution_mode: ProjectExecutionMode::Manual,
             scheduler_max_concurrent: 1,
             scheduler_max_retries: 3,
+            after_prepare_hook: None,
+            before_cleanup_hook: None,
             remote_project_id: None,
             created_at: now,
             updated_at: now,

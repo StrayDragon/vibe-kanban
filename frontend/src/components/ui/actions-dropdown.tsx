@@ -10,6 +10,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { MoreHorizontal } from 'lucide-react';
+import { WorkspaceHookMenuSummary } from '@/components/tasks/WorkspaceHookMenuSummary';
+import { getWorkspaceHookOutcome } from '@/utils/automation';
+import { cn } from '@/lib/utils';
 import type { TaskWithAttemptStatus } from 'shared/types';
 import type { Workspace } from 'shared/types';
 import { useOpenInEditor } from '@/hooks/task-attempts/useOpenInEditor';
@@ -23,7 +26,7 @@ import { RemoveWorktreeDialog } from '@/components/dialogs/tasks/RemoveWorktreeD
 import { useProject } from '@/contexts/ProjectContext';
 import { openTaskForm } from '@/lib/openTaskForm';
 import { useExecutionProcesses } from '@/hooks/execution-processes/useExecutionProcesses';
-import { useTaskAttempts } from '@/hooks/task-attempts/useTaskAttempts';
+import { useTaskAttemptsWithSessions } from '@/hooks/task-attempts/useTaskAttempts';
 import { useEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
 
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -53,13 +56,42 @@ export function ActionsDropdown({
     useExecutionProcesses(attemptIdForStatus, {
       showSoftDeleted: true,
     });
-  const { data: attempts = [] } = useTaskAttempts(task?.id, {
+  const { data: attempts = [] } = useTaskAttemptsWithSessions(task?.id, {
     enabled: Boolean(context === 'task' && task?.id),
     refetchInterval: false,
   });
 
   const hasAttemptActions = Boolean(attempt);
   const hasTaskActions = Boolean(task);
+  const canShowHookSection = context !== 'card';
+  const latestHookAttempt = useMemo(() => {
+    if (!canShowHookSection) {
+      return undefined;
+    }
+
+    if (attempt) {
+      return attempt;
+    }
+
+    return [...attempts]
+      .filter((attemptData) => getWorkspaceHookOutcome(attemptData))
+      .sort((left, right) => {
+        const leftHook = getWorkspaceHookOutcome(left);
+        const rightHook = getWorkspaceHookOutcome(right);
+        return (
+          new Date(rightHook?.ran_at ?? 0).getTime() -
+          new Date(leftHook?.ran_at ?? 0).getTime()
+        );
+      })[0];
+  }, [attempt, attempts, canShowHookSection]);
+  const hookOutcome = latestHookAttempt
+    ? getWorkspaceHookOutcome(latestHookAttempt)
+    : null;
+  const hasHookSection = Boolean(
+    canShowHookSection && hookOutcome && latestHookAttempt
+  );
+  const showHookFailureIndicator =
+    canShowHookSection && hookOutcome?.status === 'failed';
   const eligibleAttempts = useMemo(() => {
     if (context !== 'task' || attempt) return [];
     return attempts.filter((attemptData) => attemptData.container_ref);
@@ -192,14 +224,34 @@ export function ActionsDropdown({
           <Button
             variant="icon"
             aria-label="Actions"
+            className={cn(
+              'relative shrink-0 !h-8 !w-8 !p-0',
+              showHookFailureIndicator && 'text-foreground'
+            )}
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
             <MoreHorizontal className="h-4 w-4" />
+            {showHookFailureIndicator && (
+              <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-destructive" />
+            )}
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent
+          align="end"
+          className={cn(hasHookSection && 'w-[420px] max-w-[calc(100vw-1rem)]')}
+        >
+          {hasHookSection && latestHookAttempt && (
+            <>
+              <DropdownMenuLabel>{t('taskPanel.hooks.title')}</DropdownMenuLabel>
+              <div className="px-2 pb-2" onPointerDown={(e) => e.stopPropagation()}>
+                <WorkspaceHookMenuSummary workspace={latestHookAttempt} />
+              </div>
+              <DropdownMenuSeparator />
+            </>
+          )}
+
           {showAttemptSection && (
             <>
               <DropdownMenuLabel>{t('actionsMenu.attempt')}</DropdownMenuLabel>

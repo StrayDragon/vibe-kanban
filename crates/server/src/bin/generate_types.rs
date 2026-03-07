@@ -12,7 +12,12 @@ fn generate_types_content() -> String {
 
     let decls: Vec<String> = vec![
         db::models::project::Project::decl(),
+        db::models::project::WorkspaceLifecycleHookConfig::decl(),
         db::types::ProjectExecutionMode::decl(),
+        db::types::WorkspaceLifecycleHookFailurePolicy::decl(),
+        db::types::WorkspaceLifecycleHookRunMode::decl(),
+        db::types::WorkspaceLifecycleHookPhase::decl(),
+        db::types::WorkspaceLifecycleHookStatus::decl(),
         db::models::project::CreateProject::decl(),
         db::models::project::UpdateProject::decl(),
         db::models::project::SearchResult::decl(),
@@ -63,6 +68,7 @@ fn generate_types_content() -> String {
         db::models::image::Image::decl(),
         db::models::image::CreateImage::decl(),
         db::models::workspace::Workspace::decl(),
+        db::models::workspace::WorkspaceLifecycleHookRunSummary::decl(),
         db::models::session::Session::decl(),
         db::models::execution_process::ExecutionProcess::decl(),
         db::models::execution_process::ExecutionProcessStatus::decl(),

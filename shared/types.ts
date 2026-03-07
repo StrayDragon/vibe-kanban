@@ -4,13 +4,23 @@
 
 // If you are an AI, and you absolutely have to edit this file, please confirm with the user first.
 
-export type Project = { id: string, name: string, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null, execution_mode: ProjectExecutionMode, scheduler_max_concurrent: number, scheduler_max_retries: number, remote_project_id: string | null, created_at: Date, updated_at: Date, };
+export type Project = { id: string, name: string, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null, execution_mode: ProjectExecutionMode, scheduler_max_concurrent: number, scheduler_max_retries: number, after_prepare_hook: WorkspaceLifecycleHookConfig | null, before_cleanup_hook: WorkspaceLifecycleHookConfig | null, remote_project_id: string | null, created_at: Date, updated_at: Date, };
+
+export type WorkspaceLifecycleHookConfig = { command: string, working_dir: string | null, failure_policy: WorkspaceLifecycleHookFailurePolicy, run_mode: WorkspaceLifecycleHookRunMode | null, };
 
 export type ProjectExecutionMode = "manual" | "auto";
 
+export type WorkspaceLifecycleHookFailurePolicy = "block_start" | "warn_only" | "block_cleanup";
+
+export type WorkspaceLifecycleHookRunMode = "once_per_workspace" | "every_prepare";
+
+export type WorkspaceLifecycleHookPhase = "after_prepare" | "before_cleanup";
+
+export type WorkspaceLifecycleHookStatus = "succeeded" | "failed";
+
 export type CreateProject = { name: string, repositories: Array<CreateProjectRepo>, };
 
-export type UpdateProject = { name: string | null, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null | null, execution_mode: ProjectExecutionMode | null, scheduler_max_concurrent: number | null, scheduler_max_retries: number | null, };
+export type UpdateProject = { name: string | null, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null | null, execution_mode: ProjectExecutionMode | null, scheduler_max_concurrent: number | null, scheduler_max_retries: number | null, after_prepare_hook: WorkspaceLifecycleHookConfig | null | null, before_cleanup_hook: WorkspaceLifecycleHookConfig | null | null, };
 
 export type SearchResult = { path: string, is_file: boolean, match_type: SearchMatchType, };
 
@@ -48,7 +58,7 @@ export type TaskAutomationMode = "inherit" | "manual" | "auto";
 
 export type TaskCreatedByKind = "human_ui" | "mcp" | "scheduler" | "agent_followup";
 
-export type TaskAutomationReasonCode = "project_manual" | "task_manual_override" | "task_group_unsupported" | "retry_not_ready" | "retry_exhausted" | "awaiting_human_review" | "concurrency_limit_reached" | "no_project_repos" | "base_branch_unresolved" | "blocked";
+export type TaskAutomationReasonCode = "project_manual" | "task_manual_override" | "task_group_unsupported" | "retry_not_ready" | "retry_exhausted" | "awaiting_human_review" | "concurrency_limit_reached" | "no_project_repos" | "base_branch_unresolved" | "workspace_hook_failed" | "blocked";
 
 export type TaskAutomationDiagnostic = { reason_code: TaskAutomationReasonCode, reason_detail: string, actionable: boolean, };
 
@@ -106,7 +116,9 @@ export type Image = { id: string, file_path: string, original_name: string, mime
 
 export type CreateImage = { file_path: string, original_name: string, mime_type: string | null, size_bytes: bigint, hash: string, };
 
-export type Workspace = { id: string, task_id: string, container_ref: string | null, branch: string, agent_working_dir: string | null, setup_completed_at: string | null, created_at: string, updated_at: string, };
+export type Workspace = { id: string, task_id: string, container_ref: string | null, branch: string, agent_working_dir: string | null, setup_completed_at: string | null, latest_hook_run: WorkspaceLifecycleHookRunSummary | null, after_prepare_hook_status: WorkspaceLifecycleHookStatus | null, after_prepare_hook_ran_at: Date | null, after_prepare_hook_error_summary: string | null, before_cleanup_hook_status: WorkspaceLifecycleHookStatus | null, before_cleanup_hook_ran_at: Date | null, before_cleanup_hook_error_summary: string | null, created_at: string, updated_at: string, };
+
+export type WorkspaceLifecycleHookRunSummary = { phase: WorkspaceLifecycleHookPhase, status: WorkspaceLifecycleHookStatus, ran_at: Date, error_summary: string | null, };
 
 export type Session = { id: string, workspace_id: string, executor: string | null, created_at: string, updated_at: string, };
 

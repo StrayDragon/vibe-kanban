@@ -2839,6 +2839,13 @@ mod tests {
             branch: "old-branch".to_string(),
             agent_working_dir: None,
             setup_completed_at: None,
+            latest_hook_run: None,
+            after_prepare_hook_status: None,
+            after_prepare_hook_ran_at: None,
+            after_prepare_hook_error_summary: None,
+            before_cleanup_hook_status: None,
+            before_cleanup_hook_ran_at: None,
+            before_cleanup_hook_error_summary: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

@@ -1,5 +1,7 @@
 use sea_orm::entity::prelude::*;
 
+use crate::types::WorkspaceLifecycleHookStatus;
+
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "workspaces")]
 pub struct Model {
@@ -11,6 +13,12 @@ pub struct Model {
     pub branch: String,
     pub agent_working_dir: Option<String>,
     pub setup_completed_at: Option<DateTimeUtc>,
+    pub after_prepare_hook_status: Option<WorkspaceLifecycleHookStatus>,
+    pub after_prepare_hook_ran_at: Option<DateTimeUtc>,
+    pub after_prepare_hook_error_summary: Option<String>,
+    pub before_cleanup_hook_status: Option<WorkspaceLifecycleHookStatus>,
+    pub before_cleanup_hook_ran_at: Option<DateTimeUtc>,
+    pub before_cleanup_hook_error_summary: Option<String>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,
 }

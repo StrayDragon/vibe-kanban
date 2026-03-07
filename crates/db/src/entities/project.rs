@@ -1,6 +1,9 @@
 use sea_orm::entity::prelude::*;
 
-use crate::types::ProjectExecutionMode;
+use crate::types::{
+    ProjectExecutionMode, WorkspaceLifecycleHookFailurePolicy,
+    WorkspaceLifecycleHookRunMode,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "projects")]
@@ -16,6 +19,13 @@ pub struct Model {
     pub execution_mode: ProjectExecutionMode,
     pub scheduler_max_concurrent: i32,
     pub scheduler_max_retries: i32,
+    pub after_prepare_hook_command: Option<String>,
+    pub after_prepare_hook_working_dir: Option<String>,
+    pub after_prepare_hook_failure_policy: Option<WorkspaceLifecycleHookFailurePolicy>,
+    pub after_prepare_hook_run_mode: Option<WorkspaceLifecycleHookRunMode>,
+    pub before_cleanup_hook_command: Option<String>,
+    pub before_cleanup_hook_working_dir: Option<String>,
+    pub before_cleanup_hook_failure_policy: Option<WorkspaceLifecycleHookFailurePolicy>,
     pub remote_project_id: Option<Uuid>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,

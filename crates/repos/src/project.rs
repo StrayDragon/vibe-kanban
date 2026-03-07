@@ -8,7 +8,7 @@ use db::{
     models::{
         project::{
             CreateProject, Project, ProjectError, ProjectFileSearchResponse, SearchMatchType,
-            SearchResult, UpdateProject,
+            SearchResult, UpdateProject, WorkspaceLifecycleHookConfig,
         },
         project_repo::{CreateProjectRepo, ProjectRepo},
         repo::Repo,
@@ -52,6 +52,8 @@ pub enum ProjectServiceError {
     InvalidDevScriptWorkingDir(String),
     #[error("Invalid scheduler setting: {0}")]
     InvalidSchedulerSetting(String),
+    #[error("Invalid workspace lifecycle hook: {0}")]
+    InvalidWorkspaceLifecycleHook(String),
 }
 
 pub type Result<T> = std::result::Result<T, ProjectServiceError>;
@@ -77,52 +79,139 @@ impl ProjectService {
         Self
     }
 
+    fn validate_single_command_text(label: &str, script: &str) -> Result<()> {
+        let trimmed = script.trim();
+        if trimmed.is_empty() {
+            return Err(ProjectServiceError::InvalidWorkspaceLifecycleHook(format!(
+                "{label} command cannot be empty"
+            )));
+        }
+
+        let tokens: Vec<String> = shlex::split(trimmed).ok_or_else(|| {
+            ProjectServiceError::InvalidWorkspaceLifecycleHook(format!(
+                "{label} command must be valid shell-like command text"
+            ))
+        })?;
+        if tokens.is_empty() {
+            return Err(ProjectServiceError::InvalidWorkspaceLifecycleHook(format!(
+                "{label} command must include an executable"
+            )));
+        }
+        let has_forbidden = tokens.iter().any(|token| {
+            matches!(
+                token.as_str(),
+                "|" | "||" | "&" | "&&" | ";" | ">" | ">>" | "<" | "<<"
+            )
+        });
+        if has_forbidden {
+            return Err(ProjectServiceError::InvalidWorkspaceLifecycleHook(format!(
+                "{label} command must be a single command without shell operators"
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_workspace_relative_dir(label: &str, working_dir: &str) -> Result<()> {
+        let trimmed = working_dir.trim();
+        if trimmed.is_empty() {
+            return Ok(());
+        }
+
+        let path = Path::new(trimmed);
+        if path.is_absolute() {
+            return Err(ProjectServiceError::InvalidWorkspaceLifecycleHook(format!(
+                "{label} working directory must be relative to the workspace root"
+            )));
+        }
+        if path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+        {
+            return Err(ProjectServiceError::InvalidWorkspaceLifecycleHook(format!(
+                "{label} working directory cannot traverse outside the workspace"
+            )));
+        }
+        Ok(())
+    }
+
+    fn validate_workspace_hook(
+        phase: &str,
+        hook: &WorkspaceLifecycleHookConfig,
+    ) -> Result<()> {
+        Self::validate_single_command_text(phase, &hook.command)?;
+        if let Some(working_dir) = hook.working_dir.as_deref() {
+            Self::validate_workspace_relative_dir(phase, working_dir)?;
+        }
+
+        match phase {
+            "after_prepare" => {
+                match hook.failure_policy {
+                    db::types::WorkspaceLifecycleHookFailurePolicy::BlockStart
+                    | db::types::WorkspaceLifecycleHookFailurePolicy::WarnOnly => {}
+                    db::types::WorkspaceLifecycleHookFailurePolicy::BlockCleanup => {
+                        return Err(ProjectServiceError::InvalidWorkspaceLifecycleHook(
+                            "after_prepare hooks only support block_start or warn_only"
+                                .to_string(),
+                        ));
+                    }
+                }
+                if hook.run_mode.is_none() {
+                    return Err(ProjectServiceError::InvalidWorkspaceLifecycleHook(
+                        "after_prepare hooks require a run_mode".to_string(),
+                    ));
+                }
+            }
+            "before_cleanup" => {
+                match hook.failure_policy {
+                    db::types::WorkspaceLifecycleHookFailurePolicy::WarnOnly
+                    | db::types::WorkspaceLifecycleHookFailurePolicy::BlockCleanup => {}
+                    db::types::WorkspaceLifecycleHookFailurePolicy::BlockStart => {
+                        return Err(ProjectServiceError::InvalidWorkspaceLifecycleHook(
+                            "before_cleanup hooks only support warn_only or block_cleanup"
+                                .to_string(),
+                        ));
+                    }
+                }
+                if hook.run_mode.is_some() {
+                    return Err(ProjectServiceError::InvalidWorkspaceLifecycleHook(
+                        "before_cleanup hooks do not support run_mode".to_string(),
+                    ));
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
     fn validate_dev_script_update(payload: &UpdateProject) -> Result<()> {
         if let Some(script) = payload.dev_script.as_deref() {
             let trimmed = script.trim();
             if !trimmed.is_empty() {
-                let tokens: Vec<String> = shlex::split(trimmed).ok_or_else(|| {
-                    ProjectServiceError::InvalidDevScript(
-                        "Script is not valid shell-like command text".to_string(),
-                    )
+                Self::validate_single_command_text("dev_script", trimmed).map_err(|err| match err {
+                    ProjectServiceError::InvalidWorkspaceLifecycleHook(message) => {
+                        ProjectServiceError::InvalidDevScript(message)
+                    }
+                    other => other,
                 })?;
-                if tokens.is_empty() {
-                    return Err(ProjectServiceError::InvalidDevScript(
-                        "Script must include an executable command".to_string(),
-                    ));
-                }
-                let has_forbidden = tokens.iter().any(|token| {
-                    matches!(
-                        token.as_str(),
-                        "|" | "||" | "&" | "&&" | ";" | ">" | ">>" | "<" | "<<"
-                    )
-                });
-                if has_forbidden {
-                    return Err(ProjectServiceError::InvalidDevScript(
-                        "Script must be a single command without shell operators".to_string(),
-                    ));
-                }
             }
         }
 
         if let Some(working_dir) = payload.dev_script_working_dir.as_deref() {
-            let trimmed = working_dir.trim();
-            if !trimmed.is_empty() {
-                let path = Path::new(trimmed);
-                if path.is_absolute() {
-                    return Err(ProjectServiceError::InvalidDevScriptWorkingDir(
-                        "Working directory must be relative to the workspace root".to_string(),
-                    ));
+            Self::validate_workspace_relative_dir("dev_script", working_dir).map_err(|err| match err {
+                ProjectServiceError::InvalidWorkspaceLifecycleHook(message) => {
+                    ProjectServiceError::InvalidDevScriptWorkingDir(message)
                 }
-                if path
-                    .components()
-                    .any(|component| matches!(component, Component::ParentDir))
-                {
-                    return Err(ProjectServiceError::InvalidDevScriptWorkingDir(
-                        "Working directory cannot traverse outside the workspace".to_string(),
-                    ));
-                }
-            }
+                other => other,
+            })?;
+        }
+
+        if let Some(Some(hook)) = payload.after_prepare_hook.as_ref() {
+            Self::validate_workspace_hook("after_prepare", hook)?;
+        }
+
+        if let Some(Some(hook)) = payload.before_cleanup_hook.as_ref() {
+            Self::validate_workspace_hook("before_cleanup", hook)?;
         }
 
         if let Some(max_concurrent) = payload.scheduler_max_concurrent
@@ -207,6 +296,8 @@ impl ProjectService {
                     execution_mode: None,
                     scheduler_max_concurrent: None,
                     scheduler_max_retries: None,
+                after_prepare_hook: None,
+                before_cleanup_hook: None,
                 },
             )
             .await?;
@@ -568,8 +659,11 @@ mod tests {
     use db::{
         DBService,
         models::{
-            project::{CreateProject, Project, UpdateProject},
+            project::{CreateProject, Project, UpdateProject, WorkspaceLifecycleHookConfig},
             project_repo::{CreateProjectRepo, ProjectRepo},
+        },
+        types::{
+            WorkspaceLifecycleHookFailurePolicy, WorkspaceLifecycleHookRunMode,
         },
     };
     use sea_orm::Database;
@@ -586,18 +680,26 @@ mod tests {
         DBService { pool }
     }
 
-    #[test]
-    fn validate_dev_script_update_accepts_single_command() {
-        let payload = UpdateProject {
+    fn empty_update_payload() -> UpdateProject {
+        UpdateProject {
             name: None,
-            dev_script: Some("npm run dev -- --host 127.0.0.1".to_string()),
-            dev_script_working_dir: Some("repo-a".to_string()),
+            dev_script: None,
+            dev_script_working_dir: None,
             default_agent_working_dir: None,
             git_no_verify_override: None,
             execution_mode: None,
             scheduler_max_concurrent: None,
             scheduler_max_retries: None,
-        };
+            after_prepare_hook: None,
+            before_cleanup_hook: None,
+        }
+    }
+
+    #[test]
+    fn validate_dev_script_update_accepts_single_command() {
+        let mut payload = empty_update_payload();
+        payload.dev_script = Some("npm run dev -- --host 127.0.0.1".to_string());
+        payload.dev_script_working_dir = Some("repo-a".to_string());
 
         let result = ProjectService::validate_dev_script_update(&payload);
         assert!(result.is_ok());
@@ -605,16 +707,8 @@ mod tests {
 
     #[test]
     fn validate_dev_script_update_rejects_shell_operators() {
-        let payload = UpdateProject {
-            name: None,
-            dev_script: Some("npm run dev && rm -rf /".to_string()),
-            dev_script_working_dir: None,
-            default_agent_working_dir: None,
-            git_no_verify_override: None,
-            execution_mode: None,
-            scheduler_max_concurrent: None,
-            scheduler_max_retries: None,
-        };
+        let mut payload = empty_update_payload();
+        payload.dev_script = Some("npm run dev && rm -rf /".to_string());
 
         let result = ProjectService::validate_dev_script_update(&payload);
         assert!(matches!(
@@ -625,16 +719,9 @@ mod tests {
 
     #[test]
     fn validate_dev_script_update_rejects_absolute_working_dir() {
-        let payload = UpdateProject {
-            name: None,
-            dev_script: Some("npm run dev".to_string()),
-            dev_script_working_dir: Some("/tmp".to_string()),
-            default_agent_working_dir: None,
-            git_no_verify_override: None,
-            execution_mode: None,
-            scheduler_max_concurrent: None,
-            scheduler_max_retries: None,
-        };
+        let mut payload = empty_update_payload();
+        payload.dev_script = Some("npm run dev".to_string());
+        payload.dev_script_working_dir = Some("/tmp".to_string());
 
         let result = ProjectService::validate_dev_script_update(&payload);
         assert!(matches!(
@@ -645,16 +732,9 @@ mod tests {
 
     #[test]
     fn validate_dev_script_update_rejects_parent_traversal() {
-        let payload = UpdateProject {
-            name: None,
-            dev_script: Some("npm run dev".to_string()),
-            dev_script_working_dir: Some("../outside".to_string()),
-            default_agent_working_dir: None,
-            git_no_verify_override: None,
-            execution_mode: None,
-            scheduler_max_concurrent: None,
-            scheduler_max_retries: None,
-        };
+        let mut payload = empty_update_payload();
+        payload.dev_script = Some("npm run dev".to_string());
+        payload.dev_script_working_dir = Some("../outside".to_string());
 
         let result = ProjectService::validate_dev_script_update(&payload);
         assert!(matches!(
@@ -665,16 +745,8 @@ mod tests {
 
     #[test]
     fn validate_dev_script_update_rejects_invalid_scheduler_max_concurrent() {
-        let payload = UpdateProject {
-            name: None,
-            dev_script: None,
-            dev_script_working_dir: None,
-            default_agent_working_dir: None,
-            git_no_verify_override: None,
-            execution_mode: None,
-            scheduler_max_concurrent: Some(0),
-            scheduler_max_retries: None,
-        };
+        let mut payload = empty_update_payload();
+        payload.scheduler_max_concurrent = Some(0);
 
         let result = ProjectService::validate_dev_script_update(&payload);
         assert!(matches!(
@@ -685,21 +757,99 @@ mod tests {
 
     #[test]
     fn validate_dev_script_update_rejects_invalid_scheduler_max_retries() {
-        let payload = UpdateProject {
-            name: None,
-            dev_script: None,
-            dev_script_working_dir: None,
-            default_agent_working_dir: None,
-            git_no_verify_override: None,
-            execution_mode: None,
-            scheduler_max_concurrent: None,
-            scheduler_max_retries: Some(-1),
-        };
+        let mut payload = empty_update_payload();
+        payload.scheduler_max_retries = Some(-1);
 
         let result = ProjectService::validate_dev_script_update(&payload);
         assert!(matches!(
             result,
             Err(ProjectServiceError::InvalidSchedulerSetting(_))
+        ));
+    }
+
+    #[test]
+    fn validate_after_prepare_hook_accepts_workspace_relative_command() {
+        let mut payload = empty_update_payload();
+        payload.after_prepare_hook = Some(Some(WorkspaceLifecycleHookConfig {
+            command: "pnpm install --frozen-lockfile".to_string(),
+            working_dir: Some("frontend".to_string()),
+            failure_policy: WorkspaceLifecycleHookFailurePolicy::BlockStart,
+            run_mode: Some(WorkspaceLifecycleHookRunMode::OncePerWorkspace),
+        }));
+
+        let result = ProjectService::validate_dev_script_update(&payload);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_after_prepare_hook_rejects_cleanup_failure_policy() {
+        let mut payload = empty_update_payload();
+        payload.after_prepare_hook = Some(Some(WorkspaceLifecycleHookConfig {
+            command: "pnpm install".to_string(),
+            working_dir: None,
+            failure_policy: WorkspaceLifecycleHookFailurePolicy::BlockCleanup,
+            run_mode: Some(WorkspaceLifecycleHookRunMode::EveryPrepare),
+        }));
+
+        let result = ProjectService::validate_dev_script_update(&payload);
+        assert!(matches!(
+            result,
+            Err(ProjectServiceError::InvalidWorkspaceLifecycleHook(message))
+                if message.contains("after_prepare hooks only support")
+        ));
+    }
+
+    #[test]
+    fn validate_before_cleanup_hook_rejects_run_mode() {
+        let mut payload = empty_update_payload();
+        payload.before_cleanup_hook = Some(Some(WorkspaceLifecycleHookConfig {
+            command: "scripts/cleanup-artifacts".to_string(),
+            working_dir: Some("repo-a".to_string()),
+            failure_policy: WorkspaceLifecycleHookFailurePolicy::WarnOnly,
+            run_mode: Some(WorkspaceLifecycleHookRunMode::OncePerWorkspace),
+        }));
+
+        let result = ProjectService::validate_dev_script_update(&payload);
+        assert!(matches!(
+            result,
+            Err(ProjectServiceError::InvalidWorkspaceLifecycleHook(message))
+                if message.contains("before_cleanup hooks do not support run_mode")
+        ));
+    }
+
+    #[test]
+    fn validate_hook_rejects_absolute_working_dir() {
+        let mut payload = empty_update_payload();
+        payload.after_prepare_hook = Some(Some(WorkspaceLifecycleHookConfig {
+            command: "pnpm install".to_string(),
+            working_dir: Some("/tmp".to_string()),
+            failure_policy: WorkspaceLifecycleHookFailurePolicy::WarnOnly,
+            run_mode: Some(WorkspaceLifecycleHookRunMode::OncePerWorkspace),
+        }));
+
+        let result = ProjectService::validate_dev_script_update(&payload);
+        assert!(matches!(
+            result,
+            Err(ProjectServiceError::InvalidWorkspaceLifecycleHook(message))
+                if message.contains("must be relative to the workspace root")
+        ));
+    }
+
+    #[test]
+    fn validate_hook_rejects_parent_traversal_working_dir() {
+        let mut payload = empty_update_payload();
+        payload.before_cleanup_hook = Some(Some(WorkspaceLifecycleHookConfig {
+            command: "scripts/cleanup".to_string(),
+            working_dir: Some("../outside".to_string()),
+            failure_policy: WorkspaceLifecycleHookFailurePolicy::BlockCleanup,
+            run_mode: None,
+        }));
+
+        let result = ProjectService::validate_dev_script_update(&payload);
+        assert!(matches!(
+            result,
+            Err(ProjectServiceError::InvalidWorkspaceLifecycleHook(message))
+                if message.contains("cannot traverse outside the workspace")
         ));
     }
 
@@ -721,22 +871,9 @@ mod tests {
         )
         .await
         .unwrap();
-        Project::update(
-            &db.pool,
-            project_id,
-            &UpdateProject {
-                name: None,
-                dev_script: None,
-                dev_script_working_dir: None,
-                default_agent_working_dir: Some("repo-a".to_string()),
-                git_no_verify_override: None,
-                execution_mode: None,
-                scheduler_max_concurrent: None,
-                scheduler_max_retries: None,
-            },
-        )
-        .await
-        .unwrap();
+        let mut update = empty_update_payload();
+        update.default_agent_working_dir = Some("repo-a".to_string());
+        Project::update(&db.pool, project_id, &update).await.unwrap();
 
         let tmp = tempdir().unwrap();
         let repo_a = tmp.path().join("repo-a");

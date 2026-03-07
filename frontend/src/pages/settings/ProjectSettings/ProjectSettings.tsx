@@ -38,7 +38,31 @@ import type {
   ProjectRepo,
   Repo,
   UpdateProject,
+  WorkspaceLifecycleHookConfig,
+  WorkspaceLifecycleHookFailurePolicy,
+  WorkspaceLifecycleHookRunMode,
 } from 'shared/types';
+
+interface AfterPrepareHookFormState {
+  enabled: boolean;
+  command: string;
+  working_dir: string;
+  failure_policy: Extract<
+    WorkspaceLifecycleHookFailurePolicy,
+    'block_start' | 'warn_only'
+  >;
+  run_mode: WorkspaceLifecycleHookRunMode;
+}
+
+interface BeforeCleanupHookFormState {
+  enabled: boolean;
+  command: string;
+  working_dir: string;
+  failure_policy: Extract<
+    WorkspaceLifecycleHookFailurePolicy,
+    'warn_only' | 'block_cleanup'
+  >;
+}
 
 interface ProjectFormState {
   name: string;
@@ -49,6 +73,8 @@ interface ProjectFormState {
   execution_mode: ProjectExecutionMode;
   scheduler_max_concurrent: string;
   scheduler_max_retries: string;
+  after_prepare_hook: AfterPrepareHookFormState;
+  before_cleanup_hook: BeforeCleanupHookFormState;
 }
 
 type GitNoVerifyOverrideMode = 'INHERIT' | 'ENABLED' | 'DISABLED';
@@ -81,6 +107,63 @@ function gitNoVerifyModeToOverride(
   }
 }
 
+function hookConfigToAfterPrepareFormState(
+  hook: WorkspaceLifecycleHookConfig | null
+): AfterPrepareHookFormState {
+  return {
+    enabled: !!hook,
+    command: hook?.command ?? '',
+    working_dir: hook?.working_dir ?? '',
+    failure_policy:
+      hook?.failure_policy === 'warn_only' ? 'warn_only' : 'block_start',
+    run_mode: hook?.run_mode ?? 'once_per_workspace',
+  };
+}
+
+function hookConfigToBeforeCleanupFormState(
+  hook: WorkspaceLifecycleHookConfig | null
+): BeforeCleanupHookFormState {
+  return {
+    enabled: !!hook,
+    command: hook?.command ?? '',
+    working_dir: hook?.working_dir ?? '',
+    failure_policy:
+      hook?.failure_policy === 'block_cleanup'
+        ? 'block_cleanup'
+        : 'warn_only',
+  };
+}
+
+function afterPrepareFormStateToHookConfig(
+  hook: AfterPrepareHookFormState
+): WorkspaceLifecycleHookConfig | null {
+  if (!hook.enabled) {
+    return null;
+  }
+
+  return {
+    command: hook.command.trim(),
+    working_dir: hook.working_dir.trim() || null,
+    failure_policy: hook.failure_policy,
+    run_mode: hook.run_mode,
+  };
+}
+
+function beforeCleanupFormStateToHookConfig(
+  hook: BeforeCleanupHookFormState
+): WorkspaceLifecycleHookConfig | null {
+  if (!hook.enabled) {
+    return null;
+  }
+
+  return {
+    command: hook.command.trim(),
+    working_dir: hook.working_dir.trim() || null,
+    failure_policy: hook.failure_policy,
+    run_mode: null,
+  };
+}
+
 function projectToFormState(project: Project): ProjectFormState {
   return {
     name: project.name,
@@ -93,6 +176,12 @@ function projectToFormState(project: Project): ProjectFormState {
     execution_mode: project.execution_mode,
     scheduler_max_concurrent: String(project.scheduler_max_concurrent),
     scheduler_max_retries: String(project.scheduler_max_retries),
+    after_prepare_hook: hookConfigToAfterPrepareFormState(
+      project.after_prepare_hook
+    ),
+    before_cleanup_hook: hookConfigToBeforeCleanupFormState(
+      project.before_cleanup_hook
+    ),
   };
 }
 
@@ -459,6 +548,28 @@ export function ProjectSettings() {
     setError(null);
     setSuccess(false);
 
+    if (
+      draft.after_prepare_hook.enabled &&
+      !draft.after_prepare_hook.command.trim()
+    ) {
+      setError(
+        t('settings.projects.lifecycleHooks.validation.afterPrepareCommandRequired')
+      );
+      setSaving(false);
+      return;
+    }
+
+    if (
+      draft.before_cleanup_hook.enabled &&
+      !draft.before_cleanup_hook.command.trim()
+    ) {
+      setError(
+        t('settings.projects.lifecycleHooks.validation.beforeCleanupCommandRequired')
+      );
+      setSaving(false);
+      return;
+    }
+
     try {
       const updateData: UpdateProject = {
         name: draft.name.trim(),
@@ -477,6 +588,12 @@ export function ProjectSettings() {
         scheduler_max_retries: Math.max(
           0,
           Number.parseInt(draft.scheduler_max_retries, 10) || 0
+        ),
+        after_prepare_hook: afterPrepareFormStateToHookConfig(
+          draft.after_prepare_hook
+        ),
+        before_cleanup_hook: beforeCleanupFormStateToHookConfig(
+          draft.before_cleanup_hook
         ),
       };
 
@@ -536,6 +653,30 @@ export function ProjectSettings() {
     setDraft((prev) => {
       if (!prev) return prev;
       return { ...prev, ...updates };
+    });
+  };
+
+  const updateAfterPrepareHookDraft = (
+    updates: Partial<AfterPrepareHookFormState>
+  ) => {
+    setDraft((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        after_prepare_hook: { ...prev.after_prepare_hook, ...updates },
+      };
+    });
+  };
+
+  const updateBeforeCleanupHookDraft = (
+    updates: Partial<BeforeCleanupHookFormState>
+  ) => {
+    setDraft((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        before_cleanup_hook: { ...prev.before_cleanup_hook, ...updates },
+      };
     });
   };
 
@@ -813,6 +954,281 @@ export function ProjectSettings() {
                   <p className="text-sm text-muted-foreground">
                     {t('settings.projects.scheduler.maxRetries.helper')}
                   </p>
+                </div>
+              </div>
+
+              <div className="space-y-4 rounded-lg border border-border/60 p-4">
+                <div className="space-y-1">
+                  <h3 className="text-base font-semibold">
+                    {t('settings.projects.lifecycleHooks.title')}
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    {t('settings.projects.lifecycleHooks.description')}
+                  </p>
+                </div>
+
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <div className="space-y-4 rounded-lg border border-border/60 p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-1">
+                        <Label htmlFor="project-after-prepare-hook-enabled">
+                          {t('settings.projects.lifecycleHooks.afterPrepare.title')}
+                        </Label>
+                        <p className="text-sm text-muted-foreground">
+                          {t(
+                            'settings.projects.lifecycleHooks.afterPrepare.description'
+                          )}
+                        </p>
+                      </div>
+                      <Switch
+                        id="project-after-prepare-hook-enabled"
+                        checked={draft.after_prepare_hook.enabled}
+                        onCheckedChange={(checked) =>
+                          updateAfterPrepareHookDraft({ enabled: checked })
+                        }
+                      />
+                    </div>
+
+                    {draft.after_prepare_hook.enabled ? (
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="project-after-prepare-hook-command">
+                            {t(
+                              'settings.projects.lifecycleHooks.shared.command.label'
+                            )}
+                          </Label>
+                          <AutoExpandingTextarea
+                            id="project-after-prepare-hook-command"
+                            value={draft.after_prepare_hook.command}
+                            onChange={(e) =>
+                              updateAfterPrepareHookDraft({
+                                command: e.target.value,
+                              })
+                            }
+                            placeholder={t(
+                              'settings.projects.lifecycleHooks.afterPrepare.command.placeholder'
+                            )}
+                            maxRows={8}
+                            className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                          />
+                          <p className="text-sm text-muted-foreground">
+                            {t(
+                              'settings.projects.lifecycleHooks.shared.command.helper'
+                            )}
+                          </p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="project-after-prepare-hook-working-dir">
+                            {t(
+                              'settings.projects.lifecycleHooks.shared.workingDir.label'
+                            )}
+                          </Label>
+                          <Input
+                            id="project-after-prepare-hook-working-dir"
+                            value={draft.after_prepare_hook.working_dir}
+                            onChange={(e) =>
+                              updateAfterPrepareHookDraft({
+                                working_dir: e.target.value,
+                              })
+                            }
+                            placeholder={t(
+                              'settings.projects.lifecycleHooks.shared.workingDir.placeholder'
+                            )}
+                            className="font-mono"
+                          />
+                          <p className="text-sm text-muted-foreground">
+                            {t(
+                              'settings.projects.lifecycleHooks.shared.workingDir.helper'
+                            )}
+                          </p>
+                        </div>
+
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label htmlFor="project-after-prepare-hook-failure-policy">
+                              {t(
+                                'settings.projects.lifecycleHooks.shared.failurePolicy.label'
+                              )}
+                            </Label>
+                            <Select
+                              value={draft.after_prepare_hook.failure_policy}
+                              onValueChange={(value) =>
+                                updateAfterPrepareHookDraft({
+                                  failure_policy: value as Extract<
+                                    WorkspaceLifecycleHookFailurePolicy,
+                                    'block_start' | 'warn_only'
+                                  >,
+                                })
+                              }
+                            >
+                              <SelectTrigger id="project-after-prepare-hook-failure-policy">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="block_start">
+                                  {t(
+                                    'settings.projects.lifecycleHooks.afterPrepare.failurePolicy.options.blockStart'
+                                  )}
+                                </SelectItem>
+                                <SelectItem value="warn_only">
+                                  {t(
+                                    'settings.projects.lifecycleHooks.shared.failurePolicy.options.warnOnly'
+                                  )}
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="project-after-prepare-hook-run-mode">
+                              {t(
+                                'settings.projects.lifecycleHooks.afterPrepare.runMode.label'
+                              )}
+                            </Label>
+                            <Select
+                              value={draft.after_prepare_hook.run_mode}
+                              onValueChange={(value) =>
+                                updateAfterPrepareHookDraft({
+                                  run_mode: value as WorkspaceLifecycleHookRunMode,
+                                })
+                              }
+                            >
+                              <SelectTrigger id="project-after-prepare-hook-run-mode">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="once_per_workspace">
+                                  {t(
+                                    'settings.projects.lifecycleHooks.afterPrepare.runMode.options.oncePerWorkspace'
+                                  )}
+                                </SelectItem>
+                                <SelectItem value="every_prepare">
+                                  {t(
+                                    'settings.projects.lifecycleHooks.afterPrepare.runMode.options.everyPrepare'
+                                  )}
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="space-y-4 rounded-lg border border-border/60 p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-1">
+                        <Label htmlFor="project-before-cleanup-hook-enabled">
+                          {t('settings.projects.lifecycleHooks.beforeCleanup.title')}
+                        </Label>
+                        <p className="text-sm text-muted-foreground">
+                          {t(
+                            'settings.projects.lifecycleHooks.beforeCleanup.description'
+                          )}
+                        </p>
+                      </div>
+                      <Switch
+                        id="project-before-cleanup-hook-enabled"
+                        checked={draft.before_cleanup_hook.enabled}
+                        onCheckedChange={(checked) =>
+                          updateBeforeCleanupHookDraft({ enabled: checked })
+                        }
+                      />
+                    </div>
+
+                    {draft.before_cleanup_hook.enabled ? (
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="project-before-cleanup-hook-command">
+                            {t(
+                              'settings.projects.lifecycleHooks.shared.command.label'
+                            )}
+                          </Label>
+                          <AutoExpandingTextarea
+                            id="project-before-cleanup-hook-command"
+                            value={draft.before_cleanup_hook.command}
+                            onChange={(e) =>
+                              updateBeforeCleanupHookDraft({
+                                command: e.target.value,
+                              })
+                            }
+                            placeholder={t(
+                              'settings.projects.lifecycleHooks.beforeCleanup.command.placeholder'
+                            )}
+                            maxRows={8}
+                            className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                          />
+                          <p className="text-sm text-muted-foreground">
+                            {t(
+                              'settings.projects.lifecycleHooks.shared.command.helper'
+                            )}
+                          </p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="project-before-cleanup-hook-working-dir">
+                            {t(
+                              'settings.projects.lifecycleHooks.shared.workingDir.label'
+                            )}
+                          </Label>
+                          <Input
+                            id="project-before-cleanup-hook-working-dir"
+                            value={draft.before_cleanup_hook.working_dir}
+                            onChange={(e) =>
+                              updateBeforeCleanupHookDraft({
+                                working_dir: e.target.value,
+                              })
+                            }
+                            placeholder={t(
+                              'settings.projects.lifecycleHooks.shared.workingDir.placeholder'
+                            )}
+                            className="font-mono"
+                          />
+                          <p className="text-sm text-muted-foreground">
+                            {t(
+                              'settings.projects.lifecycleHooks.shared.workingDir.helper'
+                            )}
+                          </p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="project-before-cleanup-hook-failure-policy">
+                            {t(
+                              'settings.projects.lifecycleHooks.shared.failurePolicy.label'
+                            )}
+                          </Label>
+                          <Select
+                            value={draft.before_cleanup_hook.failure_policy}
+                            onValueChange={(value) =>
+                              updateBeforeCleanupHookDraft({
+                                failure_policy: value as Extract<
+                                  WorkspaceLifecycleHookFailurePolicy,
+                                  'warn_only' | 'block_cleanup'
+                                >,
+                              })
+                            }
+                          >
+                            <SelectTrigger id="project-before-cleanup-hook-failure-policy">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="warn_only">
+                                {t(
+                                  'settings.projects.lifecycleHooks.shared.failurePolicy.options.warnOnly'
+                                )}
+                              </SelectItem>
+                              <SelectItem value="block_cleanup">
+                                {t(
+                                  'settings.projects.lifecycleHooks.beforeCleanup.failurePolicy.options.blockCleanup'
+                                )}
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
 

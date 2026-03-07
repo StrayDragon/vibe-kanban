@@ -150,8 +150,104 @@ pub enum TaskAutomationReasonCode {
     NoProjectRepos,
     #[sea_orm(string_value = "base_branch_unresolved")]
     BaseBranchUnresolved,
+    #[sea_orm(string_value = "workspace_hook_failed")]
+    WorkspaceHookFailed,
     #[sea_orm(string_value = "blocked")]
     Blocked,
+}
+
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    EnumIter,
+    DeriveActiveEnum,
+    Serialize,
+    Deserialize,
+    TS,
+    EnumString,
+    Display,
+)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum WorkspaceLifecycleHookFailurePolicy {
+    #[sea_orm(string_value = "block_start")]
+    BlockStart,
+    #[sea_orm(string_value = "warn_only")]
+    WarnOnly,
+    #[sea_orm(string_value = "block_cleanup")]
+    BlockCleanup,
+}
+
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    EnumIter,
+    DeriveActiveEnum,
+    Serialize,
+    Deserialize,
+    TS,
+    EnumString,
+    Display,
+)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum WorkspaceLifecycleHookRunMode {
+    #[sea_orm(string_value = "once_per_workspace")]
+    OncePerWorkspace,
+    #[sea_orm(string_value = "every_prepare")]
+    EveryPrepare,
+}
+
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    EnumIter,
+    DeriveActiveEnum,
+    Serialize,
+    Deserialize,
+    TS,
+    EnumString,
+    Display,
+)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum WorkspaceLifecycleHookPhase {
+    #[sea_orm(string_value = "after_prepare")]
+    AfterPrepare,
+    #[sea_orm(string_value = "before_cleanup")]
+    BeforeCleanup,
+}
+
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    EnumIter,
+    DeriveActiveEnum,
+    Serialize,
+    Deserialize,
+    TS,
+    EnumString,
+    Display,
+)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum WorkspaceLifecycleHookStatus {
+    #[sea_orm(string_value = "succeeded")]
+    Succeeded,
+    #[sea_orm(string_value = "failed")]
+    Failed,
 }
 
 #[derive(

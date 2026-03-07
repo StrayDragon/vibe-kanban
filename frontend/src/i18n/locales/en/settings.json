@@ -473,6 +473,74 @@
         "unsavedChanges": "• You have unsaved changes",
         "discard": "Discard",
         "confirmSwitch": "You have unsaved changes. Are you sure you want to switch projects? Your changes will be lost."
+      },
+      "lifecycleHooks": {
+        "title": "Workspace lifecycle hooks",
+        "description": "Optional project-owned commands that run after workspace preparation or right before cleanup.",
+        "shared": {
+          "command": {
+            "label": "Command",
+            "helper": "Runs inside the workspace. Keep it project-specific and auditable."
+          },
+          "workingDir": {
+            "label": "Working Directory",
+            "placeholder": "e.g., my-repo",
+            "helper": "Relative to the workspace root. Leave empty to run from the workspace root."
+          },
+          "failurePolicy": {
+            "label": "Failure Policy",
+            "options": {
+              "warnOnly": "Warn only"
+            }
+          }
+        },
+        "afterPrepare": {
+          "title": "After prepare",
+          "description": "Run after the workspace is materialized and VK has written its generated files.",
+          "command": {
+            "placeholder": "pnpm install --frozen-lockfile"
+          },
+          "failurePolicy": {
+            "options": {
+              "blockStart": "Block task start"
+            }
+          },
+          "runMode": {
+            "label": "Run Mode",
+            "options": {
+              "oncePerWorkspace": "Once per workspace",
+              "everyPrepare": "Every prepare"
+            }
+          }
+        },
+        "beforeCleanup": {
+          "title": "Before cleanup",
+          "description": "Run right before VK removes a workspace during cleanup or worktree removal.",
+          "command": {
+            "placeholder": "pnpm run clean:local"
+          },
+          "failurePolicy": {
+            "options": {
+              "blockCleanup": "Block cleanup"
+            }
+          }
+        },
+        "summary": {
+          "title": "Lifecycle hook summary",
+          "description": "Configured prepare / cleanup hooks plus the most recent workspace hook outcome.",
+          "enabled": "Enabled",
+          "disabled": "Disabled",
+          "workspaceRoot": "Workspace root",
+          "loadingLatest": "Loading latest hook result...",
+          "latestTask": "Latest run came from task: {{task}}",
+          "untitledTask": "Untitled task",
+          "noRuns": "No hook runs recorded yet.",
+          "noneConfigured": "No lifecycle hooks configured."
+        },
+        "validation": {
+          "afterPrepareCommandRequired": "Add a command or disable the After prepare hook before saving.",
+          "beforeCleanupCommandRequired": "Add a command or disable the Before cleanup hook before saving."
+        }
       }
     }
   },

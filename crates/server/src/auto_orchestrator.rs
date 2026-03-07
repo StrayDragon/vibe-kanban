@@ -382,17 +382,27 @@ async fn dispatch_task(
             Ok(true)
         }
         Err(err) => {
+            let err_message = err.to_string();
             let next_retry_count = current_retry_count + 1;
-            let (status, blocked_reason, next_retry_at) =
-                if next_retry_count > project.scheduler_max_retries {
+            let (status, retry_count, blocked_reason, next_retry_at) =
+                if is_blocking_workspace_hook_error(&err_message) {
                     (
                         db::types::TaskDispatchStatus::Blocked,
+                        current_retry_count,
+                        Some(err_message.clone()),
+                        None,
+                    )
+                } else if next_retry_count > project.scheduler_max_retries {
+                    (
+                        db::types::TaskDispatchStatus::Blocked,
+                        next_retry_count,
                         Some("Retry limit reached while starting attempt".to_string()),
                         None,
                     )
                 } else {
                     (
                         db::types::TaskDispatchStatus::RetryScheduled,
+                        next_retry_count,
                         None,
                         Some(Utc::now() + retry_backoff(next_retry_count)),
                     )
@@ -404,9 +414,9 @@ async fn dispatch_task(
                 &UpsertTaskDispatchState {
                     controller: db::types::TaskDispatchController::Scheduler,
                     status,
-                    retry_count: next_retry_count,
+                    retry_count,
                     max_retries: project.scheduler_max_retries,
-                    last_error: Some(err.to_string()),
+                    last_error: Some(err_message),
                     blocked_reason,
                     next_retry_at,
                     claim_expires_at: None,
@@ -483,6 +493,12 @@ fn resolve_target_branch(git: &GitService, repo_path: &Path, preferred: &str) ->
     Err(anyhow::anyhow!(
         "No suitable base branch found; tried preferred, main, master"
     ))
+}
+
+fn is_blocking_workspace_hook_error(message: &str) -> bool {
+    message
+        .to_ascii_lowercase()
+        .contains("workspace lifecycle hook failed during after_prepare")
 }
 
 fn retry_backoff(retry_count: i32) -> ChronoDuration {

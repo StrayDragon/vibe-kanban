@@ -241,6 +241,22 @@
       "untitled": "Untitled task",
       "originUnavailable": "Origin task is no longer available.",
       "followUps": "Follow-up tasks ({{count}})"
+    },
+    "hooks": {
+      "title": "Workspace hooks",
+      "subtitle": "Latest prepare / cleanup hook status for this workspace.",
+      "notRun": "Not run",
+      "notRunDescription": "This hook has not run in this workspace yet.",
+      "ranAt": "Ran: {{time}}",
+      "successDescription": "The latest run completed successfully.",
+      "phases": {
+        "afterPrepare": "After prepare",
+        "beforeCleanup": "Before cleanup"
+      },
+      "statuses": {
+        "succeeded": "Succeeded",
+        "failed": "Failed"
+      }
     }
   },
   "processes": {

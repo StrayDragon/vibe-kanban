@@ -69,7 +69,6 @@ The system SHALL keep a repo-versioned workflow prompt for unattended auto-orche
 - **THEN** the prompt instructs the agent not to ask a human for generic follow-up actions
 - **AND** the prompt limits early exit to true blockers or explicit `vk` review handoff conditions
 
-
 ### Requirement: Task-level automation override
 Each task SHALL support an automation override with values `inherit`, `manual`, and `auto`.
 
@@ -188,4 +187,12 @@ The system SHALL keep project owners in control of which executor/profile varian
 - **WHEN** a programmatic caller requests an executor/profile variant that project policy does not allow
 - **THEN** the task SHALL remain persisted without silently escalating execution rights
 - **AND** the system SHALL expose a structured diagnostic explaining why the requested profile was not eligible
+
+### Requirement: Auto-managed starts honor required workspace preparation hooks
+Auto-managed task dispatch SHALL honor required workspace preparation hooks before starting coding-agent execution.
+
+#### Scenario: Scheduler defers dispatch on required hook failure
+- **WHEN** an auto-managed task belongs to a project whose blocking `after_prepare` hook fails
+- **THEN** the scheduler SHALL NOT continue into coding-agent execution
+- **AND** the task SHALL expose a structured non-dispatch reason for the hook failure
 

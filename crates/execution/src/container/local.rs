@@ -20,11 +20,12 @@ use db::{
         },
         execution_process_logs::ExecutionProcessLogs,
         execution_process_repo_state::ExecutionProcessRepoState,
+        project::{Project, WorkspaceLifecycleHookConfig},
         project_repo::ProjectRepo,
         repo::Repo,
         scratch::{DraftFollowUpData, Scratch, ScratchType},
         task::{Task, TaskStatus},
-        workspace::Workspace,
+        workspace::{Workspace, WorkspaceError},
         workspace_repo::WorkspaceRepo,
     },
 };
@@ -67,6 +68,10 @@ use utils_core::{
     notifications::SharedNotifier,
     text::{git_branch_id, short_uuid, truncate_to_char_boundary},
 };
+use db::types::{
+    WorkspaceLifecycleHookFailurePolicy, WorkspaceLifecycleHookPhase,
+    WorkspaceLifecycleHookRunMode, WorkspaceLifecycleHookStatus,
+};
 use uuid::Uuid;
 
 use super::{ContainerError, ContainerRef, ContainerService, DiffStreamOptions, command, copy};
@@ -105,6 +110,36 @@ const DEFAULT_WORKSPACE_CLEANUP_INTERVAL_SECS: u64 = 60 * 30; // 30 minutes
 
 const MIN_WORKSPACE_EXPIRED_TTL_SECS: i64 = 60; // 1 minute
 const MIN_WORKSPACE_CLEANUP_INTERVAL_SECS: u64 = 10; // 10 seconds
+
+const HOOK_OUTPUT_SUMMARY_LIMIT: usize = 4_000;
+
+fn summarize_hook_failure(output: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(output);
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(truncate_to_char_boundary(trimmed, HOOK_OUTPUT_SUMMARY_LIMIT).to_string())
+    }
+}
+
+fn resolve_hook_working_dir(workspace_dir: &Path, hook: &WorkspaceLifecycleHookConfig) -> PathBuf {
+    hook.working_dir
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| workspace_dir.join(value))
+        .unwrap_or_else(|| workspace_dir.to_path_buf())
+}
+
+fn should_run_after_prepare_hook(
+    workspace: &Workspace,
+    hook: &WorkspaceLifecycleHookConfig,
+) -> bool {
+    match hook.run_mode {
+        Some(WorkspaceLifecycleHookRunMode::EveryPrepare) => true,
+        _ => workspace.after_prepare_hook_status != Some(WorkspaceLifecycleHookStatus::Succeeded),
+    }
+}
 
 fn read_env_u64(name: &str, default: u64, min: u64) -> u64 {
     match std::env::var(name) {
@@ -253,24 +288,211 @@ impl LocalContainerService {
         self.finalization_tracker.end(execution_process_id).await;
     }
 
-    pub async fn cleanup_workspace(db: &DBService, workspace: &Workspace) {
-        let workspace_dir = if let Some(container_ref) = &workspace.container_ref {
-            PathBuf::from(container_ref)
-        } else if let Ok(Some(task)) = workspace.parent_task(&db.pool).await {
-            let dir_name = Self::dir_name_from_workspace(&workspace.id, &task.title);
-            WorkspaceManager::get_workspace_base_dir().join(dir_name)
-        } else {
-            return;
+    async fn workspace_dir_for(db: &DBService, workspace: &Workspace) -> Result<PathBuf, ContainerError> {
+        if let Some(container_ref) = &workspace.container_ref {
+            return Ok(PathBuf::from(container_ref));
+        }
+
+        let task = workspace
+            .parent_task(&db.pool)
+            .await?
+            .ok_or_else(|| anyhow!("Task not found for workspace"))?;
+        let dir_name = Self::dir_name_from_workspace(&workspace.id, &task.title);
+        Ok(WorkspaceManager::get_workspace_base_dir().join(dir_name))
+    }
+
+    async fn load_workspace_hook_context(
+        db: &DBService,
+        workspace: &Workspace,
+    ) -> Result<(Workspace, Task, Project, PathBuf), ContainerError> {
+        let fresh_workspace = Workspace::find_by_id(&db.pool, workspace.id)
+            .await?
+            .ok_or_else(|| anyhow!("Workspace not found"))?;
+        let task = fresh_workspace
+            .parent_task(&db.pool)
+            .await?
+            .ok_or_else(|| anyhow!("Task not found for workspace"))?;
+        let project = task
+            .parent_project(&db.pool)
+            .await?
+            .ok_or_else(|| anyhow!("Project not found for workspace task"))?;
+        let workspace_dir = Self::workspace_dir_for(db, &fresh_workspace).await?;
+        Ok((fresh_workspace, task, project, workspace_dir))
+    }
+
+    async fn execute_workspace_hook(
+        db: &DBService,
+        workspace: &Workspace,
+        task: &Task,
+        project: &Project,
+        workspace_dir: &Path,
+        phase: WorkspaceLifecycleHookPhase,
+        hook: &WorkspaceLifecycleHookConfig,
+    ) -> Result<Option<String>, ContainerError> {
+        let working_dir = resolve_hook_working_dir(workspace_dir, hook);
+        let parts = match shlex::split(hook.command.trim()) {
+            Some(parts) if !parts.is_empty() => parts,
+            _ => {
+                let summary = format!(
+                    "Workspace lifecycle hook failed during {}: invalid command text",
+                    phase
+                );
+                Workspace::record_hook_outcome(
+                    &db.pool,
+                    workspace.id,
+                    phase,
+                    WorkspaceLifecycleHookStatus::Failed,
+                    Some(summary.clone()),
+                )
+                .await?;
+                return Ok(Some(summary));
+            }
         };
 
-        let repositories = WorkspaceRepo::find_repos_for_workspace(&db.pool, workspace.id)
+        let (program, args) = parts.split_first().expect("validated non-empty");
+        let output = tokio::process::Command::new(program)
+            .args(args)
+            .current_dir(&working_dir)
+            .env("VK_PROJECT_NAME", &project.name)
+            .env("VK_PROJECT_ID", project.id.to_string())
+            .env("VK_TASK_ID", task.id.to_string())
+            .env("VK_WORKSPACE_ID", workspace.id.to_string())
+            .env("VK_WORKSPACE_BRANCH", &workspace.branch)
+            .output()
+            .await;
+
+        match output {
+            Ok(output) if output.status.success() => {
+                Workspace::record_hook_outcome(
+                    &db.pool,
+                    workspace.id,
+                    phase,
+                    WorkspaceLifecycleHookStatus::Succeeded,
+                    None,
+                )
+                .await?;
+                Ok(None)
+            }
+            Ok(output) => {
+                let detail = summarize_hook_failure(&output.stderr)
+                    .or_else(|| summarize_hook_failure(&output.stdout))
+                    .unwrap_or_else(|| {
+                        format!(
+                            "exit status {}",
+                            output
+                                .status
+                                .code()
+                                .map(|code| code.to_string())
+                                .unwrap_or_else(|| "unknown".to_string())
+                        )
+                    });
+                let summary = format!(
+                    "Workspace lifecycle hook failed during {}: {}",
+                    phase, detail
+                );
+                Workspace::record_hook_outcome(
+                    &db.pool,
+                    workspace.id,
+                    phase,
+                    WorkspaceLifecycleHookStatus::Failed,
+                    Some(summary.clone()),
+                )
+                .await?;
+                Ok(Some(summary))
+            }
+            Err(err) => {
+                let summary = format!(
+                    "Workspace lifecycle hook failed during {}: {}",
+                    phase, err
+                );
+                Workspace::record_hook_outcome(
+                    &db.pool,
+                    workspace.id,
+                    phase,
+                    WorkspaceLifecycleHookStatus::Failed,
+                    Some(summary.clone()),
+                )
+                .await?;
+                Ok(Some(summary))
+            }
+        }
+    }
+
+    async fn maybe_run_after_prepare_hook(
+        db: &DBService,
+        workspace: &Workspace,
+    ) -> Result<(), ContainerError> {
+        let (fresh_workspace, task, project, workspace_dir) =
+            Self::load_workspace_hook_context(db, workspace).await?;
+        let Some(hook) = project.after_prepare_hook.as_ref() else {
+            return Ok(());
+        };
+        if !should_run_after_prepare_hook(&fresh_workspace, hook) {
+            return Ok(());
+        }
+
+        if let Some(summary) = Self::execute_workspace_hook(
+            db,
+            &fresh_workspace,
+            &task,
+            &project,
+            &workspace_dir,
+            WorkspaceLifecycleHookPhase::AfterPrepare,
+            hook,
+        )
+        .await?
+        {
+            tracing::warn!(
+                workspace_id = %fresh_workspace.id,
+                project_id = %project.id,
+                phase = "after_prepare",
+                summary = %summary,
+                "workspace lifecycle hook failed"
+            );
+        }
+
+        Ok(())
+    }
+
+    pub async fn cleanup_workspace(
+        db: &DBService,
+        workspace: &Workspace,
+    ) -> Result<(), ContainerError> {
+        let (fresh_workspace, task, project, workspace_dir) =
+            Self::load_workspace_hook_context(db, workspace).await?;
+
+        if let Some(hook) = project.before_cleanup_hook.as_ref()
+            && let Some(summary) = Self::execute_workspace_hook(
+                db,
+                &fresh_workspace,
+                &task,
+                &project,
+                &workspace_dir,
+                WorkspaceLifecycleHookPhase::BeforeCleanup,
+                hook,
+            )
+            .await?
+        {
+            if hook.failure_policy == WorkspaceLifecycleHookFailurePolicy::BlockCleanup {
+                return Err(ContainerError::Workspace(WorkspaceError::ValidationError(summary)));
+            }
+            tracing::warn!(
+                workspace_id = %fresh_workspace.id,
+                project_id = %project.id,
+                phase = "before_cleanup",
+                summary = %summary,
+                "workspace lifecycle hook failed but cleanup will continue"
+            );
+        }
+
+        let repositories = WorkspaceRepo::find_repos_for_workspace(&db.pool, fresh_workspace.id)
             .await
             .unwrap_or_default();
 
         if repositories.is_empty() {
             tracing::warn!(
                 "No repositories found for workspace {}, cleaning up workspace directory only",
-                workspace.id
+                fresh_workspace.id
             );
             if workspace_dir.exists()
                 && let Err(e) = tokio::fs::remove_dir_all(&workspace_dir).await
@@ -283,14 +505,14 @@ impl LocalContainerService {
                 .unwrap_or_else(|e| {
                     tracing::warn!(
                         "Failed to clean up workspace for workspace {}: {}",
-                        workspace.id,
+                        fresh_workspace.id,
                         e
                     );
                 });
         }
 
-        // Clear container_ref so this workspace won't be picked up again
-        let _ = Workspace::clear_container_ref(&db.pool, workspace.id).await;
+        Workspace::clear_container_ref(&db.pool, fresh_workspace.id).await?;
+        Ok(())
     }
 
     pub async fn cleanup_expired_workspaces(db: &DBService) -> Result<(), ContainerError> {
@@ -319,7 +541,9 @@ impl LocalContainerService {
             expired_workspaces.len()
         );
         for workspace in &expired_workspaces {
-            Self::cleanup_workspace(db, workspace).await;
+            if let Err(err) = Self::cleanup_workspace(db, workspace).await {
+                tracing::warn!(workspace_id = %workspace.id, error = %err, "expired workspace cleanup failed");
+            }
         }
         Ok(())
     }
@@ -1460,6 +1684,8 @@ impl ContainerService for LocalContainerService {
         )
         .await?;
 
+        Self::maybe_run_after_prepare_hook(&self.db, workspace).await?;
+
         Ok(created_workspace
             .workspace_dir
             .to_string_lossy()
@@ -1468,7 +1694,7 @@ impl ContainerService for LocalContainerService {
 
     async fn delete(&self, workspace: &Workspace) -> Result<(), ContainerError> {
         self.try_stop(workspace, true).await;
-        Self::cleanup_workspace(&self.db, workspace).await;
+        Self::cleanup_workspace(&self.db, workspace).await?;
         Ok(())
     }
 
@@ -1528,6 +1754,7 @@ impl ContainerService for LocalContainerService {
             .await?;
 
         Self::create_workspace_config_files(&workspace_dir, &repositories).await?;
+        Self::maybe_run_after_prepare_hook(&self.db, workspace).await?;
 
         Ok(workspace_dir.to_string_lossy().to_string())
     }
@@ -2091,9 +2318,87 @@ fn success_exit_status() -> std::process::ExitStatus {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
     use tokio::sync::Barrier;
 
     use super::*;
+
+    fn sample_workspace() -> Workspace {
+        Workspace {
+            id: Uuid::new_v4(),
+            task_id: Uuid::new_v4(),
+            container_ref: None,
+            branch: "test-branch".to_string(),
+            agent_working_dir: None,
+            setup_completed_at: None,
+            latest_hook_run: None,
+            after_prepare_hook_status: None,
+            after_prepare_hook_ran_at: None,
+            after_prepare_hook_error_summary: None,
+            before_cleanup_hook_status: None,
+            before_cleanup_hook_ran_at: None,
+            before_cleanup_hook_error_summary: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn after_prepare_hook_once_per_workspace_skips_after_success() {
+        let mut workspace = sample_workspace();
+        workspace.after_prepare_hook_status = Some(WorkspaceLifecycleHookStatus::Succeeded);
+        let hook = WorkspaceLifecycleHookConfig {
+            command: "pnpm install".to_string(),
+            working_dir: Some("frontend".to_string()),
+            failure_policy: WorkspaceLifecycleHookFailurePolicy::WarnOnly,
+            run_mode: Some(WorkspaceLifecycleHookRunMode::OncePerWorkspace),
+        };
+
+        assert!(!should_run_after_prepare_hook(&workspace, &hook));
+    }
+
+    #[test]
+    fn after_prepare_hook_every_prepare_runs_even_after_success() {
+        let mut workspace = sample_workspace();
+        workspace.after_prepare_hook_status = Some(WorkspaceLifecycleHookStatus::Succeeded);
+        let hook = WorkspaceLifecycleHookConfig {
+            command: "pnpm install".to_string(),
+            working_dir: Some("frontend".to_string()),
+            failure_policy: WorkspaceLifecycleHookFailurePolicy::WarnOnly,
+            run_mode: Some(WorkspaceLifecycleHookRunMode::EveryPrepare),
+        };
+
+        assert!(should_run_after_prepare_hook(&workspace, &hook));
+    }
+
+    #[test]
+    fn resolve_hook_working_dir_defaults_to_workspace_root() {
+        let workspace_dir = Path::new("/tmp/workspace-root");
+        let hook = WorkspaceLifecycleHookConfig {
+            command: "pnpm install".to_string(),
+            working_dir: Some("  ".to_string()),
+            failure_policy: WorkspaceLifecycleHookFailurePolicy::WarnOnly,
+            run_mode: Some(WorkspaceLifecycleHookRunMode::OncePerWorkspace),
+        };
+
+        assert_eq!(resolve_hook_working_dir(workspace_dir, &hook), workspace_dir);
+    }
+
+    #[test]
+    fn resolve_hook_working_dir_joins_relative_path() {
+        let workspace_dir = Path::new("/tmp/workspace-root");
+        let hook = WorkspaceLifecycleHookConfig {
+            command: "pnpm install".to_string(),
+            working_dir: Some("frontend/app".to_string()),
+            failure_policy: WorkspaceLifecycleHookFailurePolicy::WarnOnly,
+            run_mode: Some(WorkspaceLifecycleHookRunMode::OncePerWorkspace),
+        };
+
+        assert_eq!(
+            resolve_hook_working_dir(workspace_dir, &hook),
+            workspace_dir.join("frontend/app")
+        );
+    }
 
     #[tokio::test]
     async fn finalization_tracker_allows_single_owner_during_race() {

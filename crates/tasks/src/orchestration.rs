@@ -53,6 +53,12 @@ pub enum TasksError {
     Runtime(String),
 }
 
+fn is_blocking_after_prepare_hook_error(message: &str) -> bool {
+    message
+        .to_ascii_lowercase()
+        .contains("workspace lifecycle hook failed during after_prepare")
+}
+
 #[derive(Debug, Clone)]
 struct ResolvedAttemptPlan {
     executor_profile_id: ExecutorProfileId,
@@ -126,6 +132,9 @@ pub async fn create_task_and_start<R: TaskRuntime + Sync>(
         .start_workspace(&workspace, input.executor_profile_id.clone(), None)
         .await
     {
+        if is_blocking_after_prepare_hook_error(&err) {
+            return Err(TasksError::Conflict(err));
+        }
         cleanup_failed_task_start(runtime, db, &task, &workspace).await?;
         return Err(TasksError::Runtime(err));
     }
@@ -212,6 +221,9 @@ pub async fn create_task_attempt<R: TaskRuntime + Sync>(
         )
         .await
     {
+        if is_blocking_after_prepare_hook_error(&err) {
+            return Err(TasksError::Conflict(err));
+        }
         cleanup_failed_attempt_start(runtime, db, &task, &workspace, &original_task_status).await?;
         return Err(TasksError::Runtime(err));
     }

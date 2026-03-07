@@ -91,6 +91,8 @@ export function NoServerContent({
           execution_mode: project.execution_mode,
           scheduler_max_concurrent: project.scheduler_max_concurrent,
           scheduler_max_retries: project.scheduler_max_retries,
+          after_prepare_hook: project.after_prepare_hook,
+          before_cleanup_hook: project.before_cleanup_hook,
         },
       },
       {

@@ -553,6 +553,8 @@ pub trait ContainerService {
                                 execution_mode: None,
                                 scheduler_max_concurrent: None,
                                 scheduler_max_retries: None,
+                            after_prepare_hook: None,
+                            before_cleanup_hook: None,
                             },
                         )
                         .await?;
@@ -1799,6 +1801,20 @@ pub trait ContainerService {
         let workspace = Workspace::find_by_id(&self.db().pool, workspace.id)
             .await?
             .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
+
+        if let Some(hook) = project.after_prepare_hook.as_ref()
+            && hook.failure_policy == db::types::WorkspaceLifecycleHookFailurePolicy::BlockStart
+            && workspace.after_prepare_hook_status
+                == Some(db::types::WorkspaceLifecycleHookStatus::Failed)
+        {
+            let detail = workspace
+                .after_prepare_hook_error_summary
+                .clone()
+                .unwrap_or_else(|| {
+                    "Workspace lifecycle hook failed during after_prepare".to_string()
+                });
+            return Err(ContainerError::Other(anyhow!(detail)));
+        }
 
         // Create a session for this workspace
         let session = Session::create(

@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    path::PathBuf,
-};
+use std::collections::{HashMap, VecDeque};
 
 use db::{
     DbErr, TransactionTrait,
@@ -10,10 +7,8 @@ use db::{
         task::{Task, TaskKind},
         task_group::{TaskGroup, TaskGroupError, TaskGroupGraph},
         workspace::Workspace,
-        workspace_repo::WorkspaceRepo,
     },
 };
-use repos::workspace_manager::WorkspaceManager;
 
 use crate::{orchestration::TasksError, runtime::TaskRuntime};
 
@@ -213,11 +208,12 @@ async fn delete_single_task_with_cleanup<R: TaskRuntime + Sync>(
             TasksError::Workspace(err)
         })?;
 
-    let repositories: Vec<Repo> = WorkspaceRepo::find_unique_repos_for_task(db, task.id).await?;
-    let workspace_dirs: Vec<PathBuf> = attempts
-        .iter()
-        .filter_map(|attempt| attempt.container_ref.as_ref().map(PathBuf::from))
-        .collect();
+    for attempt in &attempts {
+        runtime
+            .delete_workspace_container(attempt)
+            .await
+            .map_err(TasksError::Conflict)?;
+    }
 
     let tx = db.begin().await?;
     let mut total_children_affected = 0u64;
@@ -251,37 +247,15 @@ async fn delete_single_task_with_cleanup<R: TaskRuntime + Sync>(
     let task_id = task.id;
     let db = db.clone();
     tokio::spawn(async move {
-        tracing::info!(
-            "Starting background cleanup for task {} ({} workspaces, {} repos)",
-            task_id,
-            workspace_dirs.len(),
-            repositories.len()
-        );
-
-        for workspace_dir in &workspace_dirs {
-            if let Err(err) =
-                WorkspaceManager::cleanup_workspace(workspace_dir, &repositories).await
-            {
-                tracing::error!(
-                    "Background workspace cleanup failed for task {} at {}: {}",
-                    task_id,
-                    workspace_dir.display(),
-                    err
-                );
-            }
-        }
-
         match Repo::delete_orphaned(&db).await {
             Ok(count) if count > 0 => {
-                tracing::info!("Deleted {} orphaned repo records", count);
+                tracing::info!("Deleted {} orphaned repo records after deleting task {}", count, task_id);
             }
             Err(err) => {
-                tracing::error!("Failed to delete orphaned repos: {}", err);
+                tracing::error!("Failed to delete orphaned repos after deleting task {}: {}", task_id, err);
             }
             _ => {}
         }
-
-        tracing::info!("Background cleanup completed for task {}", task_id);
     });
 
     Ok(())

@@ -251,6 +251,22 @@
       "untitled": "未命名任务",
       "originUnavailable": "来源任务已不可用。",
       "followUps": "后续任务（{{count}}）"
+    },
+    "hooks": {
+      "title": "工作区 Hook",
+      "subtitle": "显示该工作区最近一次 prepare / cleanup Hook 结果。",
+      "notRun": "未运行",
+      "notRunDescription": "这个 Hook 在当前工作区里还没有运行过。",
+      "ranAt": "运行时间：{{time}}",
+      "successDescription": "最近一次运行已成功完成。",
+      "phases": {
+        "afterPrepare": "准备后",
+        "beforeCleanup": "清理前"
+      },
+      "statuses": {
+        "succeeded": "成功",
+        "failed": "失败"
+      }
     }
   },
   "processes": {

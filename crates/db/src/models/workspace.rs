@@ -20,6 +20,7 @@ use crate::{
         WorkspaceEventPayload,
     },
     models::{event_outbox::EventOutbox, ids},
+    types::{WorkspaceLifecycleHookPhase, WorkspaceLifecycleHookStatus},
 };
 
 #[derive(Debug, Error)]
@@ -51,8 +52,26 @@ pub struct Workspace {
     pub branch: String,
     pub agent_working_dir: Option<String>,
     pub setup_completed_at: Option<DateTime<Utc>>,
+    pub latest_hook_run: Option<WorkspaceLifecycleHookRunSummary>,
+    pub after_prepare_hook_status: Option<WorkspaceLifecycleHookStatus>,
+    #[ts(type = "Date | null")]
+    pub after_prepare_hook_ran_at: Option<DateTime<Utc>>,
+    pub after_prepare_hook_error_summary: Option<String>,
+    pub before_cleanup_hook_status: Option<WorkspaceLifecycleHookStatus>,
+    #[ts(type = "Date | null")]
+    pub before_cleanup_hook_ran_at: Option<DateTime<Utc>>,
+    pub before_cleanup_hook_error_summary: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct WorkspaceLifecycleHookRunSummary {
+    pub phase: WorkspaceLifecycleHookPhase,
+    pub status: WorkspaceLifecycleHookStatus,
+    #[ts(type = "Date")]
+    pub ran_at: DateTime<Utc>,
+    pub error_summary: Option<String>,
 }
 
 /// GitHub PR creation parameters
@@ -92,15 +111,64 @@ pub struct CreateWorkspace {
     pub agent_working_dir: Option<String>,
 }
 
+fn latest_hook_run_from_model(model: &workspace::Model) -> Option<WorkspaceLifecycleHookRunSummary> {
+    let after_prepare = match (
+        model.after_prepare_hook_status.clone(),
+        model.after_prepare_hook_ran_at,
+    ) {
+        (Some(status), Some(ran_at)) => Some(WorkspaceLifecycleHookRunSummary {
+            phase: WorkspaceLifecycleHookPhase::AfterPrepare,
+            status,
+            ran_at: ran_at.into(),
+            error_summary: model.after_prepare_hook_error_summary.clone(),
+        }),
+        _ => None,
+    };
+
+    let before_cleanup = match (
+        model.before_cleanup_hook_status.clone(),
+        model.before_cleanup_hook_ran_at,
+    ) {
+        (Some(status), Some(ran_at)) => Some(WorkspaceLifecycleHookRunSummary {
+            phase: WorkspaceLifecycleHookPhase::BeforeCleanup,
+            status,
+            ran_at: ran_at.into(),
+            error_summary: model.before_cleanup_hook_error_summary.clone(),
+        }),
+        _ => None,
+    };
+
+    match (after_prepare, before_cleanup) {
+        (Some(after), Some(before)) => {
+            if after.ran_at >= before.ran_at {
+                Some(after)
+            } else {
+                Some(before)
+            }
+        }
+        (Some(after), None) => Some(after),
+        (None, Some(before)) => Some(before),
+        (None, None) => None,
+    }
+}
+
 impl Workspace {
     fn from_model(model: workspace::Model, task_id: Uuid) -> Self {
+        let latest_hook_run = latest_hook_run_from_model(&model);
         Self {
             id: model.uuid,
             task_id,
-            container_ref: model.container_ref,
+            container_ref: model.container_ref.clone(),
             branch: model.branch,
             agent_working_dir: model.agent_working_dir,
             setup_completed_at: model.setup_completed_at.map(Into::into),
+            latest_hook_run,
+            after_prepare_hook_status: model.after_prepare_hook_status,
+            after_prepare_hook_ran_at: model.after_prepare_hook_ran_at.map(Into::into),
+            after_prepare_hook_error_summary: model.after_prepare_hook_error_summary,
+            before_cleanup_hook_status: model.before_cleanup_hook_status,
+            before_cleanup_hook_ran_at: model.before_cleanup_hook_ran_at.map(Into::into),
+            before_cleanup_hook_error_summary: model.before_cleanup_hook_error_summary,
             created_at: model.created_at.into(),
             updated_at: model.updated_at.into(),
         }
@@ -420,6 +488,12 @@ impl Workspace {
             branch: Set(data.branch.clone()),
             agent_working_dir: Set(data.agent_working_dir.clone()),
             setup_completed_at: Set(None),
+            after_prepare_hook_status: Set(None),
+            after_prepare_hook_ran_at: Set(None),
+            after_prepare_hook_error_summary: Set(None),
+            before_cleanup_hook_status: Set(None),
+            before_cleanup_hook_ran_at: Set(None),
+            before_cleanup_hook_error_summary: Set(None),
             created_at: Set(now.into()),
             updated_at: Set(now.into()),
             ..Default::default()
@@ -433,6 +507,55 @@ impl Workspace {
         .map_err(|err| DbErr::Custom(err.to_string()))?;
         EventOutbox::enqueue(db, EVENT_WORKSPACE_CREATED, "workspace", id, payload).await?;
         Ok(Self::from_model(model, task_id))
+    }
+
+    pub async fn record_hook_outcome<C: ConnectionTrait>(
+        db: &C,
+        workspace_id: Uuid,
+        phase: WorkspaceLifecycleHookPhase,
+        status: WorkspaceLifecycleHookStatus,
+        error_summary: Option<String>,
+    ) -> Result<(), DbErr> {
+        let record = workspace::Entity::find()
+            .filter(workspace::Column::Uuid.eq(workspace_id))
+            .one(db)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
+
+        let task_id = ids::task_uuid_by_id(db, record.task_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+
+        let now = Utc::now();
+        let mut active: workspace::ActiveModel = record.into();
+        match phase {
+            WorkspaceLifecycleHookPhase::AfterPrepare => {
+                active.after_prepare_hook_status = Set(Some(status));
+                active.after_prepare_hook_ran_at = Set(Some(now.into()));
+                active.after_prepare_hook_error_summary = Set(error_summary);
+            }
+            WorkspaceLifecycleHookPhase::BeforeCleanup => {
+                active.before_cleanup_hook_status = Set(Some(status));
+                active.before_cleanup_hook_ran_at = Set(Some(now.into()));
+                active.before_cleanup_hook_error_summary = Set(error_summary);
+            }
+        }
+        active.updated_at = Set(now.into());
+        active.update(db).await?;
+        let payload = serde_json::to_value(WorkspaceEventPayload {
+            workspace_id,
+            task_id,
+        })
+        .map_err(|err| DbErr::Custom(err.to_string()))?;
+        EventOutbox::enqueue(
+            db,
+            EVENT_WORKSPACE_UPDATED,
+            "workspace",
+            workspace_id,
+            payload,
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn update_branch_name<C: ConnectionTrait>(

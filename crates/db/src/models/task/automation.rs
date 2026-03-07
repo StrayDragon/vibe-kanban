@@ -132,6 +132,10 @@ fn blocked_reason_code(task: &TaskWithAttemptStatus) -> TaskAutomationReasonCode
         TaskAutomationReasonCode::NoProjectRepos
     } else if haystack.contains("base branch") || haystack.contains("no suitable base branch") {
         TaskAutomationReasonCode::BaseBranchUnresolved
+    } else if haystack.contains("workspace lifecycle hook failed")
+        || haystack.contains("after_prepare hook")
+    {
+        TaskAutomationReasonCode::WorkspaceHookFailed
     } else {
         TaskAutomationReasonCode::Blocked
     }
@@ -252,6 +256,8 @@ mod tests {
             execution_mode: ProjectExecutionMode::Manual,
             scheduler_max_concurrent: 1,
             scheduler_max_retries: 3,
+            after_prepare_hook: None,
+            before_cleanup_hook: None,
             remote_project_id: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -396,6 +402,35 @@ mod tests {
                 .as_ref()
                 .map(|d| &d.reason_code),
             Some(&TaskAutomationReasonCode::ConcurrencyLimitReached)
+        );
+    }
+
+    #[test]
+    fn blocking_workspace_hook_failures_use_specific_reason_code() {
+        let mut task = sample_task();
+        task.project_execution_mode = ProjectExecutionMode::Auto;
+        task.dispatch_state = Some(TaskDispatchState {
+            task_id: task.id,
+            controller: TaskDispatchController::Scheduler,
+            status: TaskDispatchStatus::Blocked,
+            retry_count: 1,
+            max_retries: 3,
+            last_error: Some(
+                "Workspace lifecycle hook failed during after_prepare: bootstrap command failed"
+                    .to_string(),
+            ),
+            blocked_reason: None,
+            next_retry_at: None,
+            claim_expires_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        });
+
+        enrich_task_with_automation_context(&mut task);
+
+        assert_eq!(
+            task.automation_diagnostic.map(|diagnostic| diagnostic.reason_code),
+            Some(TaskAutomationReasonCode::WorkspaceHookFailed)
         );
     }
 }
