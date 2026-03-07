@@ -1,3 +1,5 @@
+pub mod automation;
+
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
@@ -10,12 +12,15 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
-use super::{project::Project, workspace::Workspace};
+use super::{project::Project, task_dispatch_state::TaskDispatchState, workspace::Workspace};
 pub use crate::types::{TaskKind, TaskStatus};
 use crate::{
     entities::{execution_process, session, task, task_group, workspace},
     events::{EVENT_TASK_CREATED, EVENT_TASK_DELETED, EVENT_TASK_UPDATED, TaskEventPayload},
     models::{event_outbox::EventOutbox, ids},
+    types::{
+        ProjectExecutionMode, TaskAutomationMode, TaskAutomationReasonCode, TaskCreatedByKind,
+    },
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -25,10 +30,13 @@ pub struct Task {
     pub title: String,
     pub description: Option<String>,
     pub status: TaskStatus,
+    pub automation_mode: TaskAutomationMode,
     pub task_kind: TaskKind,
     pub task_group_id: Option<Uuid>,
     pub task_group_node_id: Option<String>,
     pub parent_workspace_id: Option<Uuid>,
+    pub origin_task_id: Option<Uuid>,
+    pub created_by_kind: TaskCreatedByKind,
     pub shared_task_id: Option<Uuid>,
     pub archived_kanban_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
@@ -43,6 +51,17 @@ pub struct TaskWithAttemptStatus {
     pub has_in_progress_attempt: bool,
     pub last_attempt_failed: bool,
     pub executor: String,
+    pub project_execution_mode: ProjectExecutionMode,
+    pub effective_automation_mode: ProjectExecutionMode,
+    pub dispatch_state: Option<TaskDispatchState>,
+    pub automation_diagnostic: Option<TaskAutomationDiagnostic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct TaskAutomationDiagnostic {
+    pub reason_code: TaskAutomationReasonCode,
+    pub reason_detail: String,
+    pub actionable: bool,
 }
 
 impl std::ops::Deref for TaskWithAttemptStatus {
@@ -71,10 +90,13 @@ pub struct CreateTask {
     pub title: String,
     pub description: Option<String>,
     pub status: Option<TaskStatus>,
+    pub automation_mode: Option<TaskAutomationMode>,
     pub task_kind: Option<TaskKind>,
     pub task_group_id: Option<Uuid>,
     pub task_group_node_id: Option<String>,
     pub parent_workspace_id: Option<Uuid>,
+    pub origin_task_id: Option<Uuid>,
+    pub created_by_kind: Option<TaskCreatedByKind>,
     pub image_ids: Option<Vec<Uuid>>,
     pub shared_task_id: Option<Uuid>,
 }
@@ -90,10 +112,13 @@ impl CreateTask {
             title,
             description,
             status: Some(TaskStatus::Todo),
+            automation_mode: None,
             task_kind: None,
             task_group_id: None,
             task_group_node_id: None,
             parent_workspace_id: None,
+            origin_task_id: None,
+            created_by_kind: None,
             image_ids: None,
             shared_task_id: None,
         }
@@ -111,14 +136,23 @@ impl CreateTask {
             title,
             description,
             status: Some(status),
+            automation_mode: None,
             task_kind: None,
             task_group_id: None,
             task_group_node_id: None,
             parent_workspace_id: None,
+            origin_task_id: None,
+            created_by_kind: None,
             image_ids: None,
             shared_task_id: Some(shared_task_id),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct TaskLineageSummary {
+    pub origin_task: Option<Task>,
+    pub follow_up_tasks: Vec<Task>,
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]
@@ -126,6 +160,7 @@ pub struct UpdateTask {
     pub title: Option<String>,
     pub description: Option<String>,
     pub status: Option<TaskStatus>,
+    pub automation_mode: Option<TaskAutomationMode>,
     pub parent_workspace_id: Option<Uuid>,
     pub image_ids: Option<Vec<Uuid>>,
 }
@@ -151,6 +186,13 @@ impl Task {
             Some(id) => ids::workspace_uuid_by_id(db, id)
                 .await?
                 .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))
+                .map(Some)?,
+            None => None,
+        };
+        let origin_task_id = match model.origin_task_id {
+            Some(id) => ids::task_uuid_by_id(db, id)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Origin task not found".to_string()))
                 .map(Some)?,
             None => None,
         };
@@ -184,10 +226,13 @@ impl Task {
             title: model.title,
             description: model.description,
             status: model.status,
+            automation_mode: model.automation_mode,
             task_kind: model.task_kind,
             task_group_id,
             task_group_node_id: model.task_group_node_id,
             parent_workspace_id,
+            origin_task_id,
+            created_by_kind: model.created_by_kind,
             shared_task_id,
             archived_kanban_id,
             created_at: model.created_at.into(),
@@ -307,6 +352,34 @@ impl Task {
         Ok((has_in_progress_attempt, last_attempt_failed, executor))
     }
 
+    async fn with_attempt_status<C: ConnectionTrait>(
+        db: &C,
+        model: task::Model,
+    ) -> Result<TaskWithAttemptStatus, DbErr> {
+        let row_id = model.id;
+        let task = Self::from_model(db, model).await?;
+        let (has_in_progress_attempt, last_attempt_failed, executor) =
+            Self::attempt_status(db, row_id).await?;
+        let project = Project::find_by_id(db, task.project_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+        let project_execution_mode = project.execution_mode.clone();
+        let dispatch_state = TaskDispatchState::find_by_task_id(db, task.id).await?;
+
+        let mut task_with_status = TaskWithAttemptStatus {
+            task,
+            has_in_progress_attempt,
+            last_attempt_failed,
+            executor,
+            project_execution_mode: project_execution_mode.clone(),
+            effective_automation_mode: project_execution_mode,
+            dispatch_state,
+            automation_diagnostic: None,
+        };
+        automation::enrich_task_with_automation_context(&mut task_with_status);
+        Ok(task_with_status)
+    }
+
     pub async fn has_running_attempts<C: ConnectionTrait>(
         db: &C,
         task_id: Uuid,
@@ -421,6 +494,33 @@ impl Task {
         Project::find_by_id(db, self.project_id).await
     }
 
+    async fn decorate_tasks_with_project_context<C: ConnectionTrait>(
+        db: &C,
+        tasks: &mut [TaskWithAttemptStatus],
+    ) -> Result<(), DbErr> {
+        let mut by_project: HashMap<Uuid, Vec<usize>> = HashMap::new();
+        for (index, task) in tasks.iter().enumerate() {
+            by_project.entry(task.project_id).or_default().push(index);
+        }
+
+        for (project_id, indices) in by_project {
+            let project = Project::find_by_id(db, project_id)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+            let mut project_tasks: Vec<TaskWithAttemptStatus> =
+                indices.iter().map(|&index| tasks[index].clone()).collect();
+            automation::decorate_project_tasks_with_automation_context(
+                &project,
+                &mut project_tasks,
+            );
+            for (local_index, task) in project_tasks.into_iter().enumerate() {
+                tasks[indices[local_index]] = task;
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn find_by_project_id_with_attempt_status<C: ConnectionTrait>(
         db: &C,
         project_id: Uuid,
@@ -438,17 +538,9 @@ impl Task {
 
         let mut tasks = Vec::with_capacity(models.len());
         for model in models {
-            let row_id = model.id;
-            let task = Self::from_model(db, model).await?;
-            let (has_in_progress_attempt, last_attempt_failed, executor) =
-                Self::attempt_status(db, row_id).await?;
-            tasks.push(TaskWithAttemptStatus {
-                task,
-                has_in_progress_attempt,
-                last_attempt_failed,
-                executor,
-            });
+            tasks.push(Self::with_attempt_status(db, model).await?);
         }
+        Self::decorate_tasks_with_project_context(db, &mut tasks).await?;
 
         Ok(tasks)
     }
@@ -485,17 +577,9 @@ impl Task {
 
         let mut tasks = Vec::with_capacity(models.len());
         for model in models {
-            let row_id = model.id;
-            let task = Self::from_model(db, model).await?;
-            let (has_in_progress_attempt, last_attempt_failed, executor) =
-                Self::attempt_status(db, row_id).await?;
-            tasks.push(TaskWithAttemptStatus {
-                task,
-                has_in_progress_attempt,
-                last_attempt_failed,
-                executor,
-            });
+            tasks.push(Self::with_attempt_status(db, model).await?);
         }
+        Self::decorate_tasks_with_project_context(db, &mut tasks).await?;
 
         Ok(tasks)
     }
@@ -541,17 +625,9 @@ impl Task {
 
         let mut tasks = Vec::with_capacity(models.len());
         for model in models {
-            let row_id = model.id;
-            let task = Self::from_model(db, model).await?;
-            let (has_in_progress_attempt, last_attempt_failed, executor) =
-                Self::attempt_status(db, row_id).await?;
-            tasks.push(TaskWithAttemptStatus {
-                task,
-                has_in_progress_attempt,
-                last_attempt_failed,
-                executor,
-            });
+            tasks.push(Self::with_attempt_status(db, model).await?);
         }
+        Self::decorate_tasks_with_project_context(db, &mut tasks).await?;
 
         Ok(tasks)
     }
@@ -564,6 +640,21 @@ impl Task {
 
         match record {
             Some(model) => Ok(Some(Self::from_model(db, model).await?)),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn find_by_id_with_attempt_status<C: ConnectionTrait>(
+        db: &C,
+        id: Uuid,
+    ) -> Result<Option<TaskWithAttemptStatus>, DbErr> {
+        let record = task::Entity::find()
+            .filter(task::Column::Uuid.eq(id))
+            .one(db)
+            .await?;
+
+        match record {
+            Some(model) => Ok(Some(Self::with_attempt_status(db, model).await?)),
             None => Ok(None),
         }
     }
@@ -601,6 +692,48 @@ impl Task {
         Ok(tasks)
     }
 
+    pub async fn find_by_origin_task_id<C: ConnectionTrait>(
+        db: &C,
+        origin_task_id: Uuid,
+    ) -> Result<Vec<Self>, DbErr> {
+        let origin_task_row_id = match ids::task_id_by_uuid(db, origin_task_id).await? {
+            Some(id) => id,
+            None => return Ok(Vec::new()),
+        };
+
+        let models = task::Entity::find()
+            .filter(task::Column::OriginTaskId.eq(origin_task_row_id))
+            .order_by_desc(task::Column::CreatedAt)
+            .all(db)
+            .await?;
+
+        let mut tasks = Vec::with_capacity(models.len());
+        for model in models {
+            tasks.push(Self::from_model(db, model).await?);
+        }
+        Ok(tasks)
+    }
+
+    pub async fn lineage_summary<C: ConnectionTrait>(
+        db: &C,
+        task_id: Uuid,
+    ) -> Result<TaskLineageSummary, DbErr> {
+        let current_task = Self::find_by_id(db, task_id)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+
+        let origin_task = match current_task.origin_task_id {
+            Some(origin_task_id) => Self::find_by_id(db, origin_task_id).await?,
+            None => None,
+        };
+        let follow_up_tasks = Self::find_by_origin_task_id(db, current_task.id).await?;
+
+        Ok(TaskLineageSummary {
+            origin_task,
+            follow_up_tasks,
+        })
+    }
+
     pub async fn create<C: ConnectionTrait>(
         db: &C,
         data: &CreateTask,
@@ -613,6 +746,13 @@ impl Task {
             Some(id) => ids::workspace_id_by_uuid(db, id)
                 .await?
                 .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))
+                .map(Some)?,
+            None => None,
+        };
+        let origin_task_id = match data.origin_task_id {
+            Some(id) => ids::task_id_by_uuid(db, id)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Origin task not found".to_string()))
                 .map(Some)?,
             None => None,
         };
@@ -665,10 +805,13 @@ impl Task {
             title: Set(data.title.clone()),
             description: Set(data.description.clone()),
             status: Set(data.status.clone().unwrap_or_default()),
+            automation_mode: Set(data.automation_mode.clone().unwrap_or_default()),
             task_kind: Set(task_kind.clone()),
             task_group_id: Set(task_group_id),
             task_group_node_id: Set(task_group_node_id),
             parent_workspace_id: Set(parent_workspace_id),
+            origin_task_id: Set(origin_task_id),
+            created_by_kind: Set(data.created_by_kind.clone().unwrap_or_default()),
             shared_task_id: Set(shared_task_id),
             archived_kanban_id: Set(None),
             created_at: Set(now.into()),
@@ -693,6 +836,7 @@ impl Task {
         title: String,
         description: Option<String>,
         status: TaskStatus,
+        automation_mode: TaskAutomationMode,
         parent_workspace_id: Option<Uuid>,
     ) -> Result<Self, DbErr> {
         let project_row_id = ids::project_id_by_uuid(db, project_id)
@@ -728,6 +872,7 @@ impl Task {
         active.title = Set(title);
         active.description = Set(description);
         active.status = Set(status.clone());
+        active.automation_mode = Set(automation_mode);
         active.parent_workspace_id = Set(parent_workspace_row_id);
         active.updated_at = Set(Utc::now().into());
 

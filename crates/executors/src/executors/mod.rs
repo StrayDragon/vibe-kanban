@@ -6,15 +6,16 @@ pub use executors_core::executors::{
     ExecutorExitSignal, InterruptSender, SpawnedChild, StandardCodingAgentExecutor, acp,
 };
 use executors_core::{
-    approvals::ExecutorApprovalService, auto_retry::AutoRetryConfig, env::ExecutionEnv,
+    approvals::ExecutorApprovalService,
+    auto_retry::AutoRetryConfig,
+    env::ExecutionEnv,
+    mcp_config::{Adapter, McpConfig, preconfigured_mcp},
 };
 use executors_protocol::{BaseCodingAgent, actions::ExecutorAction};
 use logs_store::MsgStore;
 use serde::{Deserialize, Serialize};
 use strum_macros::Display;
 use ts_rs::TS;
-
-use executors_core::mcp_config::{Adapter, McpConfig, preconfigured_mcp};
 
 #[cfg(feature = "amp")]
 pub mod amp {

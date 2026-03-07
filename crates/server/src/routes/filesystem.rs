@@ -5,6 +5,7 @@ use std::{
     sync::Arc,
 };
 
+use app_runtime::Deployment;
 use axum::{
     Router,
     extract::{Query, State},
@@ -12,7 +13,6 @@ use axum::{
     routing::get,
 };
 use config::Config;
-use app_runtime::Deployment;
 use repos::{
     filesystem::{DirectoryEntry, DirectoryListResponse, FilesystemError, FilesystemService},
     workspace_manager::WorkspaceManager,

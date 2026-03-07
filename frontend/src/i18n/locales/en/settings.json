@@ -448,6 +448,24 @@
           }
         }
       },
+      "scheduler": {
+        "mode": {
+          "label": "Execution Mode",
+          "helper": "Manual keeps humans in charge. Auto Orchestrated continuously dispatches eligible internal tasks in the background.",
+          "options": {
+            "manual": "Manual",
+            "auto": "Auto Orchestrated"
+          }
+        },
+        "maxConcurrent": {
+          "label": "Auto Concurrency",
+          "helper": "Maximum number of tasks this project may auto-run at the same time."
+        },
+        "maxRetries": {
+          "label": "Auto Retries",
+          "helper": "How many times auto orchestration retries a failed task before blocking it."
+        }
+      },
       "save": {
         "button": "Save Project Settings",
         "success": "✓ Project settings saved successfully!",

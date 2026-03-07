@@ -4,8 +4,10 @@ use async_trait::async_trait;
 use db::{self, DBService};
 use executors_core::approvals::{ExecutorApprovalError, ExecutorApprovalService};
 use serde_json::Value;
-use utils_core::notifications::SharedNotifier;
-use utils_core::approvals::{ApprovalRequest, ApprovalStatus, CreateApprovalRequest};
+use utils_core::{
+    approvals::{ApprovalRequest, ApprovalStatus, CreateApprovalRequest},
+    notifications::SharedNotifier,
+};
 use uuid::Uuid;
 
 use crate::approvals::Approvals;

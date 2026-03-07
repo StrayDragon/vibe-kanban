@@ -1,4 +1,6 @@
 pub mod api;
+pub mod auto_orchestrator;
+pub mod auto_orchestrator_prompt;
 pub mod error;
 pub mod http;
 pub mod mcp;

@@ -1,6 +1,8 @@
 use std::{fs, path::Path};
 
 fn main() {
+    println!("cargo:rerun-if-changed=../../frontend/dist");
+    println!("cargo:rerun-if-changed=../../frontend/dist/index.html");
     dotenv::dotenv().ok();
 
     if let Ok(api_key) = std::env::var("POSTHOG_API_KEY") {

@@ -1,10 +1,16 @@
+import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useProject } from '@/contexts/ProjectContext';
 import { useTaskAttemptsWithSessions } from '@/hooks/task-attempts/useTaskAttempts';
 import { useTaskAttemptWithSession } from '@/hooks/task-attempts/useTaskAttempt';
 import { useNavigateWithSearch } from '@/hooks';
+import { useTaskMutations } from '@/hooks/tasks/useTaskMutations';
 import { paths } from '@/lib/paths';
-import type { TaskWithAttemptStatus } from 'shared/types';
+import type {
+  TaskAutomationMode,
+  TaskStatus,
+  TaskWithAttemptStatus,
+} from 'shared/types';
 import type { WorkspaceWithSession } from '@/types/attempt';
 import { NewCardContent } from '../ui/new-card';
 import { Button } from '../ui/button';
@@ -12,10 +18,15 @@ import { PlusIcon } from 'lucide-react';
 import { CreateAttemptDialog } from '@/components/dialogs/tasks/CreateAttemptDialog';
 import WYSIWYGEditor from '@/components/ui/wysiwyg';
 import { DataTable, type ColumnDef } from '@/components/ui/table';
+import { TaskHandoffCard } from '@/components/tasks/TaskHandoffCard';
+import { TaskLineageCard } from '@/components/tasks/TaskLineageCard';
+import { TaskOwnershipBanner } from '@/components/tasks/TaskOwnershipBanner';
+import { getResumeAutomationMode } from '@/utils/automation';
 
 interface TaskPanelProps {
   task: TaskWithAttemptStatus | null;
   projectId?: string;
+  buildTaskPath?: (projectId: string, taskId: string) => string;
   buildAttemptPath?: (
     projectId: string,
     taskId: string,
@@ -26,6 +37,7 @@ interface TaskPanelProps {
 const TaskPanel = ({
   task,
   projectId: projectIdOverride,
+  buildTaskPath,
   buildAttemptPath,
 }: TaskPanelProps) => {
   const { t } = useTranslation('tasks');
@@ -33,6 +45,7 @@ const TaskPanel = ({
   const { projectId } = useProject();
   const resolvedProjectId = projectIdOverride ?? projectId;
   const attemptPath = buildAttemptPath ?? paths.attempt;
+  const { updateTask } = useTaskMutations(resolvedProjectId);
 
   const {
     data: attempts = [],
@@ -76,6 +89,46 @@ const TaskPanel = ({
     (a, b) =>
       new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   );
+  const latestAttempt = displayedAttempts[0];
+
+  const updateTaskFields = useCallback(
+    (patch: {
+      status?: TaskStatus | null;
+      automation_mode?: TaskAutomationMode | null;
+    }) => {
+      if (!task?.id) return;
+      updateTask.mutate({
+        taskId: task.id,
+        data: {
+          title: null,
+          description: null,
+          status: patch.status ?? null,
+          automation_mode: patch.automation_mode ?? null,
+          parent_workspace_id: null,
+          image_ids: null,
+        },
+      });
+    },
+    [task?.id, updateTask]
+  );
+
+  const handleStartAttempt = useCallback(() => {
+    if (!task?.id) return;
+    CreateAttemptDialog.show({ taskId: task.id });
+  }, [task?.id]);
+
+  const handleEnableAuto = useCallback(() => {
+    if (!task) return;
+    updateTaskFields({ automation_mode: getResumeAutomationMode(task) });
+  }, [task, updateTaskFields]);
+
+  const handleTakeOverManually = useCallback(() => {
+    if (!task) return;
+    updateTaskFields({
+      automation_mode: 'manual',
+      status: task.status === 'inreview' ? 'todo' : null,
+    });
+  }, [task, updateTaskFields]);
 
   if (!task) {
     return (
@@ -111,92 +164,101 @@ const TaskPanel = ({
   ];
 
   return (
-    <>
-      <NewCardContent>
-        <div className="p-6 flex flex-col h-full max-h-[calc(100vh-8rem)]">
-          <div className="space-y-3 overflow-y-auto flex-shrink min-h-0">
-            <WYSIWYGEditor value={titleContent} disabled taskId={task.id} />
-            {descriptionContent && (
-              <WYSIWYGEditor
-                value={descriptionContent}
-                disabled
-                taskId={task.id}
-              />
-            )}
-          </div>
+    <NewCardContent>
+      <div className="p-6 flex flex-col h-full max-h-[calc(100vh-8rem)]">
+        <div className="space-y-4 overflow-y-auto flex-shrink min-h-0">
+          <TaskOwnershipBanner
+            task={task}
+            onStartAttempt={handleStartAttempt}
+            onEnableAuto={handleEnableAuto}
+            onTakeOverManually={handleTakeOverManually}
+            isMutating={updateTask.isPending}
+          />
 
-          <div className="mt-6 flex-shrink-0 space-y-4">
-            {task.parent_workspace_id && (
-              <DataTable
-                data={parentAttempt ? [parentAttempt] : []}
-                columns={attemptColumns}
-                keyExtractor={(attempt) => attempt.id}
-                onRowClick={(attempt) => {
-                  if (resolvedProjectId) {
-                    navigate(
-                      attemptPath(
-                        resolvedProjectId,
-                        attempt.task_id,
-                        attempt.id
-                      )
-                    );
-                  }
-                }}
-                isLoading={isParentLoading}
-                headerContent="Parent Attempt"
-              />
-            )}
+          <WYSIWYGEditor value={titleContent} disabled taskId={task.id} />
+          {descriptionContent && (
+            <WYSIWYGEditor
+              value={descriptionContent}
+              disabled
+              taskId={task.id}
+            />
+          )}
 
-            {isAttemptsLoading ? (
-              <div className="text-muted-foreground">
-                {t('taskPanel.loadingAttempts')}
-              </div>
-            ) : isAttemptsError ? (
-              <div className="text-destructive">
-                {t('taskPanel.errorLoadingAttempts')}
-              </div>
-            ) : (
-              <DataTable
-                data={displayedAttempts}
-                columns={attemptColumns}
-                keyExtractor={(attempt) => attempt.id}
-                onRowClick={(attempt) => {
-                  if (resolvedProjectId && task.id) {
-                    navigate(
-                      attemptPath(resolvedProjectId, task.id, attempt.id)
-                    );
-                  }
-                }}
-                emptyState={t('taskPanel.noAttempts')}
-                headerContent={
-                  <div className="w-full flex text-left">
-                    <span className="flex-1">
-                      {t('taskPanel.attemptsCount', {
-                        count: displayedAttempts.length,
-                      })}
-                    </span>
-                    {!isTaskGroupEntry && (
-                      <span>
-                        <Button
-                          variant="icon"
-                          onClick={() =>
-                            CreateAttemptDialog.show({
-                              taskId: task.id,
-                            })
-                          }
-                        >
-                          <PlusIcon size={16} />
-                        </Button>
-                      </span>
-                    )}
-                  </div>
-                }
-              />
-            )}
-          </div>
+          <TaskHandoffCard
+            task={task}
+            latestAttempt={latestAttempt}
+            projectId={resolvedProjectId}
+            buildAttemptPath={attemptPath}
+          />
+
+          <TaskLineageCard task={task} buildTaskPath={buildTaskPath} />
         </div>
-      </NewCardContent>
-    </>
+
+        <div className="mt-6 flex-shrink-0 space-y-4">
+          {task.parent_workspace_id && (
+            <DataTable
+              data={parentAttempt ? [parentAttempt] : []}
+              columns={attemptColumns}
+              keyExtractor={(attempt) => attempt.id}
+              onRowClick={(attempt) => {
+                if (resolvedProjectId) {
+                  navigate(
+                    attemptPath(resolvedProjectId, attempt.task_id, attempt.id)
+                  );
+                }
+              }}
+              isLoading={isParentLoading}
+              headerContent={t('taskPanel.parentAttempt')}
+            />
+          )}
+
+          {isAttemptsLoading ? (
+            <div className="text-muted-foreground">
+              {t('taskPanel.loadingAttempts')}
+            </div>
+          ) : isAttemptsError ? (
+            <div className="text-destructive">
+              {t('taskPanel.errorLoadingAttempts')}
+            </div>
+          ) : (
+            <DataTable
+              data={displayedAttempts}
+              columns={attemptColumns}
+              keyExtractor={(attempt) => attempt.id}
+              onRowClick={(attempt) => {
+                if (resolvedProjectId && task.id) {
+                  navigate(attemptPath(resolvedProjectId, task.id, attempt.id));
+                }
+              }}
+              emptyState={t('taskPanel.noAttempts')}
+              headerContent={
+                <div className="w-full flex text-left">
+                  <span className="flex-1">
+                    {t('taskPanel.attemptsCount', {
+                      count: displayedAttempts.length,
+                    })}
+                  </span>
+                  {!isTaskGroupEntry && (
+                    <span>
+                      <Button
+                        variant="icon"
+                        onClick={() =>
+                          CreateAttemptDialog.show({
+                            taskId: task.id,
+                          })
+                        }
+                      >
+                        <PlusIcon size={16} />
+                      </Button>
+                    </span>
+                  )}
+                </div>
+              }
+            />
+          )}
+        </div>
+      </div>
+    </NewCardContent>
   );
 };
 

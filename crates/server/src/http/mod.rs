@@ -44,13 +44,13 @@ mod tests {
         net::{IpAddr, Ipv4Addr, SocketAddr},
     };
 
+    use app_runtime::Deployment;
     use axum::{
         body::{Body, to_bytes},
         extract::ConnectInfo,
         http::{Request, StatusCode, header},
     };
     use config::AccessControlMode;
-    use app_runtime::Deployment;
     use tower::ServiceExt;
     use uuid::Uuid;
 

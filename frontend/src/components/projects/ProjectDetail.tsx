@@ -23,6 +23,7 @@ import {
   Loader2,
   Trash2,
 } from 'lucide-react';
+import { getProjectExecutionModeLabel } from '@/utils/automation';
 
 interface ProjectDetailProps {
   projectId: string;
@@ -107,6 +108,13 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold">{project.name}</h1>
+              <Badge
+                variant={
+                  project.execution_mode === 'auto' ? 'default' : 'outline'
+                }
+              >
+                {getProjectExecutionModeLabel(project.execution_mode)}
+              </Badge>
             </div>
             <p className="text-sm text-muted-foreground">
               Project details and settings
@@ -156,6 +164,26 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
               <Badge variant="secondary">Active</Badge>
             </div>
             <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Execution Mode:</span>
+                <span>
+                  {getProjectExecutionModeLabel(project.execution_mode)}
+                </span>
+              </div>
+              {project.execution_mode === 'auto' && (
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">
+                    Auto Concurrency:
+                  </span>
+                  <span>{project.scheduler_max_concurrent}</span>
+                </div>
+              )}
+              {project.execution_mode === 'auto' && (
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">Auto Retries:</span>
+                  <span>{project.scheduler_max_retries}</span>
+                </div>
+              )}
               <div className="flex items-center text-sm">
                 <Calendar className="mr-2 h-4 w-4 text-muted-foreground" />
                 <span className="text-muted-foreground">Created:</span>

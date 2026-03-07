@@ -18,6 +18,7 @@ use crate::{
         ProjectEventPayload, TaskEventPayload,
     },
     models::event_outbox::EventOutbox,
+    types::ProjectExecutionMode,
 };
 
 #[derive(Debug, Error)]
@@ -38,6 +39,9 @@ pub struct Project {
     pub dev_script_working_dir: Option<String>,
     pub default_agent_working_dir: Option<String>,
     pub git_no_verify_override: Option<bool>,
+    pub execution_mode: ProjectExecutionMode,
+    pub scheduler_max_concurrent: i32,
+    pub scheduler_max_retries: i32,
     pub remote_project_id: Option<Uuid>,
     #[ts(type = "Date")]
     pub created_at: DateTime<Utc>,
@@ -59,6 +63,9 @@ pub struct UpdateProject {
     pub default_agent_working_dir: Option<String>,
     #[serde(deserialize_with = "deserialize_optional_bool_as_double_option")]
     pub git_no_verify_override: Option<Option<bool>>,
+    pub execution_mode: Option<ProjectExecutionMode>,
+    pub scheduler_max_concurrent: Option<i32>,
+    pub scheduler_max_retries: Option<i32>,
 }
 
 fn deserialize_optional_bool_as_double_option<'de, D>(
@@ -105,10 +112,17 @@ impl Project {
             dev_script_working_dir: model.dev_script_working_dir,
             default_agent_working_dir: model.default_agent_working_dir,
             git_no_verify_override: model.git_no_verify_override,
+            execution_mode: model.execution_mode,
+            scheduler_max_concurrent: model.scheduler_max_concurrent,
+            scheduler_max_retries: model.scheduler_max_retries,
             remote_project_id: model.remote_project_id,
             created_at: model.created_at.into(),
             updated_at: model.updated_at.into(),
         }
+    }
+
+    pub fn auto_orchestrator_enabled(&self) -> bool {
+        self.execution_mode == ProjectExecutionMode::Auto
     }
 
     pub fn effective_git_no_verify(&self, global_default: bool) -> bool {
@@ -122,6 +136,17 @@ impl Project {
 
     pub async fn find_all<C: ConnectionTrait>(db: &C) -> Result<Vec<Self>, DbErr> {
         let records = project::Entity::find()
+            .order_by_desc(project::Column::CreatedAt)
+            .all(db)
+            .await?;
+        Ok(records.into_iter().map(Self::from_model).collect())
+    }
+
+    pub async fn find_all_auto_orchestrated<C: ConnectionTrait>(
+        db: &C,
+    ) -> Result<Vec<Self>, DbErr> {
+        let records = project::Entity::find()
+            .filter(project::Column::ExecutionMode.eq(ProjectExecutionMode::Auto))
             .order_by_desc(project::Column::CreatedAt)
             .all(db)
             .await?;
@@ -212,6 +237,9 @@ impl Project {
             dev_script_working_dir: Set(None),
             default_agent_working_dir: Set(None),
             git_no_verify_override: Set(None),
+            execution_mode: Set(ProjectExecutionMode::Manual),
+            scheduler_max_concurrent: Set(1),
+            scheduler_max_retries: Set(3),
             remote_project_id: Set(None),
             created_at: Set(now.into()),
             updated_at: Set(now.into()),
@@ -251,6 +279,15 @@ impl Project {
         }
         if let Some(git_no_verify_override) = payload.git_no_verify_override {
             active.git_no_verify_override = Set(git_no_verify_override);
+        }
+        if let Some(execution_mode) = payload.execution_mode.clone() {
+            active.execution_mode = Set(execution_mode);
+        }
+        if let Some(scheduler_max_concurrent) = payload.scheduler_max_concurrent {
+            active.scheduler_max_concurrent = Set(std::cmp::max(scheduler_max_concurrent, 1));
+        }
+        if let Some(scheduler_max_retries) = payload.scheduler_max_retries {
+            active.scheduler_max_retries = Set(std::cmp::max(scheduler_max_retries, 0));
         }
         active.updated_at = Set(Utc::now().into());
 
@@ -354,6 +391,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::Project;
+    use crate::types::ProjectExecutionMode;
 
     #[test]
     fn effective_git_no_verify_prefers_project_override() {
@@ -366,6 +404,9 @@ mod tests {
             dev_script_working_dir: None,
             default_agent_working_dir: None,
             git_no_verify_override: Some(false),
+            execution_mode: ProjectExecutionMode::Manual,
+            scheduler_max_concurrent: 1,
+            scheduler_max_retries: 3,
             remote_project_id: None,
             created_at: now,
             updated_at: now,

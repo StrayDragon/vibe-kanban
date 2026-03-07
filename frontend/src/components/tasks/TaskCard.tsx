@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { KanbanCard } from '@/components/ui/shadcn-io/kanban';
 import { Link, Loader2, XCircle } from 'lucide-react';
 import type { TaskWithAttemptStatus } from 'shared/types';
+import { KanbanCard } from '@/components/ui/shadcn-io/kanban';
 import { ActionsDropdown } from '@/components/ui/actions-dropdown';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { useNavigateWithSearch } from '@/hooks';
 import { paths } from '@/lib/paths';
 import { attemptsApi } from '@/lib/api';
 import { TaskCardHeader } from './TaskCardHeader';
 import { useTranslation } from 'react-i18next';
 import { getTaskGroupId, isTaskGroupEntry } from '@/utils/taskGroup';
+import { TaskAutomationIndicators } from '@/components/tasks/TaskAutomationIndicators';
 
 type Task = TaskWithAttemptStatus;
 
@@ -148,12 +148,12 @@ export function TaskCard({
             {task.title}
           </div>
         )}
-        <Badge
-          variant="outline"
-          className="w-fit text-[10px] uppercase tracking-[0.12em] text-muted-foreground border-muted-foreground/40"
-        >
-          {typeLabel}
-        </Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex w-fit rounded-full border border-muted-foreground/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+            {typeLabel}
+          </span>
+        </div>
+        <TaskAutomationIndicators task={task} hideReviewOwnership />
         {groupSummary && groupSummary.subtaskCount > 0 && (
           <div className="text-xs text-muted-foreground">
             {t('taskGroupSubtaskCount', { count: groupSummary.subtaskCount })}

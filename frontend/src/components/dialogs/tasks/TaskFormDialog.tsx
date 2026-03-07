@@ -51,21 +51,15 @@ import { taskGroupsApi } from '@/lib/api';
 import { paths } from '@/lib/paths';
 import { taskKeys } from '@/hooks/tasks/useTask';
 import type {
+  TaskAutomationMode,
   TaskStatus,
   ExecutorProfileId,
   ImageResponse,
   CreateTaskGroup,
+  TaskWithAttemptStatus,
 } from 'shared/types';
 
-interface Task {
-  id: string;
-  project_id: string;
-  title: string;
-  description: string | null;
-  status: TaskStatus;
-  created_at: string;
-  updated_at: string;
-}
+type Task = TaskWithAttemptStatus;
 
 export type TaskFormDialogProps =
   | { mode: 'create'; projectId: string }
@@ -75,6 +69,7 @@ export type TaskFormDialogProps =
       mode: 'subtask';
       projectId: string;
       parentTaskAttemptId: string;
+      originTaskId: string;
       initialBaseBranch: string;
     };
 
@@ -86,6 +81,7 @@ type TaskFormValues = {
   title: string;
   description: string;
   status: TaskStatus;
+  automationMode: TaskAutomationMode;
   executorProfileId: ExecutorProfileId | null;
   repoBranches: RepoBranch[];
   autoStart: boolean;
@@ -170,6 +166,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           title: props.task.title,
           description: props.task.description || '',
           status: props.task.status,
+          automationMode: props.task.automation_mode,
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: false,
@@ -181,6 +178,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           title: props.initialTask.title,
           description: props.initialTask.description || '',
           status: 'todo',
+          automationMode: props.initialTask.automation_mode,
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: true,
@@ -194,6 +192,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           title: '',
           description: '',
           status: 'todo',
+          automationMode: 'inherit',
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: true,
@@ -218,6 +217,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
             title: value.title,
             description: value.description,
             status: value.status,
+            automation_mode: value.automationMode,
             parent_workspace_id: null,
             image_ids: images.length > 0 ? images.map((img) => img.id) : null,
           },
@@ -250,11 +250,14 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
         title: value.title,
         description: value.description,
         status: null,
+        automation_mode: value.automationMode,
         task_kind: null,
         task_group_id: null,
         task_group_node_id: null,
         parent_workspace_id:
           mode === 'subtask' ? props.parentTaskAttemptId : null,
+        origin_task_id: mode === 'subtask' ? props.originTaskId : null,
+        created_by_kind: null,
         image_ids: imageIds,
         shared_task_id: null,
       };
@@ -573,6 +576,46 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                 />
               )}
             </form.Field>
+            {/* Task automation */}
+            {!isTaskGroupCreate && (
+              <form.Field name="automationMode">
+                {(field) => (
+                  <div className="space-y-2">
+                    <Label
+                      htmlFor="task-automation-mode"
+                      className="text-sm font-medium"
+                    >
+                      {t('taskFormDialog.automationLabel')}
+                    </Label>
+                    <Select
+                      value={field.state.value}
+                      onValueChange={(value) =>
+                        field.handleChange(value as TaskAutomationMode)
+                      }
+                      disabled={isSubmitting}
+                    >
+                      <SelectTrigger id="task-automation-mode">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="inherit">
+                          {t('taskFormDialog.automationOptions.inherit')}
+                        </SelectItem>
+                        <SelectItem value="manual">
+                          {t('taskFormDialog.automationOptions.manual')}
+                        </SelectItem>
+                        <SelectItem value="auto">
+                          {t('taskFormDialog.automationOptions.auto')}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {t('taskFormDialog.automationHelper')}
+                    </p>
+                  </div>
+                )}
+              </form.Field>
+            )}
             {/* Edit mode status */}
             {editMode && (
               <form.Field name="status">

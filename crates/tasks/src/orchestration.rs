@@ -5,7 +5,8 @@ use db::{
     models::{
         image::TaskImage,
         project::{Project, ProjectError},
-        task::{CreateTask, Task, TaskKind, TaskStatus, TaskWithAttemptStatus},
+        task::{CreateTask, Task, TaskKind, TaskStatus, TaskWithAttemptStatus, automation},
+        task_dispatch_state::TaskDispatchState,
         task_group::{
             TaskGroup, TaskGroupError, TaskGroupGraph, TaskGroupNode, TaskGroupNodeBaseStrategy,
         },
@@ -31,6 +32,7 @@ pub struct CreateTaskAttemptInput {
     pub task_id: Uuid,
     pub executor_profile_id: ExecutorProfileId,
     pub repos: Vec<CreateWorkspaceRepo>,
+    pub prompt_override: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -131,13 +133,20 @@ pub async fn create_task_and_start<R: TaskRuntime + Sync>(
     let task = Task::find_by_id(db, task.id)
         .await?
         .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+    let task_id = task.id;
 
-    Ok(TaskWithAttemptStatus {
+    let mut task_with_status = TaskWithAttemptStatus {
         task,
         has_in_progress_attempt: true,
         last_attempt_failed: false,
         executor: input.executor_profile_id.executor.to_string(),
-    })
+        project_execution_mode: project.execution_mode.clone(),
+        effective_automation_mode: project.execution_mode,
+        dispatch_state: TaskDispatchState::find_by_task_id(db, task_id).await?,
+        automation_diagnostic: None,
+    };
+    automation::enrich_task_with_automation_context(&mut task_with_status);
+    Ok(task_with_status)
 }
 
 pub async fn create_task_attempt<R: TaskRuntime + Sync>(
@@ -196,7 +205,11 @@ pub async fn create_task_attempt<R: TaskRuntime + Sync>(
     tx.commit().await?;
 
     if let Err(err) = runtime
-        .start_workspace(&workspace, attempt_plan.executor_profile_id, None)
+        .start_workspace(
+            &workspace,
+            attempt_plan.executor_profile_id,
+            input.prompt_override.clone(),
+        )
         .await
     {
         cleanup_failed_attempt_start(runtime, db, &task, &workspace, &original_task_status).await?;

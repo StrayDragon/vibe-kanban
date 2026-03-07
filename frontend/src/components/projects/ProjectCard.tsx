@@ -25,6 +25,8 @@ import { useOpenProjectInEditor } from '@/hooks/projects/useOpenProjectInEditor'
 import { useNavigateWithSearch, useProjectRepos } from '@/hooks';
 import { projectsApi } from '@/lib/api';
 import { useTranslation } from 'react-i18next';
+import { Badge } from '@/components/ui/badge.tsx';
+import { getProjectExecutionModeLabel } from '@/utils/automation';
 
 type Props = {
   project: Project;
@@ -82,7 +84,16 @@ function ProjectCard({ project, isFocused, setError, onEdit }: Props) {
     >
       <CardHeader>
         <div className="flex items-start justify-between">
-          <CardTitle className="text-lg">{project.name}</CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-lg">{project.name}</CardTitle>
+            <Badge
+              variant={
+                project.execution_mode === 'auto' ? 'default' : 'outline'
+              }
+            >
+              {getProjectExecutionModeLabel(project.execution_mode)}
+            </Badge>
+          </div>
           <div className="flex items-center gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>

@@ -1,5 +1,6 @@
 pub mod queue;
 
+use app_runtime::Deployment;
 use axum::{
     Extension, Json, Router,
     extract::{Query, State},
@@ -20,7 +21,6 @@ use db::{
         workspace::{Workspace, WorkspaceError},
     },
 };
-use app_runtime::Deployment;
 use execution::container::ContainerService;
 use executors_protocol::{
     ExecutorProfileId,

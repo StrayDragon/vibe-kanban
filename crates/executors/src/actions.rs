@@ -2,6 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use async_trait::async_trait;
 use command_group::AsyncCommandGroup;
+use executors_core::{approvals::ExecutorApprovalService, env::ExecutionEnv};
 use executors_protocol::actions::{
     ExecutorAction, ExecutorActionType,
     coding_agent_follow_up::CodingAgentFollowUpRequest,
@@ -10,8 +11,6 @@ use executors_protocol::actions::{
 };
 use tokio::process::Command;
 use utils_core::shell::get_shell_command;
-
-use executors_core::{approvals::ExecutorApprovalService, env::ExecutionEnv};
 
 use crate::{
     executors::{CodingAgent, ExecutorError, SpawnedChild, StandardCodingAgentExecutor},

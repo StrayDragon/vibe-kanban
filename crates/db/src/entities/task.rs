@@ -1,6 +1,6 @@
 use sea_orm::entity::prelude::*;
 
-use crate::types::{TaskKind, TaskStatus};
+use crate::types::{TaskAutomationMode, TaskCreatedByKind, TaskKind, TaskStatus};
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "tasks")]
@@ -12,10 +12,13 @@ pub struct Model {
     pub title: String,
     pub description: Option<String>,
     pub status: TaskStatus,
+    pub automation_mode: TaskAutomationMode,
     pub task_kind: TaskKind,
     pub task_group_id: Option<i64>,
     pub task_group_node_id: Option<String>,
     pub parent_workspace_id: Option<i64>,
+    pub origin_task_id: Option<i64>,
+    pub created_by_kind: TaskCreatedByKind,
     pub shared_task_id: Option<i64>,
     pub archived_kanban_id: Option<i64>,
     pub created_at: DateTimeUtc,

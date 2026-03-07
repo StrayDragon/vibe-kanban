@@ -2,6 +2,7 @@ import type {
   CreateAndStartTaskRequest,
   CreateTask,
   Task,
+  TaskLineageSummary,
   TaskWithAttemptStatus,
   UpdateTask,
 } from 'shared/types';
@@ -9,9 +10,14 @@ import type {
 import { handleApiResponse, makeRequest } from './client';
 
 export const tasksApi = {
-  getById: async (taskId: string): Promise<Task> => {
+  getById: async (taskId: string): Promise<TaskWithAttemptStatus> => {
     const response = await makeRequest(`/api/tasks/${taskId}`);
-    return handleApiResponse<Task>(response);
+    return handleApiResponse<TaskWithAttemptStatus>(response);
+  },
+
+  getLineage: async (taskId: string): Promise<TaskLineageSummary> => {
+    const response = await makeRequest(`/api/tasks/${taskId}/lineage`);
+    return handleApiResponse<TaskLineageSummary>(response);
   },
 
   create: async (data: CreateTask): Promise<Task> => {

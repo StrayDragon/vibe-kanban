@@ -41,6 +41,7 @@ import TaskPanel from '@/components/panels/TaskPanel';
 import { PreviewPanel } from '@/components/panels/PreviewPanel';
 import { DiffsPanel } from '@/components/panels/DiffsPanel';
 import TodoPanel from '@/components/tasks/TodoPanel';
+import { TaskAutomationIndicators } from '@/components/tasks/TaskAutomationIndicators';
 import { CreateAttemptDialog } from '@/components/dialogs/tasks/CreateAttemptDialog';
 import { ProjectFormDialog } from '@/components/dialogs/projects/ProjectFormDialog';
 
@@ -80,6 +81,7 @@ import {
   isTaskGroupEntry,
   isTaskGroupSubtask,
 } from '@/utils/taskGroup';
+import { matchesOrchestrationFilters } from '@/utils/automation';
 
 import type {
   RepoBranchStatus,
@@ -155,7 +157,10 @@ function loadIncludeArchived(): boolean {
 
 function saveIncludeArchived(value: boolean): void {
   try {
-    localStorage.setItem(INCLUDE_ARCHIVED_STORAGE_KEY, value ? 'true' : 'false');
+    localStorage.setItem(
+      INCLUDE_ARCHIVED_STORAGE_KEY,
+      value ? 'true' : 'false'
+    );
   } catch {
     // Ignore storage errors
   }
@@ -246,12 +251,12 @@ function TaskListItem({
               <XCircle className="h-4 w-4 text-destructive" />
             )}
           </div>
-          <Badge
-            variant="outline"
-            className="w-fit text-[10px] uppercase tracking-[0.12em] text-muted-foreground border-muted-foreground/40"
-          >
-            {typeLabel}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex w-fit rounded-full border border-muted-foreground/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+              {typeLabel}
+            </span>
+          </div>
+          <TaskAutomationIndicators task={task} hideReviewOwnership />
           {description && (
             <p className="text-xs text-muted-foreground line-clamp-2">
               {description}
@@ -339,7 +344,15 @@ export function TasksOverview() {
   const isXL = useMediaQuery('(min-width: 1280px)');
   const isMobile = !isXL;
 
-  const { query: searchQuery, focusInput } = useSearch();
+  const {
+    query: searchQuery,
+    focusInput,
+    clear: clearSearch,
+    orchestrationFilters,
+    clearOrchestrationFilters,
+    setReviewInbox,
+    clearReviewInbox,
+  } = useSearch();
   const agentLabel = t('attempt.agent');
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
     () => new Set()
@@ -535,9 +548,50 @@ export function TasksOverview() {
     [tasks]
   );
 
+  const reviewInboxTasks = useMemo(
+    () =>
+      visibleTasks.filter(
+        (task) =>
+          (task.status === 'inreview' ||
+            task.dispatch_state?.status === 'awaiting_human_review') &&
+          matchesOrchestrationFilters(task, orchestrationFilters)
+      ),
+    [orchestrationFilters, visibleTasks]
+  );
+
+  const reviewInboxProjectNames = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(projectsById).map(([id, project]) => [id, project.name])
+      ),
+    [projectsById]
+  );
+
+  useEffect(() => {
+    setReviewInbox({
+      tasks: reviewInboxTasks,
+      onSelectTask: handleViewTaskDetails,
+      projectNames: reviewInboxProjectNames,
+    });
+
+    return () => {
+      clearReviewInbox();
+    };
+  }, [
+    clearReviewInbox,
+    handleViewTaskDetails,
+    reviewInboxProjectNames,
+    reviewInboxTasks,
+    setReviewInbox,
+  ]);
+
   const filteredTasks = useMemo(() => {
-    if (!hasSearch) return visibleTasks;
-    return visibleTasks.filter((task) => {
+    const laneFiltered = visibleTasks.filter((task) =>
+      matchesOrchestrationFilters(task, orchestrationFilters)
+    );
+
+    if (!hasSearch) return laneFiltered;
+    return laneFiltered.filter((task) => {
       const title = task.title.toLowerCase();
       const description = task.description?.toLowerCase() ?? '';
       return (
@@ -545,7 +599,7 @@ export function TasksOverview() {
         description.includes(normalizedSearch)
       );
     });
-  }, [hasSearch, normalizedSearch, visibleTasks]);
+  }, [hasSearch, normalizedSearch, orchestrationFilters, visibleTasks]);
 
   const tasksByProject = useMemo(() => {
     const grouped: Record<string, Task[]> = {};
@@ -719,48 +773,17 @@ export function TasksOverview() {
   }
 
   const hasVisibleTasks = filteredTasks.length > 0;
+  const hasActiveTaskFilters =
+    Boolean(searchQuery.trim()) || orchestrationFilters.length > 0;
 
-  const listContent = showNoProjects ? (
-    <div className="max-w-5xl mx-auto mt-8 px-6">
-      <Card>
-        <CardContent className="py-12 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-muted">
-            <Plus className="h-6 w-6" />
-          </div>
-          <h3 className="mt-4 text-lg font-semibold">
-            {t('projects:empty.title')}
-          </h3>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {t('projects:empty.description')}
-          </p>
-          <Button className="mt-4" onClick={handleCreateProject}>
-            <Plus className="mr-2 h-4 w-4" />
-            {t('projects:createProject')}
-          </Button>
-        </CardContent>
-      </Card>
-    </div>
-  ) : tasks.length === 0 ? (
-    <div className="max-w-5xl mx-auto mt-8 px-6">
-      <Card>
-        <CardContent className="text-center py-8">
-          <p className="text-muted-foreground">{t('overview.empty')}</p>
-        </CardContent>
-      </Card>
-    </div>
-  ) : !hasVisibleTasks ? (
-    <div className="max-w-5xl mx-auto mt-8 px-6">
-      <Card>
-        <CardContent className="text-center py-8">
-          <p className="text-muted-foreground">
-            {t('overview.noSearchResults')}
-          </p>
-        </CardContent>
-      </Card>
-    </div>
-  ) : (
-    <div className="h-full w-full overflow-y-auto">
-      <div className="max-w-5xl mx-auto px-6 py-6 space-y-6">
+  const handleResetVisibleFilters = () => {
+    clearSearch();
+    clearOrchestrationFilters();
+  };
+
+  const overviewControls =
+    tasks.length > 0 && !showNoProjects ? (
+      <>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
             <h1 className="text-2xl font-semibold tracking-tight">
@@ -814,6 +837,64 @@ export function TasksOverview() {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+
+      </>
+    ) : null;
+
+  const listContent = showNoProjects ? (
+    <div className="max-w-5xl mx-auto mt-8 px-6">
+      <Card>
+        <CardContent className="py-12 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-muted">
+            <Plus className="h-6 w-6" />
+          </div>
+          <h3 className="mt-4 text-lg font-semibold">
+            {t('projects:empty.title')}
+          </h3>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {t('projects:empty.description')}
+          </p>
+          <Button className="mt-4" onClick={handleCreateProject}>
+            <Plus className="mr-2 h-4 w-4" />
+            {t('projects:createProject')}
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
+  ) : tasks.length === 0 ? (
+    <div className="max-w-5xl mx-auto mt-8 px-6">
+      <Card>
+        <CardContent className="text-center py-8">
+          <p className="text-muted-foreground">{t('overview.empty')}</p>
+        </CardContent>
+      </Card>
+    </div>
+  ) : !hasVisibleTasks ? (
+    <div className="h-full w-full overflow-y-auto">
+      <div className="max-w-5xl mx-auto px-6 py-6 space-y-6">
+        {overviewControls}
+        <Card>
+          <CardContent className="text-center py-8">
+            <p className="text-muted-foreground">
+              {t('overview.noFilteredResults')}
+            </p>
+            {hasActiveTaskFilters && (
+              <Button
+                variant="outline"
+                className="mt-4"
+                onClick={handleResetVisibleFilters}
+              >
+                {t('common:reset')}
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  ) : (
+    <div className="h-full w-full overflow-y-auto">
+      <div className="max-w-5xl mx-auto px-6 py-6 space-y-6">
+        {overviewControls}
 
         {orderedProjectIds.map((projectIdKey) => {
           const project = projectsById[projectIdKey];
@@ -1049,6 +1130,7 @@ export function TasksOverview() {
         <TaskPanel
           task={selectedTask}
           projectId={selectedTask.project_id}
+          buildTaskPath={paths.overviewTask}
           buildAttemptPath={paths.overviewAttempt}
         />
       ) : showNoAttemptsPanel ? (

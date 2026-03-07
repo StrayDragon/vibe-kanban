@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use app_runtime::Deployment;
 use axum::{
     Json,
     extract::{ConnectInfo, Request, State},
@@ -7,7 +8,6 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use app_runtime::Deployment;
 use url::form_urlencoded;
 use utils_core::response::ApiResponse;
 

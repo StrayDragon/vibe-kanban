@@ -24,7 +24,9 @@ export interface UseAllTasksOptions {
 /**
  * Stream tasks across all projects via WebSocket (JSON Patch).
  */
-export const useAllTasks = (options?: UseAllTasksOptions): UseAllTasksResult => {
+export const useAllTasks = (
+  options?: UseAllTasksOptions
+): UseAllTasksResult => {
   const includeArchived = options?.includeArchived ?? false;
   const endpoint = includeArchived
     ? '/api/tasks/stream/ws?include_archived=true'

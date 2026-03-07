@@ -8,6 +8,18 @@ import {
   ReactNode,
 } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
+import type { TaskWithAttemptStatus } from 'shared/types';
+
+import {
+  type OrchestrationLane,
+  normalizeOrchestrationFilters,
+} from '@/utils/automation';
+
+export interface ReviewInboxRegistration {
+  tasks: TaskWithAttemptStatus[];
+  onSelectTask: (task: TaskWithAttemptStatus) => void;
+  projectNames?: Record<string, string>;
+}
 
 interface SearchState {
   query: string;
@@ -16,6 +28,13 @@ interface SearchState {
   clear: () => void;
   focusInput: () => void;
   registerInputRef: (ref: HTMLInputElement | null) => void;
+  orchestrationFilters: OrchestrationLane[];
+  setOrchestrationFilters: (filters: OrchestrationLane[]) => void;
+  toggleOrchestrationFilter: (filter: OrchestrationLane) => void;
+  clearOrchestrationFilters: () => void;
+  reviewInbox: ReviewInboxRegistration | null;
+  setReviewInbox: (registration: ReviewInboxRegistration | null) => void;
+  clearReviewInbox: () => void;
 }
 
 const SearchContext = createContext<SearchState | null>(null);
@@ -26,6 +45,11 @@ interface SearchProviderProps {
 
 export function SearchProvider({ children }: SearchProviderProps) {
   const [query, setQuery] = useState('');
+  const [orchestrationFilters, setOrchestrationFiltersState] = useState<
+    OrchestrationLane[]
+  >([]);
+  const [reviewInbox, setReviewInboxState] =
+    useState<ReviewInboxRegistration | null>(null);
   const location = useLocation();
   const { projectId } = useParams<{ projectId: string }>();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -36,17 +60,21 @@ export function SearchProvider({ children }: SearchProviderProps) {
   const isOverviewTasksRoute = /^\/tasks/.test(location.pathname);
   const isTasksRoute = isProjectTasksRoute || isOverviewTasksRoute;
 
-  // Clear search when leaving tasks pages
   useEffect(() => {
-    if (!isTasksRoute && query !== '') {
+    if (
+      !isTasksRoute &&
+      (query !== '' || orchestrationFilters.length > 0 || reviewInbox !== null)
+    ) {
       setQuery('');
+      setOrchestrationFiltersState([]);
+      setReviewInboxState(null);
     }
-  }, [isTasksRoute, query]);
+  }, [isTasksRoute, orchestrationFilters.length, query, reviewInbox]);
 
-  // Clear search when project changes on project-specific tasks routes
   useEffect(() => {
     if (isProjectTasksRoute) {
       setQuery('');
+      setOrchestrationFiltersState([]);
     }
   }, [projectId, isProjectTasksRoute]);
 
@@ -62,6 +90,35 @@ export function SearchProvider({ children }: SearchProviderProps) {
     inputRef.current = ref;
   }, []);
 
+  const setOrchestrationFilters = useCallback(
+    (filters: OrchestrationLane[]) => {
+      setOrchestrationFiltersState(normalizeOrchestrationFilters(filters));
+    },
+    []
+  );
+
+  const toggleOrchestrationFilter = useCallback((filter: OrchestrationLane) => {
+    setOrchestrationFiltersState((prev) => {
+      if (prev.includes(filter)) {
+        return prev.filter((item) => item !== filter);
+      }
+
+      return normalizeOrchestrationFilters([...prev, filter]);
+    });
+  }, []);
+
+  const clearOrchestrationFilters = useCallback(() => {
+    setOrchestrationFiltersState([]);
+  }, []);
+
+  const setReviewInbox = useCallback((registration: ReviewInboxRegistration | null) => {
+    setReviewInboxState(registration);
+  }, []);
+
+  const clearReviewInbox = useCallback(() => {
+    setReviewInboxState(null);
+  }, []);
+
   const value: SearchState = {
     query,
     setQuery,
@@ -69,6 +126,13 @@ export function SearchProvider({ children }: SearchProviderProps) {
     clear,
     focusInput,
     registerInputRef,
+    orchestrationFilters,
+    setOrchestrationFilters,
+    toggleOrchestrationFilter,
+    clearOrchestrationFilters,
+    reviewInbox,
+    setReviewInbox,
+    clearReviewInbox,
   };
 
   return (

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use app_runtime::Deployment;
 use db::{
     DbPool,
     models::{
@@ -8,7 +9,6 @@ use db::{
         workspace_repo::WorkspaceRepo,
     },
 };
-use app_runtime::Deployment;
 use execution::container::ContainerService;
 use repos::git::WorktreeResetOptions;
 use uuid::Uuid;

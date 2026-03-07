@@ -50,6 +50,8 @@ pub enum ProjectServiceError {
     InvalidDevScript(String),
     #[error("Invalid dev script working directory: {0}")]
     InvalidDevScriptWorkingDir(String),
+    #[error("Invalid scheduler setting: {0}")]
+    InvalidSchedulerSetting(String),
 }
 
 pub type Result<T> = std::result::Result<T, ProjectServiceError>;
@@ -123,6 +125,22 @@ impl ProjectService {
             }
         }
 
+        if let Some(max_concurrent) = payload.scheduler_max_concurrent
+            && max_concurrent < 1
+        {
+            return Err(ProjectServiceError::InvalidSchedulerSetting(
+                "Scheduler max concurrent must be at least 1".to_string(),
+            ));
+        }
+
+        if let Some(max_retries) = payload.scheduler_max_retries
+            && max_retries < 0
+        {
+            return Err(ProjectServiceError::InvalidSchedulerSetting(
+                "Scheduler max retries must be zero or greater".to_string(),
+            ));
+        }
+
         Ok(())
     }
 
@@ -186,6 +204,9 @@ impl ProjectService {
                     dev_script_working_dir: None,
                     default_agent_working_dir: Some(repo.name),
                     git_no_verify_override: None,
+                    execution_mode: None,
+                    scheduler_max_concurrent: None,
+                    scheduler_max_retries: None,
                 },
             )
             .await?;
@@ -573,6 +594,9 @@ mod tests {
             dev_script_working_dir: Some("repo-a".to_string()),
             default_agent_working_dir: None,
             git_no_verify_override: None,
+            execution_mode: None,
+            scheduler_max_concurrent: None,
+            scheduler_max_retries: None,
         };
 
         let result = ProjectService::validate_dev_script_update(&payload);
@@ -587,6 +611,9 @@ mod tests {
             dev_script_working_dir: None,
             default_agent_working_dir: None,
             git_no_verify_override: None,
+            execution_mode: None,
+            scheduler_max_concurrent: None,
+            scheduler_max_retries: None,
         };
 
         let result = ProjectService::validate_dev_script_update(&payload);
@@ -604,6 +631,9 @@ mod tests {
             dev_script_working_dir: Some("/tmp".to_string()),
             default_agent_working_dir: None,
             git_no_verify_override: None,
+            execution_mode: None,
+            scheduler_max_concurrent: None,
+            scheduler_max_retries: None,
         };
 
         let result = ProjectService::validate_dev_script_update(&payload);
@@ -621,12 +651,55 @@ mod tests {
             dev_script_working_dir: Some("../outside".to_string()),
             default_agent_working_dir: None,
             git_no_verify_override: None,
+            execution_mode: None,
+            scheduler_max_concurrent: None,
+            scheduler_max_retries: None,
         };
 
         let result = ProjectService::validate_dev_script_update(&payload);
         assert!(matches!(
             result,
             Err(ProjectServiceError::InvalidDevScriptWorkingDir(_))
+        ));
+    }
+
+    #[test]
+    fn validate_dev_script_update_rejects_invalid_scheduler_max_concurrent() {
+        let payload = UpdateProject {
+            name: None,
+            dev_script: None,
+            dev_script_working_dir: None,
+            default_agent_working_dir: None,
+            git_no_verify_override: None,
+            execution_mode: None,
+            scheduler_max_concurrent: Some(0),
+            scheduler_max_retries: None,
+        };
+
+        let result = ProjectService::validate_dev_script_update(&payload);
+        assert!(matches!(
+            result,
+            Err(ProjectServiceError::InvalidSchedulerSetting(_))
+        ));
+    }
+
+    #[test]
+    fn validate_dev_script_update_rejects_invalid_scheduler_max_retries() {
+        let payload = UpdateProject {
+            name: None,
+            dev_script: None,
+            dev_script_working_dir: None,
+            default_agent_working_dir: None,
+            git_no_verify_override: None,
+            execution_mode: None,
+            scheduler_max_concurrent: None,
+            scheduler_max_retries: Some(-1),
+        };
+
+        let result = ProjectService::validate_dev_script_update(&payload);
+        assert!(matches!(
+            result,
+            Err(ProjectServiceError::InvalidSchedulerSetting(_))
         ));
     }
 
@@ -657,6 +730,9 @@ mod tests {
                 dev_script_working_dir: None,
                 default_agent_working_dir: Some("repo-a".to_string()),
                 git_no_verify_override: None,
+                execution_mode: None,
+                scheduler_max_concurrent: None,
+                scheduler_max_retries: None,
             },
         )
         .await

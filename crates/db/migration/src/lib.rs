@@ -10,6 +10,9 @@ mod m20260302000002_attempt_control_leases;
 mod m20260303000000_mcp_tool_tasks;
 mod m20260304000000_archived_kanbans;
 mod m20260304000001_executor_protocol_strict;
+mod m20260307000000_auto_orchestrator;
+mod m20260307010000_task_automation_override;
+mod m20260307020000_task_lineage_source;
 
 pub struct Migrator;
 
@@ -27,6 +30,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20260303000000_mcp_tool_tasks::Migration),
             Box::new(m20260304000000_archived_kanbans::Migration),
             Box::new(m20260304000001_executor_protocol_strict::Migration),
+            Box::new(m20260307000000_auto_orchestrator::Migration),
+            Box::new(m20260307010000_task_automation_override::Migration),
+            Box::new(m20260307020000_task_lineage_source::Migration),
         ]
     }
 }

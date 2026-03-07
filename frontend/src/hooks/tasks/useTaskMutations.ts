@@ -11,6 +11,7 @@ import type {
   UpdateTask,
 } from 'shared/types';
 import { taskKeys } from './useTask';
+import { taskLineageKeys } from './useTaskLineage';
 
 export function useTaskMutations(projectId?: string) {
   const queryClient = useQueryClient();
@@ -35,6 +36,22 @@ export function useTaskMutations(projectId?: string) {
           ),
         });
       }
+      queryClient.invalidateQueries({
+        queryKey: taskLineageKeys.byTask(createdTask.id),
+      });
+      if (createdTask.origin_task_id) {
+        queryClient.invalidateQueries({
+          queryKey: taskLineageKeys.byTask(createdTask.origin_task_id),
+        });
+      }
+      queryClient.invalidateQueries({
+        queryKey: taskLineageKeys.byTask(createdTask.id),
+      });
+      if (createdTask.origin_task_id) {
+        queryClient.invalidateQueries({
+          queryKey: taskLineageKeys.byTask(createdTask.origin_task_id),
+        });
+      }
       if (projectId) {
         navigate(`${paths.task(projectId, createdTask.id)}/attempts/latest`);
       }
@@ -57,6 +74,14 @@ export function useTaskMutations(projectId?: string) {
           ),
         });
       }
+      queryClient.invalidateQueries({
+        queryKey: taskLineageKeys.byTask(createdTask.id),
+      });
+      if (createdTask.origin_task_id) {
+        queryClient.invalidateQueries({
+          queryKey: taskLineageKeys.byTask(createdTask.origin_task_id),
+        });
+      }
       if (projectId) {
         navigate(`${paths.task(projectId, createdTask.id)}/attempts/latest`);
       }
@@ -71,6 +96,14 @@ export function useTaskMutations(projectId?: string) {
       tasksApi.update(taskId, data),
     onSuccess: (updatedTask: Task) => {
       invalidateQueries(updatedTask.id);
+      queryClient.invalidateQueries({
+        queryKey: taskLineageKeys.byTask(updatedTask.id),
+      });
+      if (updatedTask.origin_task_id) {
+        queryClient.invalidateQueries({
+          queryKey: taskLineageKeys.byTask(updatedTask.origin_task_id),
+        });
+      }
     },
     onError: (err) => {
       console.error('Failed to update task:', err);

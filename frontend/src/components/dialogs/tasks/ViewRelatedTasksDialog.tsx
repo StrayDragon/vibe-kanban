@@ -103,6 +103,7 @@ const ViewRelatedTasksDialogImpl =
             mode: 'subtask',
             projectId,
             parentTaskAttemptId: attempt.id,
+            originTaskId: attempt.task_id,
             initialBaseBranch: attempt.branch,
           });
         } catch {

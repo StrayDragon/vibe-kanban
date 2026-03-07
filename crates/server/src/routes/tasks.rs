@@ -1,4 +1,5 @@
 use anyhow;
+use app_runtime::Deployment;
 use axum::{
     Extension, Json, Router,
     extract::{
@@ -12,10 +13,9 @@ use axum::{
 };
 use db::models::{
     image::TaskImage,
-    task::{CreateTask, Task, TaskWithAttemptStatus, UpdateTask},
+    task::{CreateTask, Task, TaskLineageSummary, TaskWithAttemptStatus, UpdateTask},
     workspace_repo::CreateWorkspaceRepo,
 };
-use app_runtime::Deployment;
 use executors_protocol::ExecutorProfileId;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use logs_axum::LogMsgAxumExt;
@@ -117,9 +117,20 @@ async fn handle_tasks_ws(
 
 pub async fn get_task(
     Extension(task): Extension<Task>,
-    State(_deployment): State<DeploymentImpl>,
-) -> Result<ResponseJson<ApiResponse<Task>>, ApiError> {
+    State(deployment): State<DeploymentImpl>,
+) -> Result<ResponseJson<ApiResponse<TaskWithAttemptStatus>>, ApiError> {
+    let task = Task::find_by_id_with_attempt_status(&deployment.db().pool, task.id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("Task not found".to_string()))?;
     Ok(ResponseJson(ApiResponse::success(task)))
+}
+
+pub async fn get_task_lineage(
+    Extension(task): Extension<Task>,
+    State(deployment): State<DeploymentImpl>,
+) -> Result<ResponseJson<ApiResponse<TaskLineageSummary>>, ApiError> {
+    let lineage = Task::lineage_summary(&deployment.db().pool, task.id).await?;
+    Ok(ResponseJson(ApiResponse::success(lineage)))
 }
 
 pub async fn create_task(
@@ -198,6 +209,9 @@ pub async fn update_task(
         None => existing_task.description,      // Field omitted = keep existing
     };
     let status = payload.status.unwrap_or(existing_task.status);
+    let automation_mode = payload
+        .automation_mode
+        .unwrap_or(existing_task.automation_mode);
     let parent_workspace_id = payload
         .parent_workspace_id
         .or(existing_task.parent_workspace_id);
@@ -209,6 +223,7 @@ pub async fn update_task(
         title,
         description,
         status,
+        automation_mode,
         parent_workspace_id,
     )
     .await?;
@@ -247,6 +262,7 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
 
     let task_id_router = Router::new()
         .route("/", get(get_task))
+        .route("/lineage", get(get_task_lineage))
         .merge(task_actions_router)
         .layer(from_fn_with_state(
             deployment.clone(),
@@ -265,15 +281,15 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
 
 #[cfg(test)]
 mod tests {
-    use axum::{Json, extract::State, http::HeaderValue};
+    use app_runtime::Deployment;
+    use axum::{Extension, Json, extract::State, http::HeaderValue};
     use db::models::{
         project::{CreateProject, Project},
         task::{CreateTask, Task},
     };
-    use app_runtime::Deployment;
     use uuid::Uuid;
 
-    use super::create_task;
+    use super::{create_task, get_task_lineage};
     use crate::{DeploymentImpl, test_support::TestEnvGuard};
 
     fn idempotency_headers(key: &'static str) -> axum::http::HeaderMap {
@@ -331,6 +347,76 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(tasks.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn get_task_lineage_returns_origin_and_follow_up_context() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let _env_guard = TestEnvGuard::new(&temp_root, db_url);
+        let deployment = DeploymentImpl::new().await.unwrap();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &deployment.db().pool,
+            &CreateProject {
+                name: "Lineage".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let origin_task_id = Uuid::new_v4();
+        let origin_task = Task::create(
+            &deployment.db().pool,
+            &CreateTask::from_title_description(
+                project_id,
+                "Origin task".to_string(),
+                Some("parent".to_string()),
+            ),
+            origin_task_id,
+        )
+        .await
+        .unwrap();
+
+        let mut follow_up_payload =
+            CreateTask::from_title_description(project_id, "Follow-up task".to_string(), None);
+        follow_up_payload.origin_task_id = Some(origin_task_id);
+        follow_up_payload.created_by_kind = Some(db::types::TaskCreatedByKind::AgentFollowup);
+
+        let follow_up_task =
+            Task::create(&deployment.db().pool, &follow_up_payload, Uuid::new_v4())
+                .await
+                .unwrap();
+
+        let Json(origin_response) =
+            get_task_lineage(Extension(origin_task.clone()), State(deployment.clone()))
+                .await
+                .unwrap();
+        let origin_lineage = origin_response.into_data().expect("origin lineage");
+        assert!(origin_lineage.origin_task.is_none());
+        assert_eq!(origin_lineage.follow_up_tasks.len(), 1);
+        assert_eq!(origin_lineage.follow_up_tasks[0].id, follow_up_task.id);
+        assert_eq!(
+            origin_lineage.follow_up_tasks[0].created_by_kind,
+            db::types::TaskCreatedByKind::AgentFollowup
+        );
+
+        let Json(follow_up_response) =
+            get_task_lineage(Extension(follow_up_task.clone()), State(deployment))
+                .await
+                .unwrap();
+        let follow_up_lineage = follow_up_response.into_data().expect("follow-up lineage");
+        assert_eq!(
+            follow_up_lineage.origin_task.expect("origin task").id,
+            origin_task.id
+        );
+        assert!(follow_up_lineage.follow_up_tasks.is_empty());
     }
 
     #[tokio::test]

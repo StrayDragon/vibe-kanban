@@ -1,9 +1,9 @@
 use std::future::{Future, IntoFuture};
 
 use anyhow::{self, Error as AnyhowError};
+use app_runtime::{Deployment, DeploymentError};
 use chrono::Utc;
 use db::DbErr;
-use app_runtime::{Deployment, DeploymentError};
 use execution::container::ContainerService;
 use server::{DeploymentImpl, http};
 use strip_ansi_escapes::strip;
@@ -118,6 +118,7 @@ async fn main() -> Result<(), VibeKanbanError> {
         }
     });
     deployment.spawn_pr_monitor_service().await;
+    let _auto_orchestrator_handle = server::auto_orchestrator::spawn(deployment.clone());
     // Pre-warm file search cache for most active projects
     let deployment_for_cache = deployment.clone();
     tokio::spawn(async move {

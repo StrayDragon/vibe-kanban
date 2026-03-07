@@ -21,6 +21,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { useProjects } from '@/hooks/projects/useProjects';
@@ -31,7 +32,13 @@ import { AutoExpandingTextarea } from '@/components/ui/auto-expanding-textarea';
 import { RepoPickerDialog } from '@/components/dialogs/shared/RepoPickerDialog';
 import { projectsApi } from '@/lib/api';
 import { repoBranchKeys } from '@/hooks/task-attempts/useRepoBranches';
-import type { Project, ProjectRepo, Repo, UpdateProject } from 'shared/types';
+import type {
+  Project,
+  ProjectExecutionMode,
+  ProjectRepo,
+  Repo,
+  UpdateProject,
+} from 'shared/types';
 
 interface ProjectFormState {
   name: string;
@@ -39,6 +46,9 @@ interface ProjectFormState {
   dev_script_working_dir: string;
   default_agent_working_dir: string;
   git_no_verify_override: GitNoVerifyOverrideMode;
+  execution_mode: ProjectExecutionMode;
+  scheduler_max_concurrent: string;
+  scheduler_max_retries: string;
 }
 
 type GitNoVerifyOverrideMode = 'INHERIT' | 'ENABLED' | 'DISABLED';
@@ -80,6 +90,9 @@ function projectToFormState(project: Project): ProjectFormState {
     git_no_verify_override: gitNoVerifyOverrideToMode(
       project.git_no_verify_override
     ),
+    execution_mode: project.execution_mode,
+    scheduler_max_concurrent: String(project.scheduler_max_concurrent),
+    scheduler_max_retries: String(project.scheduler_max_retries),
   };
 }
 
@@ -245,7 +258,9 @@ export function ProjectSettings() {
     }
 
     const nextUpdatedAtMs = (() => {
-      const ms = new Date(nextProject.updated_at as unknown as string).getTime();
+      const ms = new Date(
+        nextProject.updated_at as unknown as string
+      ).getTime();
       return Number.isFinite(ms) ? ms : 0;
     })();
 
@@ -453,6 +468,15 @@ export function ProjectSettings() {
           draft.default_agent_working_dir.trim() || null,
         git_no_verify_override: gitNoVerifyModeToOverride(
           draft.git_no_verify_override
+        ),
+        execution_mode: draft.execution_mode,
+        scheduler_max_concurrent: Math.max(
+          1,
+          Number.parseInt(draft.scheduler_max_concurrent, 10) || 1
+        ),
+        scheduler_max_retries: Math.max(
+          0,
+          Number.parseInt(draft.scheduler_max_retries, 10) || 0
         ),
       };
 
@@ -717,6 +741,79 @@ export function ProjectSettings() {
                 <p className="text-sm text-muted-foreground">
                   {t('settings.projects.git.noVerify.helper')}
                 </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-4">
+                  <div className="space-y-1">
+                    <Label htmlFor="project-execution-mode">
+                      {t('settings.projects.scheduler.mode.label')}
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      {t('settings.projects.scheduler.mode.helper')}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-muted-foreground whitespace-nowrap">
+                      {draft.execution_mode === 'auto'
+                        ? t('settings.projects.scheduler.mode.options.auto')
+                        : t('settings.projects.scheduler.mode.options.manual')}
+                    </span>
+                    <Switch
+                      id="project-execution-mode"
+                      checked={draft.execution_mode === 'auto'}
+                      onCheckedChange={(checked) =>
+                        updateDraft({
+                          execution_mode: checked ? 'auto' : 'manual',
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="project-scheduler-max-concurrent">
+                    {t('settings.projects.scheduler.maxConcurrent.label')}
+                  </Label>
+                  <Input
+                    id="project-scheduler-max-concurrent"
+                    type="number"
+                    min={1}
+                    value={draft.scheduler_max_concurrent}
+                    disabled={draft.execution_mode !== 'auto'}
+                    onChange={(e) =>
+                      updateDraft({
+                        scheduler_max_concurrent: e.target.value,
+                      })
+                    }
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    {t('settings.projects.scheduler.maxConcurrent.helper')}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="project-scheduler-max-retries">
+                    {t('settings.projects.scheduler.maxRetries.label')}
+                  </Label>
+                  <Input
+                    id="project-scheduler-max-retries"
+                    type="number"
+                    min={0}
+                    value={draft.scheduler_max_retries}
+                    disabled={draft.execution_mode !== 'auto'}
+                    onChange={(e) =>
+                      updateDraft({
+                        scheduler_max_retries: e.target.value,
+                      })
+                    }
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    {t('settings.projects.scheduler.maxRetries.helper')}
+                  </p>
+                </div>
               </div>
 
               {/* Save Button */}

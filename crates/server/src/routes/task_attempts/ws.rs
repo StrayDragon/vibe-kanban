@@ -1,3 +1,4 @@
+use app_runtime::Deployment;
 use axum::{
     Extension,
     extract::{
@@ -7,7 +8,6 @@ use axum::{
     response::IntoResponse,
 };
 use db::models::workspace::Workspace;
-use app_runtime::Deployment;
 use execution::container::ContainerService;
 
 use super::DiffStreamQuery;

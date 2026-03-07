@@ -1,5 +1,6 @@
 use std::path::Path as StdPath;
 
+use app_runtime::Deployment;
 use axum::{
     Router,
     body::Body,
@@ -16,7 +17,6 @@ use db::{
         task::Task,
     },
 };
-use app_runtime::Deployment;
 use execution::image::ImageError;
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;

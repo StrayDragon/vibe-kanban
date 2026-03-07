@@ -354,11 +354,10 @@ export function TaskGroupWorkflow() {
     [refetchTaskGroup, taskGroup]
   );
 
-  const { debounced: persistGraphDebounced, cancel: cancelPersistGraphDebounced } =
-    useDebouncedCallback(
-    persistGraph,
-    600
-  );
+  const {
+    debounced: persistGraphDebounced,
+    cancel: cancelPersistGraphDebounced,
+  } = useDebouncedCallback(persistGraph, 600);
 
   const handleDiscardGraphDraft = useCallback(() => {
     if (!taskGroup) return;
@@ -879,10 +878,13 @@ export function TaskGroupWorkflow() {
             ? newNodeDescription.trim()
             : null,
           status: null,
+          automation_mode: null,
           task_kind: null,
           task_group_id: null,
           task_group_node_id: null,
           parent_workspace_id: null,
+          origin_task_id: null,
+          created_by_kind: null,
           image_ids: null,
           shared_task_id: null,
         });
@@ -945,6 +947,7 @@ export function TaskGroupWorkflow() {
         title: selectedTask.title,
         description: selectedTask.description,
         status: 'done',
+        automation_mode: selectedTask.automation_mode,
         parent_workspace_id: selectedTask.parent_workspace_id,
         image_ids: null,
       });

@@ -4,11 +4,13 @@
 
 // If you are an AI, and you absolutely have to edit this file, please confirm with the user first.
 
-export type Project = { id: string, name: string, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null, remote_project_id: string | null, created_at: Date, updated_at: Date, };
+export type Project = { id: string, name: string, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null, execution_mode: ProjectExecutionMode, scheduler_max_concurrent: number, scheduler_max_retries: number, remote_project_id: string | null, created_at: Date, updated_at: Date, };
+
+export type ProjectExecutionMode = "manual" | "auto";
 
 export type CreateProject = { name: string, repositories: Array<CreateProjectRepo>, };
 
-export type UpdateProject = { name: string | null, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null | null, };
+export type UpdateProject = { name: string | null, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null | null, execution_mode: ProjectExecutionMode | null, scheduler_max_concurrent: number | null, scheduler_max_retries: number | null, };
 
 export type SearchResult = { path: string, is_file: boolean, match_type: SearchMatchType, };
 
@@ -40,9 +42,23 @@ export type TaskStatus = "todo" | "inprogress" | "inreview" | "done" | "cancelle
 
 export type TaskKind = "default" | "group";
 
-export type Task = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
+export type Task = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, automation_mode: TaskAutomationMode, task_kind: TaskKind, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
 
-export type TaskWithAttemptStatus = { has_in_progress_attempt: boolean, last_attempt_failed: boolean, executor: string, id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
+export type TaskAutomationMode = "inherit" | "manual" | "auto";
+
+export type TaskCreatedByKind = "human_ui" | "mcp" | "scheduler" | "agent_followup";
+
+export type TaskAutomationReasonCode = "project_manual" | "task_manual_override" | "task_group_unsupported" | "retry_not_ready" | "retry_exhausted" | "awaiting_human_review" | "concurrency_limit_reached" | "no_project_repos" | "base_branch_unresolved" | "blocked";
+
+export type TaskAutomationDiagnostic = { reason_code: TaskAutomationReasonCode, reason_detail: string, actionable: boolean, };
+
+export type TaskWithAttemptStatus = { has_in_progress_attempt: boolean, last_attempt_failed: boolean, executor: string, project_execution_mode: ProjectExecutionMode, effective_automation_mode: ProjectExecutionMode, dispatch_state: TaskDispatchState | null, automation_diagnostic: TaskAutomationDiagnostic | null, id: string, project_id: string, title: string, description: string | null, status: TaskStatus, automation_mode: TaskAutomationMode, task_kind: TaskKind, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
+
+export type TaskDispatchState = { task_id: string, controller: TaskDispatchController, status: TaskDispatchStatus, retry_count: number, max_retries: number, last_error: string | null, blocked_reason: string | null, next_retry_at: Date | null, claim_expires_at: Date | null, created_at: Date, updated_at: Date, };
+
+export type TaskDispatchController = "manual" | "scheduler";
+
+export type TaskDispatchStatus = "idle" | "claimed" | "running" | "retry_scheduled" | "awaiting_human_review" | "blocked";
 
 export type ArchivedKanban = { id: string, project_id: string, title: string, created_at: string, updated_at: string, };
 
@@ -50,9 +66,11 @@ export type ArchivedKanbanWithTaskCount = { tasks_count: bigint, id: string, pro
 
 export type TaskRelationships = { parent_task: Task | null, current_workspace: Workspace, children: Array<Task>, };
 
-export type CreateTask = { project_id: string, title: string, description: string | null, status: TaskStatus | null, task_kind: TaskKind | null, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, image_ids: Array<string> | null, shared_task_id: string | null, };
+export type TaskLineageSummary = { origin_task: Task | null, follow_up_tasks: Array<Task>, };
 
-export type UpdateTask = { title: string | null, description: string | null, status: TaskStatus | null, parent_workspace_id: string | null, image_ids: Array<string> | null, };
+export type CreateTask = { project_id: string, title: string, description: string | null, status: TaskStatus | null, automation_mode: TaskAutomationMode | null, task_kind: TaskKind | null, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind | null, image_ids: Array<string> | null, shared_task_id: string | null, };
+
+export type UpdateTask = { title: string | null, description: string | null, status: TaskStatus | null, automation_mode: TaskAutomationMode | null, parent_workspace_id: string | null, image_ids: Array<string> | null, };
 
 export type TaskGroup = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, baseline_ref: string, schema_version: number, graph: TaskGroupGraph, suggested_status: TaskStatus, created_at: string, updated_at: string, };
 
@@ -195,6 +213,10 @@ export type RenameBranchResponse = { branch: string, };
 export type OpenEditorRequest = { editor_type: string | null, file_path: string | null, };
 
 export type OpenEditorResponse = { url: string | null, };
+
+export type AttemptState = "idle" | "running" | "completed" | "failed";
+
+export type TaskAttemptStatusResponse = { attempt_id: string, task_id: string, workspace_branch: string, created_at: string, updated_at: string, latest_session_id: string | null, latest_execution_process_id: string | null, state: AttemptState, last_activity_at: string | null, failure_summary: string | null, };
 
 export type CreateAndStartTaskRequest = { task: CreateTask, executor_profile_id: ExecutorProfileId, repos: Array<WorkspaceRepoInput>, };
 

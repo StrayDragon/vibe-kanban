@@ -1,7 +1,7 @@
+use app_runtime::Deployment;
 #[cfg(test)]
 use db::models::task_group::TaskGroupGraph;
 use db::models::{task::Task, task_group::TaskGroup};
-use app_runtime::Deployment;
 pub use domain::DeleteTaskMode;
 use tasks::task_deletion as domain;
 

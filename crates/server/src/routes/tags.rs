@@ -1,3 +1,4 @@
+use app_runtime::Deployment;
 use axum::{
     Extension, Json, Router,
     extract::{Query, State},
@@ -9,7 +10,6 @@ use db::{
     DbErr,
     models::tag::{CreateTag, Tag, UpdateTag},
 };
-use app_runtime::Deployment;
 use serde::Deserialize;
 use ts_rs::TS;
 use utils_core::response::ApiResponse;

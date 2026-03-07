@@ -3,7 +3,8 @@
   "empty": {
     "noTasks": "未找到此项目的任务。",
     "createFirst": "创建第一个任务",
-    "noSearchResults": "没有任务匹配您的搜索。"
+    "noSearchResults": "没有任务匹配您的搜索。",
+    "noFilteredResults": "这个项目里没有任务匹配当前搜索或筛选条件。"
   },
   "overview": {
     "title": "全部任务",
@@ -16,7 +17,8 @@
     "expandStatus": "展开{{status}}",
     "foldStatusButton": "折叠状态",
     "foldStatusLabel": "自动折叠状态",
-    "includeArchived": "包含归档任务"
+    "includeArchived": "包含归档任务",
+    "noFilteredResults": "没有任务匹配当前搜索或筛选条件。"
   },
   "archives": {
     "title": "归档",
@@ -207,7 +209,49 @@
     "loadingAttempts": "加载尝试中...",
     "errorLoadingAttempts": "加载尝试失败",
     "attemptsCount": "尝试（{{count}}）",
-    "noAttempts": "还没有尝试"
+    "noAttempts": "还没有尝试",
+    "ownershipTitle": "执行归属",
+    "projectMode": "项目模式",
+    "taskMode": "任务模式",
+    "effectiveMode": "生效模式",
+    "parentAttempt": "父尝试",
+    "handoff": {
+      "title": "自动托管交接",
+      "subtitle": "先看最新自动执行结果，再决定是否深入日志。",
+      "latestAttempt": "最新尝试",
+      "updated": "更新时间",
+      "diffSummary": "Diff 摘要",
+      "filesChanged_one": "{{count}} 个文件变更",
+      "filesChanged_other": "{{count}} 个文件变更",
+      "attemptStatus": "尝试状态",
+      "unknownStatus": "未知",
+      "lastActivity": "最后活动",
+      "contextTitle": "发生了什么",
+      "failureSummary": "失败摘要",
+      "schedulerNote": "调度说明",
+      "openLatestAttempt": "打开最新尝试",
+      "attemptStates": {
+        "idle": "空闲",
+        "running": "运行中",
+        "completed": "已完成",
+        "failed": "失败"
+      },
+      "actions": {
+        "approve": "确认结果",
+        "rework": "要求返工",
+        "takeOver": "切换为手动接管",
+        "resumeAuto": "恢复自动托管"
+      },
+      "filesChanged": "变更了 {{count}} 个文件"
+    },
+    "lineage": {
+      "title": "任务来源",
+      "createdFrom": "来源任务",
+      "loading": "正在加载关联任务…",
+      "untitled": "未命名任务",
+      "originUnavailable": "来源任务已不可用。",
+      "followUps": "后续任务（{{count}}）"
+    }
   },
   "processes": {
     "selectAttempt": "选择尝试以查看执行进程。",
@@ -577,6 +621,13 @@
       "done": "完成",
       "cancelled": "已取消"
     },
+    "automationLabel": "自动化",
+    "automationHelper": "继承会跟随项目设置。手动表示始终等待人来启动。自动表示允许调度器以无人值守方式托管该任务。",
+    "automationOptions": {
+      "inherit": "继承项目设置",
+      "manual": "仅手动",
+      "auto": "自动托管"
+    },
     "startLabel": "开始",
     "attachImage": "附加图片",
     "dropImagesHere": "在此处放置图片",
@@ -634,6 +685,35 @@
     },
     "buttons": {
       "retry": "重试"
+    }
+  },
+  "orchestration": {
+    "title": "自动编排总览",
+    "projectSubtitle": "把手动任务和自动托管任务明确区分开。",
+    "overviewSubtitle": "快速查看哪些任务是手动、托管、阻塞或等待人工审阅。",
+    "filtersLabel": "筛选",
+    "filterAria": "筛选 {{label}} 任务",
+    "filters": {
+      "all": "全部",
+      "manual": "手动",
+      "managed": "托管",
+      "needsReview": "待审阅",
+      "blocked": "阻塞"
+    },
+    "reviewInbox": {
+      "title": "审阅收件箱",
+      "subtitle_one": "{{count}} 个任务等待人工决策。",
+      "subtitle_other": "{{count}} 个任务等待人工决策。",
+      "untitled": "未命名任务",
+      "status": "状态",
+      "reviewAction": "去审阅",
+      "openDrawer": "打开收件箱",
+      "closeDrawer": "关闭审阅收件箱"
+    },
+    "filterLabel": "筛选",
+    "topbar": {
+      "button": "筛选",
+      "menuTitle": "任务筛选"
     }
   }
 }

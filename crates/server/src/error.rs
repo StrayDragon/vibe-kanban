@@ -1,3 +1,4 @@
+use app_runtime::DeploymentError;
 use axum::{
     Json,
     extract::multipart::MultipartError,
@@ -13,7 +14,6 @@ use db::{
         session::SessionError, workspace::WorkspaceError,
     },
 };
-use app_runtime::DeploymentError;
 use execution::{container::ContainerError, github::GitHubServiceError, image::ImageError};
 use executors::executors::ExecutorError;
 use repos::{
@@ -242,6 +242,7 @@ impl From<ProjectServiceError> for ApiError {
             }
             ProjectServiceError::InvalidDevScript(msg) => ApiError::BadRequest(msg),
             ProjectServiceError::InvalidDevScriptWorkingDir(msg) => ApiError::BadRequest(msg),
+            ProjectServiceError::InvalidSchedulerSetting(msg) => ApiError::BadRequest(msg),
         }
     }
 }

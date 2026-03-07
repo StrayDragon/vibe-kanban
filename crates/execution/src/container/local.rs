@@ -59,12 +59,12 @@ use repos::{
     workspace_manager::{RepoWorkspaceInput, WorkspaceManager},
 };
 use serde_json::json;
-use utils_core::notifications::SharedNotifier;
 use tasks::approvals::{Approvals, executor_approvals::ExecutorApprovalBridge};
 use tokio::{sync::RwLock, task::JoinHandle};
 use tokio_util::{io::ReaderStream, sync::CancellationToken};
 use utils_core::{
     diff::DiffSummary,
+    notifications::SharedNotifier,
     text::{git_branch_id, short_uuid, truncate_to_char_boundary},
 };
 use uuid::Uuid;
@@ -254,10 +254,14 @@ impl LocalContainerService {
     }
 
     pub async fn cleanup_workspace(db: &DBService, workspace: &Workspace) {
-        let Some(container_ref) = &workspace.container_ref else {
+        let workspace_dir = if let Some(container_ref) = &workspace.container_ref {
+            PathBuf::from(container_ref)
+        } else if let Ok(Some(task)) = workspace.parent_task(&db.pool).await {
+            let dir_name = Self::dir_name_from_workspace(&workspace.id, &task.title);
+            WorkspaceManager::get_workspace_base_dir().join(dir_name)
+        } else {
             return;
         };
-        let workspace_dir = PathBuf::from(container_ref);
 
         let repositories = WorkspaceRepo::find_repos_for_workspace(&db.pool, workspace.id)
             .await

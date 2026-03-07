@@ -3,7 +3,8 @@
   "empty": {
     "noTasks": "No tasks found for this project.",
     "createFirst": "Create First Task",
-    "noSearchResults": "No tasks match your search."
+    "noSearchResults": "No tasks match your search.",
+    "noFilteredResults": "No tasks in this project match the current search or filters."
   },
   "overview": {
     "title": "All Tasks",
@@ -16,7 +17,8 @@
     "expandStatus": "Expand {{status}}",
     "foldStatusButton": "Fold statuses",
     "foldStatusLabel": "Auto-fold statuses",
-    "includeArchived": "Include archived tasks"
+    "includeArchived": "Include archived tasks",
+    "noFilteredResults": "No tasks match the current search or filters."
   },
   "archives": {
     "title": "Archives",
@@ -197,7 +199,49 @@
     "loadingAttempts": "Loading attempts...",
     "errorLoadingAttempts": "Failed to load attempts",
     "attemptsCount": "Attempts ({{count}})",
-    "noAttempts": "No attempts yet"
+    "noAttempts": "No attempts yet",
+    "ownershipTitle": "Execution ownership",
+    "projectMode": "Project mode",
+    "taskMode": "Task mode",
+    "effectiveMode": "Effective mode",
+    "parentAttempt": "Parent Attempt",
+    "handoff": {
+      "title": "Auto handoff",
+      "subtitle": "Review the latest auto-managed result before diving into logs.",
+      "latestAttempt": "Latest attempt",
+      "updated": "Updated",
+      "diffSummary": "Diff summary",
+      "filesChanged_one": "{{count}} file changed",
+      "filesChanged_other": "{{count}} files changed",
+      "attemptStatus": "Attempt status",
+      "unknownStatus": "Unknown",
+      "lastActivity": "Last activity",
+      "contextTitle": "What happened",
+      "failureSummary": "Failure summary",
+      "schedulerNote": "Scheduler note",
+      "openLatestAttempt": "Open latest attempt",
+      "attemptStates": {
+        "idle": "Idle",
+        "running": "Running",
+        "completed": "Completed",
+        "failed": "Failed"
+      },
+      "actions": {
+        "approve": "Approve result",
+        "rework": "Request rework",
+        "takeOver": "Take over manually",
+        "resumeAuto": "Resume auto"
+      },
+      "filesChanged": "{{count}} files changed"
+    },
+    "lineage": {
+      "title": "Task lineage",
+      "createdFrom": "Created from",
+      "loading": "Loading linked task…",
+      "untitled": "Untitled task",
+      "originUnavailable": "Origin task is no longer available.",
+      "followUps": "Follow-up tasks ({{count}})"
+    }
   },
   "processes": {
     "selectAttempt": "Select an attempt to view execution processes.",
@@ -580,6 +624,13 @@
       "done": "Done",
       "cancelled": "Cancelled"
     },
+    "automationLabel": "Automation",
+    "automationHelper": "Inherit follows the project setting. Manual always waits for a human. Auto lets the scheduler manage this task in unattended mode.",
+    "automationOptions": {
+      "inherit": "Inherit project setting",
+      "manual": "Manual only",
+      "auto": "Auto managed"
+    },
     "startLabel": "Start",
     "attachImage": "Attach image",
     "dropImagesHere": "Drop images here",
@@ -637,6 +688,35 @@
     },
     "buttons": {
       "retry": "Retry"
+    }
+  },
+  "orchestration": {
+    "title": "Automation overview",
+    "projectSubtitle": "Keep manual and auto-managed work clearly separated.",
+    "overviewSubtitle": "See which tasks are manual, managed, blocked, or waiting for review.",
+    "filtersLabel": "Filter",
+    "filterAria": "Filter {{label}} tasks",
+    "filters": {
+      "all": "All",
+      "manual": "Manual",
+      "managed": "Managed",
+      "needsReview": "Needs Review",
+      "blocked": "Blocked"
+    },
+    "reviewInbox": {
+      "title": "Review inbox",
+      "subtitle_one": "{{count}} task waiting for a human decision.",
+      "subtitle_other": "{{count}} tasks waiting for a human decision.",
+      "untitled": "Untitled task",
+      "status": "Status",
+      "reviewAction": "Review",
+      "openDrawer": "Open inbox",
+      "closeDrawer": "Close review inbox"
+    },
+    "filterLabel": "Filter",
+    "topbar": {
+      "button": "Filters",
+      "menuTitle": "Task filters"
     }
   }
 }

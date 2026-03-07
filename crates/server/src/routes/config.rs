@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use app_runtime::{Deployment, DeploymentError};
 use axum::{
     Json, Router,
     body::Body,
@@ -13,7 +14,6 @@ use config::{
     editor::{EditorConfig, EditorType},
     save_config_to_file,
 };
-use app_runtime::{Deployment, DeploymentError};
 use execution::github::GitHubService;
 use executors::{
     agent_command::{AgentCommandResolution, agent_command_resolver},

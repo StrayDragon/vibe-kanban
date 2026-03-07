@@ -57,11 +57,11 @@ use repos::{
     workspace_manager::WorkspaceError as WorkspaceManagerError,
     worktree_manager::WorktreeError,
 };
-use utils_core::notifications::SharedNotifier;
 use thiserror::Error;
 use tokio::{sync::RwLock, task::JoinHandle};
 use utils_core::{
     log_entries::LogEntryChannel,
+    notifications::SharedNotifier,
     text::{git_branch_id, short_uuid},
 };
 use uuid::Uuid;
@@ -550,6 +550,9 @@ pub trait ContainerService {
                                     project.default_agent_working_dir.clone()
                                 },
                                 git_no_verify_override: None,
+                                execution_mode: None,
+                                scheduler_max_concurrent: None,
+                                scheduler_max_retries: None,
                             },
                         )
                         .await?;

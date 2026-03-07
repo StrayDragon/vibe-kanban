@@ -150,13 +150,14 @@ export function ActionsDropdown({
 
   const handleCreateSubtask = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!projectId || !attempt) return;
+    if (!projectId || !attempt || !task) return;
     const baseBranch = attempt.branch;
     if (!baseBranch) return;
     openTaskForm({
       mode: 'subtask',
       projectId,
       parentTaskAttemptId: attempt.id,
+      originTaskId: task.id,
       initialBaseBranch: baseBranch,
     });
   };

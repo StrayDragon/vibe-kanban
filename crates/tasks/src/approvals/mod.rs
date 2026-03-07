@@ -683,13 +683,19 @@ mod tests {
         let read_baz = create_tool_use_entry("Read", "baz.rs", "baz-id", ToolStatus::Created);
 
         store.push_patch(
-            executors_core::logs::utils::patch::ConversationPatch::add_normalized_entry(0, read_foo),
+            executors_core::logs::utils::patch::ConversationPatch::add_normalized_entry(
+                0, read_foo,
+            ),
         );
         store.push_patch(
-            executors_core::logs::utils::patch::ConversationPatch::add_normalized_entry(1, read_bar),
+            executors_core::logs::utils::patch::ConversationPatch::add_normalized_entry(
+                1, read_bar,
+            ),
         );
         store.push_patch(
-            executors_core::logs::utils::patch::ConversationPatch::add_normalized_entry(2, read_baz),
+            executors_core::logs::utils::patch::ConversationPatch::add_normalized_entry(
+                2, read_baz,
+            ),
         );
 
         let (idx_foo, _) =
@@ -715,7 +721,10 @@ mod tests {
             },
         );
         store.push_patch(
-            executors_core::logs::utils::patch::ConversationPatch::add_normalized_entry(3, read_pending),
+            executors_core::logs::utils::patch::ConversationPatch::add_normalized_entry(
+                3,
+                read_pending,
+            ),
         );
 
         assert!(

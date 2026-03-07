@@ -1,12 +1,12 @@
 use std::{collections::HashMap, sync::Arc};
 
 mod notification;
-pub use notification::NotificationService;
-
 use anyhow::Error as AnyhowError;
 use async_trait::async_trait;
 use axum::response::sse::Event;
-use config::{Config, ConfigError, cache_budget::cache_budgets, load_config_from_file, save_config_to_file};
+use config::{
+    Config, ConfigError, cache_budget::cache_budgets, load_config_from_file, save_config_to_file,
+};
 use db::{
     DBService, DbErr,
     models::{
@@ -17,7 +17,9 @@ use db::{
 };
 use events::{EventError, EventService};
 use execution::{
-    container::{ContainerError, ContainerService, LocalContainerService, log_backfill_completion_cache_len},
+    container::{
+        ContainerError, ContainerService, LocalContainerService, log_backfill_completion_cache_len,
+    },
     image::{ImageError, ImageService},
     pr_monitor::PrMonitorService,
     queued_message::QueuedMessageService,
@@ -26,6 +28,7 @@ use executors::{executors::ExecutorError, profile::ExecutorConfigs};
 use futures::{StreamExt, TryStreamExt};
 use logs_axum::LogMsgAxumExt;
 use logs_store::MsgStore;
+pub use notification::NotificationService;
 use repos::{
     file_ranker::file_stats_cache_len,
     file_search_cache::FileSearchCache,
@@ -37,11 +40,11 @@ use repos::{
     worktree_manager::WorktreeError,
 };
 use tasks::approvals::Approvals;
-use utils_core::notifications::SharedNotifier;
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use utils_assets::config_path;
+use utils_core::notifications::SharedNotifier;
 use uuid::Uuid;
 
 #[derive(Debug, Error)]
@@ -352,7 +355,8 @@ impl AppRuntime {
         core: &CoreServices,
     ) -> Result<RuntimeServices, DeploymentError> {
         let shutdown_token = CancellationToken::new();
-        let notification_service: SharedNotifier = Arc::new(NotificationService::new(config.clone()));
+        let notification_service: SharedNotifier =
+            Arc::new(NotificationService::new(config.clone()));
         let db = DBService::new().await?;
         let image = ImageService::new(db.clone().pool)?;
         Self::spawn_orphaned_image_cleanup(image.clone());
@@ -498,4 +502,3 @@ mod tests {
         assert!(config.show_release_notes);
     }
 }
-

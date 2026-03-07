@@ -1,3 +1,4 @@
+use app_runtime::Deployment;
 use axum::{
     Router,
     extract::{Path, State},
@@ -5,7 +6,6 @@ use axum::{
     routing::{get, post},
 };
 use db::models::repo::Repo;
-use app_runtime::Deployment;
 use repos::git::{GitBranch, GitServiceError};
 use serde::Deserialize;
 use ts_rs::TS;

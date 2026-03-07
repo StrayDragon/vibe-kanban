@@ -257,8 +257,9 @@ pub enum RunScriptError {
     ProcessAlreadyRunning,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(rename_all = "lowercase")]
 pub enum AttemptState {
     Idle,
     Running,
@@ -266,7 +267,7 @@ pub enum AttemptState {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct TaskAttemptStatusResponse {
     pub attempt_id: Uuid,
     pub task_id: Uuid,

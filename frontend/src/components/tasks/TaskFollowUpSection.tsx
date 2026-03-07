@@ -712,14 +712,12 @@ export function TaskFollowUpSection({
           onRunCleanupScript={handleRunCleanupScript}
           isQueued={isQueued}
           isQueueLoading={isQueueLoading}
-          canQueueMessage={
-            Boolean(
-              localMessage.trim() ||
-                conflictResolutionInstructions ||
-                reviewMarkdown ||
-                clickedMarkdown
-            )
-          }
+          canQueueMessage={Boolean(
+            localMessage.trim() ||
+              conflictResolutionInstructions ||
+              reviewMarkdown ||
+              clickedMarkdown
+          )}
           onQueueMessage={handleQueueMessage}
           onCancelQueue={cancelQueue}
           onStopExecution={stopExecution}

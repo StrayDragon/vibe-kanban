@@ -8,6 +8,7 @@ import type {
   ExecutionProcess,
   GhCliSetupError,
   GitOperationError,
+  TaskAttemptStatusResponse,
   MergeTaskAttemptRequest,
   OpenEditorRequest,
   OpenEditorResponse,
@@ -61,6 +62,13 @@ export const attemptsApi = {
   get: async (attemptId: string): Promise<Workspace> => {
     const response = await makeRequest(`/api/task-attempts/${attemptId}`);
     return handleApiResponse<Workspace>(response);
+  },
+
+  getStatus: async (attemptId: string): Promise<TaskAttemptStatusResponse> => {
+    const response = await makeRequest(
+      `/api/task-attempts/${attemptId}/status`
+    );
+    return handleApiResponse<TaskAttemptStatusResponse>(response);
   },
 
   /** Get workspace with latest session */

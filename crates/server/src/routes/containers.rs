@@ -1,3 +1,4 @@
+use app_runtime::Deployment;
 use axum::{
     Router,
     extract::{Query, State},
@@ -5,7 +6,6 @@ use axum::{
     routing::get,
 };
 use db::models::workspace::{Workspace, WorkspaceContext};
-use app_runtime::Deployment;
 use serde::{Deserialize, Serialize};
 use utils_core::response::ApiResponse;
 

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use app_runtime::Deployment;
 use axum::{
     Extension, Json,
     extract::{Query, State},
@@ -18,7 +19,6 @@ use db::{
         workspace_repo::WorkspaceRepo,
     },
 };
-use app_runtime::Deployment;
 use execution::{
     container::ContainerService,
     github::{CreatePrRequest, GitHubService, GitHubServiceError, UnifiedPrComment},

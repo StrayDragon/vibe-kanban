@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow;
+use app_runtime::Deployment;
 use axum::{
     Extension, Json, Router,
     extract::{
@@ -16,7 +17,6 @@ use db::models::{
     project_repo::{CreateProjectRepo, ProjectRepo, UpdateProjectRepo},
     repo::Repo,
 };
-use app_runtime::Deployment;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use logs_axum::LogMsgAxumExt;
 use repos::{file_search_cache::SearchQuery, project::ProjectServiceError};
@@ -424,8 +424,8 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
 
 #[cfg(test)]
 mod tests {
-    use axum::{body::to_bytes, http::StatusCode};
     use app_runtime::Deployment;
+    use axum::{body::to_bytes, http::StatusCode};
     use repos::git::GitService;
 
     use super::*;

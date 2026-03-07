@@ -1,3 +1,4 @@
+use app_runtime::Deployment;
 use axum::{
     Json, Router,
     extract::{
@@ -8,7 +9,6 @@ use axum::{
     routing::get,
 };
 use db::models::scratch::{CreateScratch, Scratch, ScratchType, UpdateScratch};
-use app_runtime::Deployment;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use logs_axum::LogMsgAxumExt;
 use serde::Deserialize;

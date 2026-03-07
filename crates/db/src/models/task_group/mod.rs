@@ -435,10 +435,13 @@ impl TaskGroup {
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
             status: None,
+            automation_mode: None,
             task_kind: Some(TaskKind::Group),
             task_group_id: Some(task_group_id),
             task_group_node_id: None,
             parent_workspace_id: None,
+            origin_task_id: None,
+            created_by_kind: None,
             image_ids: None,
             shared_task_id: None,
         };

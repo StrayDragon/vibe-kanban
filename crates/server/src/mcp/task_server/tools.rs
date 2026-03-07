@@ -570,7 +570,7 @@ Avoid: Expecting attempt/session info here (use list_tasks/list_task_attempts)."
         &self,
         Parameters(GetTaskRequest { task_id }): Parameters<GetTaskRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let task = Task::find_by_id(&self.deployment.db().pool, task_id)
+        let task = Task::find_by_id_with_attempt_status(&self.deployment.db().pool, task_id)
             .await
             .map_err(|e| {
                 ErrorData::internal_error(
@@ -582,14 +582,14 @@ Avoid: Expecting attempt/session info here (use list_tasks/list_task_attempts)."
                 ErrorData::invalid_params("Task not found", Some(json!({ "task_id": task_id })))
             })?;
         Self::success(&GetTaskResponse {
-            task: McpTask::from_task(task),
+            task: McpTask::from_task_with_status(task),
         })
     }
 
     #[tool(
         description = r#"Use when: Create a new task/ticket in a project.
 Required: project_id, title
-Optional: description, request_id
+Optional: description, automation_mode, origin_task_id, created_by_kind, request_id
 Next: start_attempt
 Avoid: Empty title; guessing project_id (use list_projects)."#,
         output_schema = tool_output_schema::<CreateTaskResponse>(),
@@ -605,6 +605,9 @@ Avoid: Empty title; guessing project_id (use list_projects)."#,
             project_id,
             title,
             description,
+            automation_mode,
+            origin_task_id,
+            created_by_kind,
             request_id,
         }): Parameters<CreateTaskRequest>,
     ) -> Result<CallToolResult, ErrorData> {
@@ -625,7 +628,108 @@ Avoid: Empty title; guessing project_id (use list_projects)."#,
             None => None,
         };
 
-        let payload = CreateTask::from_title_description(project_id, title, expanded_description);
+        let automation_mode = automation_mode.and_then(|mode| {
+            let trimmed = mode.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+        let automation_mode = if let Some(automation_mode) = automation_mode {
+            Some(
+                db::types::TaskAutomationMode::from_str(&automation_mode).map_err(|_| {
+                    let mut details = serde_json::Map::new();
+                    details.insert("tool".to_string(), json!("create_task"));
+                    details.insert("path".to_string(), json!("automation_mode"));
+                    details.insert("value".to_string(), json!(automation_mode));
+                    details.insert(
+                        "valid_values".to_string(),
+                        json!(["inherit", "manual", "auto"]),
+                    );
+                    details.insert("next_tools".to_string(), json!([]));
+                    details.insert(
+                        "example_args".to_string(),
+                        json!({ "project_id": project_id, "title": title, "automation_mode": "auto" }),
+                    );
+
+                    ErrorData::invalid_params(
+                        "Invalid task automation mode",
+                        Some(crate::mcp::params::invalid_params_payload(
+                            "invalid_argument",
+                            "Valid values: inherit, manual, auto.".to_string(),
+                            details,
+                        )),
+                    )
+                })?,
+            )
+        } else {
+            None
+        };
+
+        let created_by_kind = created_by_kind.and_then(|kind| {
+            let trimmed = kind.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+        let created_by_kind = if let Some(created_by_kind) = created_by_kind {
+            Some(
+                db::types::TaskCreatedByKind::from_str(&created_by_kind).map_err(|_| {
+                    let mut details = serde_json::Map::new();
+                    details.insert("tool".to_string(), json!("create_task"));
+                    details.insert("path".to_string(), json!("created_by_kind"));
+                    details.insert("value".to_string(), json!(created_by_kind));
+                    details.insert(
+                        "valid_values".to_string(),
+                        json!(["human_ui", "mcp", "scheduler", "agent_followup"]),
+                    );
+                    details.insert("next_tools".to_string(), json!([]));
+                    details.insert(
+                        "example_args".to_string(),
+                        json!({ "project_id": project_id, "title": title, "origin_task_id": Uuid::new_v4(), "created_by_kind": "agent_followup" }),
+                    );
+
+                    ErrorData::invalid_params(
+                        "Invalid task source kind",
+                        Some(crate::mcp::params::invalid_params_payload(
+                            "invalid_argument",
+                            "Valid values: human_ui, mcp, scheduler, agent_followup.".to_string(),
+                            details,
+                        )),
+                    )
+                })?,
+            )
+        } else if origin_task_id.is_some() {
+            Some(db::types::TaskCreatedByKind::AgentFollowup)
+        } else {
+            Some(db::types::TaskCreatedByKind::Mcp)
+        };
+
+        if matches!(
+            created_by_kind,
+            Some(db::types::TaskCreatedByKind::AgentFollowup)
+        ) && origin_task_id.is_none()
+        {
+            return Self::err_with(
+                "agent_followup tasks require origin_task_id.",
+                Some(json!({
+                    "tool": "create_task",
+                    "path": "origin_task_id",
+                })),
+                Some("Provide the originating task id when creating follow-up work.".to_string()),
+                Some("missing_required"),
+                Some(false),
+            );
+        }
+
+        let mut payload =
+            CreateTask::from_title_description(project_id, title, expanded_description);
+        payload.automation_mode = automation_mode;
+        payload.origin_task_id = origin_task_id;
+        payload.created_by_kind = created_by_kind;
         let request_hash = Self::request_hash(&payload)?;
         let key = Self::stable_tool_idempotency_key(request_id);
 
@@ -657,7 +761,7 @@ Avoid: Empty title; guessing project_id (use list_projects)."#,
     #[tool(
         description = r#"Use when: Update a task's title/description/status.
 Required: task_id
-Optional: title, description, status
+Optional: title, description, status, automation_mode
 Next: get_task, start_attempt
 Avoid: Calling this just to set status=inprogress (start_attempt already does that)."#,
         output_schema = tool_output_schema::<UpdateTaskResponse>(),
@@ -674,6 +778,7 @@ Avoid: Calling this just to set status=inprogress (start_attempt already does th
             title,
             description,
             status,
+            automation_mode,
         }): Parameters<UpdateTaskRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let pool = &self.deployment.db().pool;
@@ -740,6 +845,45 @@ Avoid: Calling this just to set status=inprogress (start_attempt already does th
             None
         };
 
+        let automation_mode = automation_mode.and_then(|mode| {
+            let trimmed = mode.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+        let automation_mode = if let Some(automation_mode) = automation_mode {
+            Some(
+                db::types::TaskAutomationMode::from_str(&automation_mode).map_err(|_| {
+                    let mut details = serde_json::Map::new();
+                    details.insert("tool".to_string(), json!("update_task"));
+                    details.insert("path".to_string(), json!("automation_mode"));
+                    details.insert("value".to_string(), json!(automation_mode));
+                    details.insert(
+                        "valid_values".to_string(),
+                        json!(["inherit", "manual", "auto"]),
+                    );
+                    details.insert("next_tools".to_string(), json!([]));
+                    details.insert(
+                        "example_args".to_string(),
+                        json!({ "task_id": task_id, "automation_mode": "manual" }),
+                    );
+
+                    ErrorData::invalid_params(
+                        "Invalid task automation mode",
+                        Some(crate::mcp::params::invalid_params_payload(
+                            "invalid_argument",
+                            "Valid values: inherit, manual, auto.".to_string(),
+                            details,
+                        )),
+                    )
+                })?,
+            )
+        } else {
+            None
+        };
+
         let title = title.and_then(|t| {
             let trimmed = t.trim();
             if trimmed.is_empty() {
@@ -759,6 +903,7 @@ Avoid: Calling this just to set status=inprogress (start_attempt already does th
             title.unwrap_or(existing.title),
             description.or(existing.description),
             status.unwrap_or(existing.status),
+            automation_mode.unwrap_or(existing.automation_mode),
             parent_workspace_id,
         )
         .await
@@ -3163,11 +3308,11 @@ mod tests {
         time::Duration,
     };
 
+    use app_runtime::Deployment;
     use config::DiffPreviewGuardPreset;
     use db::models::{
         execution_process::CreateExecutionProcess, repo::Repo, session::CreateSession,
     };
-    use app_runtime::Deployment;
     use executors_protocol::actions::{ExecutorActionType, script::ScriptContext};
     use rmcp::{
         ServiceExt,
@@ -3475,7 +3620,7 @@ mod tests {
         std::fs::create_dir_all(&temp_root).unwrap();
         let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
         let deployment = DeploymentImpl::new().await.expect("deployment");
-        let server = TaskServer::new(deployment);
+        let server = TaskServer::new(deployment.clone());
 
         let info = server.get_info();
         assert_eq!(info.protocol_version, ProtocolVersion::LATEST);
@@ -3526,7 +3671,7 @@ mod tests {
         .await
         .unwrap();
 
-        let server = TaskServer::new(deployment);
+        let server = TaskServer::new(deployment.clone());
 
         let list_projects_result = server
             .list_projects()
@@ -3594,7 +3739,7 @@ mod tests {
         .await
         .unwrap();
 
-        let server = TaskServer::new(deployment);
+        let server = TaskServer::new(deployment.clone());
         let result = server
             .start_attempt(Parameters(StartAttemptRequest {
                 task_id,
@@ -4185,7 +4330,7 @@ mod tests {
             .unwrap();
         });
 
-        let server = TaskServer::new(deployment);
+        let server = TaskServer::new(deployment.clone());
         let result = server
             .tail_attempt_feed(Parameters(TailAttemptFeedRequest {
                 attempt_id,
@@ -4671,6 +4816,281 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_task_follow_up_defaults_source_and_keeps_project_manual() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = &deployment.db().pool;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            pool,
+            &db::models::project::CreateProject {
+                name: "Manual project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let origin_task_id = Uuid::new_v4();
+        Task::create(
+            pool,
+            &CreateTask::from_title_description(
+                project_id,
+                "Origin task".to_string(),
+                Some("parent".to_string()),
+            ),
+            origin_task_id,
+        )
+        .await
+        .unwrap();
+
+        let server = TaskServer::new(deployment.clone());
+        let result = server
+            .create_task(Parameters(CreateTaskRequest {
+                project_id,
+                title: "Agent follow-up".to_string(),
+                description: Some("Handle the uncovered edge case".to_string()),
+                automation_mode: Some("auto".to_string()),
+                origin_task_id: Some(origin_task_id),
+                created_by_kind: None,
+                request_id: None,
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result.is_error, Some(false));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap();
+        let follow_up_task_id =
+            Uuid::parse_str(payload["task_id"].as_str().expect("task id")).unwrap();
+
+        let follow_up = Task::find_by_id_with_attempt_status(pool, follow_up_task_id)
+            .await
+            .unwrap()
+            .expect("follow-up task");
+        assert_eq!(follow_up.origin_task_id, Some(origin_task_id));
+        assert_eq!(
+            follow_up.created_by_kind,
+            db::types::TaskCreatedByKind::AgentFollowup
+        );
+        assert_eq!(
+            follow_up.automation_mode,
+            db::types::TaskAutomationMode::Auto
+        );
+        assert_eq!(
+            follow_up.project_execution_mode,
+            db::types::ProjectExecutionMode::Manual
+        );
+        assert_eq!(
+            follow_up.effective_automation_mode,
+            db::types::ProjectExecutionMode::Auto
+        );
+
+        let project = Project::find_by_id(pool, project_id)
+            .await
+            .unwrap()
+            .expect("project");
+        assert_eq!(
+            project.execution_mode,
+            db::types::ProjectExecutionMode::Manual
+        );
+
+        let Json(list_payload) = server
+            .list_tasks(Parameters(ListTasksRequest {
+                project_id,
+                status: None,
+                limit: Some(20),
+            }))
+            .await
+            .unwrap();
+        let origin_task_id_string = origin_task_id.to_string();
+        let listed = list_payload
+            .tasks
+            .into_iter()
+            .find(|task| task.id == follow_up_task_id.to_string())
+            .expect("listed follow-up task");
+        assert_eq!(
+            listed.origin_task_id.as_deref(),
+            Some(origin_task_id_string.as_str())
+        );
+        assert_eq!(listed.created_by_kind, "agent_followup");
+        assert_eq!(listed.automation_mode, "auto");
+        assert_eq!(listed.project_execution_mode, "manual");
+        assert_eq!(listed.effective_automation_mode, "auto");
+
+        let get_result = server
+            .get_task(Parameters(GetTaskRequest {
+                task_id: follow_up_task_id,
+            }))
+            .await
+            .unwrap();
+        let get_payload: serde_json::Value =
+            serde_json::from_str(&get_result.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(
+            get_payload["task"]["origin_task_id"].as_str(),
+            Some(origin_task_id_string.as_str())
+        );
+        assert_eq!(
+            get_payload["task"]["created_by_kind"].as_str(),
+            Some("agent_followup")
+        );
+        assert_eq!(
+            get_payload["task"]["project_execution_mode"].as_str(),
+            Some("manual")
+        );
+        assert_eq!(
+            get_payload["task"]["effective_automation_mode"].as_str(),
+            Some("auto")
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn create_task_rejects_agent_followup_without_origin_task_id() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = &deployment.db().pool;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            pool,
+            &db::models::project::CreateProject {
+                name: "Follow-up validation".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let server = TaskServer::new(deployment.clone());
+        let result = server
+            .create_task(Parameters(CreateTaskRequest {
+                project_id,
+                title: "Broken follow-up".to_string(),
+                description: None,
+                automation_mode: Some("auto".to_string()),
+                origin_task_id: None,
+                created_by_kind: Some("agent_followup".to_string()),
+                request_id: None,
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result.is_error, Some(true));
+        let payload = result.structured_content.expect("structured content");
+        assert_eq!(payload["code"].as_str(), Some("missing_required"));
+        assert_eq!(payload["retryable"].as_bool(), Some(false));
+        assert_eq!(payload["details"]["path"].as_str(), Some("origin_task_id"));
+
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
+    async fn update_task_auto_override_does_not_change_project_execution_mode() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = &deployment.db().pool;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            pool,
+            &db::models::project::CreateProject {
+                name: "Task-level auto only".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            pool,
+            &CreateTask::from_title_description(
+                project_id,
+                "Opt into auto".to_string(),
+                Some("Should stay in a manual project".to_string()),
+            ),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let server = TaskServer::new(deployment.clone());
+        let update_result = server
+            .update_task(Parameters(UpdateTaskRequest {
+                task_id,
+                title: None,
+                description: None,
+                status: None,
+                automation_mode: Some("auto".to_string()),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(update_result.is_error, Some(false));
+
+        let updated_task = Task::find_by_id_with_attempt_status(pool, task_id)
+            .await
+            .unwrap()
+            .expect("updated task");
+        assert_eq!(
+            updated_task.automation_mode,
+            db::types::TaskAutomationMode::Auto
+        );
+        assert_eq!(
+            updated_task.project_execution_mode,
+            db::types::ProjectExecutionMode::Manual
+        );
+        assert_eq!(
+            updated_task.effective_automation_mode,
+            db::types::ProjectExecutionMode::Auto
+        );
+
+        let project = Project::find_by_id(pool, project_id)
+            .await
+            .unwrap()
+            .expect("project");
+        assert_eq!(
+            project.execution_mode,
+            db::types::ProjectExecutionMode::Manual
+        );
+
+        let get_result = server
+            .get_task(Parameters(GetTaskRequest { task_id }))
+            .await
+            .unwrap();
+        let get_payload: serde_json::Value =
+            serde_json::from_str(&get_result.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(
+            get_payload["task"]["automation_mode"].as_str(),
+            Some("auto")
+        );
+        assert_eq!(
+            get_payload["task"]["project_execution_mode"].as_str(),
+            Some("manual")
+        );
+        assert_eq!(
+            get_payload["task"]["effective_automation_mode"].as_str(),
+            Some("auto")
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[tokio::test]
     async fn create_task_idempotency_conflict_is_structured_tool_error() {
         let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&temp_root).unwrap();
@@ -4700,6 +5120,9 @@ mod tests {
                 project_id,
                 title: "Task A".to_string(),
                 description: None,
+                automation_mode: None,
+                origin_task_id: None,
+                created_by_kind: None,
                 request_id: request_id.clone(),
             }))
             .await
@@ -4711,6 +5134,9 @@ mod tests {
                 project_id,
                 title: "Task B".to_string(),
                 description: None,
+                automation_mode: None,
+                origin_task_id: None,
+                created_by_kind: None,
                 request_id: request_id.clone(),
             }))
             .await
@@ -4886,7 +5312,7 @@ mod tests {
             .await
             .unwrap();
 
-        let server = TaskServer::new(deployment);
+        let server = TaskServer::new(deployment.clone());
         let result = server
             .get_attempt_changes(Parameters(GetAttemptChangesRequest {
                 attempt_id: workspace.id,

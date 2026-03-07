@@ -7,6 +7,7 @@ use std::{
     },
 };
 
+use app_runtime::Deployment;
 use db::{
     DbErr,
     events::{
@@ -34,7 +35,6 @@ use db::{
         workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
     },
 };
-use app_runtime::Deployment;
 use execution::container::ContainerService;
 use executors_protocol::{
     BaseCodingAgent, ExecutorProfileId,

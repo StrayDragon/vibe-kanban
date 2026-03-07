@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use app_runtime::Deployment;
 use axum::{
     Extension, Json,
     extract::{Query, State},
@@ -26,7 +27,6 @@ use db::{
         workspace_repo::{CreateWorkspaceRepo, RepoWithTargetBranch, WorkspaceRepo},
     },
 };
-use app_runtime::Deployment;
 use execution::{container::ContainerService, diff_stream, github::GitHubService};
 use executors::{
     executors::{CodingAgent, ExecutorError},
@@ -1023,6 +1023,7 @@ pub async fn create_task_attempt(
                             target_branch: repo.target_branch.clone(),
                         })
                         .collect(),
+                    prompt_override: None,
                 },
             )
             .await?;
@@ -2317,6 +2318,7 @@ pub async fn get_task_attempt_repos(
 mod tests {
     use std::{collections::HashSet, path::Path};
 
+    use app_runtime::Deployment;
     use axum::{
         Extension, Json,
         extract::{Query, State},
@@ -2343,7 +2345,6 @@ mod tests {
         workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
     };
     use db_migration::Migrator;
-    use app_runtime::Deployment;
     use execution::container::LocalContainerService;
     use executors_protocol::{
         BaseCodingAgent, ExecutorProfileId,

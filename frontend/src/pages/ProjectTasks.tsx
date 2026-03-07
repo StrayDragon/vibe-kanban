@@ -66,6 +66,7 @@ import {
 import { AttemptHeaderActions } from '@/components/panels/AttemptHeaderActions';
 import { TaskPanelHeaderActions } from '@/components/panels/TaskPanelHeaderActions';
 import { getTaskGroupId, isTaskGroupSubtask } from '@/utils/taskGroup';
+import { matchesOrchestrationFilters } from '@/utils/automation';
 
 import type { TaskWithAttemptStatus, TaskStatus } from 'shared/types';
 
@@ -155,7 +156,15 @@ export function ProjectTasks() {
       openTaskForm({ mode: 'create', projectId });
     }
   }, [projectId]);
-  const { query: searchQuery, focusInput } = useSearch();
+  const {
+    query: searchQuery,
+    focusInput,
+    clear: clearSearch,
+    orchestrationFilters,
+    clearOrchestrationFilters,
+    setReviewInbox,
+    clearReviewInbox,
+  } = useSearch();
 
   const {
     tasks,
@@ -314,6 +323,27 @@ export function ProjectTasks() {
   const hasSearch = Boolean(searchQuery.trim());
   const normalizedSearch = searchQuery.trim().toLowerCase();
 
+  const matchesTaskSearch = useCallback(
+    (task: Task): boolean => {
+      if (!hasSearch) return true;
+      const lowerTitle = task.title.toLowerCase();
+      const lowerDescription = task.description?.toLowerCase() ?? '';
+      return (
+        lowerTitle.includes(normalizedSearch) ||
+        lowerDescription.includes(normalizedSearch)
+      );
+    },
+    [hasSearch, normalizedSearch]
+  );
+
+  const orchestrationScopeTasks = useMemo(
+    () =>
+      tasks.filter(
+        (task) => !isTaskGroupSubtask(task) && matchesTaskSearch(task)
+      ),
+    [matchesTaskSearch, tasks]
+  );
+
   const kanbanColumns = useMemo(() => {
     const columns: Record<TaskStatus, KanbanColumnItem[]> = {
       todo: [],
@@ -321,19 +351,6 @@ export function ProjectTasks() {
       inreview: [],
       done: [],
       cancelled: [],
-    };
-
-    const matchesSearch = (
-      title: string,
-      description?: string | null
-    ): boolean => {
-      if (!hasSearch) return true;
-      const lowerTitle = title.toLowerCase();
-      const lowerDescription = description?.toLowerCase() ?? '';
-      return (
-        lowerTitle.includes(normalizedSearch) ||
-        lowerDescription.includes(normalizedSearch)
-      );
     };
 
     (Object.entries(tasksByStatus) as [TaskStatus, Task[]][]).forEach(
@@ -345,9 +362,13 @@ export function ProjectTasks() {
           if (isTaskGroupSubtask(task)) {
             return;
           }
-          if (!matchesSearch(task.title, task.description)) {
+          if (!matchesTaskSearch(task)) {
             return;
           }
+          if (!matchesOrchestrationFilters(task, orchestrationFilters)) {
+            return;
+          }
+
           columns[status].push(task);
         });
       }
@@ -362,13 +383,14 @@ export function ProjectTasks() {
     });
 
     return columns;
-  }, [hasSearch, normalizedSearch, tasksByStatus]);
+  }, [matchesTaskSearch, orchestrationFilters, tasksByStatus]);
 
   const hasVisibleTasks = useMemo(
     () =>
       Object.values(kanbanColumns).some((items) => items && items.length > 0),
     [kanbanColumns]
   );
+
 
   useKeyNavUp(
     () => {
@@ -583,6 +605,28 @@ export function ProjectTasks() {
     }
   }, [selectedTask, kanbanColumns, handleViewTaskDetails]);
 
+  const reviewInboxTasks = useMemo(
+    () =>
+      orchestrationScopeTasks.filter(
+        (task) =>
+          (task.status === 'inreview' ||
+            task.dispatch_state?.status === 'awaiting_human_review') &&
+          matchesOrchestrationFilters(task, orchestrationFilters)
+      ),
+    [orchestrationFilters, orchestrationScopeTasks]
+  );
+
+  useEffect(() => {
+    setReviewInbox({
+      tasks: reviewInboxTasks,
+      onSelectTask: handleViewTaskDetails,
+    });
+
+    return () => {
+      clearReviewInbox();
+    };
+  }, [clearReviewInbox, handleViewTaskDetails, reviewInboxTasks, setReviewInbox]);
+
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
       const { active, over } = event;
@@ -598,6 +642,7 @@ export function ProjectTasks() {
           title: task.title,
           description: task.description,
           status: newStatus,
+          automation_mode: task.automation_mode,
           parent_workspace_id: task.parent_workspace_id,
           image_ids: null,
         });
@@ -642,7 +687,15 @@ export function ProjectTasks() {
       : `${truncated}...`;
   };
 
-  const kanbanContent =
+  const hasActiveTaskFilters =
+    Boolean(searchQuery.trim()) || orchestrationFilters.length > 0;
+
+  const handleResetVisibleFilters = () => {
+    clearSearch();
+    clearOrchestrationFilters();
+  };
+
+  const kanbanBody =
     tasks.length === 0 ? (
       <div className="max-w-7xl mx-auto mt-8">
         <Card>
@@ -660,8 +713,17 @@ export function ProjectTasks() {
         <Card>
           <CardContent className="text-center py-8">
             <p className="text-muted-foreground">
-              {t('empty.noSearchResults')}
+              {t('empty.noFilteredResults')}
             </p>
+            {hasActiveTaskFilters && (
+              <Button
+                variant="outline"
+                className="mt-4"
+                onClick={handleResetVisibleFilters}
+              >
+                {t('common:reset')}
+              </Button>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -677,6 +739,13 @@ export function ProjectTasks() {
         />
       </div>
     );
+
+
+  const kanbanContent = (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="min-h-0 flex-1">{kanbanBody}</div>
+    </div>
+  );
 
   const rightHeader = selectedTask ? (
     <NewCardHeader
@@ -740,7 +809,7 @@ export function ProjectTasks() {
   const attemptContent = selectedTask ? (
     <NewCard className="h-full min-h-0 flex flex-col bg-diagonal-lines bg-muted border-0">
       {isTaskView ? (
-        <TaskPanel task={selectedTask} />
+        <TaskPanel task={selectedTask} buildTaskPath={paths.task} />
       ) : (
         <TaskAttemptPanel attempt={attempt} task={selectedTask}>
           {({ logs, followUp }) => (

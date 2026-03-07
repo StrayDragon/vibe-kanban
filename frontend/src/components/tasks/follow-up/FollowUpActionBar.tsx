@@ -168,7 +168,9 @@ export function FollowUpActionBar({
             <DropdownMenuItem
               onClick={onRunCleanupScript}
               disabled={!hasCleanupScript}
-              title={hasCleanupScript ? undefined : t('followUp.noCleanupScript')}
+              title={
+                hasCleanupScript ? undefined : t('followUp.noCleanupScript')
+              }
             >
               {t('followUp.runCleanupScript')}
             </DropdownMenuItem>

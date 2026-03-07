@@ -1,5 +1,6 @@
 use std::{fmt::Display, future::Future};
 
+use app_runtime::Deployment;
 use axum::{
     extract::{Path, Request, State},
     http::StatusCode,
@@ -13,7 +14,6 @@ use db::{
         task::Task, task_group::TaskGroup, workspace::Workspace,
     },
 };
-use app_runtime::Deployment;
 use uuid::Uuid;
 
 pub trait ModelLoaderDeps {

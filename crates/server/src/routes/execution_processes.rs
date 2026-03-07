@@ -1,6 +1,7 @@
 use std::sync::OnceLock;
 
 use anyhow;
+use app_runtime::Deployment;
 use axum::{
     Extension, Router,
     extract::{
@@ -15,7 +16,6 @@ use db::models::{
     execution_process::{ExecutionProcess, ExecutionProcessError, ExecutionProcessStatus},
     execution_process_repo_state::ExecutionProcessRepoState,
 };
-use app_runtime::Deployment;
 use execution::container::ContainerService;
 use executors::logs::utils::patch::PatchType;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
