@@ -54,9 +54,21 @@ trait ToNormalizedEntryOpt {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CodexNotificationParams {
-    #[serde(rename = "msg")]
     msg: EventMsg,
+
+    /// Codex conversation/thread identifier.
+    ///
+    /// Newer Codex app server versions attach this to every `codex/event/*` notification
+    /// as `conversationId`. Older payloads might use `threadId`/`thread_id`.
+    #[serde(
+        default,
+        alias = "threadId",
+        alias = "thread_id",
+        alias = "conversation_id"
+    )]
+    conversation_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -216,6 +228,7 @@ struct LogState {
     patches: HashMap<String, PatchState>,
     web_searches: HashMap<String, WebSearchState>,
     token_usage_info: Option<TokenUsageInfo>,
+    agent_session_id: Option<String>,
 }
 
 enum StreamingTextKind {
@@ -234,6 +247,7 @@ impl LogState {
             patches: HashMap::new(),
             web_searches: HashMap::new(),
             token_usage_info: None,
+            agent_session_id: None,
         }
     }
 
@@ -452,6 +466,18 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
             else {
                 continue;
             };
+
+            if let Some(conversation_id) = params
+                .conversation_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                if state.agent_session_id.as_deref() != Some(conversation_id) {
+                    state.agent_session_id = Some(conversation_id.to_string());
+                    msg_store.push_session_id(conversation_id.to_string());
+                }
+            }
 
             let event = params.msg;
             match event {
@@ -2338,6 +2364,42 @@ mod tests {
         .await;
 
         assert!(entry.content.contains("model: gpt-4.1"));
+        assert!(
+            msg_store
+                .get_history()
+                .iter()
+                .any(|msg| matches!(msg, LogMsg::SessionId(id) if id == session_id))
+        );
+
+        msg_store.push_finished();
+    }
+
+    #[tokio::test]
+    async fn normalize_logs_extracts_session_id_from_conversation_id() {
+        let msg_store = Arc::new(MsgStore::new());
+        normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
+
+        let session_id = "019ccd9d-f0bf-75d1-a434-28aba3a21be2";
+        let notification = JSONRPCNotification {
+            method: "codex/event/agent_message_delta".to_string(),
+            params: Some(json!({
+                "id": "turn-1",
+                "msg": { "type": "agent_message_delta", "delta": "hi" },
+                "conversationId": session_id,
+            })),
+        };
+
+        push_json_line(
+            &msg_store,
+            serde_json::to_string(&notification).expect("notification"),
+        );
+
+        let _ = wait_for_entry(&msg_store, |entry| {
+            matches!(entry.entry_type, NormalizedEntryType::AssistantMessage)
+                && entry.content.contains("hi")
+        })
+        .await;
+
         assert!(
             msg_store
                 .get_history()

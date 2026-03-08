@@ -449,20 +449,24 @@ impl ExecutionProcess {
             .await?
             .ok_or(DbErr::RecordNotFound("Session not found".to_string()))?;
 
-        let latest_process = execution_process::Entity::find()
+        let process_ids: Vec<i64> = execution_process::Entity::find()
+            .select_only()
+            .column(execution_process::Column::Id)
             .filter(execution_process::Column::SessionId.eq(session_row_id))
             .filter(execution_process::Column::RunReason.eq(ExecutionProcessRunReason::CodingAgent))
             .filter(execution_process::Column::Dropped.eq(false))
-            .order_by_desc(execution_process::Column::CreatedAt)
-            .one(db)
+            .into_tuple()
+            .all(db)
             .await?;
 
-        let Some(process) = latest_process else {
+        if process_ids.is_empty() {
             return Ok(None);
-        };
+        }
 
+        // Some executors may only emit a session id once, or may fail before emitting it. Use the
+        // most recent non-null `agent_session_id` across all CodingAgent turns in this session.
         let turn = coding_agent_turn::Entity::find()
-            .filter(coding_agent_turn::Column::ExecutionProcessId.eq(process.id))
+            .filter(coding_agent_turn::Column::ExecutionProcessId.is_in(process_ids))
             .filter(coding_agent_turn::Column::AgentSessionId.is_not_null())
             .order_by_desc(coding_agent_turn::Column::CreatedAt)
             .one(db)
