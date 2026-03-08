@@ -47,10 +47,12 @@ export function TaskOwnershipBanner({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={ownership.variant}>{ownership.label}</Badge>
-            <Badge variant="outline">
-              {t('taskPanel.projectMode')}:{' '}
-              {getProjectExecutionModeLabel(task.project_execution_mode)}
-            </Badge>
+            {task.project_execution_mode === 'auto' && (
+              <Badge variant="outline">
+                {t('taskPanel.projectMode')}:{' '}
+                {getProjectExecutionModeLabel(task.project_execution_mode)}
+              </Badge>
+            )}
             <Badge variant="outline">
               {t('taskPanel.taskMode')}: {getTaskAutomationModeLabel(task)}
             </Badge>

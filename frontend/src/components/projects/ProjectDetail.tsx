@@ -263,13 +263,11 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold">{project.name}</h1>
-              <Badge
-                variant={
-                  project.execution_mode === 'auto' ? 'default' : 'outline'
-                }
-              >
-                {getProjectExecutionModeLabel(project.execution_mode)}
-              </Badge>
+              {project.execution_mode === 'auto' && (
+                <Badge variant="default">
+                  {getProjectExecutionModeLabel(project.execution_mode)}
+                </Badge>
+              )}
             </div>
             <p className="text-sm text-muted-foreground">
               Project details and settings

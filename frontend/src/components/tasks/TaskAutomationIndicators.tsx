@@ -61,14 +61,25 @@ export function TaskAutomationIndicators({
   detailClassName,
   hideReviewOwnership = false,
 }: TaskAutomationIndicatorsProps) {
+  const shouldShowOrchestrationIndicators =
+    task.project_execution_mode === 'auto' ||
+    task.effective_automation_mode === 'auto';
+
+  if (!shouldShowOrchestrationIndicators) {
+    return null;
+  }
+
   const ownership = getTaskAutomationOwnershipPresentation(task);
   const runtime = getTaskAutomationRuntimePresentation(task);
+  const shouldHideRuntime =
+    runtime?.label === 'In Progress' && task.status === 'inprogress';
+  const visibleRuntime = shouldHideRuntime ? null : runtime;
   const OwnerIcon = OWNER_ICONS[getTaskAutomationOwnerKey(task)] ?? UserRound;
-  const RuntimeIcon = runtime ? runtimeIcon(runtime.label) : null;
+  const RuntimeIcon = visibleRuntime ? runtimeIcon(visibleRuntime.label) : null;
   const detail = getTaskAutomationDetail(task);
   const shouldHideOwnership =
     hideReviewOwnership && ownership.kind === 'needs_review';
-  const shouldShowBadgeRow = !shouldHideOwnership || Boolean(runtime);
+  const shouldShowBadgeRow = !shouldHideOwnership || Boolean(visibleRuntime);
   const shouldShowDetail = showDetail && detail && !shouldHideOwnership;
 
   return (
@@ -84,13 +95,13 @@ export function TaskAutomationIndicators({
               {ownership.label}
             </Badge>
           )}
-          {runtime && (
+          {visibleRuntime && (
             <Badge
-              variant={runtime.variant}
-              className={cn('gap-1.5', runtime.className)}
+              variant={visibleRuntime.variant}
+              className={cn('gap-1.5', visibleRuntime.className)}
             >
               {RuntimeIcon && <RuntimeIcon className="h-3.5 w-3.5" />}
-              {runtime.label}
+              {visibleRuntime.label}
             </Badge>
           )}
         </div>

@@ -86,13 +86,11 @@ function ProjectCard({ project, isFocused, setError, onEdit }: Props) {
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-2">
             <CardTitle className="text-lg">{project.name}</CardTitle>
-            <Badge
-              variant={
-                project.execution_mode === 'auto' ? 'default' : 'outline'
-              }
-            >
-              {getProjectExecutionModeLabel(project.execution_mode)}
-            </Badge>
+            {project.execution_mode === 'auto' && (
+              <Badge variant="default">
+                {getProjectExecutionModeLabel(project.execution_mode)}
+              </Badge>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <DropdownMenu>

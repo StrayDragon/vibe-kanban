@@ -74,7 +74,7 @@ export function TaskOrchestrationSummaryStrip({
             <ShieldCheck className="h-4 w-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
           </div>
-          {projectExecutionMode && (
+          {projectExecutionMode === 'auto' && (
             <Badge variant="outline" className="gap-1.5">
               <Bot className="h-3.5 w-3.5" />
               {getProjectExecutionModeLabel(projectExecutionMode)}
