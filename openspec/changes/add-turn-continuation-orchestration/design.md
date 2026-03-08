@@ -32,9 +32,21 @@ Continuation should only exist within optional auto orchestration. Manual projec
 - persist user-visible continuation counters as a manual-task concern
 - render continuation affordances in human-manual task views
 
-To preserve current behavior, the project-level continuation budget should default to zero additional turns until explicitly enabled.
+To preserve current behavior, the effective continuation budget should default to zero additional turns unless explicitly enabled.
 
-### 2. Evaluate continuation only after a successful but incomplete turn
+### 2. Continuation budgets inherit project defaults but tasks may override
+
+Continuation needs a simple override model similar to `automation_mode`:
+
+- Project defines a default continuation budget (recommended default: `0` additional turns).
+- Task optionally defines its own continuation budget override:
+  - `None` → inherit the project default
+  - `0` → explicitly disable continuation for this task even if the project default is non-zero
+  - `> 0` → allow up to that many continuation turns for this task, even if the project default is `0`
+
+The scheduler computes an **effective continuation budget** per task from this precedence rule and uses it for eligibility and diagnostics.
+
+### 3. Evaluate continuation only after a successful but incomplete turn
 
 Continuation is considered only when all of the following are true:
 - the task is effectively auto-managed
@@ -43,11 +55,11 @@ Continuation is considered only when all of the following are true:
 - the task is not waiting on human review
 - there are no pending approvals
 - there is no blocking diagnostic
-- continuation budget and continuation time window still allow another turn
+- effective continuation budget and continuation time window still allow another turn
 
 This keeps continuation distinct from retry-on-error recovery.
 
-### 3. Reuse same-session follow-up infrastructure
+### 4. Reuse same-session follow-up infrastructure
 
 The scheduler should:
 - find the latest coding-agent session for the workspace
@@ -56,20 +68,23 @@ The scheduler should:
 
 Continuation remains scheduler-owned rather than UI-owned.
 
-### 4. Use a short continuation prompt
+### 5. Use a short, stateful continuation prompt (not a repeated fixed base prompt)
 
-The continuation prompt should be built from:
-- latest turn summary
-- current task status
-- remaining continuation budget
-- any newly observed blocker/diagnostic context
+Continuation should not re-send a full static orchestration prompt on every follow-up turn.
+
+Instead, the continuation prompt should be built from the *previous turn's outcome* plus a small continuation instruction template:
+- latest turn summary (preferred) and/or a short excerpt of the latest agent "result" message
+- current task status and any newly observed blocker/diagnostic context
+- remaining continuation budget and any time-window constraints
 
 It should explicitly say:
 - this is a continuation turn
 - do not restart completed investigation
 - focus only on remaining work needed to reach a terminal or review-ready state
 
-### 5. Enforce explicit budgets and stop reasons
+This mirrors the intent of Symphony-style momentum: keep the task moving with minimal, stateful reminders instead of restarting from scratch.
+
+### 6. Enforce explicit budgets and stop reasons
 
 Recommended policy fields:
 - max continuation turns per attempt
@@ -85,19 +100,21 @@ Continuation must stop immediately when:
 
 Persist a structured stop reason so humans and MCP clients can tell why automation stopped.
 
-### 6. Persist only the state needed for auditability
+### 7. Persist only the state needed for auditability
 
 Persist enough continuation state for auditability and diagnostics:
 - current continuation turn count
 - max continuation turns
 - last continuation stop reason
 - last continuation prompt timestamp
+- effective budget source (`project_default` vs `task_override`) where useful for explainability
 
 These fields should appear only in auto-managed task/task-feed reads. Manual-task surfaces should omit them entirely.
 
 ## Migration Plan
 
-- Add continuation policy to the latest project automation config version with conservative default-off behavior.
+- Add continuation policy to the project settings with conservative default-off behavior.
+- Add an optional task-level override field with inheritance/disable semantics.
 - Persist counters and stop reasons additively so existing tasks remain valid.
 - Regenerate shared TypeScript types if continuation diagnostics become part of task DTOs.
 - Roll out continuation behind opt-in settings first, then validate with one managed project before broader use.

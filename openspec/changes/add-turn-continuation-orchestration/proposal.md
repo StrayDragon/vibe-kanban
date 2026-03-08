@@ -5,9 +5,11 @@ Symphony's continuation loop keeps the same task moving across multiple agent tu
 ## What Changes
 
 - Add optional, bounded same-session turn continuation for auto-managed tasks only.
-- Keep the feature disabled by default so current manual and one-turn auto behavior remain unchanged until a project opts in.
+- Keep the feature disabled by default so current manual and one-turn auto behavior remain unchanged unless an effective continuation budget is configured.
+- Add a simple hierarchy for continuation budgets: project-level default, with optional per-task override (including per-task disable).
 - Reuse existing follow-up/session infrastructure instead of creating a second attempt or a new workspace per continuation turn.
 - Add strict continuation stop conditions around review handoff, approvals, blocking diagnostics, and continuation budgets.
+- Build continuation follow-up prompts from the previous turn's summary/result plus a small continuation instruction template (avoid re-sending a full fixed base prompt each turn).
 - Expose continuation state and budget diagnostics only in auto-managed task surfaces and MCP-readable task data.
 
 ## Capabilities
@@ -21,7 +23,7 @@ Symphony's continuation loop keeps the same task moving across multiple agent tu
 ## Impact
 
 - Backend: scheduler/orchestrator loop, queued follow-up handling, task dispatch state, and attempt/session diagnostics.
-- Config/data model: project-level continuation policy plus persisted counters and stop reasons for managed tasks.
+- Config/data model: project-level continuation policy, optional task-level override, plus persisted counters and stop reasons for managed tasks.
 - UI/MCP: only auto-managed task detail and machine-facing reads explain continuation progress or stop reasons.
 - Cost/safety: continuation budgets become a first-class runtime concern.
 
@@ -49,10 +51,11 @@ Symphony's continuation loop keeps the same task moving across multiple agent tu
 - Runaway loops and unexpected cost growth if continuation budgets are too weak.
 - Repeated validation or duplicate side effects across continuation turns.
 - Confusing humans if continuation stop reasons are not surfaced clearly in managed-task diagnostics.
+- Confusing precedence if effective budgets are not explainable (project default vs task override).
 - Session quality may degrade if prompts do not stay concise and stateful.
 
 ## Verification
 
-- Scheduler tests for continuation eligibility, budget exhaustion, and stop reasons.
+- Scheduler tests for continuation eligibility, budget exhaustion, stop reasons, and budget precedence (project vs task override).
 - Session/follow-up integration tests proving same-session continuity.
 - Manual smoke check showing a task continues automatically for one additional turn and then stops at a review handoff boundary.
