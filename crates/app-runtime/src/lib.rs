@@ -119,44 +119,44 @@ pub trait Deployment: Clone + Send + Sync + 'static {
         let hard_timeout_ms = 2_300;
         let project_count = Project::count(&self.db().pool).await.unwrap_or(0);
 
-        if project_count == 0 {
-            if let Ok(repos) = self
-                .filesystem()
-                .list_common_git_repos(soft_timeout_ms, hard_timeout_ms, Some(4))
+        if project_count != 0 {
+            return;
+        }
+
+        let Ok(repos) = self
+            .filesystem()
+            .list_common_git_repos(soft_timeout_ms, hard_timeout_ms, Some(4))
+            .await
+        else {
+            return;
+        };
+
+        for repo in repos.into_iter().take(3) {
+            let project_name = repo.name.clone();
+            let repo_path = repo.path.to_string_lossy().to_string();
+
+            let create_data = CreateProject {
+                name: project_name,
+                repositories: vec![CreateProjectRepo {
+                    display_name: repo.name,
+                    git_repo_path: repo_path.clone(),
+                }],
+            };
+
+            match self
+                .project()
+                .create_project(&self.db().pool, self.repo(), create_data.clone())
                 .await
             {
-                for repo in repos.into_iter().take(3) {
-                    let project_name = repo.name.clone();
-                    let repo_path = repo.path.to_string_lossy().to_string();
-
-                    let create_data = CreateProject {
-                        name: project_name,
-                        repositories: vec![CreateProjectRepo {
-                            display_name: repo.name,
-                            git_repo_path: repo_path.clone(),
-                        }],
-                    };
-
-                    match self
-                        .project()
-                        .create_project(&self.db().pool, self.repo(), create_data.clone())
-                        .await
-                    {
-                        Ok(project) => {
-                            tracing::info!(
-                                "Auto-created project '{}' from {}",
-                                project.name,
-                                repo_path
-                            );
-                        }
-                        Err(error) => {
-                            tracing::warn!(
-                                "Failed to auto-create project from {}: {}",
-                                repo.path.display(),
-                                error
-                            );
-                        }
-                    }
+                Ok(project) => {
+                    tracing::info!("Auto-created project '{}' from {}", project.name, repo_path);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "Failed to auto-create project from {}: {}",
+                        repo.path.display(),
+                        error
+                    );
                 }
             }
         }

@@ -509,13 +509,13 @@ fn retry_backoff(retry_count: i32) -> ChronoDuration {
 
 #[cfg(test)]
 mod tests {
-    use super::retry_backoff;
+    use super::{MAX_BACKOFF_SECONDS, retry_backoff};
 
     #[test]
     fn retry_backoff_is_capped() {
         assert_eq!(retry_backoff(1).num_seconds(), 15);
         assert_eq!(retry_backoff(2).num_seconds(), 30);
-        assert_eq!(retry_backoff(7).num_seconds(), 960.min(600));
-        assert_eq!(retry_backoff(9).num_seconds(), 600);
+        assert_eq!(retry_backoff(7).num_seconds(), MAX_BACKOFF_SECONDS);
+        assert_eq!(retry_backoff(9).num_seconds(), MAX_BACKOFF_SECONDS);
     }
 }

@@ -13,7 +13,7 @@ use axum::{
 };
 use db::models::{
     image::TaskImage,
-    task::{CreateTask, Task, TaskLineageSummary, TaskWithAttemptStatus, UpdateTask},
+    task::{CreateTask, Task, TaskLineageSummary, TaskUpdateParams, TaskWithAttemptStatus, UpdateTask},
     workspace_repo::CreateWorkspaceRepo,
 };
 use executors_protocol::ExecutorProfileId;
@@ -219,12 +219,14 @@ pub async fn update_task(
     let task = Task::update(
         &deployment.db().pool,
         existing_task.id,
-        existing_task.project_id,
-        title,
-        description,
-        status,
-        automation_mode,
-        parent_workspace_id,
+        TaskUpdateParams {
+            project_id: existing_task.project_id,
+            title,
+            description,
+            status,
+            automation_mode,
+            parent_workspace_id,
+        },
     )
     .await?;
 

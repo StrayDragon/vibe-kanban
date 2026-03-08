@@ -1,5 +1,7 @@
 use rmcp::{tool, tool_router};
 
+use db::models::task::TaskUpdateParams;
+
 use super::*;
 
 pub(super) fn build_tool_router() -> ToolRouter<TaskServer> {
@@ -899,12 +901,14 @@ Avoid: Calling this just to set status=inprogress (start_attempt already does th
         Task::update(
             pool,
             existing.id,
-            existing.project_id,
-            title.unwrap_or(existing.title),
-            description.or(existing.description),
-            status.unwrap_or(existing.status),
-            automation_mode.unwrap_or(existing.automation_mode),
-            parent_workspace_id,
+            TaskUpdateParams {
+                project_id: existing.project_id,
+                title: title.unwrap_or(existing.title),
+                description: description.or(existing.description),
+                status: status.unwrap_or(existing.status),
+                automation_mode: automation_mode.unwrap_or(existing.automation_mode),
+                parent_workspace_id,
+            },
         )
         .await
         .map_err(|e| {

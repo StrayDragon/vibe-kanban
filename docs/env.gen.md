@@ -126,59 +126,59 @@ Notes:
 
 The list below shows where each env var name appears in the repo (best-effort).
 
-- `BACKEND_HOST`: `frontend/vite.config.ts`
-- `BACKEND_PORT`: `crates/server/src/main.rs`, `frontend/vite.config.ts`, `package.json`
+- `BACKEND_HOST`: `frontend/vite.config.ts`, `scripts/run-e2e.js`
+- `BACKEND_PORT`: `crates/server/src/main.rs`, `frontend/vite.config.ts`, `package.json`, `scripts/run-e2e.js`
 - `DATABASE_URL`: `crates/db/src/lib.rs`, `crates/server/src/test_support.rs`, `scripts/prepare-db.js`
-- `DISABLE_WORKSPACE_EXPIRED_CLEANUP`: `crates/local-deployment/src/container.rs`
-- `DISABLE_WORKTREE_ORPHAN_CLEANUP`: `crates/services/src/services/workspace_manager.rs`, `package.json`
-- `FRONTEND_PORT`: `frontend/vite.config.ts`, `package.json`
-- `HOST`: `crates/server/src/http/mod.rs`, `crates/server/src/main.rs`, `justfile`
+- `DISABLE_WORKSPACE_EXPIRED_CLEANUP`: `crates/execution/src/container/local.rs`
+- `DISABLE_WORKTREE_ORPHAN_CLEANUP`: `crates/repos/src/workspace_manager.rs`, `package.json`
+- `FRONTEND_PORT`: `frontend/vite.config.ts`, `package.json`, `scripts/run-e2e.js`
+- `HOST`: `crates/server/src/http/mod.rs`, `crates/server/src/main.rs`, `justfile`, `scripts/run-e2e.js`
 - `KANBAN_OPENAI_API_BASE`: `crates/server/src/routes/translation.rs`
 - `KANBAN_OPENAI_API_KEY`: `crates/server/src/routes/translation.rs`
 - `KANBAN_OPENAI_DEFAULT_MODEL`: `crates/server/src/routes/translation.rs`
 - `OPENAI_API_BASE`: `crates/server/src/routes/translation.rs`
 - `OPENAI_API_KEY`: `crates/server/src/routes/translation.rs`
 - `OPENAI_DEFAULT_MODEL`: `crates/server/src/routes/translation.rs`
-- `PORT`: `crates/server/src/main.rs`, `justfile`, `scripts/setup-dev-environment.js`
+- `PORT`: `crates/server/src/main.rs`, `justfile`, `scripts/run-e2e.js`, `scripts/setup-dev-environment.js`
 - `POSTHOG_API_ENDPOINT`: `crates/server/build.rs`
 - `POSTHOG_API_KEY`: `crates/server/build.rs`
-- `RUST_LOG`: `crates/executors/src/executors/codex.rs`, `crates/server/src/main.rs`, `package.json`
-- `VIBE_ASSET_DIR`: `crates/server/src/test_support.rs`, `crates/utils/src/assets.rs`
+- `RUST_LOG`: `crates/executor-codex/src/codex/mod.rs`, `crates/server/src/main.rs`, `package.json`
+- `VIBE_ASSET_DIR`: `crates/server/src/test_support.rs`, `crates/utils-assets/src/assets.rs`, `scripts/run-e2e.js`
 - `VIBE_BACKEND_URL`: —
 - `VIBE_DB_RESET_ON_MIGRATION_ERROR`: `crates/db/src/lib.rs`
-- `VIBE_FAKE_AGENT_CONFIG`: `crates/executors/src/executors/fake_agent.rs`
-- `VIBE_FAKE_AGENT_PATH`: `crates/executors/src/executors/fake_agent.rs`
-- `VITE_OPEN`: `frontend/package.json`, `frontend/vite.config.ts`
+- `VIBE_FAKE_AGENT_CONFIG`: `crates/executor-fake-agent/src/fake_agent.rs`
+- `VIBE_FAKE_AGENT_PATH`: `crates/executor-fake-agent/src/fake_agent.rs`
+- `VITE_OPEN`: `frontend/package.json`, `frontend/vite.config.ts`, `scripts/run-e2e.js`
 - `VITE_PARENT_ORIGIN`: `frontend/src/utils/StyleOverride.tsx`
 - `VITE_SOURCEMAP`: `frontend/vite.config.ts`
-- `VK_APPROVALS_COMPLETED_TTL_SECS`: `crates/services/src/services/cache_budget.rs`
-- `VK_CACHE_WARN_AT_RATIO`: `crates/services/src/services/cache_budget.rs`
-- `VK_CACHE_WARN_SAMPLE_SECS`: `crates/services/src/services/cache_budget.rs`
-- `VK_FILE_SEARCH_CACHE_MAX_REPOS`: `crates/services/src/services/cache_budget.rs`
-- `VK_FILE_SEARCH_CACHE_TTL_SECS`: `crates/services/src/services/cache_budget.rs`
-- `VK_FILE_SEARCH_MAX_FILES`: `crates/services/src/services/cache_budget.rs`
-- `VK_FILE_SEARCH_WATCHER_TTL_SECS`: `crates/services/src/services/cache_budget.rs`
-- `VK_FILE_SEARCH_WATCHERS_MAX`: `crates/services/src/services/cache_budget.rs`
-- `VK_FILE_STATS_CACHE_MAX_REPOS`: `crates/services/src/services/cache_budget.rs`
-- `VK_FILE_STATS_CACHE_TTL_SECS`: `crates/services/src/services/cache_budget.rs`
+- `VK_APPROVALS_COMPLETED_TTL_SECS`: `crates/config/src/cache_budget.rs`
+- `VK_CACHE_WARN_AT_RATIO`: `crates/config/src/cache_budget.rs`
+- `VK_CACHE_WARN_SAMPLE_SECS`: `crates/config/src/cache_budget.rs`
+- `VK_FILE_SEARCH_CACHE_MAX_REPOS`: `crates/config/src/cache_budget.rs`
+- `VK_FILE_SEARCH_CACHE_TTL_SECS`: `crates/config/src/cache_budget.rs`
+- `VK_FILE_SEARCH_MAX_FILES`: `crates/config/src/cache_budget.rs`
+- `VK_FILE_SEARCH_WATCHER_TTL_SECS`: `crates/config/src/cache_budget.rs`
+- `VK_FILE_SEARCH_WATCHERS_MAX`: `crates/config/src/cache_budget.rs`
+- `VK_FILE_STATS_CACHE_MAX_REPOS`: `crates/config/src/cache_budget.rs`
+- `VK_FILE_STATS_CACHE_TTL_SECS`: `crates/config/src/cache_budget.rs`
 - `VK_IDEMPOTENCY_COMPLETED_TTL_SECS`: `crates/server/src/main.rs`
 - `VK_IDEMPOTENCY_IN_PROGRESS_TTL_SECS`: `crates/server/src/main.rs`, `crates/server/src/mcp/task_server.rs`, `crates/server/src/routes/idempotency.rs`
-- `VK_LEGACY_JSONL_RETENTION_DAYS`: `crates/services/src/services/container/mod.rs`
-- `VK_LOG_BACKFILL_COMPLETION_MAX_ENTRIES`: `crates/services/src/services/cache_budget.rs`
-- `VK_LOG_BACKFILL_COMPLETION_TTL_SECS`: `crates/services/src/services/cache_budget.rs`
-- `VK_LOG_BACKFILL_CONCURRENCY`: `crates/services/src/services/container/mod.rs`
-- `VK_LOG_HISTORY_MAX_BYTES`: `crates/utils/src/msg_store.rs`
-- `VK_LOG_HISTORY_MAX_ENTRIES`: `crates/utils/src/msg_store.rs`
-- `VK_LOG_PERSISTENCE_MODE`: `crates/services/src/services/container/mod.rs`
+- `VK_LEGACY_JSONL_RETENTION_DAYS`: `crates/execution/src/container/mod.rs`
+- `VK_LOG_BACKFILL_COMPLETION_MAX_ENTRIES`: `crates/config/src/cache_budget.rs`
+- `VK_LOG_BACKFILL_COMPLETION_TTL_SECS`: `crates/config/src/cache_budget.rs`
+- `VK_LOG_BACKFILL_CONCURRENCY`: `crates/execution/src/container/mod.rs`
+- `VK_LOG_HISTORY_MAX_BYTES`: `crates/logs-store/src/msg_store.rs`
+- `VK_LOG_HISTORY_MAX_ENTRIES`: `crates/logs-store/src/msg_store.rs`
+- `VK_LOG_PERSISTENCE_MODE`: `crates/execution/src/container/mod.rs`
 - `VK_NORMALIZED_LOG_HISTORY_PAGE_SIZE`: `crates/server/src/routes/execution_processes.rs`
-- `VK_OPEN_BROWSER_STARTUP`: `crates/server/src/main.rs`, `justfile`
-- `VK_PROJECT_ID`: `crates/local-deployment/src/container.rs`
-- `VK_PROJECT_NAME`: `crates/executors/src/env.rs`, `crates/local-deployment/src/container.rs`
-- `VK_QUEUED_MESSAGES_TTL_SECS`: `crates/services/src/services/cache_budget.rs`
+- `VK_OPEN_BROWSER_STARTUP`: `crates/server/src/main.rs`, `justfile`, `scripts/run-e2e.js`
+- `VK_PROJECT_ID`: `crates/execution/src/container/local.rs`
+- `VK_PROJECT_NAME`: `crates/execution/src/container/local.rs`, `crates/executors-core/src/env.rs`
+- `VK_QUEUED_MESSAGES_TTL_SECS`: `crates/config/src/cache_budget.rs`
 - `VK_RAW_LOG_HISTORY_PAGE_SIZE`: `crates/server/src/routes/execution_processes.rs`
 - `VK_SHARED_API_BASE`: `crates/server/build.rs`
-- `VK_TASK_ID`: `crates/local-deployment/src/container.rs`
-- `VK_WORKSPACE_BRANCH`: `crates/local-deployment/src/container.rs`
-- `VK_WORKSPACE_CLEANUP_INTERVAL_SECS`: `crates/local-deployment/src/container.rs`
-- `VK_WORKSPACE_EXPIRED_TTL_SECS`: `crates/local-deployment/src/container.rs`
-- `VK_WORKSPACE_ID`: `crates/local-deployment/src/container.rs`
+- `VK_TASK_ID`: `crates/execution/src/container/local.rs`
+- `VK_WORKSPACE_BRANCH`: `crates/execution/src/container/local.rs`
+- `VK_WORKSPACE_CLEANUP_INTERVAL_SECS`: `crates/execution/src/container/local.rs`
+- `VK_WORKSPACE_EXPIRED_TTL_SECS`: `crates/execution/src/container/local.rs`
+- `VK_WORKSPACE_ID`: `crates/execution/src/container/local.rs`

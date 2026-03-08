@@ -165,6 +165,16 @@ pub struct UpdateTask {
     pub image_ids: Option<Vec<Uuid>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct TaskUpdateParams {
+    pub project_id: Uuid,
+    pub title: String,
+    pub description: Option<String>,
+    pub status: TaskStatus,
+    pub automation_mode: TaskAutomationMode,
+    pub parent_workspace_id: Option<Uuid>,
+}
+
 impl Task {
     fn archived_task_write_error() -> DbErr {
         DbErr::Custom("Task is archived. Restore it before modifying.".to_string())
@@ -832,13 +842,16 @@ impl Task {
     pub async fn update<C: ConnectionTrait>(
         db: &C,
         id: Uuid,
-        project_id: Uuid,
-        title: String,
-        description: Option<String>,
-        status: TaskStatus,
-        automation_mode: TaskAutomationMode,
-        parent_workspace_id: Option<Uuid>,
+        params: TaskUpdateParams,
     ) -> Result<Self, DbErr> {
+        let TaskUpdateParams {
+            project_id,
+            title,
+            description,
+            status,
+            automation_mode,
+            parent_workspace_id,
+        } = params;
         let project_row_id = ids::project_id_by_uuid(db, project_id)
             .await?
             .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;

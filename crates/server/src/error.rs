@@ -290,6 +290,20 @@ impl From<ProjectRepoError> for ApiError {
     }
 }
 
+impl From<TasksError> for ApiError {
+    fn from(err: TasksError) -> Self {
+        match err {
+            TasksError::Database(err) => ApiError::Database(err),
+            TasksError::Project(err) => ApiError::Project(err),
+            TasksError::Workspace(err) => ApiError::Workspace(err),
+            TasksError::Conflict(msg) => ApiError::Conflict(msg),
+            TasksError::NotFound(msg) => ApiError::NotFound(msg),
+            TasksError::BadRequest(msg) => ApiError::BadRequest(msg),
+            TasksError::Runtime(msg) => ApiError::Internal(msg),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,19 +370,5 @@ mod tests {
                 .status(),
             StatusCode::NOT_FOUND
         );
-    }
-}
-
-impl From<TasksError> for ApiError {
-    fn from(err: TasksError) -> Self {
-        match err {
-            TasksError::Database(err) => ApiError::Database(err),
-            TasksError::Project(err) => ApiError::Project(err),
-            TasksError::Workspace(err) => ApiError::Workspace(err),
-            TasksError::Conflict(msg) => ApiError::Conflict(msg),
-            TasksError::NotFound(msg) => ApiError::NotFound(msg),
-            TasksError::BadRequest(msg) => ApiError::BadRequest(msg),
-            TasksError::Runtime(msg) => ApiError::Internal(msg),
-        }
     }
 }

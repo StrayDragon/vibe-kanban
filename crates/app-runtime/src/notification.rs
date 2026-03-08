@@ -41,17 +41,15 @@ impl NotificationService {
                 .arg(&file_path)
                 .spawn();
         } else if cfg!(target_os = "linux") && !utils_core::is_wsl2() {
-            if tokio::process::Command::new("paplay")
+            let played = tokio::process::Command::new("paplay")
                 .arg(&file_path)
                 .spawn()
                 .is_ok()
-            {
-            } else if tokio::process::Command::new("aplay")
-                .arg(&file_path)
-                .spawn()
-                .is_ok()
-            {
-            } else {
+                || tokio::process::Command::new("aplay")
+                    .arg(&file_path)
+                    .spawn()
+                    .is_ok();
+            if !played {
                 let _ = tokio::process::Command::new("echo")
                     .arg("-e")
                     .arg("\\a")
