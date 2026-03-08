@@ -5,7 +5,6 @@ import { useHotkeysContext } from 'react-hotkeys-hook';
 import {
   AlertTriangle,
   ChevronDown,
-  Loader2,
   Plus,
   SlidersHorizontal,
   XCircle,
@@ -244,9 +243,6 @@ function TaskListItem({
             <span className="text-sm font-medium line-clamp-1">
               {task.title || 'Task'}
             </span>
-            {task.has_in_progress_attempt && (
-              <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-            )}
             {task.last_attempt_failed && (
               <XCircle className="h-4 w-4 text-destructive" />
             )}

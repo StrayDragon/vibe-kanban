@@ -520,7 +520,7 @@ export function getTaskRuntimePresentation(
 
   if (task.has_in_progress_attempt) {
     return {
-      label: 'In Progress',
+      label: 'Running',
       variant: 'default',
       className: RUNNING_BADGE_CLASS,
     };

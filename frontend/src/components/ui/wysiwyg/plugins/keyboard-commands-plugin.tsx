@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
+import { $convertToMarkdownString, type Transformer } from '@lexical/markdown';
 import {
   KEY_MODIFIER_COMMAND,
   KEY_ENTER_COMMAND,
@@ -8,11 +9,16 @@ import {
 } from 'lexical';
 
 type Props = {
-  onCmdEnter?: () => void;
-  onShiftCmdEnter?: () => void;
+  transformers: Transformer[];
+  onCmdEnter?: (markdown: string) => void;
+  onShiftCmdEnter?: (markdown: string) => void;
 };
 
-export function KeyboardCommandsPlugin({ onCmdEnter, onShiftCmdEnter }: Props) {
+export function KeyboardCommandsPlugin({
+  transformers,
+  onCmdEnter,
+  onShiftCmdEnter,
+}: Props) {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
@@ -29,13 +35,17 @@ export function KeyboardCommandsPlugin({ onCmdEnter, onShiftCmdEnter }: Props) {
         event.preventDefault();
         event.stopPropagation();
 
+        const markdown = editor.getEditorState().read(() =>
+          $convertToMarkdownString(transformers)
+        );
+
         if (event.shiftKey && onShiftCmdEnter) {
-          onShiftCmdEnter();
+          onShiftCmdEnter(markdown);
           return true;
         }
 
         if (!event.shiftKey && onCmdEnter) {
-          onCmdEnter();
+          onCmdEnter(markdown);
           return true;
         }
 
@@ -61,7 +71,7 @@ export function KeyboardCommandsPlugin({ onCmdEnter, onShiftCmdEnter }: Props) {
       unregisterModifier();
       unregisterEnter();
     };
-  }, [editor, onCmdEnter, onShiftCmdEnter]);
+  }, [editor, onCmdEnter, onShiftCmdEnter, transformers]);
 
   return null;
 }

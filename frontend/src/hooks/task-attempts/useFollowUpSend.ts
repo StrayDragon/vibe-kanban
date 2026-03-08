@@ -28,9 +28,11 @@ export function useFollowUpSend({
   const [isSendingFollowUp, setIsSendingFollowUp] = useState(false);
   const [followUpError, setFollowUpError] = useState<string | null>(null);
 
-  const onSendFollowUp = useCallback(async () => {
+  const onSendFollowUp = useCallback(async (messageOverride?: string) => {
     if (!sessionId) return;
-    const extraMessage = message.trim();
+    const override =
+      typeof messageOverride === 'string' ? messageOverride : undefined;
+    const extraMessage = (override ?? message).trim();
     const finalPrompt = [
       conflictMarkdown,
       clickedMarkdown?.trim(),

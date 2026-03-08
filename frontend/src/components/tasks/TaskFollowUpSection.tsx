@@ -423,9 +423,17 @@ export function TaskFollowUpSection({
   }, [workspaceId, isAttemptRunning, hasCleanupScript]);
 
   // Handler to queue the current message for execution after agent finishes
-  const handleQueueMessage = useCallback(async () => {
+  const handleQueueMessage = useCallback(async (messageOverride?: string) => {
+    const extraMessage =
+      typeof messageOverride === 'string' ? messageOverride : localMessage;
     if (
-      !localMessage.trim() &&
+      typeof messageOverride === 'string' &&
+      messageOverride !== localMessage
+    ) {
+      setLocalMessage(messageOverride);
+    }
+    if (
+      !extraMessage.trim() &&
       !conflictResolutionInstructions &&
       !reviewMarkdown &&
       !clickedMarkdown
@@ -436,19 +444,20 @@ export function TaskFollowUpSection({
     // Cancel any pending debounced save and save immediately before queueing
     // This prevents the race condition where the debounce fires after queueing
     cancelDebouncedSave();
-    await saveToScratch(localMessage, selectedVariant);
+    await saveToScratch(extraMessage, selectedVariant);
 
     // Combine all the content that would be sent (same as follow-up send)
     const parts = [
       conflictResolutionInstructions,
       clickedMarkdown,
       reviewMarkdown,
-      localMessage,
+      extraMessage,
     ].filter(Boolean);
     const combinedMessage = parts.join('\n\n');
     await queueMessage(combinedMessage, selectedVariant);
   }, [
     localMessage,
+    setLocalMessage,
     conflictResolutionInstructions,
     reviewMarkdown,
     clickedMarkdown,
@@ -460,15 +469,19 @@ export function TaskFollowUpSection({
 
   // Keyboard shortcut handler - send follow-up or queue depending on state
   const handleSubmitShortcut = useCallback(
-    (e?: KeyboardEvent) => {
-      e?.preventDefault();
+    (arg?: KeyboardEvent | string) => {
+      if (arg && typeof arg !== 'string') {
+        arg.preventDefault();
+      }
+
+      const messageOverride = typeof arg === 'string' ? arg : undefined;
       if (isAttemptRunning) {
         // When running, CMD+Enter queues the message (if not already queued)
         if (!isQueued) {
-          handleQueueMessage();
+          void handleQueueMessage(messageOverride);
         }
       } else {
-        onSendFollowUp();
+        void onSendFollowUp(messageOverride);
       }
     },
     [isAttemptRunning, isQueued, handleQueueMessage, onSendFollowUp]

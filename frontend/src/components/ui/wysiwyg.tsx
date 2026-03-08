@@ -60,8 +60,8 @@ type WysiwygProps = {
   onPasteFiles?: (files: File[]) => void;
   className?: string;
   projectId?: string; // for file search in typeahead
-  onCmdEnter?: () => void;
-  onShiftCmdEnter?: () => void;
+  onCmdEnter?: (markdown: SerializedEditorState) => void;
+  onShiftCmdEnter?: (markdown: SerializedEditorState) => void;
   /** Task attempt ID for resolving .vibe-images paths (preferred over taskId) */
   taskAttemptId?: string;
   /** Task ID for resolving .vibe-images paths when taskAttemptId is not available */
@@ -253,6 +253,7 @@ function WYSIWYGEditor({
                   <MarkdownShortcutPlugin transformers={extendedTransformers} />
                   <FileTagTypeaheadPlugin projectId={projectId} />
                   <KeyboardCommandsPlugin
+                    transformers={extendedTransformers}
                     onCmdEnter={onCmdEnter}
                     onShiftCmdEnter={onShiftCmdEnter}
                   />

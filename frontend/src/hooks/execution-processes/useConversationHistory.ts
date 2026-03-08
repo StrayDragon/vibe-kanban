@@ -329,6 +329,7 @@ export const useConversationHistory = ({
       let hasRunningProcess = false;
       let lastProcessFailedOrKilled = false;
       let needsSetup = false;
+      let loadingIndicatorProcessId: string | null = null;
 
       // Create user messages + tool calls for setup/cleanup scripts
       const allEntries = Object.values(executionProcessState)
@@ -427,7 +428,10 @@ export const useConversationHistory = ({
             }
 
             if (isProcessRunning && !hasPendingApprovalEntry) {
-              entries.push(makeLoadingPatch(p.executionProcess.id));
+              // Keep a single loading indicator at the bottom of the full
+              // conversation (after any queued follow-ups), rather than inside
+              // the running process group.
+              loadingIndicatorProcessId = p.executionProcess.id;
             }
           } else if (
             p.executionProcess.executor_action.typ.type === 'ScriptRequest'
@@ -515,6 +519,10 @@ export const useConversationHistory = ({
 
           return entries;
         });
+
+      if (loadingIndicatorProcessId) {
+        allEntries.push(makeLoadingPatch(loadingIndicatorProcessId));
+      }
 
       // Emit the next action bar if no process running
       if (!hasRunningProcess && !hasPendingApproval) {

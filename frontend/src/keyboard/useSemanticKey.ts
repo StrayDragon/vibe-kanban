@@ -31,8 +31,11 @@ export function createSemanticHook<A extends Action>(action: A) {
       preventDefault,
     } = options;
 
-    // Use 'when' as alias for 'enabled' if provided
-    const isEnabled = when !== undefined ? when : enabled;
+    // Use 'when' as alias for 'enabled' if provided.
+    // Both can be a boolean or a function that returns boolean.
+    const enabledLike = when !== undefined ? when : enabled;
+    const isEnabled =
+      typeof enabledLike === 'function' ? enabledLike() : enabledLike;
 
     // Memoize to get stable array references and prevent unnecessary re-registrations
     const keys = useMemo(() => getKeysFor(action, scope), [scope]);
@@ -46,12 +49,10 @@ export function createSemanticHook<A extends Action>(action: A) {
           return;
         }
 
-        if (isEnabled) {
-          handler(event);
-        }
+        handler(event);
       },
       {
-        enabled,
+        enabled: isEnabled,
         enableOnContentEditable,
         enableOnFormTags,
         preventDefault,
