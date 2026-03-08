@@ -9,10 +9,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use codex_app_server_protocol::{InputItem, NewConversationParams};
-use codex_protocol::{
-    config_types::SandboxMode as CodexSandboxMode, protocol::AskForApproval as CodexAskForApproval,
-};
+use codex_app_server_protocol::{AskForApproval as ProtocolAskForApproval, SandboxMode as ProtocolSandboxMode, ThreadForkParams, ThreadStartParams, UserInput};
 use command_group::AsyncCommandGroup;
 use derivative::Derivative;
 use executors_core::{
@@ -42,7 +39,6 @@ use self::{
     client::AppServerClient,
     jsonrpc::{ExitSignalSender, JsonRpcPeer},
     normalize_logs::{Error, normalize_logs},
-    session::SessionHandler,
 };
 
 /// Sandbox policy modes for Codex
@@ -277,38 +273,36 @@ impl Codex {
         apply_overrides(builder, &self.cmd)
     }
 
-    fn build_new_conversation_params(&self, cwd: &Path) -> NewConversationParams {
+    fn build_thread_start_params(&self, cwd: &Path) -> ThreadStartParams {
         let sandbox = match self.sandbox.as_ref() {
-            None | Some(SandboxMode::Auto) => Some(CodexSandboxMode::WorkspaceWrite), // match the Auto preset in codex
-            Some(SandboxMode::ReadOnly) => Some(CodexSandboxMode::ReadOnly),
-            Some(SandboxMode::WorkspaceWrite) => Some(CodexSandboxMode::WorkspaceWrite),
-            Some(SandboxMode::DangerFullAccess) => Some(CodexSandboxMode::DangerFullAccess),
+            None | Some(SandboxMode::Auto) => Some(ProtocolSandboxMode::WorkspaceWrite), // match the Auto preset in codex
+            Some(SandboxMode::ReadOnly) => Some(ProtocolSandboxMode::ReadOnly),
+            Some(SandboxMode::WorkspaceWrite) => Some(ProtocolSandboxMode::WorkspaceWrite),
+            Some(SandboxMode::DangerFullAccess) => Some(ProtocolSandboxMode::DangerFullAccess),
         };
 
         let approval_policy = match self.ask_for_approval.as_ref() {
             None if matches!(self.sandbox.as_ref(), None | Some(SandboxMode::Auto)) => {
                 // match the Auto preset in codex
-                Some(CodexAskForApproval::OnRequest)
+                Some(ProtocolAskForApproval::OnRequest)
             }
             None => None,
-            Some(AskForApproval::UnlessTrusted) => Some(CodexAskForApproval::UnlessTrusted),
-            Some(AskForApproval::OnFailure) => Some(CodexAskForApproval::OnFailure),
-            Some(AskForApproval::OnRequest) => Some(CodexAskForApproval::OnRequest),
-            Some(AskForApproval::Never) => Some(CodexAskForApproval::Never),
+            Some(AskForApproval::UnlessTrusted) => Some(ProtocolAskForApproval::UnlessTrusted),
+            Some(AskForApproval::OnFailure) => Some(ProtocolAskForApproval::OnFailure),
+            Some(AskForApproval::OnRequest) => Some(ProtocolAskForApproval::OnRequest),
+            Some(AskForApproval::Never) => Some(ProtocolAskForApproval::Never),
         };
 
-        NewConversationParams {
+        ThreadStartParams {
             model: self.model.clone(),
-            profile: self.profile.clone(),
+            model_provider: self.model_provider.clone(),
             cwd: Some(cwd.to_string_lossy().to_string()),
             approval_policy,
             sandbox,
             config: self.build_config_overrides(),
             base_instructions: self.base_instructions.clone(),
-            include_apply_patch_tool: self.include_apply_patch_tool,
-            model_provider: self.model_provider.clone(),
-            compact_prompt: self.compact_prompt.clone(),
             developer_instructions: self.developer_instructions.clone(),
+            experimental_raw_events: false,
         }
     }
 
@@ -348,7 +342,7 @@ impl Codex {
     async fn spawn_inner(
         &self,
         current_dir: &Path,
-        input_items: Vec<InputItem>,
+        input_items: Vec<UserInput>,
         command_parts: CommandParts,
         resume_session: Option<&str>,
         env: &ExecutionEnv,
@@ -383,7 +377,7 @@ impl Codex {
         let new_stdout = create_stdout_pipe_writer(&mut child)?;
         let (exit_signal_tx, exit_signal_rx) = tokio::sync::oneshot::channel();
 
-        let params = self.build_new_conversation_params(current_dir);
+        let params = self.build_thread_start_params(current_dir);
         let resume_session = resume_session.map(|s| s.to_string());
         let auto_approve = matches!(
             (&self.sandbox, &self.ask_for_approval),
@@ -448,9 +442,9 @@ impl Codex {
 
     #[allow(clippy::too_many_arguments)]
     async fn launch_codex_app_server(
-        conversation_params: NewConversationParams,
+        conversation_params: ThreadStartParams,
         resume_session: Option<String>,
-        input_items: Vec<InputItem>,
+        input_items: Vec<UserInput>,
         child_stdout: tokio::process::ChildStdout,
         child_stdin: tokio::process::ChildStdin,
         log_writer: LogWriter,
@@ -472,29 +466,31 @@ impl Codex {
         match resume_session {
             None => {
                 let params = conversation_params;
-                let response = client.new_conversation(params).await?;
-                let conversation_id = response.conversation_id;
-                client.register_session(&conversation_id).await?;
-                client.add_conversation_listener(conversation_id).await?;
-                client.send_user_items(conversation_id, input_items).await?;
+                let response = client.thread_start(params).await?;
+                let thread_id = response.thread.id;
+                client.register_thread(&thread_id).await?;
+                client.turn_start(&thread_id, input_items).await?;
             }
             Some(session_id) => {
-                let (rollout_path, _forked_session_id) =
-                    SessionHandler::fork_rollout_file(&session_id)
-                        .map_err(|e| ExecutorError::FollowUpNotSupported(e.to_string()))?;
                 let overrides = conversation_params;
                 let response = client
-                    .resume_conversation(rollout_path.clone(), overrides)
+                    .thread_fork(ThreadForkParams {
+                        thread_id: session_id.clone(),
+                        path: None,
+                        model: overrides.model,
+                        model_provider: overrides.model_provider,
+                        cwd: overrides.cwd,
+                        approval_policy: overrides.approval_policy,
+                        sandbox: overrides.sandbox,
+                        config: overrides.config,
+                        base_instructions: overrides.base_instructions,
+                        developer_instructions: overrides.developer_instructions,
+                    })
                     .await?;
-                tracing::debug!(
-                    "resuming session using rollout file {}, response {:?}",
-                    rollout_path.display(),
-                    response
-                );
-                let conversation_id = response.conversation_id;
-                client.register_session(&conversation_id).await?;
-                client.add_conversation_listener(conversation_id).await?;
-                client.send_user_items(conversation_id, input_items).await?;
+                tracing::debug!("forked thread for session {session_id}, response {response:?}");
+                let thread_id = response.thread.id;
+                client.register_thread(&thread_id).await?;
+                client.turn_start(&thread_id, input_items).await?;
             }
         }
         Ok(())
@@ -504,10 +500,11 @@ impl Codex {
 fn build_input_items(
     prompt: &str,
     image_paths: Option<&HashMap<String, PathBuf>>,
-) -> Vec<InputItem> {
+) -> Vec<UserInput> {
     let Some(image_paths) = image_paths else {
-        return vec![InputItem::Text {
+        return vec![UserInput::Text {
             text: prompt.to_string(),
+            text_elements: Vec::new(),
         }];
     };
 
@@ -516,16 +513,17 @@ fn build_input_items(
     let mut items = Vec::new();
     let mut last = 0;
 
-    let push_text = |items: &mut Vec<InputItem>, text: &str| {
+    let push_text = |items: &mut Vec<UserInput>, text: &str| {
         if text.is_empty() {
             return;
         }
-        if let Some(InputItem::Text { text: existing }) = items.last_mut() {
+        if let Some(UserInput::Text { text: existing, .. }) = items.last_mut() {
             existing.push_str(text);
             return;
         }
-        items.push(InputItem::Text {
+        items.push(UserInput::Text {
             text: text.to_string(),
+            text_elements: Vec::new(),
         });
     };
 
@@ -539,7 +537,7 @@ fn build_input_items(
             push_text(&mut items, &prompt[last..end]);
         }
         if let Some(path) = image_paths.get(src).filter(|path| path.exists()) {
-            items.push(InputItem::LocalImage { path: path.clone() });
+            items.push(UserInput::LocalImage { path: path.clone() });
         }
         last = end;
     }
@@ -549,8 +547,9 @@ fn build_input_items(
     }
 
     if items.is_empty() {
-        items.push(InputItem::Text {
+        items.push(UserInput::Text {
             text: prompt.to_string(),
+            text_elements: Vec::new(),
         });
     }
 
@@ -561,7 +560,7 @@ fn build_input_items(
 mod tests {
     use std::{collections::HashMap, path::PathBuf};
 
-    use codex_app_server_protocol::InputItem;
+    use codex_app_server_protocol::UserInput;
 
     use super::build_input_items;
 
@@ -577,20 +576,20 @@ mod tests {
 
         assert_eq!(items.len(), 3);
         match &items[0] {
-            InputItem::Text { text } => {
+            UserInput::Text { text, .. } => {
                 assert!(text.contains("![a](.vibe-images/a.png)"));
                 assert!(text.contains("Intro"));
             }
             _ => panic!("expected text item"),
         }
         match &items[1] {
-            InputItem::LocalImage { path } => {
+            UserInput::LocalImage { path } => {
                 assert_eq!(path, &temp_path);
             }
             _ => panic!("expected local image item"),
         }
         match &items[2] {
-            InputItem::Text { text } => {
+            UserInput::Text { text, .. } => {
                 assert!(text.contains(" end"));
             }
             _ => panic!("expected trailing text item"),
@@ -610,7 +609,7 @@ mod tests {
 
         assert_eq!(items.len(), 1);
         match &items[0] {
-            InputItem::Text { text } => {
+            UserInput::Text { text, .. } => {
                 assert!(text.contains("![x](.vibe-images/missing.png)"));
             }
             _ => panic!("expected text item"),
