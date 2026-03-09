@@ -34,7 +34,6 @@ import { projectsApi } from '@/lib/api';
 import { repoBranchKeys } from '@/hooks/task-attempts/useRepoBranches';
 import type {
   Project,
-  ProjectExecutionMode,
   ProjectRepo,
   Repo,
   UpdateProject,
@@ -70,7 +69,6 @@ interface ProjectFormState {
   dev_script_working_dir: string;
   default_agent_working_dir: string;
   git_no_verify_override: GitNoVerifyOverrideMode;
-  execution_mode: ProjectExecutionMode;
   scheduler_max_concurrent: string;
   scheduler_max_retries: string;
   after_prepare_hook: AfterPrepareHookFormState;
@@ -173,7 +171,6 @@ function projectToFormState(project: Project): ProjectFormState {
     git_no_verify_override: gitNoVerifyOverrideToMode(
       project.git_no_verify_override
     ),
-    execution_mode: project.execution_mode,
     scheduler_max_concurrent: String(project.scheduler_max_concurrent),
     scheduler_max_retries: String(project.scheduler_max_retries),
     after_prepare_hook: hookConfigToAfterPrepareFormState(
@@ -588,7 +585,6 @@ export function ProjectSettings() {
         git_no_verify_override: gitNoVerifyModeToOverride(
           draft.git_no_verify_override
         ),
-        execution_mode: draft.execution_mode,
         scheduler_max_concurrent: Math.max(
           1,
           Number.parseInt(draft.scheduler_max_concurrent, 10) || 1
@@ -899,35 +895,6 @@ export function ProjectSettings() {
                 </p>
               </div>
 
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-4">
-                  <div className="space-y-1">
-                    <Label htmlFor="project-execution-mode">
-                      {t('settings.projects.scheduler.mode.label')}
-                    </Label>
-                    <p className="text-sm text-muted-foreground">
-                      {t('settings.projects.scheduler.mode.helper')}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm text-muted-foreground whitespace-nowrap">
-                      {draft.execution_mode === 'auto'
-                        ? t('settings.projects.scheduler.mode.options.auto')
-                        : t('settings.projects.scheduler.mode.options.manual')}
-                    </span>
-                    <Switch
-                      id="project-execution-mode"
-                      checked={draft.execution_mode === 'auto'}
-                      onCheckedChange={(checked) =>
-                        updateDraft({
-                          execution_mode: checked ? 'auto' : 'manual',
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-              </div>
-
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="project-scheduler-max-concurrent">
@@ -938,7 +905,6 @@ export function ProjectSettings() {
                     type="number"
                     min={1}
                     value={draft.scheduler_max_concurrent}
-                    disabled={draft.execution_mode !== 'auto'}
                     onChange={(e) =>
                       updateDraft({
                         scheduler_max_concurrent: e.target.value,
@@ -959,7 +925,6 @@ export function ProjectSettings() {
                     type="number"
                     min={0}
                     value={draft.scheduler_max_retries}
-                    disabled={draft.execution_mode !== 'auto'}
                     onChange={(e) =>
                       updateDraft({
                         scheduler_max_retries: e.target.value,

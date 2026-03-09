@@ -1,5 +1,6 @@
 import type {
   ExecutorProfileId,
+  MilestoneAutomationMode,
   TaskStatus,
   TaskWithAttemptStatus,
 } from 'shared/types';
@@ -10,27 +11,22 @@ export type TaskGroupNodeBaseStrategy = 'topology' | 'baseline';
 
 export type TaskGroupGraphNode = {
   id: string;
-  task_id?: string;
-  taskId?: string;
-  kind?: TaskGroupNodeKind;
-  phase?: number;
-  executor_profile_id?: ExecutorProfileId | null;
-  executorProfileId?: ExecutorProfileId | null;
-  base_strategy?: TaskGroupNodeBaseStrategy;
-  baseStrategy?: TaskGroupNodeBaseStrategy;
-  instructions?: string | null;
-  requires_approval?: boolean;
-  requiresApproval?: boolean;
-  layout?: { x?: number; y?: number };
+  task_id: string;
+  kind: TaskGroupNodeKind;
+  phase: number;
+  executor_profile_id: ExecutorProfileId | null;
+  base_strategy: TaskGroupNodeBaseStrategy;
+  instructions: string | null;
+  requires_approval: boolean | null;
+  layout: { x: number; y: number };
+  status?: TaskStatus | null;
 };
 
 export type TaskGroupGraphEdge = {
   id: string;
   from: string;
   to: string;
-  type?: string;
-  data_flow?: string;
-  dataFlow?: string;
+  data_flow: string | null;
 };
 
 export type TaskGroupGraph = {
@@ -44,13 +40,16 @@ export type TaskGroup = {
   project_id: string;
   title: string;
   description: string | null;
+  objective: string | null;
+  definition_of_done: string | null;
+  default_executor_profile_id: ExecutorProfileId | null;
+  automation_mode: MilestoneAutomationMode;
+  run_next_step_requested_at: string | null;
   status: TaskStatus;
-  suggested_status?: TaskStatus | null;
-  suggestedStatus?: TaskStatus | null;
-  baseline_ref?: string | null;
+  suggested_status: TaskStatus;
+  baseline_ref: string;
   schema_version: number;
-  graph?: TaskGroupGraph;
-  graph_json?: TaskGroupGraph;
+  graph: TaskGroupGraph;
   created_at: string;
   updated_at: string;
 };
@@ -58,6 +57,10 @@ export type TaskGroup = {
 export type UpdateTaskGroup = {
   title?: string | null;
   description?: string | null;
+  objective?: string | null;
+  definition_of_done?: string | null;
+  default_executor_profile_id?: ExecutorProfileId | null;
+  automation_mode?: MilestoneAutomationMode | null;
   status?: TaskStatus;
   baseline_ref?: string | null;
   schema_version?: number | null;

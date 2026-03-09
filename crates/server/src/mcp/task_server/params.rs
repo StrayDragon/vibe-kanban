@@ -11,8 +11,6 @@ pub struct CreateTaskRequest {
     pub title: String,
     #[schemars(description = "Optional description of the task")]
     pub description: Option<String>,
-    #[schemars(description = "Optional automation override: 'inherit', 'manual', or 'auto'")]
-    pub automation_mode: Option<String>,
     #[schemars(
         description = "Optional origin task id (UUID string) when this task is created as a follow-up to another task"
     )]
@@ -44,8 +42,6 @@ pub struct UpdateTaskRequest {
     pub description: Option<String>,
     #[schemars(description = "New status: 'todo', 'inprogress', 'inreview', 'done', 'cancelled'")]
     pub status: Option<String>,
-    #[schemars(description = "Optional automation override: 'inherit', 'manual', or 'auto'")]
-    pub automation_mode: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
@@ -166,28 +162,20 @@ pub struct TaskSummary {
     pub title: String,
     #[schemars(description = "Current status of the task")]
     pub status: String,
-    #[schemars(description = "Task automation override: inherit, manual, or auto")]
-    pub automation_mode: String,
+    #[schemars(description = "Task kind: default or group")]
+    pub task_kind: String,
+    #[schemars(
+        description = "Owning milestone/task group id if the task is part of a milestone node (UUID string)"
+    )]
+    pub task_group_id: Option<String>,
+    #[schemars(description = "Owning milestone node id if the task is part of a milestone node")]
+    pub task_group_node_id: Option<String>,
     #[schemars(description = "Task source kind: human_ui, mcp, scheduler, or agent_followup")]
     pub created_by_kind: String,
     #[schemars(
         description = "Origin task id when this task was created as follow-up work (UUID string)"
     )]
     pub origin_task_id: Option<String>,
-    #[schemars(description = "Project-level execution mode: manual or auto")]
-    pub project_execution_mode: String,
-    #[schemars(description = "Effective automation mode after task/project override resolution")]
-    pub effective_automation_mode: String,
-    #[schemars(
-        description = "Stable reason code explaining why the task is not currently auto-scheduled"
-    )]
-    pub automation_reason_code: Option<String>,
-    #[schemars(
-        description = "Human-readable detail explaining why the task is not currently auto-scheduled"
-    )]
-    pub automation_reason_detail: Option<String>,
-    #[schemars(description = "Whether the automation reason is actionable by an operator")]
-    pub automation_actionable: Option<bool>,
     #[schemars(description = "When the task was created")]
     pub created_at: String,
     #[schemars(description = "When the task was last updated")]
@@ -223,33 +211,17 @@ impl TaskSummary {
             task,
             has_in_progress_attempt,
             last_attempt_failed,
-            project_execution_mode,
-            effective_automation_mode,
-            automation_diagnostic,
             ..
         } = task;
-        let (automation_reason_code, automation_reason_detail, automation_actionable) =
-            automation_diagnostic
-                .map(|diagnostic| {
-                    (
-                        Some(diagnostic.reason_code.to_string()),
-                        Some(diagnostic.reason_detail),
-                        Some(diagnostic.actionable),
-                    )
-                })
-                .unwrap_or((None, None, None));
         Self {
             id: task.id.to_string(),
             title: task.title,
             status: task.status.to_string(),
-            automation_mode: task.automation_mode.to_string(),
+            task_kind: task.task_kind.to_string(),
+            task_group_id: task.task_group_id.map(|id| id.to_string()),
+            task_group_node_id: task.task_group_node_id.clone(),
             created_by_kind: task.created_by_kind.to_string(),
             origin_task_id: task.origin_task_id.map(|id| id.to_string()),
-            project_execution_mode: project_execution_mode.to_string(),
-            effective_automation_mode: effective_automation_mode.to_string(),
-            automation_reason_code,
-            automation_reason_detail,
-            automation_actionable,
             created_at: task.created_at.to_rfc3339(),
             updated_at: task.updated_at.to_rfc3339(),
             latest_attempt_id: summary.latest_attempt_id,
@@ -364,51 +336,29 @@ pub struct McpTask {
     pub title: String,
     pub description: Option<String>,
     pub status: String,
-    pub automation_mode: String,
+    pub task_kind: String,
+    pub task_group_id: Option<String>,
+    pub task_group_node_id: Option<String>,
     pub created_by_kind: String,
     pub origin_task_id: Option<String>,
-    pub project_execution_mode: String,
-    pub effective_automation_mode: String,
-    pub automation_reason_code: Option<String>,
-    pub automation_reason_detail: Option<String>,
-    pub automation_actionable: Option<bool>,
     pub created_at: String,
     pub updated_at: String,
 }
 
 impl McpTask {
     pub(super) fn from_task_with_status(task: TaskWithAttemptStatus) -> Self {
-        let TaskWithAttemptStatus {
-            task,
-            project_execution_mode,
-            effective_automation_mode,
-            automation_diagnostic,
-            ..
-        } = task;
-        let (automation_reason_code, automation_reason_detail, automation_actionable) =
-            automation_diagnostic
-                .map(|diagnostic| {
-                    (
-                        Some(diagnostic.reason_code.to_string()),
-                        Some(diagnostic.reason_detail),
-                        Some(diagnostic.actionable),
-                    )
-                })
-                .unwrap_or((None, None, None));
+        let TaskWithAttemptStatus { task, .. } = task;
         Self {
             id: task.id.to_string(),
             project_id: task.project_id.to_string(),
             title: task.title,
             description: task.description,
             status: task.status.to_string(),
-            automation_mode: task.automation_mode.to_string(),
+            task_kind: task.task_kind.to_string(),
+            task_group_id: task.task_group_id.map(|id| id.to_string()),
+            task_group_node_id: task.task_group_node_id.clone(),
             created_by_kind: task.created_by_kind.to_string(),
             origin_task_id: task.origin_task_id.map(|id| id.to_string()),
-            project_execution_mode: project_execution_mode.to_string(),
-            effective_automation_mode: effective_automation_mode.to_string(),
-            automation_reason_code,
-            automation_reason_detail,
-            automation_actionable,
             created_at: task.created_at.to_rfc3339(),
             updated_at: task.updated_at.to_rfc3339(),
         }

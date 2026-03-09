@@ -63,7 +63,6 @@ export async function createTask(
     title: args.title,
     description: args.description ?? null,
     status: args.status ?? null,
-    automation_mode: null,
     task_kind: null,
     task_group_id: null,
     task_group_node_id: null,

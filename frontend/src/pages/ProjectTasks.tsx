@@ -66,7 +66,6 @@ import {
 import { AttemptHeaderActions } from '@/components/panels/AttemptHeaderActions';
 import { TaskPanelHeaderActions } from '@/components/panels/TaskPanelHeaderActions';
 import { getTaskGroupId, isTaskGroupSubtask } from '@/utils/taskGroup';
-import { matchesOrchestrationFilters } from '@/utils/automation';
 import { toast } from '@/components/ui/toast';
 import { useOptimisticTasksStore } from '@/stores/useOptimisticTasksStore';
 
@@ -162,8 +161,6 @@ export function ProjectTasks() {
     query: searchQuery,
     focusInput,
     clear: clearSearch,
-    orchestrationFilters,
-    clearOrchestrationFilters,
     setReviewInbox,
     clearReviewInbox,
   } = useSearch();
@@ -367,9 +364,6 @@ export function ProjectTasks() {
           if (!matchesTaskSearch(task)) {
             return;
           }
-          if (!matchesOrchestrationFilters(task, orchestrationFilters)) {
-            return;
-          }
 
           columns[status].push(task);
         });
@@ -385,7 +379,7 @@ export function ProjectTasks() {
     });
 
     return columns;
-  }, [matchesTaskSearch, orchestrationFilters, tasksByStatus]);
+  }, [matchesTaskSearch, tasksByStatus]);
 
   const hasVisibleTasks = useMemo(
     () =>
@@ -611,11 +605,10 @@ export function ProjectTasks() {
     () =>
       orchestrationScopeTasks.filter(
         (task) =>
-          (task.status === 'inreview' ||
-            task.dispatch_state?.status === 'awaiting_human_review') &&
-          matchesOrchestrationFilters(task, orchestrationFilters)
+          task.status === 'inreview' ||
+          task.dispatch_state?.status === 'awaiting_human_review'
       ),
-    [orchestrationFilters, orchestrationScopeTasks]
+    [orchestrationScopeTasks]
   );
 
   useEffect(() => {
@@ -653,7 +646,6 @@ export function ProjectTasks() {
           title: task.title,
           description: task.description,
           status: newStatus,
-          automation_mode: task.automation_mode,
           parent_workspace_id: task.parent_workspace_id,
           image_ids: null,
         });
@@ -705,12 +697,10 @@ export function ProjectTasks() {
       : `${truncated}...`;
   };
 
-  const hasActiveTaskFilters =
-    Boolean(searchQuery.trim()) || orchestrationFilters.length > 0;
+  const hasActiveTaskFilters = Boolean(searchQuery.trim());
 
   const handleResetVisibleFilters = () => {
     clearSearch();
-    clearOrchestrationFilters();
   };
 
   const kanbanBody =

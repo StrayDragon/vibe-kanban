@@ -6,7 +6,7 @@ import type {
   WorkspaceLifecycleHookPhase,
   WorkspaceLifecycleHookStatus,
 } from 'shared/types';
-import { getWorkspaceHookOutcome } from '@/utils/automation';
+import { getWorkspaceHookOutcome } from '@/utils/workspaceHooks';
 
 type WorkspaceHookSurface = Pick<
   Workspace,

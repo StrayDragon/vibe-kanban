@@ -591,7 +591,7 @@ Avoid: Expecting attempt/session info here (use list_tasks/list_task_attempts)."
     #[tool(
         description = r#"Use when: Create a new task/ticket in a project.
 Required: project_id, title
-Optional: description, automation_mode, origin_task_id, created_by_kind, request_id
+Optional: description, origin_task_id, created_by_kind, request_id
 Next: start_attempt
 Avoid: Empty title; guessing project_id (use list_projects)."#,
         output_schema = tool_output_schema::<CreateTaskResponse>(),
@@ -607,7 +607,6 @@ Avoid: Empty title; guessing project_id (use list_projects)."#,
             project_id,
             title,
             description,
-            automation_mode,
             origin_task_id,
             created_by_kind,
             request_id,
@@ -628,45 +627,6 @@ Avoid: Empty title; guessing project_id (use list_projects)."#,
         let expanded_description = match description {
             Some(desc) => Some(self.expand_tags(&desc).await),
             None => None,
-        };
-
-        let automation_mode = automation_mode.and_then(|mode| {
-            let trimmed = mode.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        });
-        let automation_mode = if let Some(automation_mode) = automation_mode {
-            Some(
-                db::types::TaskAutomationMode::from_str(&automation_mode).map_err(|_| {
-                    let mut details = serde_json::Map::new();
-                    details.insert("tool".to_string(), json!("create_task"));
-                    details.insert("path".to_string(), json!("automation_mode"));
-                    details.insert("value".to_string(), json!(automation_mode));
-                    details.insert(
-                        "valid_values".to_string(),
-                        json!(["inherit", "manual", "auto"]),
-                    );
-                    details.insert("next_tools".to_string(), json!([]));
-                    details.insert(
-                        "example_args".to_string(),
-                        json!({ "project_id": project_id, "title": title, "automation_mode": "auto" }),
-                    );
-
-                    ErrorData::invalid_params(
-                        "Invalid task automation mode",
-                        Some(crate::mcp::params::invalid_params_payload(
-                            "invalid_argument",
-                            "Valid values: inherit, manual, auto.".to_string(),
-                            details,
-                        )),
-                    )
-                })?,
-            )
-        } else {
-            None
         };
 
         let created_by_kind = created_by_kind.and_then(|kind| {
@@ -729,7 +689,6 @@ Avoid: Empty title; guessing project_id (use list_projects)."#,
 
         let mut payload =
             CreateTask::from_title_description(project_id, title, expanded_description);
-        payload.automation_mode = automation_mode;
         payload.origin_task_id = origin_task_id;
         payload.created_by_kind = created_by_kind;
         let request_hash = Self::request_hash(&payload)?;
@@ -763,7 +722,7 @@ Avoid: Empty title; guessing project_id (use list_projects)."#,
     #[tool(
         description = r#"Use when: Update a task's title/description/status.
 Required: task_id
-Optional: title, description, status, automation_mode
+Optional: title, description, status
 Next: get_task, start_attempt
 Avoid: Calling this just to set status=inprogress (start_attempt already does that)."#,
         output_schema = tool_output_schema::<UpdateTaskResponse>(),
@@ -780,7 +739,6 @@ Avoid: Calling this just to set status=inprogress (start_attempt already does th
             title,
             description,
             status,
-            automation_mode,
         }): Parameters<UpdateTaskRequest>,
     ) -> Result<CallToolResult, ErrorData> {
         let pool = &self.deployment.db().pool;
@@ -847,45 +805,6 @@ Avoid: Calling this just to set status=inprogress (start_attempt already does th
             None
         };
 
-        let automation_mode = automation_mode.and_then(|mode| {
-            let trimmed = mode.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        });
-        let automation_mode = if let Some(automation_mode) = automation_mode {
-            Some(
-                db::types::TaskAutomationMode::from_str(&automation_mode).map_err(|_| {
-                    let mut details = serde_json::Map::new();
-                    details.insert("tool".to_string(), json!("update_task"));
-                    details.insert("path".to_string(), json!("automation_mode"));
-                    details.insert("value".to_string(), json!(automation_mode));
-                    details.insert(
-                        "valid_values".to_string(),
-                        json!(["inherit", "manual", "auto"]),
-                    );
-                    details.insert("next_tools".to_string(), json!([]));
-                    details.insert(
-                        "example_args".to_string(),
-                        json!({ "task_id": task_id, "automation_mode": "manual" }),
-                    );
-
-                    ErrorData::invalid_params(
-                        "Invalid task automation mode",
-                        Some(crate::mcp::params::invalid_params_payload(
-                            "invalid_argument",
-                            "Valid values: inherit, manual, auto.".to_string(),
-                            details,
-                        )),
-                    )
-                })?,
-            )
-        } else {
-            None
-        };
-
         let title = title.and_then(|t| {
             let trimmed = t.trim();
             if trimmed.is_empty() {
@@ -906,7 +825,6 @@ Avoid: Calling this just to set status=inprogress (start_attempt already does th
                 title: title.unwrap_or(existing.title),
                 description: description.or(existing.description),
                 status: status.unwrap_or(existing.status),
-                automation_mode: automation_mode.unwrap_or(existing.automation_mode),
                 parent_workspace_id,
             },
         )
@@ -4859,7 +4777,6 @@ mod tests {
                 project_id,
                 title: "Agent follow-up".to_string(),
                 description: Some("Handle the uncovered edge case".to_string()),
-                automation_mode: Some("auto".to_string()),
                 origin_task_id: Some(origin_task_id),
                 created_by_kind: None,
                 request_id: None,
@@ -4882,27 +4799,6 @@ mod tests {
             follow_up.created_by_kind,
             db::types::TaskCreatedByKind::AgentFollowup
         );
-        assert_eq!(
-            follow_up.automation_mode,
-            db::types::TaskAutomationMode::Auto
-        );
-        assert_eq!(
-            follow_up.project_execution_mode,
-            db::types::ProjectExecutionMode::Manual
-        );
-        assert_eq!(
-            follow_up.effective_automation_mode,
-            db::types::ProjectExecutionMode::Auto
-        );
-
-        let project = Project::find_by_id(pool, project_id)
-            .await
-            .unwrap()
-            .expect("project");
-        assert_eq!(
-            project.execution_mode,
-            db::types::ProjectExecutionMode::Manual
-        );
 
         let Json(list_payload) = server
             .list_tasks(Parameters(ListTasksRequest {
@@ -4923,9 +4819,9 @@ mod tests {
             Some(origin_task_id_string.as_str())
         );
         assert_eq!(listed.created_by_kind, "agent_followup");
-        assert_eq!(listed.automation_mode, "auto");
-        assert_eq!(listed.project_execution_mode, "manual");
-        assert_eq!(listed.effective_automation_mode, "auto");
+        assert_eq!(listed.task_kind, "default");
+        assert!(listed.task_group_id.is_none());
+        assert!(listed.task_group_node_id.is_none());
 
         let get_result = server
             .get_task(Parameters(GetTaskRequest {
@@ -4943,14 +4839,9 @@ mod tests {
             get_payload["task"]["created_by_kind"].as_str(),
             Some("agent_followup")
         );
-        assert_eq!(
-            get_payload["task"]["project_execution_mode"].as_str(),
-            Some("manual")
-        );
-        assert_eq!(
-            get_payload["task"]["effective_automation_mode"].as_str(),
-            Some("auto")
-        );
+        assert_eq!(get_payload["task"]["task_kind"].as_str(), Some("default"));
+        assert!(get_payload["task"]["task_group_id"].is_null());
+        assert!(get_payload["task"]["task_group_node_id"].is_null());
 
         let _ = std::fs::remove_dir_all(&temp_root);
     }
@@ -4982,7 +4873,6 @@ mod tests {
                 project_id,
                 title: "Broken follow-up".to_string(),
                 description: None,
-                automation_mode: Some("auto".to_string()),
                 origin_task_id: None,
                 created_by_kind: Some("agent_followup".to_string()),
                 request_id: None,
@@ -5000,7 +4890,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_task_auto_override_does_not_change_project_execution_mode() {
+    async fn update_task_status_is_persisted() {
         let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&temp_root).unwrap();
         let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
@@ -5039,38 +4929,17 @@ mod tests {
                 task_id,
                 title: None,
                 description: None,
-                status: None,
-                automation_mode: Some("auto".to_string()),
+                status: Some("done".to_string()),
             }))
             .await
             .unwrap();
         assert_eq!(update_result.is_error, Some(false));
 
-        let updated_task = Task::find_by_id_with_attempt_status(pool, task_id)
+        let updated_task = Task::find_by_id(pool, task_id)
             .await
             .unwrap()
             .expect("updated task");
-        assert_eq!(
-            updated_task.automation_mode,
-            db::types::TaskAutomationMode::Auto
-        );
-        assert_eq!(
-            updated_task.project_execution_mode,
-            db::types::ProjectExecutionMode::Manual
-        );
-        assert_eq!(
-            updated_task.effective_automation_mode,
-            db::types::ProjectExecutionMode::Auto
-        );
-
-        let project = Project::find_by_id(pool, project_id)
-            .await
-            .unwrap()
-            .expect("project");
-        assert_eq!(
-            project.execution_mode,
-            db::types::ProjectExecutionMode::Manual
-        );
+        assert_eq!(updated_task.status, TaskStatus::Done);
 
         let get_result = server
             .get_task(Parameters(GetTaskRequest { task_id }))
@@ -5078,18 +4947,7 @@ mod tests {
             .unwrap();
         let get_payload: serde_json::Value =
             serde_json::from_str(&get_result.content[0].as_text().unwrap().text).unwrap();
-        assert_eq!(
-            get_payload["task"]["automation_mode"].as_str(),
-            Some("auto")
-        );
-        assert_eq!(
-            get_payload["task"]["project_execution_mode"].as_str(),
-            Some("manual")
-        );
-        assert_eq!(
-            get_payload["task"]["effective_automation_mode"].as_str(),
-            Some("auto")
-        );
+        assert_eq!(get_payload["task"]["status"].as_str(), Some("done"));
 
         let _ = std::fs::remove_dir_all(&temp_root);
     }
@@ -5124,7 +4982,6 @@ mod tests {
                 project_id,
                 title: "Task A".to_string(),
                 description: None,
-                automation_mode: None,
                 origin_task_id: None,
                 created_by_kind: None,
                 request_id: request_id.clone(),
@@ -5138,7 +4995,6 @@ mod tests {
                 project_id,
                 title: "Task B".to_string(),
                 description: None,
-                automation_mode: None,
                 origin_task_id: None,
                 created_by_kind: None,
                 request_id: request_id.clone(),

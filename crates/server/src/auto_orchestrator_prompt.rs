@@ -45,11 +45,6 @@ pub fn render_auto_orchestration_prompt(
         .replace("{task_title}", task.title.trim())
         .replace("{task_status}", &task.status.to_string())
         .replace("{project_name}", project.name.trim())
-        .replace(
-            "{project_execution_mode}",
-            &project.execution_mode.to_string(),
-        )
-        .replace("{task_automation_mode}", &task.automation_mode.to_string())
         .replace("{task_description}", description)
         .replace("{repository_context}", &repository_context)
         .replace("{attempt_section}", &attempt_section)
@@ -60,9 +55,7 @@ mod tests {
     use chrono::Utc;
     use db::{
         models::{project::Project, task::Task},
-        types::{
-            ProjectExecutionMode, TaskAutomationMode, TaskCreatedByKind, TaskKind, TaskStatus,
-        },
+        types::{TaskCreatedByKind, TaskKind, TaskStatus},
     };
     use uuid::Uuid;
 
@@ -76,7 +69,6 @@ mod tests {
             dev_script_working_dir: None,
             default_agent_working_dir: None,
             git_no_verify_override: None,
-            execution_mode: ProjectExecutionMode::Auto,
             scheduler_max_concurrent: 2,
             scheduler_max_retries: 3,
             after_prepare_hook: None,
@@ -94,7 +86,6 @@ mod tests {
             title: "Fix flaky test".to_string(),
             description: Some("Make the retry path deterministic.".to_string()),
             status: TaskStatus::Todo,
-            automation_mode: TaskAutomationMode::Auto,
             task_kind: TaskKind::Default,
             task_group_id: None,
             task_group_node_id: None,

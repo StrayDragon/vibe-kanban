@@ -12,7 +12,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ExecutionProcess, Project } from 'shared/types';
+import type { ExecutionProcess, Project } from 'shared/types';
 import {
   createScriptPlaceholderStrategy,
   ScriptPlaceholderContext,
@@ -88,7 +88,6 @@ export function NoServerContent({
           dev_script_working_dir: project.dev_script_working_dir ?? null,
           default_agent_working_dir: project.default_agent_working_dir ?? null,
           git_no_verify_override: project.git_no_verify_override ?? null,
-          execution_mode: project.execution_mode,
           scheduler_max_concurrent: project.scheduler_max_concurrent,
           scheduler_max_retries: project.scheduler_max_retries,
           after_prepare_hook: project.after_prepare_hook,
@@ -137,7 +136,6 @@ export function NoServerContent({
         title: COMPANION_INSTALL_TASK_TITLE,
         description: COMPANION_INSTALL_TASK_DESCRIPTION,
         status: null,
-        automation_mode: 'inherit',
         task_kind: null,
         task_group_id: null,
         task_group_node_id: null,

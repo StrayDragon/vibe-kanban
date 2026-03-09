@@ -293,11 +293,10 @@ impl ProjectService {
                     dev_script_working_dir: None,
                     default_agent_working_dir: Some(repo.name),
                     git_no_verify_override: None,
-                    execution_mode: None,
                     scheduler_max_concurrent: None,
                     scheduler_max_retries: None,
-                after_prepare_hook: None,
-                before_cleanup_hook: None,
+                    after_prepare_hook: None,
+                    before_cleanup_hook: None,
                 },
             )
             .await?;
@@ -687,7 +686,6 @@ mod tests {
             dev_script_working_dir: None,
             default_agent_working_dir: None,
             git_no_verify_override: None,
-            execution_mode: None,
             scheduler_max_concurrent: None,
             scheduler_max_retries: None,
             after_prepare_hook: None,

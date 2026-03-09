@@ -41,6 +41,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { toast } from '@/components/ui/toast';
 import { ExecutorProfileSelector } from '@/components/settings';
 import {
   Dialog,
@@ -90,7 +91,11 @@ import type {
   TaskGroupNodeBaseStrategy,
   TaskGroupNodeKind,
 } from '@/types/task-group';
-import type { ExecutorProfileId, TaskStatus } from 'shared/types';
+import type {
+  ExecutorProfileId,
+  MilestoneAutomationMode,
+  TaskStatus,
+} from 'shared/types';
 
 const TASK_STATUSES: TaskStatus[] = [
   'todo',
@@ -101,20 +106,20 @@ const TASK_STATUSES: TaskStatus[] = [
 ];
 
 const getNodeTaskId = (node: TaskGroupGraphNode): string | undefined =>
-  node.task_id ?? node.taskId;
+  node.task_id;
 
 const getNodeExecutorProfileId = (
   node: TaskGroupGraphNode
 ): ExecutorProfileId | null =>
-  node.executor_profile_id ?? node.executorProfileId ?? null;
+  node.executor_profile_id;
 
 const getNodeBaseStrategy = (
   node: TaskGroupGraphNode
 ): TaskGroupNodeBaseStrategy =>
-  node.base_strategy ?? node.baseStrategy ?? 'topology';
+  node.base_strategy;
 
 const getEdgeLabel = (edge: TaskGroupGraphEdge): string | undefined =>
-  edge.data_flow ?? edge.dataFlow;
+  edge.data_flow ?? undefined;
 
 const fallbackPosition = (index: number) => ({
   x: (index % 4) * 260,
@@ -128,11 +133,13 @@ const createId = (prefix: string) => {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`;
 };
 
+const executorProfileKey = (profile: ExecutorProfileId | null): string => {
+  if (!profile) return 'null';
+  return `${profile.executor}::${profile.variant ?? ''}`;
+};
+
 const normalizeGraph = (graph?: TaskGroupGraph | null): TaskGroupGraph => ({
-  nodes: (graph?.nodes ?? []).map((node) => ({
-    ...node,
-    layout: { ...(node.layout ?? {}) },
-  })),
+  nodes: (graph?.nodes ?? []).map((node) => ({ ...node })),
   edges: (graph?.edges ?? []).map((edge) => ({ ...edge })),
 });
 
@@ -146,7 +153,7 @@ const graphKey = (graph: TaskGroupGraph): string => {
       executorProfileId: getNodeExecutorProfileId(node),
       baseStrategy: getNodeBaseStrategy(node),
       instructions: node.instructions ?? null,
-      requiresApproval: node.requires_approval ?? node.requiresApproval ?? null,
+      requiresApproval: node.requires_approval ?? null,
       layoutX: node.layout?.x ?? null,
       layoutY: node.layout?.y ?? null,
     }))
@@ -200,7 +207,7 @@ export function TaskGroupWorkflow() {
 
   const serverGraph = useMemo(() => {
     if (!taskGroup) return null;
-    return normalizeGraph(taskGroup.graph ?? taskGroup.graph_json);
+    return normalizeGraph(taskGroup.graph);
   }, [taskGroup]);
 
   const serverGraphKey = useMemo(() => {
@@ -225,7 +232,7 @@ export function TaskGroupWorkflow() {
       setGraphDraft(null);
       return;
     }
-    const nextGraph = normalizeGraph(taskGroup.graph ?? taskGroup.graph_json);
+    const nextGraph = normalizeGraph(taskGroup.graph);
     const nextKey = graphKey(nextGraph);
     setGraphError(null);
 
@@ -244,8 +251,8 @@ export function TaskGroupWorkflow() {
   }, [taskGroup]);
 
   const graph = useMemo(
-    () => graphDraft ?? taskGroup?.graph ?? taskGroup?.graph_json ?? null,
-    [graphDraft, taskGroup?.graph, taskGroup?.graph_json]
+    () => graphDraft ?? taskGroup?.graph ?? null,
+    [graphDraft, taskGroup?.graph]
   );
   const graphNodes = useMemo(() => graph?.nodes ?? [], [graph]);
   const graphEdges = useMemo(() => graph?.edges ?? [], [graph]);
@@ -306,6 +313,14 @@ export function TaskGroupWorkflow() {
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [statusValue, setStatusValue] = useState<TaskStatus | null>(null);
   const [baselineValue, setBaselineValue] = useState('');
+  const [objectiveValue, setObjectiveValue] = useState('');
+  const [definitionOfDoneValue, setDefinitionOfDoneValue] = useState('');
+  const [defaultExecutorProfileValue, setDefaultExecutorProfileValue] =
+    useState<ExecutorProfileId | null>(null);
+  const [automationModeValue, setAutomationModeValue] =
+    useState<MilestoneAutomationMode>('manual');
+  const [isUpdatingMilestone, setIsUpdatingMilestone] = useState(false);
+  const [isRequestingNextStep, setIsRequestingNextStep] = useState(false);
   const [isAddNodeOpen, setIsAddNodeOpen] = useState(false);
   const [newNodeMode, setNewNodeMode] = useState<NewNodeMode>('existing');
   const [newNodeTaskId, setNewNodeTaskId] = useState<string | null>(null);
@@ -335,6 +350,74 @@ export function TaskGroupWorkflow() {
     setBaselineValue(taskGroup.baseline_ref ?? '');
   }, [taskGroup]);
 
+  const lastMilestoneIdRef = useRef<string | null>(null);
+  const lastServerMilestoneMetaRef = useRef<{
+    task_group_id: string;
+    objective: string;
+    definition_of_done: string;
+    default_executor_profile_key: string;
+    automation_mode: MilestoneAutomationMode;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!taskGroup) {
+      lastMilestoneIdRef.current = null;
+      lastServerMilestoneMetaRef.current = null;
+      setObjectiveValue('');
+      setDefinitionOfDoneValue('');
+      setDefaultExecutorProfileValue(null);
+      setAutomationModeValue('manual');
+      return;
+    }
+
+    const serverObjective = taskGroup.objective ?? '';
+    const serverDoD = taskGroup.definition_of_done ?? '';
+    const serverDefaultExecutor = taskGroup.default_executor_profile_id ?? null;
+    const serverDefaultExecutorKey = executorProfileKey(serverDefaultExecutor);
+    const serverAutomation = taskGroup.automation_mode ?? 'manual';
+
+    const isNewMilestone = lastMilestoneIdRef.current !== taskGroup.id;
+    lastMilestoneIdRef.current = taskGroup.id;
+
+    if (isNewMilestone || !lastServerMilestoneMetaRef.current) {
+      setObjectiveValue(serverObjective);
+      setDefinitionOfDoneValue(serverDoD);
+      setDefaultExecutorProfileValue(serverDefaultExecutor);
+      setAutomationModeValue(serverAutomation);
+    } else {
+      setObjectiveValue((prev) => {
+        const lastServer = lastServerMilestoneMetaRef.current?.objective ?? '';
+        return prev === lastServer ? serverObjective : prev;
+      });
+      setDefinitionOfDoneValue((prev) => {
+        const lastServer =
+          lastServerMilestoneMetaRef.current?.definition_of_done ?? '';
+        return prev === lastServer ? serverDoD : prev;
+      });
+      setDefaultExecutorProfileValue((prev) => {
+        const lastKey =
+          lastServerMilestoneMetaRef.current?.default_executor_profile_key ??
+          'null';
+        return executorProfileKey(prev) === lastKey
+          ? serverDefaultExecutor
+          : prev;
+      });
+      setAutomationModeValue((prev) => {
+        const lastServer =
+          lastServerMilestoneMetaRef.current?.automation_mode ?? 'manual';
+        return prev === lastServer ? serverAutomation : prev;
+      });
+    }
+
+    lastServerMilestoneMetaRef.current = {
+      task_group_id: taskGroup.id,
+      objective: serverObjective,
+      definition_of_done: serverDoD,
+      default_executor_profile_key: serverDefaultExecutorKey,
+      automation_mode: serverAutomation,
+    };
+  }, [taskGroup]);
+
   const persistGraph = useCallback(
     async (nextGraph: TaskGroupGraph) => {
       if (!taskGroup) return;
@@ -344,7 +427,7 @@ export function TaskGroupWorkflow() {
         await taskGroupsApi.update(taskGroup.id, { graph: nextGraph });
         await refetchTaskGroup();
       } catch (error) {
-        console.error('Failed to update task group graph:', error);
+        console.error('Failed to update milestone graph:', error);
         setGraphError('Failed to save workflow changes.');
         await refetchTaskGroup();
       } finally {
@@ -362,7 +445,7 @@ export function TaskGroupWorkflow() {
   const handleDiscardGraphDraft = useCallback(() => {
     if (!taskGroup) return;
     cancelPersistGraphDebounced();
-    setGraphDraft(normalizeGraph(taskGroup.graph ?? taskGroup.graph_json));
+    setGraphDraft(normalizeGraph(taskGroup.graph));
     setGraphError(null);
   }, [cancelPersistGraphDebounced, taskGroup]);
 
@@ -402,7 +485,7 @@ export function TaskGroupWorkflow() {
           next.requires_approval =
             updates.kind === 'checkpoint'
               ? true
-              : (node.requires_approval ?? node.requiresApproval ?? false);
+              : (node.requires_approval ?? false);
         }
         if (typeof updates.phase === 'number') {
           next.phase = updates.phase;
@@ -433,7 +516,7 @@ export function TaskGroupWorkflow() {
         const prevNode = prevMap.get(node.id);
         const taskId = getNodeTaskId(node);
         const task = taskId ? tasksById[taskId] : undefined;
-        const layout = node.layout ?? {};
+        const layout = node.layout;
         const fallback = fallbackPosition(index);
         const position =
           prevNode?.position ??
@@ -449,15 +532,12 @@ export function TaskGroupWorkflow() {
           data: {
             title: task?.title ?? node.id,
             status: task?.status,
-            kind: node.kind ?? 'task',
+            kind: node.kind,
             taskId,
             phase: node.phase,
             executorProfileId: getNodeExecutorProfileId(node),
             baseStrategy: getNodeBaseStrategy(node),
-            requiresApproval:
-              node.requires_approval ??
-              node.requiresApproval ??
-              (node.kind ?? 'task') === 'checkpoint',
+            requiresApproval: node.requires_approval ?? node.kind === 'checkpoint',
             onUpdate: (updates: { kind?: TaskGroupNodeKind; phase?: number }) =>
               handleInlineNodeUpdate(node.id, updates),
           },
@@ -481,7 +561,7 @@ export function TaskGroupWorkflow() {
           draggable: false,
           connectable: false,
           data: {
-            title: entryTask?.title || taskGroup?.title || 'Task Group',
+            title: entryTask?.title || taskGroup?.title || 'Milestone',
             status: entryTask?.status ?? taskGroup?.status,
             kind: 'task',
             taskId: entryTask?.id,
@@ -547,11 +627,12 @@ export function TaskGroupWorkflow() {
 
   useEffect(() => {
     if (selectedEdgeId) return;
-    if (!selectedNodeId && nodes.length > 0 && !hasAutoSelectedRef.current) {
-      hasAutoSelectedRef.current = true;
-      setSelectedNodeId(nodes[0].id);
-    }
-  }, [nodes, selectedEdgeId, selectedNodeId]);
+    if (selectedNodeId) return;
+    if (!masterNodeId) return;
+    if (hasAutoSelectedRef.current) return;
+    hasAutoSelectedRef.current = true;
+    setSelectedNodeId(masterNodeId);
+  }, [masterNodeId, selectedEdgeId, selectedNodeId]);
 
   const isMasterSelected = Boolean(
     masterNodeId && selectedNodeId === masterNodeId
@@ -632,6 +713,39 @@ export function TaskGroupWorkflow() {
     };
   }, [graphNodesById, selectedEdge, tasksById]);
 
+  const milestoneProgress = useMemo(() => {
+    const counts: Record<TaskStatus, number> = {
+      todo: 0,
+      inprogress: 0,
+      inreview: 0,
+      done: 0,
+      cancelled: 0,
+    };
+    let missing = 0;
+    let activeAttemptTaskTitle: string | null = null;
+
+    graphNodes.forEach((node) => {
+      const taskId = getNodeTaskId(node);
+      if (!taskId) return;
+      const task = tasksById[taskId];
+      if (!task) {
+        missing += 1;
+        return;
+      }
+      counts[task.status] += 1;
+      if (!activeAttemptTaskTitle && task.has_in_progress_attempt) {
+        activeAttemptTaskTitle = task.title || task.id;
+      }
+    });
+
+    const total = graphNodes.length;
+    const done = counts.done;
+    const percent =
+      total > 0 ? Math.round((done / total) * 100) : counts.done > 0 ? 100 : 0;
+
+    return { counts, total, done, percent, missing, activeAttemptTaskTitle };
+  }, [graphNodes, tasksById]);
+
   const isGraphNodeSelected = Boolean(selectedGraphNode);
   const selectedKind = selectedGraphNode?.kind ?? 'task';
   const selectedExecutorProfile = selectedGraphNode
@@ -641,9 +755,7 @@ export function TaskGroupWorkflow() {
     ? getNodeBaseStrategy(selectedGraphNode)
     : 'topology';
   const requiresApproval =
-    selectedGraphNode?.requires_approval ??
-    selectedGraphNode?.requiresApproval ??
-    selectedKind === 'checkpoint';
+    selectedGraphNode?.requires_approval ?? selectedKind === 'checkpoint';
   const isCheckpoint = isGraphNodeSelected && selectedKind === 'checkpoint';
   const isNodeReady = isGraphNodeSelected ? blockedBy.length === 0 : true;
   const isPendingApproval = Boolean(
@@ -653,8 +765,7 @@ export function TaskGroupWorkflow() {
       selectedTask?.status !== 'done'
   );
 
-  const suggestedStatus =
-    taskGroup?.suggested_status ?? taskGroup?.suggestedStatus ?? null;
+  const suggestedStatus = taskGroup?.suggested_status ?? null;
   const currentStatus = statusValue ?? taskGroup?.status ?? 'todo';
 
   const handleNodesChange = useCallback(
@@ -750,6 +861,7 @@ export function TaskGroupWorkflow() {
             id: edgeId,
             from: connection.source!,
             to: connection.target!,
+            data_flow: null,
           },
         ],
       }));
@@ -770,7 +882,7 @@ export function TaskGroupWorkflow() {
         await taskGroupsApi.update(taskGroup.id, { status: nextStatus });
         await refetchTaskGroup();
       } catch (error) {
-        console.error('Failed to update task group status:', error);
+        console.error('Failed to update milestone status:', error);
         setStatusValue(previousStatus);
       } finally {
         setIsUpdatingStatus(false);
@@ -810,6 +922,156 @@ export function TaskGroupWorkflow() {
     [handleBaselineSave]
   );
 
+  const handleObjectiveSave = useCallback(async () => {
+    if (!taskGroup) return;
+    const trimmed = objectiveValue.trim();
+    const nextValue = trimmed.length ? trimmed : null;
+    const currentValue = taskGroup.objective ?? null;
+
+    if (currentValue === nextValue) {
+      setObjectiveValue(nextValue ?? '');
+      return;
+    }
+
+    setIsUpdatingMilestone(true);
+    try {
+      await taskGroupsApi.update(taskGroup.id, { objective: nextValue });
+      await refetchTaskGroup();
+    } catch (error) {
+      console.error('Failed to update milestone objective:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Failed to save objective',
+        description: error instanceof Error ? error.message : undefined,
+      });
+      setObjectiveValue(taskGroup.objective ?? '');
+    } finally {
+      setIsUpdatingMilestone(false);
+    }
+  }, [objectiveValue, refetchTaskGroup, taskGroup]);
+
+  const handleDefinitionOfDoneSave = useCallback(async () => {
+    if (!taskGroup) return;
+    const trimmed = definitionOfDoneValue.trim();
+    const nextValue = trimmed.length ? trimmed : null;
+    const currentValue = taskGroup.definition_of_done ?? null;
+
+    if (currentValue === nextValue) {
+      setDefinitionOfDoneValue(nextValue ?? '');
+      return;
+    }
+
+    setIsUpdatingMilestone(true);
+    try {
+      await taskGroupsApi.update(taskGroup.id, {
+        definition_of_done: nextValue,
+      });
+      await refetchTaskGroup();
+    } catch (error) {
+      console.error('Failed to update milestone definition of done:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Failed to save definition of done',
+        description: error instanceof Error ? error.message : undefined,
+      });
+      setDefinitionOfDoneValue(taskGroup.definition_of_done ?? '');
+    } finally {
+      setIsUpdatingMilestone(false);
+    }
+  }, [definitionOfDoneValue, refetchTaskGroup, taskGroup]);
+
+  const handleDefaultExecutorProfileSave = useCallback(
+    async (profile: ExecutorProfileId | null) => {
+      if (!taskGroup) return;
+      const previous = defaultExecutorProfileValue;
+      setDefaultExecutorProfileValue(profile);
+      setIsUpdatingMilestone(true);
+      try {
+        await taskGroupsApi.update(taskGroup.id, {
+          default_executor_profile_id: profile,
+        });
+        await refetchTaskGroup();
+      } catch (error) {
+        console.error(
+          'Failed to update milestone default executor profile:',
+          error
+        );
+        toast({
+          variant: 'destructive',
+          title: 'Failed to save default executor profile',
+          description: error instanceof Error ? error.message : undefined,
+        });
+        setDefaultExecutorProfileValue(previous);
+      } finally {
+        setIsUpdatingMilestone(false);
+      }
+    },
+    [defaultExecutorProfileValue, refetchTaskGroup, taskGroup]
+  );
+
+  const handleAutomationModeToggle = useCallback(
+    async (checked: boolean) => {
+      if (!taskGroup) return;
+      const nextMode: MilestoneAutomationMode = checked ? 'auto' : 'manual';
+      const previous = automationModeValue;
+      if (previous === nextMode) return;
+      setAutomationModeValue(nextMode);
+      setIsUpdatingMilestone(true);
+      try {
+        await taskGroupsApi.update(taskGroup.id, { automation_mode: nextMode });
+        await refetchTaskGroup();
+      } catch (error) {
+        console.error('Failed to update milestone automation mode:', error);
+        toast({
+          variant: 'destructive',
+          title: 'Failed to update automation',
+          description: error instanceof Error ? error.message : undefined,
+        });
+        setAutomationModeValue(previous);
+      } finally {
+        setIsUpdatingMilestone(false);
+      }
+    },
+    [automationModeValue, refetchTaskGroup, taskGroup]
+  );
+
+  const handleRunNextStep = useCallback(async () => {
+    if (!taskGroup) return;
+    setIsRequestingNextStep(true);
+    try {
+      const result = await taskGroupsApi.runNextStep(taskGroup.id);
+      const candidateTitle = result.candidate_task_id
+        ? (tasksById[result.candidate_task_id]?.title ??
+          result.candidate_task_id)
+        : null;
+      const details =
+        result.message ??
+        (candidateTitle ? `Candidate: ${candidateTitle}` : undefined);
+
+      toast({
+        title:
+          result.status === 'queued'
+            ? 'Queued next step'
+            : result.status === 'queued_waiting_for_active_attempt'
+              ? 'Queued next step (waiting)'
+              : 'No eligible next step',
+        description: details,
+        variant: result.status === 'not_eligible' ? 'destructive' : 'default',
+        durationMs: result.status === 'not_eligible' ? 6500 : 4500,
+      });
+      await refetchTaskGroup();
+    } catch (error) {
+      console.error('Failed to request next milestone step:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Failed to queue next step',
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setIsRequestingNextStep(false);
+    }
+  }, [refetchTaskGroup, taskGroup, tasksById]);
+
   const handleEdgeLabelChange = useCallback(
     (value: string) => {
       setSelectedEdgeLabel(value);
@@ -820,7 +1082,7 @@ export function TaskGroupWorkflow() {
           edge.id === selectedEdgeId
             ? {
                 ...edge,
-                data_flow: value.trim().length ? value : undefined,
+                data_flow: value.trim().length ? value : null,
               }
             : edge
         ),
@@ -878,7 +1140,6 @@ export function TaskGroupWorkflow() {
             ? newNodeDescription.trim()
             : null,
           status: null,
-          automation_mode: null,
           task_kind: null,
           task_group_id: null,
           task_group_node_id: null,
@@ -947,7 +1208,6 @@ export function TaskGroupWorkflow() {
         title: selectedTask.title,
         description: selectedTask.description,
         status: 'done',
-        automation_mode: selectedTask.automation_mode,
         parent_workspace_id: selectedTask.parent_workspace_id,
         image_ids: null,
       });
@@ -982,7 +1242,9 @@ export function TaskGroupWorkflow() {
       ? 'Chat'
       : selectedEdge
         ? 'Edge details'
-        : 'Node details';
+        : isMasterSelected
+          ? 'Milestone'
+          : 'Node details';
   const selectedNodeLabel = selectedTask?.title || 'Task';
   const selectedNodeMeta = isMasterSelected
     ? 'Primary'
@@ -1136,8 +1398,9 @@ export function TaskGroupWorkflow() {
                     setSelectedNodeId(null);
                     return;
                   }
-                  setSelectedNodeId(null);
-                  setSelectedEdgeId(null);
+                  // ReactFlow can emit an empty selection change when focus shifts
+                  // (e.g. clicking UI controls). Keep the current selection unless the
+                  // user explicitly clears it via pane clicks.
                 }}
                 onPaneClick={() => {
                   setSelectedNodeId(null);
@@ -1340,11 +1603,144 @@ export function TaskGroupWorkflow() {
                   </Button>
                 </div>
               ) : !selectedGraphNode ? (
-                <div className="p-4 text-sm text-muted-foreground">
-                  {isMasterSelected
-                    ? 'Primary node is chat-only. Select a workflow node to edit details.'
-                    : 'Select a node or edge to view details.'}
-                </div>
+                isMasterSelected ? (
+                  <div className="p-4 space-y-5">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-xs text-muted-foreground">
+                          Progress
+                        </div>
+                        <div className="text-xs font-medium">
+                          {milestoneProgress.done}/{milestoneProgress.total}{' '}
+                          done
+                        </div>
+                      </div>
+                      <div className="h-2 rounded-full bg-muted overflow-hidden">
+                        <div
+                          className="h-2 bg-foreground/70"
+                          style={{ width: `${milestoneProgress.percent}%` }}
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                        {(['inprogress', 'inreview', 'todo'] as TaskStatus[])
+                          .map((status) => ({
+                            status,
+                            count: milestoneProgress.counts[status],
+                          }))
+                          .filter((item) => item.count > 0)
+                          .map((item) => (
+                            <span key={item.status}>
+                              {statusLabels[item.status]}: {item.count}
+                            </span>
+                          ))}
+                        {milestoneProgress.missing > 0 && (
+                          <span>Missing: {milestoneProgress.missing}</span>
+                        )}
+                      </div>
+                      {milestoneProgress.activeAttemptTaskTitle && (
+                        <div className="text-[11px] text-muted-foreground">
+                          Active attempt:{' '}
+                          {milestoneProgress.activeAttemptTaskTitle}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs">Automation</Label>
+                        <Switch
+                          checked={automationModeValue === 'auto'}
+                          onCheckedChange={handleAutomationModeToggle}
+                          disabled={isUpdatingMilestone}
+                        />
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        When enabled, the scheduler advances eligible nodes one
+                        at a time. When disabled, use "Run next step".
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          onClick={handleRunNextStep}
+                          disabled={isRequestingNextStep || isUpdatingMilestone}
+                        >
+                          <Play className="h-4 w-4 mr-1" />
+                          Run next step
+                        </Button>
+                        {taskGroup.run_next_step_requested_at && (
+                          <Badge variant="outline" className="text-[10px]">
+                            Queued
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-xs">Default executor profile</Label>
+                      <ExecutorProfileSelector
+                        profiles={profiles}
+                        selectedProfile={defaultExecutorProfileValue}
+                        onProfileSelect={(profile) =>
+                          handleDefaultExecutorProfileSave(profile)
+                        }
+                        showLabel={false}
+                        className="gap-2"
+                        itemClassName="min-w-0"
+                        disabled={isUpdatingMilestone}
+                      />
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          onClick={() => handleDefaultExecutorProfileSave(null)}
+                          disabled={
+                            isUpdatingMilestone || !defaultExecutorProfileValue
+                          }
+                        >
+                          Clear
+                        </Button>
+                        {!defaultExecutorProfileValue && (
+                          <div className="text-[11px] text-muted-foreground">
+                            Defaults to each node's executor profile (or your
+                            current profile).
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-xs">Objective</Label>
+                      <Textarea
+                        value={objectiveValue}
+                        onChange={(event) =>
+                          setObjectiveValue(event.target.value)
+                        }
+                        onBlur={handleObjectiveSave}
+                        placeholder="What does success look like?"
+                        className="min-h-[80px]"
+                        disabled={isUpdatingMilestone}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-xs">Definition of done</Label>
+                      <Textarea
+                        value={definitionOfDoneValue}
+                        onChange={(event) =>
+                          setDefinitionOfDoneValue(event.target.value)
+                        }
+                        onBlur={handleDefinitionOfDoneSave}
+                        placeholder="Acceptance criteria and completion checklist"
+                        className="min-h-[90px]"
+                        disabled={isUpdatingMilestone}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 text-sm text-muted-foreground">
+                    Select a node or edge to view details.
+                  </div>
+                )
               ) : !selectedTask ? (
                 <div className="p-4 text-sm text-muted-foreground">
                   {isTasksLoading
@@ -1380,9 +1776,7 @@ export function TaskGroupWorkflow() {
                               requires_approval:
                                 value === 'checkpoint'
                                   ? true
-                                  : (node.requires_approval ??
-                                    node.requiresApproval ??
-                                    false),
+                                  : (node.requires_approval ?? false),
                             }))
                           }
                         >
@@ -1464,8 +1858,8 @@ export function TaskGroupWorkflow() {
                       </Select>
                       <div className="text-[11px] text-muted-foreground">
                         {selectedBaseStrategy === 'topology'
-                          ? 'Topology uses the most recent completed predecessor and falls back to the task group baseline.'
-                          : 'Baseline starts from the task group baseline branch.'}
+                          ? 'Topology uses the most recent completed predecessor and falls back to the milestone baseline.'
+                          : 'Baseline starts from the milestone baseline branch.'}
                       </div>
                     </div>
 

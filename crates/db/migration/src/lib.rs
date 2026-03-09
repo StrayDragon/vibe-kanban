@@ -14,6 +14,7 @@ mod m20260307000000_auto_orchestrator;
 mod m20260307010000_task_automation_override;
 mod m20260307020000_task_lineage_source;
 mod m20260307110000_workspace_lifecycle_hooks;
+mod m20260309000000_milestones_hard_cut;
 
 pub struct Migrator;
 
@@ -35,6 +36,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260307010000_task_automation_override::Migration),
             Box::new(m20260307020000_task_lineage_source::Migration),
             Box::new(m20260307110000_workspace_lifecycle_hooks::Migration),
+            Box::new(m20260309000000_milestones_hard_cut::Migration),
         ]
     }
 }

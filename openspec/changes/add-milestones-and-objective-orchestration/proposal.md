@@ -13,6 +13,10 @@ Operators need a higher-level, editable container that defines the acceptance ta
   - across tasks: selects the next eligible milestone task/node and starts it when policy allows
 - Add UI surfaces to create/edit milestones, review progress, and adjust the plan at any time (including mid-run), with explicit “take over” controls.
 - Expose milestone state and next actions via API and (optionally) MCP-friendly read contracts.
+- **BREAKING**: Remove project/task-scoped auto orchestration mode selection. Unattended dispatch becomes milestone-scoped only:
+  - Remove `project.execution_mode` (manual/auto) as an operator control.
+  - Remove `task.automation_mode` (inherit/manual/auto) as an operator control.
+  - The scheduler no longer auto-dispatches regular tasks; it only advances milestones.
 
 ## Capabilities
 
@@ -23,12 +27,12 @@ Operators need a higher-level, editable container that defines the acceptance ta
 ### Modified Capabilities
 
 - `workflow-orchestration`: Extend task-group/workflow grouping to support milestone-grade objectives and presets, and make milestone progress legible from existing task surfaces.
-- `auto-task-orchestration`: Allow scheduler-driven dispatch of grouped work when it is explicitly milestone-managed, while keeping non-milestone grouped tasks unscheduled.
+- `auto-task-orchestration`: Replace project/task-scoped automation controls with milestone-scoped orchestration. The scheduler dispatches milestone work only.
 - `task-group-prompting`: Extend prompt augmentation so milestone objective/preset context is injected in addition to node instructions.
 
 ## Impact
 
 - **DB**: new milestone persistence (either a new table or an extension of existing task-group persistence), plus new fields for objective, presets, and runner state.
 - **Backend**: new/extended routes for milestone CRUD and “run one step”; scheduler integration for milestone-managed dispatch; prompt rendering changes to include milestone context.
-- **Frontend**: new milestone creation/edit surfaces and progress views; integrate navigation from tasks to milestones; preserve existing task-level workflows.
+- **Frontend**: new milestone creation/edit surfaces and progress views; integrate navigation from tasks to milestones; remove legacy automation toggles, lanes, and ownership indicators.
 - **MCP**: optional read-only “handoff” style payloads for milestone status so agents can decide approve/rework/take-over without log scraping.

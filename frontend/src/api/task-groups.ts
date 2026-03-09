@@ -1,4 +1,4 @@
-import type { CreateTaskGroup } from 'shared/types';
+import type { CreateTaskGroup, RunNextMilestoneStepResponse } from 'shared/types';
 import type { TaskGroup, UpdateTaskGroup } from '@/types/task-group';
 
 import { handleApiResponse, makeRequest } from './client';
@@ -26,5 +26,17 @@ export const taskGroupsApi = {
       body: JSON.stringify(data),
     });
     return handleApiResponse<TaskGroup>(response);
+  },
+
+  runNextStep: async (
+    taskGroupId: string
+  ): Promise<RunNextMilestoneStepResponse> => {
+    const response = await makeRequest(
+      `/api/task-groups/${taskGroupId}/run-next-step`,
+      {
+        method: 'POST',
+      }
+    );
+    return handleApiResponse<RunNextMilestoneStepResponse>(response);
   },
 };

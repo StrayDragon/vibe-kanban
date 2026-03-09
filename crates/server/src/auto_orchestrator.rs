@@ -1,22 +1,28 @@
-use std::{path::Path, time::Duration};
+use std::{collections::HashMap, path::Path, time::Duration};
 
 use anyhow::{Context, Result};
 use app_runtime::Deployment;
 use chrono::{Duration as ChronoDuration, Utc};
 use db::models::{
     project::Project,
-    task::{TaskStatus, TaskWithAttemptStatus, automation as task_automation},
+    task::{TaskStatus, TaskWithAttemptStatus},
     task_dispatch_state::{TaskDispatchState, UpsertTaskDispatchState},
+    task_group::TaskGroup,
     workspace_repo::CreateWorkspaceRepo,
 };
 use repos::git::GitService;
 use tasks::orchestration::{self, CreateTaskAttemptInput};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::{
     DeploymentImpl,
     auto_orchestrator_prompt::{PromptRepoContext, render_auto_orchestration_prompt},
+    milestone_dispatch::{
+        milestone_dispatch_enabled, milestone_has_active_attempt,
+        next_milestone_dispatch_candidate,
+    },
     task_runtime::DeploymentTaskRuntime,
 };
 
@@ -90,23 +96,102 @@ async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Re
         reconcile_task_state(deployment, project, task).await?;
     }
 
-    for task in tasks {
+    if available_slots <= 0 {
+        return Ok(());
+    }
+
+    let tasks_by_id: HashMap<Uuid, TaskWithAttemptStatus> =
+        tasks.into_iter().map(|task| (task.id, task)).collect();
+
+    let mut milestones = TaskGroup::find_by_project_id(&deployment.db().pool, project.id)
+        .await
+        .context("failed to load task groups for milestone orchestration")?;
+    milestones.retain(milestone_dispatch_enabled);
+
+    if milestones.is_empty() {
+        return Ok(());
+    }
+
+    // Prioritize explicit "run next step" requests first, oldest-first.
+    milestones.sort_by_key(|milestone| {
+        (
+            milestone.run_next_step_requested_at.is_none(),
+            milestone
+                .run_next_step_requested_at
+                .unwrap_or(milestone.created_at),
+            milestone.created_at,
+        )
+    });
+
+    for milestone in milestones {
         if available_slots <= 0 {
             break;
         }
-        if !is_dispatch_candidate(&task) || !retry_ready(&task) {
+
+        if milestone_has_active_attempt(&milestone, &tasks_by_id) {
             continue;
         }
 
-        match dispatch_task(deployment, project, &task).await {
-            Ok(true) => available_slots -= 1,
-            Ok(false) => {}
+        let Some(task) = next_milestone_dispatch_candidate(&milestone, &tasks_by_id) else {
+            if milestone.run_next_step_requested_at.is_some() {
+                warn!(
+                    task_group_id = %milestone.id,
+                    project_id = %project.id,
+                    "run next step requested but no eligible node; clearing request"
+                );
+                if let Err(err) =
+                    TaskGroup::clear_run_next_step_request(&deployment.db().pool, milestone.id)
+                        .await
+                {
+                    warn!(
+                        task_group_id = %milestone.id,
+                        project_id = %project.id,
+                        error = %err,
+                        "failed to clear run next step request"
+                    );
+                }
+            }
+            continue;
+        };
+
+        match dispatch_task(deployment, project, task).await {
+            Ok(DispatchOutcome::Started) => {
+                available_slots -= 1;
+                if milestone.run_next_step_requested_at.is_some()
+                    && let Err(err) =
+                        TaskGroup::clear_run_next_step_request(&deployment.db().pool, milestone.id)
+                            .await
+                {
+                    warn!(
+                        task_group_id = %milestone.id,
+                        project_id = %project.id,
+                        error = %err,
+                        "failed to clear run next step request after dispatch"
+                    );
+                }
+            }
+            Ok(DispatchOutcome::Blocked) => {
+                if milestone.run_next_step_requested_at.is_some()
+                    && let Err(err) =
+                        TaskGroup::clear_run_next_step_request(&deployment.db().pool, milestone.id)
+                            .await
+                {
+                    warn!(
+                        task_group_id = %milestone.id,
+                        project_id = %project.id,
+                        error = %err,
+                        "failed to clear run next step request after block"
+                    );
+                }
+            }
+            Ok(DispatchOutcome::RetryScheduled | DispatchOutcome::Skipped) => {}
             Err(err) => {
                 warn!(
                     task_id = %task.id,
+                    task_group_id = %milestone.id,
                     project_id = %project.id,
                     error = %err,
-                    "auto dispatch failed"
+                    "milestone dispatch failed"
                 );
             }
         }
@@ -239,12 +324,12 @@ async fn reconcile_task_state(
     Ok(())
 }
 
-fn is_dispatch_candidate(task: &TaskWithAttemptStatus) -> bool {
-    task_automation::is_dispatch_candidate(task)
-}
-
-fn retry_ready(task: &TaskWithAttemptStatus) -> bool {
-    task_automation::retry_ready(task)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DispatchOutcome {
+    Started,
+    RetryScheduled,
+    Blocked,
+    Skipped,
 }
 
 async fn upsert_blocked_state(
@@ -278,7 +363,7 @@ async fn dispatch_task(
     deployment: &DeploymentImpl,
     project: &Project,
     task: &TaskWithAttemptStatus,
-) -> Result<bool> {
+) -> Result<DispatchOutcome> {
     let executor_profile_id = {
         let config = deployment.config().read().await;
         config.executor_profile.clone()
@@ -301,7 +386,7 @@ async fn dispatch_task(
                 err.to_string(),
             )
             .await?;
-            return Ok(false);
+            return Ok(DispatchOutcome::Blocked);
         }
     };
 
@@ -314,7 +399,7 @@ async fn dispatch_task(
             "Project has no repositories configured",
         )
         .await?;
-        return Ok(false);
+        return Ok(DispatchOutcome::Blocked);
     }
 
     let prompt_repos: Vec<PromptRepoContext> = resolved_repos
@@ -378,8 +463,12 @@ async fn dispatch_task(
                 },
             )
             .await?;
-            info!(task_id = %task.id, project_id = %project.id, "auto orchestrator dispatched task");
-            Ok(true)
+            info!(
+                task_id = %task.id,
+                project_id = %project.id,
+                "scheduler dispatched task"
+            );
+            Ok(DispatchOutcome::Started)
         }
         Err(err) => {
             let err_message = err.to_string();
@@ -413,7 +502,7 @@ async fn dispatch_task(
                 task.id,
                 &UpsertTaskDispatchState {
                     controller: db::types::TaskDispatchController::Scheduler,
-                    status,
+                    status: status.clone(),
                     retry_count,
                     max_retries: project.scheduler_max_retries,
                     last_error: Some(err_message),
@@ -424,7 +513,11 @@ async fn dispatch_task(
             )
             .await?;
 
-            Ok(false)
+            Ok(match status {
+                db::types::TaskDispatchStatus::RetryScheduled => DispatchOutcome::RetryScheduled,
+                db::types::TaskDispatchStatus::Blocked => DispatchOutcome::Blocked,
+                _ => DispatchOutcome::Skipped,
+            })
         }
     }
 }

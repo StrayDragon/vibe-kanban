@@ -12,6 +12,8 @@ What VK does not support today is “goal-driven” automation across a multi-st
 
 This change introduces **Milestones** as the operator-facing concept for goal-driven work and connects them to existing TaskGroups + auto-orchestration primitives.
 
+This change is also a **hard cut**: project/task-scoped automation toggles are removed so the system has exactly one automation surface area (milestones).
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -22,6 +24,7 @@ This change introduces **Milestones** as the operator-facing concept for goal-dr
   - across tasks: select only the next eligible milestone node and keep milestone concurrency at 1 active attempt
 - Keep human take-over explicit and fast (pause/resume and per-task manual override).
 - Provide UI parity for creating, editing, running, and reviewing milestones without inventing a second dashboard.
+ - Remove legacy project/task automation controls so operators are not presented with “auto” toggles that cannot deliver multi-step goal semantics.
 
 **Non-Goals:**
 - External tracker ingestion (Linear/Jira/GitHub Issues).
@@ -29,6 +32,7 @@ This change introduces **Milestones** as the operator-facing concept for goal-dr
 - A second executor runtime pipeline or a second review workflow.
 - Multi-milestone task membership or cross-project milestones.
 - A full “auto planner” that generates an entire task graph from scratch (we make room for it, but v1 keeps planning human-driven).
+ - Backward-compatible support for project/task automation toggles (this is a hard cut refactor).
 
 ## Decisions
 
@@ -44,6 +48,17 @@ Milestone should therefore be a **TaskGroup with additional milestone metadata**
 
 This avoids duplicating linking tables and keeps milestone editing (add/remove nodes, adjust dependencies) within the existing workflow surface.
 
+### 1.5 Hard cut: remove project/task-scoped automation toggles
+
+To avoid maintaining two automation models, VK removes:
+- `Project.execution_mode` (manual/auto) as an operator-facing control and persisted field
+- `Task.automation_mode` (inherit/manual/auto) as an operator-facing control and persisted field
+- task list “manual/managed/needs review/blocked” orchestration lanes that are keyed to task automation mode
+
+After this change:
+- Regular tasks are always human-started.
+- The scheduler only dispatches milestone node tasks (task-group linked tasks) when milestone automation is enabled or a “run next step” enqueue is pending.
+
 ### 2. Milestone automation is explicit and does not require project auto mode
 
 Milestone automation defaults to manual and becomes eligible for unattended dispatch only when a human explicitly enables it on the milestone.
@@ -51,7 +66,7 @@ Milestone automation defaults to manual and becomes eligible for unattended disp
 Milestone automation SHALL NOT require `project.execution_mode=auto`. This matches the existing VK safety model: projects default to manual, but explicit opt-ins (task-level auto overrides, and now milestone-level automation) may still run under the scheduler.
 
 Safety/precedence rules:
-- Per-task manual take-over (`task.automation_mode=manual`) remains a hard stop even if milestone automation is enabled.
+- Human take-over is milestone-scoped (pause automation); milestones stop dispatching new node attempts while paused.
 - Project scheduler limits (`scheduler_max_concurrent`, retries) still constrain dispatch.
 
 ### 3. Milestone metadata lives on the TaskGroup record (queryable columns, not only in JSON)

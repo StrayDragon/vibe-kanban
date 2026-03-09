@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { MoreHorizontal } from 'lucide-react';
 import { WorkspaceHookMenuSummary } from '@/components/tasks/WorkspaceHookMenuSummary';
-import { getWorkspaceHookOutcome } from '@/utils/automation';
+import { getWorkspaceHookOutcome } from '@/utils/workspaceHooks';
 import { cn } from '@/lib/utils';
 import type { TaskWithAttemptStatus } from 'shared/types';
 import type { Workspace } from 'shared/types';

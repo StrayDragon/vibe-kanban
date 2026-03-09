@@ -115,9 +115,6 @@ export function useTaskMutations(projectId?: string) {
         patch.description = data.description;
       }
       if (typeof data.status === 'string') patch.status = data.status;
-      if (typeof data.automation_mode === 'string') {
-        patch.automation_mode = data.automation_mode;
-      }
       if (
         typeof data.parent_workspace_id === 'string' ||
         data.parent_workspace_id === null

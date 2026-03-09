@@ -94,12 +94,6 @@ export function TaskReviewInbox({
                       )}
                     </div>
 
-                    {task.automation_diagnostic?.reason_detail && (
-                      <p className="mt-2 text-xs leading-5 text-muted-foreground line-clamp-2">
-                        {task.automation_diagnostic.reason_detail}
-                      </p>
-                    )}
-
                     <div className="mt-3 flex items-center justify-between gap-2">
                       <Badge
                         variant="outline"

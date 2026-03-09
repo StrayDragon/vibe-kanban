@@ -40,7 +40,6 @@ import TaskPanel from '@/components/panels/TaskPanel';
 import { PreviewPanel } from '@/components/panels/PreviewPanel';
 import { DiffsPanel } from '@/components/panels/DiffsPanel';
 import TodoPanel from '@/components/tasks/TodoPanel';
-import { TaskAutomationIndicators } from '@/components/tasks/TaskAutomationIndicators';
 import { CreateAttemptDialog } from '@/components/dialogs/tasks/CreateAttemptDialog';
 import { ProjectFormDialog } from '@/components/dialogs/projects/ProjectFormDialog';
 
@@ -81,7 +80,6 @@ import {
   isTaskGroupEntry,
   isTaskGroupSubtask,
 } from '@/utils/taskGroup';
-import { matchesOrchestrationFilters } from '@/utils/automation';
 
 import type {
   RepoBranchStatus,
@@ -216,7 +214,7 @@ function TaskListItem({
   const taskGroupId = getTaskGroupId(task);
   const isGroupedTask = Boolean(taskGroupId) && !isTaskGroup;
   const typeLabel = isTaskGroup
-    ? 'Task Group'
+    ? 'Milestone'
     : isGroupedTask
       ? 'Subtask'
       : 'Task';
@@ -253,7 +251,6 @@ function TaskListItem({
               {typeLabel}
             </span>
           </div>
-          <TaskAutomationIndicators task={task} hideReviewOwnership />
           {description && (
             <p className="text-xs text-muted-foreground line-clamp-2">
               {description}
@@ -345,8 +342,6 @@ export function TasksOverview() {
     query: searchQuery,
     focusInput,
     clear: clearSearch,
-    orchestrationFilters,
-    clearOrchestrationFilters,
     setReviewInbox,
     clearReviewInbox,
   } = useSearch();
@@ -549,11 +544,10 @@ export function TasksOverview() {
     () =>
       visibleTasks.filter(
         (task) =>
-          (task.status === 'inreview' ||
-            task.dispatch_state?.status === 'awaiting_human_review') &&
-          matchesOrchestrationFilters(task, orchestrationFilters)
+          task.status === 'inreview' ||
+          task.dispatch_state?.status === 'awaiting_human_review'
       ),
-    [orchestrationFilters, visibleTasks]
+    [visibleTasks]
   );
 
   const reviewInboxProjectNames = useMemo(
@@ -583,12 +577,8 @@ export function TasksOverview() {
   ]);
 
   const filteredTasks = useMemo(() => {
-    const laneFiltered = visibleTasks.filter((task) =>
-      matchesOrchestrationFilters(task, orchestrationFilters)
-    );
-
-    if (!hasSearch) return laneFiltered;
-    return laneFiltered.filter((task) => {
+    if (!hasSearch) return visibleTasks;
+    return visibleTasks.filter((task) => {
       const title = task.title.toLowerCase();
       const description = task.description?.toLowerCase() ?? '';
       return (
@@ -596,7 +586,7 @@ export function TasksOverview() {
         description.includes(normalizedSearch)
       );
     });
-  }, [hasSearch, normalizedSearch, orchestrationFilters, visibleTasks]);
+  }, [hasSearch, normalizedSearch, visibleTasks]);
 
   const tasksByProject = useMemo(() => {
     const grouped: Record<string, Task[]> = {};
@@ -770,12 +760,10 @@ export function TasksOverview() {
   }
 
   const hasVisibleTasks = filteredTasks.length > 0;
-  const hasActiveTaskFilters =
-    Boolean(searchQuery.trim()) || orchestrationFilters.length > 0;
+  const hasActiveTaskFilters = Boolean(searchQuery.trim());
 
   const handleResetVisibleFilters = () => {
     clearSearch();
-    clearOrchestrationFilters();
   };
 
   const overviewControls =

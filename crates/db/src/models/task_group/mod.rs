@@ -15,7 +15,7 @@ use crate::{
     entities::{task, task_group},
     events::{EVENT_TASK_UPDATED, TaskEventPayload},
     models::{event_outbox::EventOutbox, ids},
-    types::{TaskKind, TaskStatus},
+    types::{MilestoneAutomationMode, TaskKind, TaskStatus},
 };
 
 const SUPPORTED_SCHEMA_VERSION: i32 = 1;
@@ -50,6 +50,11 @@ pub struct TaskGroup {
     pub project_id: Uuid,
     pub title: String,
     pub description: Option<String>,
+    pub objective: Option<String>,
+    pub definition_of_done: Option<String>,
+    pub default_executor_profile_id: Option<ExecutorProfileId>,
+    pub automation_mode: MilestoneAutomationMode,
+    pub run_next_step_requested_at: Option<DateTime<Utc>>,
     pub status: TaskStatus,
     pub baseline_ref: String,
     pub schema_version: i32,
@@ -64,6 +69,10 @@ pub struct CreateTaskGroup {
     pub project_id: Uuid,
     pub title: String,
     pub description: Option<String>,
+    pub objective: Option<String>,
+    pub definition_of_done: Option<String>,
+    pub default_executor_profile_id: Option<ExecutorProfileId>,
+    pub automation_mode: Option<MilestoneAutomationMode>,
     pub status: Option<TaskStatus>,
     pub baseline_ref: String,
     pub schema_version: i32,
@@ -74,6 +83,10 @@ pub struct CreateTaskGroup {
 pub struct UpdateTaskGroup {
     pub title: Option<String>,
     pub description: Option<String>,
+    pub objective: Option<String>,
+    pub definition_of_done: Option<String>,
+    pub default_executor_profile_id: Option<Option<ExecutorProfileId>>,
+    pub automation_mode: Option<MilestoneAutomationMode>,
     pub status: Option<TaskStatus>,
     pub baseline_ref: Option<String>,
     pub schema_version: Option<i32>,
@@ -327,6 +340,10 @@ impl TaskGroup {
         let project_uuid = ids::project_uuid_by_id(db, model.project_id)
             .await?
             .ok_or(TaskGroupError::ProjectNotFound)?;
+        let default_executor_profile_id = match model.default_executor_profile_id {
+            Some(value) => Some(serde_json::from_value(value)?),
+            None => None,
+        };
         let graph = Self::parse_graph(model.graph_json)?;
         let status_map = Self::build_node_status_map(db, &graph.nodes).await?;
         let (graph_with_status, node_statuses) = Self::apply_node_statuses(graph, &status_map);
@@ -337,6 +354,11 @@ impl TaskGroup {
             project_id: project_uuid,
             title: model.title,
             description: model.description,
+            objective: model.objective,
+            definition_of_done: model.definition_of_done,
+            default_executor_profile_id,
+            automation_mode: model.automation_mode,
+            run_next_step_requested_at: model.run_next_step_requested_at.map(Into::into),
             status: model.status,
             baseline_ref: model.baseline_ref,
             schema_version: model.schema_version,
@@ -409,12 +431,31 @@ impl TaskGroup {
             .ok_or(TaskGroupError::ProjectNotFound)?;
 
         let graph_json = serde_json::to_value(data.graph.without_statuses())?;
+        let objective = data
+            .objective
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let definition_of_done = data
+            .definition_of_done
+            .as_ref()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let default_executor_profile_id = match data.default_executor_profile_id.as_ref() {
+            Some(profile) => Some(serde_json::to_value(profile)?),
+            None => None,
+        };
         let now = Utc::now();
         let active = task_group::ActiveModel {
             uuid: Set(task_group_id),
             project_id: Set(project_row_id),
             title: Set(data.title.clone()),
             description: Set(data.description.clone()),
+            objective: Set(objective),
+            definition_of_done: Set(definition_of_done),
+            default_executor_profile_id: Set(default_executor_profile_id),
+            automation_mode: Set(data.automation_mode.clone().unwrap_or_default()),
+            run_next_step_requested_at: Set(None),
             status: Set(data.status.clone().unwrap_or_default()),
             baseline_ref: Set(data.baseline_ref.clone()),
             schema_version: Set(data.schema_version),
@@ -435,7 +476,6 @@ impl TaskGroup {
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
             status: None,
-            automation_mode: None,
             task_kind: Some(TaskKind::Group),
             task_group_id: Some(task_group_id),
             task_group_node_id: None,
@@ -475,6 +515,10 @@ impl TaskGroup {
 
         let mut title = record.title.clone();
         let mut description = record.description.clone();
+        let mut objective = record.objective.clone();
+        let mut definition_of_done = record.definition_of_done.clone();
+        let mut default_executor_profile_id = record.default_executor_profile_id.clone();
+        let mut automation_mode = record.automation_mode.clone();
         let mut status = record.status.clone();
         let mut baseline_ref = record.baseline_ref.clone();
         let mut schema_version = record.schema_version;
@@ -490,6 +534,31 @@ impl TaskGroup {
             } else {
                 Some(trimmed.to_string())
             };
+        }
+        if let Some(value) = &data.objective {
+            let trimmed = value.trim();
+            objective = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Some(value) = &data.definition_of_done {
+            let trimmed = value.trim();
+            definition_of_done = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Some(value) = &data.default_executor_profile_id {
+            default_executor_profile_id = match value {
+                Some(profile) => Some(serde_json::to_value(profile)?),
+                None => None,
+            };
+        }
+        if let Some(value) = &data.automation_mode {
+            automation_mode = value.clone();
         }
         if let Some(value) = data.status.clone() {
             status = value;
@@ -508,6 +577,10 @@ impl TaskGroup {
         let mut active: task_group::ActiveModel = record.into();
         active.title = Set(title);
         active.description = Set(description);
+        active.objective = Set(objective);
+        active.definition_of_done = Set(definition_of_done);
+        active.default_executor_profile_id = Set(default_executor_profile_id);
+        active.automation_mode = Set(automation_mode);
         active.status = Set(status);
         active.baseline_ref = Set(baseline_ref);
         active.schema_version = Set(schema_version);
@@ -524,6 +597,44 @@ impl TaskGroup {
         }
 
         Self::from_model(db, updated).await
+    }
+
+    pub async fn request_run_next_step<C: ConnectionTrait>(
+        db: &C,
+        id: Uuid,
+    ) -> Result<DateTime<Utc>, TaskGroupError> {
+        let record = task_group::Entity::find()
+            .filter(task_group::Column::Uuid.eq(id))
+            .one(db)
+            .await?
+            .ok_or(TaskGroupError::TaskGroupNotFound)?;
+
+        let now = Utc::now();
+        let mut active: task_group::ActiveModel = record.into();
+        active.run_next_step_requested_at = Set(Some(now.into()));
+        active.updated_at = Set(now.into());
+        active.update(db).await?;
+
+        Ok(now)
+    }
+
+    pub async fn clear_run_next_step_request<C: ConnectionTrait>(
+        db: &C,
+        id: Uuid,
+    ) -> Result<(), TaskGroupError> {
+        let record = task_group::Entity::find()
+            .filter(task_group::Column::Uuid.eq(id))
+            .one(db)
+            .await?
+            .ok_or(TaskGroupError::TaskGroupNotFound)?;
+
+        let now = Utc::now();
+        let mut active: task_group::ActiveModel = record.into();
+        active.run_next_step_requested_at = Set(None);
+        active.updated_at = Set(now.into());
+        active.update(db).await?;
+
+        Ok(())
     }
 
     pub async fn delete<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<u64, TaskGroupError> {
@@ -887,6 +998,10 @@ mod tests {
                 project_id,
                 title: "Workflow".to_string(),
                 description: None,
+                objective: None,
+                definition_of_done: None,
+                default_executor_profile_id: None,
+                automation_mode: None,
                 status: None,
                 baseline_ref: "main".to_string(),
                 schema_version: SUPPORTED_SCHEMA_VERSION,
@@ -986,6 +1101,10 @@ mod tests {
                 project_id,
                 title: "Workflow".to_string(),
                 description: None,
+                objective: None,
+                definition_of_done: None,
+                default_executor_profile_id: None,
+                automation_mode: None,
                 status: None,
                 baseline_ref: "main".to_string(),
                 schema_version: SUPPORTED_SCHEMA_VERSION,
@@ -1048,6 +1167,10 @@ mod tests {
             &UpdateTaskGroup {
                 title: None,
                 description: None,
+                objective: None,
+                definition_of_done: None,
+                default_executor_profile_id: None,
+                automation_mode: None,
                 status: None,
                 baseline_ref: None,
                 schema_version: None,
@@ -1146,6 +1269,10 @@ mod tests {
                 project_id,
                 title: "Workflow".to_string(),
                 description: None,
+                objective: None,
+                definition_of_done: None,
+                default_executor_profile_id: None,
+                automation_mode: None,
                 status: None,
                 baseline_ref: "main".to_string(),
                 schema_version: SUPPORTED_SCHEMA_VERSION,

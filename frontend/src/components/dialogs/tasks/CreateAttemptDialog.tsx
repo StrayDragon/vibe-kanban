@@ -36,17 +36,17 @@ import type {
 } from '@/types/task-group';
 
 const getNodeTaskId = (node: TaskGroupGraphNode): string | undefined =>
-  node.task_id ?? node.taskId;
+  node.task_id;
 
 const getNodeExecutorProfileId = (
   node: TaskGroupGraphNode
 ): ExecutorProfileId | null =>
-  node.executor_profile_id ?? node.executorProfileId ?? null;
+  node.executor_profile_id;
 
 const getNodeBaseStrategy = (
   node: TaskGroupGraphNode
 ): TaskGroupNodeBaseStrategy =>
-  node.base_strategy ?? node.baseStrategy ?? 'topology';
+  node.base_strategy;
 
 export interface CreateAttemptDialogProps {
   taskId: string;
@@ -93,7 +93,7 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
     const { data: projectRepos = [], isLoading: isLoadingRepos } =
       useProjectRepos(projectId, { enabled: modal.visible });
 
-    const taskGroupGraph = taskGroup?.graph ?? taskGroup?.graph_json;
+    const taskGroupGraph = taskGroup?.graph ?? null;
     const taskGroupNode = useMemo(() => {
       if (!taskGroupGraph || !task) return null;
       return taskGroupGraph.nodes.find(

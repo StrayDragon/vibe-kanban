@@ -1,8 +1,7 @@
 use sea_orm::entity::prelude::*;
 
 use crate::types::{
-    ProjectExecutionMode, WorkspaceLifecycleHookFailurePolicy,
-    WorkspaceLifecycleHookRunMode,
+    WorkspaceLifecycleHookFailurePolicy, WorkspaceLifecycleHookRunMode,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
@@ -16,7 +15,6 @@ pub struct Model {
     pub dev_script_working_dir: Option<String>,
     pub default_agent_working_dir: Option<String>,
     pub git_no_verify_override: Option<bool>,
-    pub execution_mode: ProjectExecutionMode,
     pub scheduler_max_concurrent: i32,
     pub scheduler_max_retries: i32,
     pub after_prepare_hook_command: Option<String>,

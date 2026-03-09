@@ -303,7 +303,7 @@
     "updateStatusFailed": "Failed to update task status"
   },
   "navigateToParent": "Navigate to parent task attempt",
-  "openTaskGroup": "Open task group",
+  "openTaskGroup": "Open milestone",
   "taskGroupSubtaskCount_one": "{{count}} subtask",
   "taskGroupSubtaskCount_other": "{{count}} subtasks",
   "toolbar": {
@@ -644,7 +644,7 @@
     "editTitle": "Edit Task",
     "tabs": {
       "task": "Create Task",
-      "taskGroup": "Create Task Group"
+      "taskGroup": "Create Milestone"
     },
     "titlePlaceholder": "Task title...",
     "descriptionPlaceholder": "Add more details (optional). Type @ to search files.",
@@ -658,13 +658,6 @@
       "done": "Done",
       "cancelled": "Cancelled"
     },
-    "automationLabel": "Automation",
-    "automationHelper": "Inherit follows the project setting. Manual always waits for a human. Auto lets the scheduler manage this task in unattended mode.",
-    "automationOptions": {
-      "inherit": "Inherit project setting",
-      "manual": "Manual only",
-      "auto": "Auto managed"
-    },
     "startLabel": "Start",
     "attachImage": "Attach image",
     "dropImagesHere": "Drop images here",
@@ -672,7 +665,7 @@
     "updateTask": "Update Task",
     "starting": "Starting...",
     "creating": "Creating...",
-    "createTaskGroup": "Create Task Group",
+    "createTaskGroup": "Create Milestone",
     "create": "Create",
     "discardDialog": {
       "title": "Discard unsaved changes?",

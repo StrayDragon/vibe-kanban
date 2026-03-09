@@ -5,7 +5,7 @@ use db::{
     models::{
         image::TaskImage,
         project::{Project, ProjectError},
-        task::{CreateTask, Task, TaskKind, TaskStatus, TaskWithAttemptStatus, automation},
+        task::{CreateTask, Task, TaskKind, TaskStatus, TaskWithAttemptStatus},
         task_dispatch_state::TaskDispatchState,
         task_group::{
             TaskGroup, TaskGroupError, TaskGroupGraph, TaskGroupNode, TaskGroupNodeBaseStrategy,
@@ -144,17 +144,13 @@ pub async fn create_task_and_start<R: TaskRuntime + Sync>(
         .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
     let task_id = task.id;
 
-    let mut task_with_status = TaskWithAttemptStatus {
+    let task_with_status = TaskWithAttemptStatus {
         task,
         has_in_progress_attempt: true,
         last_attempt_failed: false,
         executor: input.executor_profile_id.executor.to_string(),
-        project_execution_mode: project.execution_mode.clone(),
-        effective_automation_mode: project.execution_mode,
         dispatch_state: TaskDispatchState::find_by_task_id(db, task_id).await?,
-        automation_diagnostic: None,
     };
-    automation::enrich_task_with_automation_context(&mut task_with_status);
     Ok(task_with_status)
 }
 
@@ -264,13 +260,17 @@ fn find_task_group_node<'a>(
 }
 
 fn resolve_executor_profile_id(
+    task_group: &TaskGroup,
     task_group_node: &TaskGroupNode,
     fallback: ExecutorProfileId,
 ) -> ExecutorProfileId {
-    task_group_node
-        .executor_profile_id
-        .clone()
-        .unwrap_or(fallback)
+    if let Some(profile_id) = task_group_node.executor_profile_id.clone() {
+        return profile_id;
+    }
+    if let Some(profile_id) = task_group.default_executor_profile_id.clone() {
+        return profile_id;
+    }
+    fallback
 }
 
 async fn resolve_topology_base_branches(
@@ -416,7 +416,8 @@ async fn resolve_attempt_plan(
         }
 
         let task_group_node = find_task_group_node(&task_group.graph, node_id)?;
-        executor_profile_id = resolve_executor_profile_id(task_group_node, executor_profile_id);
+        executor_profile_id =
+            resolve_executor_profile_id(&task_group, task_group_node, executor_profile_id);
 
         match &task_group_node.base_strategy {
             TaskGroupNodeBaseStrategy::Baseline => {

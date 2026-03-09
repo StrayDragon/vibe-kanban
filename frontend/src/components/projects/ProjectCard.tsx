@@ -19,14 +19,12 @@ import {
   MoreHorizontal,
   Trash2,
 } from 'lucide-react';
-import { Project } from 'shared/types';
+import type { Project } from 'shared/types';
 import { useEffect, useRef } from 'react';
 import { useOpenProjectInEditor } from '@/hooks/projects/useOpenProjectInEditor';
 import { useNavigateWithSearch, useProjectRepos } from '@/hooks';
 import { projectsApi } from '@/lib/api';
 import { useTranslation } from 'react-i18next';
-import { Badge } from '@/components/ui/badge.tsx';
-import { getProjectExecutionModeLabel } from '@/utils/automation';
 import { ConfirmDialog } from '@/components/dialogs';
 
 type Props = {
@@ -102,11 +100,6 @@ function ProjectCard({ project, isFocused, setError, onEdit }: Props) {
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-2">
             <CardTitle className="text-lg">{project.name}</CardTitle>
-            {project.execution_mode === 'auto' && (
-              <Badge variant="default">
-                {getProjectExecutionModeLabel(project.execution_mode)}
-              </Badge>
-            )}
           </div>
           <div className="flex items-center gap-2">
             <DropdownMenu>

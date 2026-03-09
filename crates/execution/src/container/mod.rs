@@ -178,6 +178,34 @@ fn append_node_instructions_to_prompt(base_prompt: &str, instructions: &str) -> 
     }
 }
 
+fn append_milestone_context_to_prompt(
+    base_prompt: &str,
+    objective: Option<&str>,
+    definition_of_done: Option<&str>,
+) -> String {
+    let objective = objective.map(str::trim).filter(|value| !value.is_empty());
+    let definition_of_done = definition_of_done
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if objective.is_none() && definition_of_done.is_none() {
+        return base_prompt.to_string();
+    }
+
+    let mut sections = Vec::new();
+    if let Some(objective) = objective {
+        sections.push(format!("Objective:\n{objective}"));
+    }
+    if let Some(definition_of_done) = definition_of_done {
+        sections.push(format!("Definition of done:\n{definition_of_done}"));
+    }
+
+    format!(
+        "{base_prompt}\n\n---\n\nMilestone context:\n{}",
+        sections.join("\n\n")
+    )
+}
+
 async fn resolve_log_persistence_config(pool: &db::DbPool) -> LogPersistenceConfig {
     let log_entries_available = ExecutionProcessLogEntry::table_available(pool).await;
 
@@ -550,11 +578,10 @@ pub trait ContainerService {
                                     project.default_agent_working_dir.clone()
                                 },
                                 git_no_verify_override: None,
-                                execution_mode: None,
                                 scheduler_max_concurrent: None,
                                 scheduler_max_retries: None,
-                            after_prepare_hook: None,
-                            before_cleanup_hook: None,
+                                after_prepare_hook: None,
+                                before_cleanup_hook: None,
                             },
                         )
                         .await?;
@@ -1838,6 +1865,28 @@ pub trait ContainerService {
             if !node_key.is_empty() {
                 match TaskGroup::find_by_id(&self.db().pool, task_group_id).await {
                     Ok(Some(task_group)) => {
+                        let prompt_with_milestone = append_milestone_context_to_prompt(
+                            &prompt,
+                            task_group.objective.as_deref(),
+                            task_group.definition_of_done.as_deref(),
+                        );
+                        if prompt_with_milestone != prompt {
+                            tracing::info!(
+                                task_id = %task.id,
+                                task_group_id = %task_group_id,
+                                node_id = %node_key,
+                                "Appending milestone objective/definition-of-done to prompt"
+                            );
+                            prompt = prompt_with_milestone;
+                        } else {
+                            tracing::info!(
+                                task_id = %task.id,
+                                task_group_id = %task_group_id,
+                                node_id = %node_key,
+                                "No milestone objective/definition-of-done to append"
+                            );
+                        }
+
                         let node = task_group
                             .graph
                             .nodes
@@ -2305,6 +2354,33 @@ mod tests {
     fn append_node_instructions_to_prompt_skips_blank_instructions() {
         let base = "Base prompt";
         assert_eq!(append_node_instructions_to_prompt(base, " \n\t "), base);
+    }
+
+    #[test]
+    fn append_milestone_context_to_prompt_appends_objective_and_definition_of_done() {
+        let base = "Base prompt";
+        let result = append_milestone_context_to_prompt(
+            base,
+            Some("  Ship v1  "),
+            Some("  All tests pass  "),
+        );
+
+        assert!(result.starts_with(base));
+        assert!(result.contains("Milestone context:"));
+        assert!(result.contains("Objective:"));
+        assert!(result.contains("Ship v1"));
+        assert!(result.contains("Definition of done:"));
+        assert!(result.contains("All tests pass"));
+    }
+
+    #[test]
+    fn append_milestone_context_to_prompt_skips_blank_fields() {
+        let base = "Base prompt";
+        assert_eq!(
+            append_milestone_context_to_prompt(base, Some(" \n\t "), Some("")),
+            base
+        );
+        assert_eq!(append_milestone_context_to_prompt(base, None, None), base);
     }
 
     #[test]

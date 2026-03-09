@@ -52,7 +52,6 @@ import { paths } from '@/lib/paths';
 import { uiIds } from '@/lib/uiIds';
 import { taskKeys } from '@/hooks/tasks/useTask';
 import type {
-  TaskAutomationMode,
   TaskStatus,
   ExecutorProfileId,
   ImageResponse,
@@ -82,7 +81,6 @@ type TaskFormValues = {
   title: string;
   description: string;
   status: TaskStatus;
-  automationMode: TaskAutomationMode;
   executorProfileId: ExecutorProfileId | null;
   repoBranches: RepoBranch[];
   autoStart: boolean;
@@ -153,7 +151,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
       }
     },
     onError: (err) => {
-      console.error('Failed to create task group:', err);
+      console.error('Failed to create milestone:', err);
     },
   });
 
@@ -167,7 +165,6 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           title: props.task.title,
           description: props.task.description || '',
           status: props.task.status,
-          automationMode: props.task.automation_mode,
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: false,
@@ -179,7 +176,6 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           title: props.initialTask.title,
           description: props.initialTask.description || '',
           status: 'todo',
-          automationMode: props.initialTask.automation_mode,
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: true,
@@ -193,7 +189,6 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           title: '',
           description: '',
           status: 'todo',
-          automationMode: 'inherit',
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: true,
@@ -218,7 +213,6 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
             title: value.title,
             description: value.description,
             status: value.status,
-            automation_mode: value.automationMode,
             parent_workspace_id: null,
             image_ids: images.length > 0 ? images.map((img) => img.id) : null,
           },
@@ -234,6 +228,10 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
         project_id: projectId,
         title: value.title,
         description: value.description.trim().length ? value.description : null,
+        objective: null,
+        definition_of_done: null,
+        default_executor_profile_id: null,
+        automation_mode: null,
         status: null,
         baseline_ref: baselineRef,
         schema_version: 1,
@@ -251,7 +249,6 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
         title: value.title,
         description: value.description,
         status: null,
-        automation_mode: value.automationMode,
         task_kind: null,
         task_group_id: null,
         task_group_node_id: null,
@@ -344,7 +341,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
 
           // Add markdown image reference to description
           const markdownText = `![${img.original_name}](${img.file_path})`;
-          form.setFieldValue('description', (prev) =>
+          form.setFieldValue('description', (prev: string) =>
             prev.trim() === '' ? markdownText : `${prev} ${markdownText}`
           );
           setImages((prev) => [...prev, img]);
@@ -590,46 +587,6 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                 />
               )}
             </form.Field>
-            {/* Task automation */}
-            {!isTaskGroupCreate && (
-              <form.Field name="automationMode">
-                {(field) => (
-                  <div className="space-y-2">
-                    <Label
-                      htmlFor="task-automation-mode"
-                      className="text-sm font-medium"
-                    >
-                      {t('taskFormDialog.automationLabel')}
-                    </Label>
-                    <Select
-                      value={field.state.value}
-                      onValueChange={(value) =>
-                        field.handleChange(value as TaskAutomationMode)
-                      }
-                      disabled={isSubmitting}
-                    >
-                      <SelectTrigger id="task-automation-mode">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="inherit">
-                          {t('taskFormDialog.automationOptions.inherit')}
-                        </SelectItem>
-                        <SelectItem value="manual">
-                          {t('taskFormDialog.automationOptions.manual')}
-                        </SelectItem>
-                        <SelectItem value="auto">
-                          {t('taskFormDialog.automationOptions.auto')}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      {t('taskFormDialog.automationHelper')}
-                    </p>
-                  </div>
-                )}
-              </form.Field>
-            )}
             {/* Edit mode status */}
             {editMode && (
               <form.Field name="status">
@@ -738,7 +695,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                             const config = repoBranchConfigs[0];
                             const selectedBranch =
                               field.state.value.find(
-                                (v) => v.repoId === config.repoId
+                                (v: RepoBranch) => v.repoId === config.repoId
                               )?.branch ?? config.targetBranch;
                             return (
                               <div
@@ -775,18 +732,18 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                             ...config,
                             targetBranch:
                               field.state.value.find(
-                                (v) => v.repoId === config.repoId
+                                (v: RepoBranch) => v.repoId === config.repoId
                               )?.branch ?? config.targetBranch,
                           }));
                           return (
                             <RepoBranchSelector
                               configs={configs}
                               onBranchChange={(repoId, branch) => {
-                                const newValue = field.state.value.map((v) =>
+                                const newValue = field.state.value.map((v: RepoBranch) =>
                                   v.repoId === repoId ? { ...v, branch } : v
                                 );
                                 if (
-                                  !newValue.find((v) => v.repoId === repoId)
+                                  !newValue.find((v: RepoBranch) => v.repoId === repoId)
                                 ) {
                                   newValue.push({ repoId, branch });
                                 }

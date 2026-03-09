@@ -26,7 +26,6 @@ import {
 } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { SearchBar } from '@/components/SearchBar';
-import { TaskOrchestrationFilterMenu } from '@/components/tasks/TaskOrchestrationFilterMenu';
 import { TaskReviewInbox } from '@/components/tasks/TaskReviewInbox';
 import { useSearch } from '@/contexts/SearchContext';
 import { openTaskForm } from '@/lib/openTaskForm';
@@ -84,9 +83,6 @@ export function Navbar() {
     active,
     clear,
     registerInputRef,
-    orchestrationFilters,
-    toggleOrchestrationFilter,
-    clearOrchestrationFilters,
     reviewInbox,
   } = useSearch();
   const handleOpenInEditor = useOpenProjectInEditor(project || null);
@@ -321,26 +317,9 @@ export function Navbar() {
               onClear={clear}
               project={project || null}
             />
-            {active && (
-              <TaskOrchestrationFilterMenu
-                className="shrink-0"
-                selectedFilters={orchestrationFilters}
-                onToggleFilter={toggleOrchestrationFilter}
-                onClearFilters={clearOrchestrationFilters}
-              />
-            )}
           </div>
 
           <div className="flex flex-1 items-center justify-end gap-1">
-            {active && (
-              <TaskOrchestrationFilterMenu
-                className="sm:hidden"
-                compact
-                selectedFilters={orchestrationFilters}
-                onToggleFilter={toggleOrchestrationFilter}
-                onClearFilters={clearOrchestrationFilters}
-              />
-            )}
             {showProjectActions ? (
               <>
                 <div className="flex items-center gap-1">

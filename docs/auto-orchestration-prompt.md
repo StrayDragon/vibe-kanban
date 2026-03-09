@@ -7,8 +7,6 @@ Task context:
 - Title: {task_title}
 - Current status: {task_status}
 - Project: {project_name}
-- Project execution mode: {project_execution_mode}
-- Task automation mode: {task_automation_mode}
 
 Description:
 {task_description}

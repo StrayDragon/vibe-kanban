@@ -10,7 +10,6 @@ import { attemptsApi } from '@/lib/api';
 import { TaskCardHeader } from './TaskCardHeader';
 import { useTranslation } from 'react-i18next';
 import { getTaskGroupId, isTaskGroupEntry } from '@/utils/taskGroup';
-import { TaskAutomationIndicators } from '@/components/tasks/TaskAutomationIndicators';
 
 type Task = TaskWithAttemptStatus;
 
@@ -49,7 +48,7 @@ export function TaskCard({
   const showSubtaskTitle =
     isGroupedTask && groupTitle && groupTitle !== task.title;
   const typeLabel = isTaskGroup
-    ? 'Task Group'
+    ? 'Milestone'
     : isGroupedTask
       ? 'Subtask'
       : 'Task';
@@ -150,7 +149,6 @@ export function TaskCard({
             {typeLabel}
           </span>
         </div>
-        <TaskAutomationIndicators task={task} hideReviewOwnership />
         {groupSummary && groupSummary.subtaskCount > 0 && (
           <div className="text-xs text-muted-foreground">
             {t('taskGroupSubtaskCount', { count: groupSummary.subtaskCount })}

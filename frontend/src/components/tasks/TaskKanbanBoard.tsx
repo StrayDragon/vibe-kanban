@@ -50,7 +50,7 @@ function TaskKanbanBoard({
         if (!isTaskGroupEntry(task)) return;
         const groupId = getTaskGroupId(task);
         if (!groupId || map.has(groupId)) return;
-        map.set(groupId, task.title || 'Task Group');
+        map.set(groupId, task.title || 'Milestone');
       });
     });
 
@@ -82,7 +82,7 @@ function TaskKanbanBoard({
           group = {
             type: 'group',
             groupId,
-            title: taskGroupTitles.get(groupId) ?? 'Task Group',
+            title: taskGroupTitles.get(groupId) ?? 'Milestone',
             tasks: [],
           };
           groups.set(groupId, group);

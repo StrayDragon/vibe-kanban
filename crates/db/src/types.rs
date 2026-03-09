@@ -51,35 +51,8 @@ pub enum TaskStatus {
 #[sea_orm(rs_type = "String", db_type = "Text")]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
-pub enum ProjectExecutionMode {
+pub enum MilestoneAutomationMode {
     #[default]
-    #[sea_orm(string_value = "manual")]
-    Manual,
-    #[sea_orm(string_value = "auto")]
-    Auto,
-}
-
-#[derive(
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    EnumIter,
-    DeriveActiveEnum,
-    Serialize,
-    Deserialize,
-    TS,
-    EnumString,
-    Display,
-    Default,
-)]
-#[sea_orm(rs_type = "String", db_type = "Text")]
-#[serde(rename_all = "lowercase")]
-#[strum(serialize_all = "lowercase")]
-pub enum TaskAutomationMode {
-    #[default]
-    #[sea_orm(string_value = "inherit")]
-    Inherit,
     #[sea_orm(string_value = "manual")]
     Manual,
     #[sea_orm(string_value = "auto")]
@@ -113,47 +86,6 @@ pub enum TaskCreatedByKind {
     Scheduler,
     #[sea_orm(string_value = "agent_followup")]
     AgentFollowup,
-}
-
-#[derive(
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    EnumIter,
-    DeriveActiveEnum,
-    Serialize,
-    Deserialize,
-    TS,
-    EnumString,
-    Display,
-)]
-#[sea_orm(rs_type = "String", db_type = "Text")]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum TaskAutomationReasonCode {
-    #[sea_orm(string_value = "project_manual")]
-    ProjectManual,
-    #[sea_orm(string_value = "task_manual_override")]
-    TaskManualOverride,
-    #[sea_orm(string_value = "task_group_unsupported")]
-    TaskGroupUnsupported,
-    #[sea_orm(string_value = "retry_not_ready")]
-    RetryNotReady,
-    #[sea_orm(string_value = "retry_exhausted")]
-    RetryExhausted,
-    #[sea_orm(string_value = "awaiting_human_review")]
-    AwaitingHumanReview,
-    #[sea_orm(string_value = "concurrency_limit_reached")]
-    ConcurrencyLimitReached,
-    #[sea_orm(string_value = "no_project_repos")]
-    NoProjectRepos,
-    #[sea_orm(string_value = "base_branch_unresolved")]
-    BaseBranchUnresolved,
-    #[sea_orm(string_value = "workspace_hook_failed")]
-    WorkspaceHookFailed,
-    #[sea_orm(string_value = "blocked")]
-    Blocked,
 }
 
 #[derive(

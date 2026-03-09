@@ -6,11 +6,7 @@ import { useTaskAttemptWithSession } from '@/hooks/task-attempts/useTaskAttempt'
 import { useNavigateWithSearch } from '@/hooks';
 import { useTaskMutations } from '@/hooks/tasks/useTaskMutations';
 import { paths } from '@/lib/paths';
-import type {
-  TaskAutomationMode,
-  TaskStatus,
-  TaskWithAttemptStatus,
-} from 'shared/types';
+import type { TaskWithAttemptStatus } from 'shared/types';
 import type { WorkspaceWithSession } from '@/types/attempt';
 import { NewCardContent } from '../ui/new-card';
 import { Button } from '../ui/button';
@@ -18,10 +14,8 @@ import { PlusIcon } from 'lucide-react';
 import { CreateAttemptDialog } from '@/components/dialogs/tasks/CreateAttemptDialog';
 import WYSIWYGEditor from '@/components/ui/wysiwyg';
 import { DataTable, type ColumnDef } from '@/components/ui/table';
-import { TaskHandoffCard } from '@/components/tasks/TaskHandoffCard';
 import { TaskLineageCard } from '@/components/tasks/TaskLineageCard';
-import { TaskOwnershipBanner } from '@/components/tasks/TaskOwnershipBanner';
-import { getResumeAutomationMode } from '@/utils/automation';
+import { Badge } from '@/components/ui/badge';
 
 interface TaskPanelProps {
   task: TaskWithAttemptStatus | null;
@@ -89,46 +83,11 @@ const TaskPanel = ({
     (a, b) =>
       new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   );
-  const latestAttempt = displayedAttempts[0];
-
-  const updateTaskFields = useCallback(
-    (patch: {
-      status?: TaskStatus | null;
-      automation_mode?: TaskAutomationMode | null;
-    }) => {
-      if (!task?.id) return;
-      updateTask.mutate({
-        taskId: task.id,
-        data: {
-          title: null,
-          description: null,
-          status: patch.status ?? null,
-          automation_mode: patch.automation_mode ?? null,
-          parent_workspace_id: null,
-          image_ids: null,
-        },
-      });
-    },
-    [task?.id, updateTask]
-  );
 
   const handleStartAttempt = useCallback(() => {
     if (!task?.id) return;
     CreateAttemptDialog.show({ taskId: task.id });
   }, [task?.id]);
-
-  const handleEnableAuto = useCallback(() => {
-    if (!task) return;
-    updateTaskFields({ automation_mode: getResumeAutomationMode(task) });
-  }, [task, updateTaskFields]);
-
-  const handleTakeOverManually = useCallback(() => {
-    if (!task) return;
-    updateTaskFields({
-      automation_mode: 'manual',
-      status: task.status === 'inreview' ? 'todo' : null,
-    });
-  }, [task, updateTaskFields]);
 
   if (!task) {
     return (
@@ -167,13 +126,45 @@ const TaskPanel = ({
     <NewCardContent>
       <div className="p-6 flex flex-col h-full max-h-[calc(100vh-8rem)]">
         <div className="space-y-4 overflow-y-auto flex-shrink min-h-0">
-          <TaskOwnershipBanner
-            task={task}
-            onStartAttempt={handleStartAttempt}
-            onEnableAuto={handleEnableAuto}
-            onTakeOverManually={handleTakeOverManually}
-            isMutating={updateTask.isPending}
-          />
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">{task.status}</Badge>
+              {task.dispatch_state?.status === 'awaiting_human_review' && (
+                <Badge variant="secondary">
+                  {t('taskPanel.needsReview', 'Needs review')}
+                </Badge>
+              )}
+              {task.last_attempt_failed && (
+                <Badge variant="destructive">
+                  {t('taskPanel.lastAttemptFailed', 'Last attempt failed')}
+                </Badge>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {task.task_group_id && resolvedProjectId && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    navigate(
+                      paths.taskGroupWorkflow(resolvedProjectId, task.task_group_id!)
+                    )
+                  }
+                >
+                  {t('taskGroup.openWorkflow', 'Open milestone')}
+                </Button>
+              )}
+              {!isTaskGroupEntry && (
+                <Button
+                  size="sm"
+                  onClick={handleStartAttempt}
+                  disabled={updateTask.isPending}
+                >
+                  {t('actionsMenu.createNewAttempt')}
+                </Button>
+              )}
+            </div>
+          </div>
 
           <WYSIWYGEditor value={titleContent} disabled taskId={task.id} />
           {descriptionContent && (
@@ -183,13 +174,6 @@ const TaskPanel = ({
               taskId={task.id}
             />
           )}
-
-          <TaskHandoffCard
-            task={task}
-            latestAttempt={latestAttempt}
-            projectId={resolvedProjectId}
-            buildAttemptPath={attemptPath}
-          />
 
           <TaskLineageCard task={task} buildTaskPath={buildTaskPath} />
         </div>
