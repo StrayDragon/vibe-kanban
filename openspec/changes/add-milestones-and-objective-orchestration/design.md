@@ -44,7 +44,17 @@ Milestone should therefore be a **TaskGroup with additional milestone metadata**
 
 This avoids duplicating linking tables and keeps milestone editing (add/remove nodes, adjust dependencies) within the existing workflow surface.
 
-### 2. Milestone metadata lives on the TaskGroup record (queryable columns, not only in JSON)
+### 2. Milestone automation is explicit and does not require project auto mode
+
+Milestone automation defaults to manual and becomes eligible for unattended dispatch only when a human explicitly enables it on the milestone.
+
+Milestone automation SHALL NOT require `project.execution_mode=auto`. This matches the existing VK safety model: projects default to manual, but explicit opt-ins (task-level auto overrides, and now milestone-level automation) may still run under the scheduler.
+
+Safety/precedence rules:
+- Per-task manual take-over (`task.automation_mode=manual`) remains a hard stop even if milestone automation is enabled.
+- Project scheduler limits (`scheduler_max_concurrent`, retries) still constrain dispatch.
+
+### 3. Milestone metadata lives on the TaskGroup record (queryable columns, not only in JSON)
 
 Add explicit DB columns to `task_groups` for milestone concerns:
 - `objective` (TEXT, nullable): the desired end-state, written for an agent and a human reviewer.
@@ -57,7 +67,7 @@ Rationale:
 - columns avoid versioning an ad-hoc JSON schema inside `graph_json`
 - the graph remains the graph; milestone metadata remains stable across graph edits
 
-### 3. Preset precedence: node override > milestone default > system default
+### 4. Preset precedence: node override > milestone default > system default
 
 When starting a milestone node attempt (UI or scheduler):
 1. If `TaskGroupNode.executorProfileId` is set, use it.
@@ -66,7 +76,7 @@ When starting a milestone node attempt (UI or scheduler):
 
 This makes milestone presets useful without removing fine-grained per-node tuning.
 
-### 4. One-step-at-a-time progression is enforced by eligibility, not by a background “loop”
+### 5. One-step-at-a-time progression is enforced by eligibility, not by a background “loop”
 
 Milestone automation must be bounded and predictable:
 - At most one in-progress attempt is allowed across all node tasks in a milestone.
@@ -80,7 +90,20 @@ This approach:
 - reuses the current scheduler model (poll + claim + start) instead of adding a second orchestrator loop
 - avoids races with task finalization by keeping the scheduler as the one writer that starts attempts
 
-### 5. Continuation within a node requires an explicit signal, defaulting to stop
+### 6. “Run next step” is a scheduler enqueue, not a direct start
+
+The milestone UI needs a safe “advance once” control that respects concurrency limits and avoids bypassing scheduler logic.
+
+Decision: “Run next step” enqueues a request for the scheduler rather than directly starting an attempt from the HTTP handler.
+
+Implementation shape (v1):
+- Persist a milestone-scoped enqueue request (for example `task_groups.run_next_step_requested_at`).
+- The scheduler prioritizes milestones with a pending request, attempts to dispatch the next eligible node once, and then clears the request.
+- This works whether the project is manual or auto, and whether milestone automation is enabled or not.
+
+This keeps concurrency enforcement centralized and makes “advance once” durable and inspectable.
+
+### 7. Continuation within a node requires an explicit signal, defaulting to stop
 
 This change does not invent a new completion protocol. It integrates with the continuation signal defined by `add-turn-continuation-orchestration`:
 - agents emit a parseable marker (for example `VK_NEXT: continue|review`) in their final message
@@ -89,7 +112,7 @@ This change does not invent a new completion protocol. It integrates with the co
 
 Milestone “definition of done” is injected into the prompt so agents have a stable target when deciding whether to continue.
 
-### 6. UX is data-dense, drill-down, and reuse-first
+### 8. UX is data-dense, drill-down, and reuse-first
 
 Use the existing workflow view as the Milestone “detail” surface:
 - master (entry) node panel shows milestone objective/DoD + automation toggle + “run next step”
@@ -123,6 +146,4 @@ Accessibility and interaction guardrails (from UI/UX baseline):
 
 ## Open Questions
 
-- Do we want milestone `automation_mode` to be independent from project `execution_mode`, or should milestone automation require both to be `auto`?
-- Should “run next step” be a scheduler-owned action (enqueue) or a direct “start attempt” API call (more immediate but riskier for concurrency)?
 - Do we need a separate milestone MCP tool surface in v1, or is HTTP + existing task MCP sufficient?

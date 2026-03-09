@@ -17,9 +17,15 @@ The scheduler SHALL only auto-dispatch internal tasks that are eligible under cu
 #### Scenario: Milestone-managed grouped tasks are eligible for dispatch
 - **WHEN** a task belongs to a task group node
 - **AND** the owning task group is eligible for unattended milestone dispatch
+- **AND** the owning project's execution mode is `manual` or `auto`
 - **AND** the task group has no other node task with an in-progress attempt
 - **AND** the node's predecessor nodes are all `done`
 - **THEN** the scheduler SHALL treat the node task as eligible for dispatch through the existing orchestration flow
+
+#### Scenario: Task-level manual override blocks milestone dispatch
+- **WHEN** a task belongs to a task group node
+- **AND** the task's automation mode is `manual`
+- **THEN** the scheduler SHALL NOT auto-dispatch the task
 
 #### Scenario: Manual project does not dispatch inherited tasks
 - **WHEN** a task inherits automation settings from a project in `manual` mode

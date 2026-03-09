@@ -37,6 +37,11 @@ Each milestone SHALL expose an automation mode that controls whether milestone n
 - **WHEN** a milestone automation mode is enabled
 - **THEN** eligible milestone node tasks MAY become dispatch candidates subject to the normal scheduler safety rules
 
+#### Scenario: Milestone automation does not require project auto mode
+- **WHEN** a milestone automation mode is enabled
+- **AND** the owning project's execution mode is `manual`
+- **THEN** eligible milestone node tasks MAY become dispatch candidates subject to the normal scheduler safety rules
+
 ### Requirement: Milestones advance one eligible node at a time
 When a milestone is automated, the system SHALL ensure that at most one milestone node task has an in-progress attempt at a time.
 
@@ -72,3 +77,18 @@ The system SHALL provide a way for a human operator to pause milestone automatio
 #### Scenario: Resume milestone automation
 - **WHEN** a human resumes milestone automation
 - **THEN** eligible nodes become dispatch candidates again subject to the normal scheduler rules
+
+### Requirement: Milestones support enqueued “run next step”
+The system SHALL allow a human operator to request that a milestone advance by exactly one eligible node via a scheduler-enqueued action.
+
+This action SHALL respect scheduler concurrency constraints and SHALL NOT bypass the scheduler by directly starting an attempt from the request handler.
+
+#### Scenario: Enqueue next step
+- **WHEN** a user requests “run next step” for a milestone
+- **THEN** the system records a pending enqueue request for that milestone
+- **AND** the scheduler attempts to dispatch the next eligible node task once
+
+#### Scenario: Enqueue respects concurrency limits
+- **WHEN** a user requests “run next step” for a milestone
+- **AND** the project has no available scheduler slots
+- **THEN** the request remains pending until a slot is available
