@@ -16,19 +16,19 @@ test('dev-mode smoke: create task and see fake-agent output', async ({ page }) =
 
   await page.goto('/tasks');
 
-  await page.getByRole('button', { name: 'Create Project' }).click();
+  await page.getByTestId('tasks-overview-create-project').click();
 
-  await page.getByText('Create New Repository', { exact: true }).click();
-  await page.locator('#repo-name').fill(repoName);
-  await page.locator('#parent-path').fill(repoParentDir);
-  await page.getByRole('button', { name: 'Create Repository' }).click();
+  await page.getByTestId('repo-picker-option-new').click();
+  await page.getByTestId('repo-picker-name').fill(repoName);
+  await page.getByTestId('repo-picker-parent-path').fill(repoParentDir);
+  await page.getByTestId('repo-picker-submit-create').click();
 
   await page.waitForURL(/\/projects\/[^/]+\/tasks/);
 
-  await page.getByLabel('Create new task').click();
-  await page.locator('#task-title').fill(taskTitle);
+  await page.getByTestId('navbar-create-task').click();
+  await page.getByTestId('task-form-title').fill(taskTitle);
 
-  const createButton = page.getByRole('button', { name: 'Create' });
+  const createButton = page.getByTestId('task-form-submit');
   await expect(createButton).toBeEnabled();
   await createButton.click();
 

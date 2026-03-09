@@ -337,6 +337,7 @@ export function Navbar() {
                       className="h-9 w-9"
                       onClick={handleCreateTask}
                       aria-label="Create new task"
+                      data-testid="navbar-create-task"
                     >
                       <Plus className="h-4 w-4" />
                     </Button>

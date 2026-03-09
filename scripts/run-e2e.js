@@ -28,6 +28,20 @@ function writeJson(filePath, value) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function shouldCopySeedAsset(srcPath) {
+  const stat = fs.statSync(srcPath);
+  if (stat.isDirectory()) {
+    return true;
+  }
+
+  const lowerName = path.basename(srcPath).toLowerCase();
+  return !(
+    lowerName.endsWith('.db') ||
+    lowerName.endsWith('.sqlite') ||
+    lowerName.endsWith('.sqlite3')
+  );
+}
+
 function spawnLogged(command, args, options) {
   const child = spawn(command, args, options);
   child.on('exit', (code, signal) => {
@@ -113,12 +127,16 @@ async function main() {
   const reposDir = path.join(e2eRoot, 'repos');
 
   fs.mkdirSync(e2eRoot, { recursive: true });
-  fs.mkdirSync(reposDir, { recursive: true });
   rmDirIfExists(assetDir);
+  rmDirIfExists(reposDir);
+  fs.mkdirSync(reposDir, { recursive: true });
 
   const seedAssetsDir = path.join(repoRoot, 'dev_assets_seed');
   if (fs.existsSync(seedAssetsDir)) {
-    fs.cpSync(seedAssetsDir, assetDir, { recursive: true });
+    fs.cpSync(seedAssetsDir, assetDir, {
+      recursive: true,
+      filter: shouldCopySeedAsset,
+    });
   } else {
     fs.mkdirSync(assetDir, { recursive: true });
   }

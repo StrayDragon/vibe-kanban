@@ -850,7 +850,11 @@ export function TasksOverview() {
           <p className="mt-2 text-sm text-muted-foreground">
             {t('projects:empty.description')}
           </p>
-          <Button className="mt-4" onClick={handleCreateProject}>
+          <Button
+            className="mt-4"
+            onClick={handleCreateProject}
+            data-testid="tasks-overview-create-project"
+          >
             <Plus className="mr-2 h-4 w-4" />
             {t('projects:createProject')}
           </Button>

@@ -546,6 +546,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
               {(field) => (
                 <Input
                   id="task-title"
+                  data-testid="task-form-title"
                   value={field.state.value}
                   onChange={(e) => field.handleChange(e.target.value)}
                   placeholder={t('taskFormDialog.titlePlaceholder')}
@@ -860,7 +861,11 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                         : t('taskFormDialog.create');
 
                   return (
-                    <Button onClick={form.handleSubmit} disabled={!canSubmit}>
+                    <Button
+                      onClick={form.handleSubmit}
+                      disabled={!canSubmit}
+                      data-testid="task-form-submit"
+                    >
                       {buttonText}
                     </Button>
                   );

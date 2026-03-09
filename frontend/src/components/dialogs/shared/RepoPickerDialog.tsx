@@ -167,9 +167,11 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
               {/* Stage: Options */}
               {stage === 'options' && (
                 <>
-                  <div
-                    className="p-4 border cursor-pointer hover:shadow-md transition-shadow rounded-lg bg-card"
+                  <button
+                    type="button"
+                    className="w-full rounded-lg border bg-card p-4 text-left transition-shadow hover:shadow-md"
                     onClick={() => setStage('existing')}
+                    data-testid="repo-picker-option-existing"
                   >
                     <div className="flex items-start gap-3">
                       <FolderGit className="h-5 w-5 mt-0.5 flex-shrink-0 text-muted-foreground" />
@@ -182,11 +184,13 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </button>
 
-                  <div
-                    className="p-4 border cursor-pointer hover:shadow-md transition-shadow rounded-lg bg-card"
+                  <button
+                    type="button"
+                    className="w-full rounded-lg border bg-card p-4 text-left transition-shadow hover:shadow-md"
                     onClick={() => setStage('new')}
+                    data-testid="repo-picker-option-new"
                   >
                     <div className="flex items-start gap-3">
                       <FolderPlus className="h-5 w-5 mt-0.5 flex-shrink-0 text-muted-foreground" />
@@ -199,7 +203,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </button>
                 </>
               )}
 
@@ -207,6 +211,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
               {stage === 'existing' && (
                 <>
                   <button
+                    type="button"
                     className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1"
                     onClick={goBack}
                     disabled={isWorking}
@@ -231,10 +236,12 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                       {allRepos
                         .slice(0, showMoreRepos ? allRepos.length : 3)
                         .map((repo) => (
-                          <div
+                          <button
                             key={repo.path}
-                            className="p-4 border cursor-pointer hover:shadow-md transition-shadow rounded-lg bg-card"
+                            type="button"
+                            className="w-full rounded-lg border bg-card p-4 text-left transition-shadow hover:shadow-md"
                             onClick={() => !isWorking && handleSelectRepo(repo)}
+                            disabled={isWorking}
                           >
                             <div className="flex items-start gap-3">
                               <FolderGit className="h-5 w-5 mt-0.5 flex-shrink-0 text-muted-foreground" />
@@ -247,11 +254,12 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                                 </div>
                               </div>
                             </div>
-                          </div>
+                          </button>
                         ))}
 
                       {!showMoreRepos && allRepos.length > 3 && (
                         <button
+                          type="button"
                           className="text-sm text-muted-foreground hover:text-foreground transition-colors text-left"
                           onClick={() => setShowMoreRepos(true)}
                         >
@@ -260,6 +268,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                       )}
                       {showMoreRepos && allRepos.length > 3 && (
                         <button
+                          type="button"
                           className="text-sm text-muted-foreground hover:text-foreground transition-colors text-left"
                           onClick={() => setShowMoreRepos(false)}
                         >
@@ -269,9 +278,12 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                     </div>
                   )}
 
-                  <div
-                    className="p-4 border border-dashed cursor-pointer hover:shadow-md transition-shadow rounded-lg bg-card"
+                  <button
+                    type="button"
+                    className="w-full rounded-lg border border-dashed bg-card p-4 text-left transition-shadow hover:shadow-md"
                     onClick={() => !isWorking && handleBrowseForRepo()}
+                    disabled={isWorking}
+                    data-testid="repo-picker-browse"
                   >
                     <div className="flex items-start gap-3">
                       <Search className="h-5 w-5 mt-0.5 flex-shrink-0 text-muted-foreground" />
@@ -284,7 +296,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </button>
                 </>
               )}
 
@@ -292,6 +304,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
               {stage === 'new' && (
                 <>
                   <button
+                    type="button"
                     className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1"
                     onClick={goBack}
                     disabled={isWorking}
@@ -307,6 +320,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                       </Label>
                       <Input
                         id="repo-name"
+                        data-testid="repo-picker-name"
                         type="text"
                         value={repoName}
                         onChange={(e) => setRepoName(e.target.value)}
@@ -323,6 +337,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                       <div className="flex space-x-2">
                         <Input
                           id="parent-path"
+                          data-testid="repo-picker-parent-path"
                           type="text"
                           value={parentPath}
                           onChange={(e) => setParentPath(e.target.value)}
@@ -359,6 +374,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                       onClick={handleCreateRepo}
                       disabled={isWorking || !repoName.trim()}
                       className="w-full"
+                      data-testid="repo-picker-submit-create"
                     >
                       {isWorking ? (
                         <>

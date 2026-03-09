@@ -11,6 +11,7 @@ use axum::{
     response::{IntoResponse, Json as ResponseJson},
     routing::{delete, get, post, put},
 };
+use events::EventError;
 use db::models::{
     image::TaskImage,
     task::{CreateTask, Task, TaskLineageSummary, TaskUpdateParams, TaskWithAttemptStatus, UpdateTask},
@@ -63,9 +64,21 @@ pub async fn stream_tasks_ws(
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| async move {
         if let Err(e) = handle_tasks_ws(socket, deployment, query).await {
-            tracing::warn!("tasks WS closed: {}", e);
+            if is_missing_project_stream_error(&e) {
+                tracing::debug!("tasks WS closed for missing project: {}", e);
+            } else {
+                tracing::warn!("tasks WS closed: {}", e);
+            }
         }
     })
+}
+
+fn is_missing_project_stream_error(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<EventError>(),
+        Some(EventError::Database(db::DbErr::RecordNotFound(message)))
+            if message == "Project not found"
+    )
 }
 
 async fn handle_tasks_ws(

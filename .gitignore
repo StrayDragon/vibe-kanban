@@ -67,6 +67,9 @@ coverage/
 
 .env
 frontend/dist
+.e2e/
+test-results/
+playwright-report/
 
 build-npm-package-codesign.sh
 
