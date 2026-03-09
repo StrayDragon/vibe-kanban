@@ -1,0 +1,12 @@
+export const uiIds = {
+  tasksOverviewCreateProject: 'tasks-overview-create-project',
+  navbarCreateTask: 'navbar-create-task',
+  taskFormTitle: 'task-form-title',
+  taskFormSubmit: 'task-form-submit',
+  repoPickerOptionExisting: 'repo-picker-option-existing',
+  repoPickerOptionNew: 'repo-picker-option-new',
+  repoPickerBrowse: 'repo-picker-browse',
+  repoPickerName: 'repo-picker-name',
+  repoPickerParentPath: 'repo-picker-parent-path',
+  repoPickerSubmitCreate: 'repo-picker-submit-create',
+} as const;

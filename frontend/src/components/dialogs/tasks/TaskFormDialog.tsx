@@ -49,6 +49,7 @@ import { useHotkeysContext } from 'react-hotkeys-hook';
 import { cn } from '@/lib/utils';
 import { taskGroupsApi } from '@/lib/api';
 import { paths } from '@/lib/paths';
+import { uiIds } from '@/lib/uiIds';
 import { taskKeys } from '@/hooks/tasks/useTask';
 import type {
   TaskAutomationMode,
@@ -545,8 +546,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
             <form.Field name="title">
               {(field) => (
                 <Input
-                  id="task-title"
-                  data-testid="task-form-title"
+                  id={uiIds.taskFormTitle}
                   value={field.state.value}
                   onChange={(e) => field.handleChange(e.target.value)}
                   placeholder={t('taskFormDialog.titlePlaceholder')}
@@ -864,7 +864,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                     <Button
                       onClick={form.handleSubmit}
                       disabled={!canSubmit}
-                      data-testid="task-form-submit"
+                      id={uiIds.taskFormSubmit}
                     >
                       {buttonText}
                     </Button>

@@ -20,6 +20,7 @@ import {
   Search,
 } from 'lucide-react';
 import { fileSystemApi, repoApi } from '@/lib/api';
+import { uiIds } from '@/lib/uiIds';
 import { DirectoryEntry, Repo } from 'shared/types';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { defineModal } from '@/lib/modals';
@@ -171,7 +172,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                     type="button"
                     className="w-full rounded-lg border bg-card p-4 text-left transition-shadow hover:shadow-md"
                     onClick={() => setStage('existing')}
-                    data-testid="repo-picker-option-existing"
+                    id={uiIds.repoPickerOptionExisting}
                   >
                     <div className="flex items-start gap-3">
                       <FolderGit className="h-5 w-5 mt-0.5 flex-shrink-0 text-muted-foreground" />
@@ -190,7 +191,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                     type="button"
                     className="w-full rounded-lg border bg-card p-4 text-left transition-shadow hover:shadow-md"
                     onClick={() => setStage('new')}
-                    data-testid="repo-picker-option-new"
+                    id={uiIds.repoPickerOptionNew}
                   >
                     <div className="flex items-start gap-3">
                       <FolderPlus className="h-5 w-5 mt-0.5 flex-shrink-0 text-muted-foreground" />
@@ -283,7 +284,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                     className="w-full rounded-lg border border-dashed bg-card p-4 text-left transition-shadow hover:shadow-md"
                     onClick={() => !isWorking && handleBrowseForRepo()}
                     disabled={isWorking}
-                    data-testid="repo-picker-browse"
+                    id={uiIds.repoPickerBrowse}
                   >
                     <div className="flex items-start gap-3">
                       <Search className="h-5 w-5 mt-0.5 flex-shrink-0 text-muted-foreground" />
@@ -315,12 +316,11 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
 
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <Label htmlFor="repo-name">
+                      <Label htmlFor={uiIds.repoPickerName}>
                         Repository Name <span className="text-red-500">*</span>
                       </Label>
                       <Input
-                        id="repo-name"
-                        data-testid="repo-picker-name"
+                        id={uiIds.repoPickerName}
                         type="text"
                         value={repoName}
                         onChange={(e) => setRepoName(e.target.value)}
@@ -333,11 +333,12 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="parent-path">Parent Directory</Label>
+                      <Label htmlFor={uiIds.repoPickerParentPath}>
+                        Parent Directory
+                      </Label>
                       <div className="flex space-x-2">
                         <Input
-                          id="parent-path"
-                          data-testid="repo-picker-parent-path"
+                          id={uiIds.repoPickerParentPath}
                           type="text"
                           value={parentPath}
                           onChange={(e) => setParentPath(e.target.value)}
@@ -374,7 +375,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                       onClick={handleCreateRepo}
                       disabled={isWorking || !repoName.trim()}
                       className="w-full"
-                      data-testid="repo-picker-submit-create"
+                      id={uiIds.repoPickerSubmitCreate}
                     >
                       {isWorking ? (
                         <>

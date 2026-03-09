@@ -39,6 +39,7 @@ import { ProjectFormDialog } from '@/components/dialogs/projects/ProjectFormDial
 import { ArchiveKanbanDialog, ConfirmDialog } from '@/components/dialogs';
 import { projectsApi } from '@/lib/api';
 import { paths } from '@/lib/paths';
+import { uiIds } from '@/lib/uiIds';
 import type { Project } from 'shared/types';
 
 const EXTERNAL_LINKS = [
@@ -337,7 +338,7 @@ export function Navbar() {
                       className="h-9 w-9"
                       onClick={handleCreateTask}
                       aria-label="Create new task"
-                      data-testid="navbar-create-task"
+                      id={uiIds.navbarCreateTask}
                     >
                       <Plus className="h-4 w-4" />
                     </Button>

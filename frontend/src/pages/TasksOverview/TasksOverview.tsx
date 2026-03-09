@@ -74,6 +74,7 @@ import {
 } from '@/keyboard';
 import { cn } from '@/lib/utils';
 import { paths } from '@/lib/paths';
+import { uiIds } from '@/lib/uiIds';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
 import {
   getTaskGroupId,
@@ -853,7 +854,7 @@ export function TasksOverview() {
           <Button
             className="mt-4"
             onClick={handleCreateProject}
-            data-testid="tasks-overview-create-project"
+            id={uiIds.tasksOverviewCreateProject}
           >
             <Plus className="mr-2 h-4 w-4" />
             {t('projects:createProject')}
