@@ -209,6 +209,14 @@ export function ProjectSettings() {
     error: projectsError,
   } = useProjects();
 
+  const projectNameCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    projects.forEach((project) => {
+      counts.set(project.name, (counts.get(project.name) ?? 0) + 1);
+    });
+    return counts;
+  }, [projects]);
+
   // Selected project state
   const [selectedProjectId, setSelectedProjectId] = useState<string>(
     searchParams.get('projectId') || ''
@@ -751,7 +759,14 @@ export function ProjectSettings() {
                 {projects && projects.length > 0 ? (
                   projects.map((project) => (
                     <SelectItem key={project.id} value={project.id}>
-                      {project.name}
+                      <div className="flex flex-col">
+                        <span className="truncate">{project.name}</span>
+                        {(projectNameCounts.get(project.name) ?? 0) > 1 && (
+                          <span className="truncate text-xs font-mono text-muted-foreground">
+                            {project.id}
+                          </span>
+                        )}
+                      </div>
                     </SelectItem>
                   ))
                 ) : (

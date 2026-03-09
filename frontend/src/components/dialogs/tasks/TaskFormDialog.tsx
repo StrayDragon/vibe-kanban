@@ -495,7 +495,20 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           {...getRootProps()}
           className="h-full flex flex-col gap-4 p-4 relative min-h-0"
         >
-          <input {...getInputProps()} />
+          <Label htmlFor="task-form-image-upload" className="sr-only">
+            {t('taskFormDialog.attachImage')}
+          </Label>
+          <input
+            {...getInputProps({
+              id: 'task-form-image-upload',
+              name: 'taskFormImages',
+              'aria-label': t('taskFormDialog.attachImage'),
+              // Screen readers should interact with the explicit "Attach image" button, not the
+              // internal dropzone input.
+              'aria-hidden': true,
+              tabIndex: -1,
+            })}
+          />
           {/* Drag overlay */}
           {isDragActive && (
             <div className="absolute inset-0 z-50 bg-primary/95 border-2 border-dashed border-primary-foreground/50 rounded-lg flex items-center justify-center pointer-events-none">

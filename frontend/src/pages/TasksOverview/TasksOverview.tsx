@@ -885,7 +885,7 @@ export function TasksOverview() {
                 className="mt-4"
                 onClick={handleResetVisibleFilters}
               >
-                {t('common:reset')}
+                {t('common:buttons.reset')}
               </Button>
             )}
           </CardContent>

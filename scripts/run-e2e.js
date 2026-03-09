@@ -130,6 +130,8 @@ async function main() {
   rmDirIfExists(assetDir);
   rmDirIfExists(reposDir);
   fs.mkdirSync(reposDir, { recursive: true });
+  // Some UI flows expect user-provided parent directories to already exist.
+  fs.mkdirSync(path.join(reposDir, 'worktrees'), { recursive: true });
 
   const seedAssetsDir = path.join(repoRoot, 'dev_assets_seed');
   if (fs.existsSync(seedAssetsDir)) {
@@ -150,6 +152,8 @@ async function main() {
     disclaimer_acknowledged: true,
     onboarding_acknowledged: true,
     show_release_notes: false,
+    // Prevent UI onboarding modals from blocking E2E flows.
+    showcases: { seen_features: ['task-panel-onboarding'] },
     editor: { editor_type: 'NONE' },
     notifications: {
       sound_enabled: false,

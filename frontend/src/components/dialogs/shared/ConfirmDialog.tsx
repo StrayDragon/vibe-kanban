@@ -75,7 +75,7 @@ const ConfirmDialogImpl = NiceModal.create<ConfirmDialogProps>((props) => {
             {getIcon()}
             <DialogTitle>{title}</DialogTitle>
           </div>
-          <DialogDescription className="text-left pt-2">
+          <DialogDescription className="text-left pt-2 whitespace-pre-line break-words">
             {message}
           </DialogDescription>
         </DialogHeader>

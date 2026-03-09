@@ -472,11 +472,11 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
+                && state.agent_session_id.as_deref() != Some(conversation_id)
             {
-                if state.agent_session_id.as_deref() != Some(conversation_id) {
-                    state.agent_session_id = Some(conversation_id.to_string());
-                    msg_store.push_session_id(conversation_id.to_string());
-                }
+                let conversation_id = conversation_id.to_string();
+                state.agent_session_id = Some(conversation_id.clone());
+                msg_store.push_session_id(conversation_id);
             }
 
             let event = params.msg;

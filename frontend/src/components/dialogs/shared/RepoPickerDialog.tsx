@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useTranslation } from 'react-i18next';
 import {
   Dialog,
   DialogContent,
@@ -36,10 +37,13 @@ type Stage = 'options' | 'existing' | 'new';
 
 const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
   ({
-    title = 'Select Repository',
-    description = 'Choose or create a git repository',
+    title,
+    description,
   }) => {
     const modal = useModal();
+    const { t } = useTranslation('common');
+    const resolvedTitle = title ?? t('repoPicker.title');
+    const resolvedDescription = description ?? t('repoPicker.description');
     const [stage, setStage] = useState<Stage>('options');
     const [error, setError] = useState('');
     const [isWorking, setIsWorking] = useState(false);
@@ -71,12 +75,12 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
         const repos = await fileSystemApi.listGitRepos();
         setAllRepos(repos);
       } catch (err) {
-        setError('Failed to load repositories');
+        setError(t('repoPicker.errors.loadFailed'));
         console.error('Failed to load repos:', err);
       } finally {
         setReposLoading(false);
       }
-    }, []);
+    }, [t]);
 
     useEffect(() => {
       if (stage === 'existing' && allRepos.length === 0 && !reposLoading) {
@@ -93,7 +97,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
         modal.hide();
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : 'Failed to register repository'
+          err instanceof Error ? err.message : t('repoPicker.errors.registerFailed')
         );
       } finally {
         setIsWorking(false);
@@ -107,8 +111,8 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
     const handleBrowseForRepo = async () => {
       setError('');
       const selectedPath = await FolderPickerDialog.show({
-        title: 'Select Git Repository',
-        description: 'Choose an existing git repository',
+        title: t('repoPicker.browseExisting.title'),
+        description: t('repoPicker.browseExisting.description'),
       });
       if (selectedPath) {
         registerAndReturn(selectedPath);
@@ -117,7 +121,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
 
     const handleCreateRepo = async () => {
       if (!repoName.trim()) {
-        setError('Repository name is required');
+        setError(t('repoPicker.new.nameRequired'));
         return;
       }
 
@@ -132,7 +136,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
         modal.hide();
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : 'Failed to create repository'
+          err instanceof Error ? err.message : t('repoPicker.errors.createFailed')
         );
       } finally {
         setIsWorking(false);
@@ -160,8 +164,8 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
         <Dialog open={modal.visible} onOpenChange={handleOpenChange}>
           <DialogContent className="max-w-[500px] w-full">
             <DialogHeader>
-              <DialogTitle>{title}</DialogTitle>
-              <DialogDescription>{description}</DialogDescription>
+              <DialogTitle>{resolvedTitle}</DialogTitle>
+              <DialogDescription>{resolvedDescription}</DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4">
@@ -178,10 +182,10 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                       <FolderGit className="h-5 w-5 mt-0.5 flex-shrink-0 text-muted-foreground" />
                       <div className="min-w-0 flex-1">
                         <div className="font-medium text-foreground">
-                          From Git Repository
+                          {t('repoPicker.options.existing.title')}
                         </div>
                         <div className="text-xs text-muted-foreground mt-1">
-                          Select an existing repository from your system
+                          {t('repoPicker.options.existing.description')}
                         </div>
                       </div>
                     </div>
@@ -197,10 +201,10 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                       <FolderPlus className="h-5 w-5 mt-0.5 flex-shrink-0 text-muted-foreground" />
                       <div className="min-w-0 flex-1">
                         <div className="font-medium text-foreground">
-                          Create New Repository
+                          {t('repoPicker.options.new.title')}
                         </div>
                         <div className="text-xs text-muted-foreground mt-1">
-                          Initialize a new git repository
+                          {t('repoPicker.options.new.description')}
                         </div>
                       </div>
                     </div>
@@ -218,7 +222,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                     disabled={isWorking}
                   >
                     <ArrowLeft className="h-3 w-3" />
-                    Back to options
+                    {t('repoPicker.backToOptions')}
                   </button>
 
                   {reposLoading && (
@@ -226,7 +230,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                       <div className="flex items-center gap-3">
                         <div className="animate-spin h-5 w-5 border-2 border-muted-foreground border-t-transparent rounded-full" />
                         <div className="text-sm text-muted-foreground">
-                          Loading repositories...
+                          {t('repoPicker.existing.loading')}
                         </div>
                       </div>
                     </div>
@@ -264,7 +268,9 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                           className="text-sm text-muted-foreground hover:text-foreground transition-colors text-left"
                           onClick={() => setShowMoreRepos(true)}
                         >
-                          Show {allRepos.length - 3} more repositories
+                          {t('repoPicker.existing.showMore', {
+                            count: allRepos.length - 3,
+                          })}
                         </button>
                       )}
                       {showMoreRepos && allRepos.length > 3 && (
@@ -273,7 +279,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                           className="text-sm text-muted-foreground hover:text-foreground transition-colors text-left"
                           onClick={() => setShowMoreRepos(false)}
                         >
-                          Show less
+                          {t('repoPicker.existing.showLess')}
                         </button>
                       )}
                     </div>
@@ -290,10 +296,10 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                       <Search className="h-5 w-5 mt-0.5 flex-shrink-0 text-muted-foreground" />
                       <div className="min-w-0 flex-1">
                         <div className="font-medium text-foreground">
-                          Browse for repository
+                          {t('repoPicker.existing.browse.title')}
                         </div>
                         <div className="text-xs text-muted-foreground mt-1">
-                          Browse and select any repository on your system
+                          {t('repoPicker.existing.browse.description')}
                         </div>
                       </div>
                     </div>
@@ -311,30 +317,31 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                     disabled={isWorking}
                   >
                     <ArrowLeft className="h-3 w-3" />
-                    Back to options
+                    {t('repoPicker.backToOptions')}
                   </button>
 
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor={uiIds.repoPickerName}>
-                        Repository Name <span className="text-red-500">*</span>
+                        {t('repoPicker.new.nameLabel')}{' '}
+                        <span className="text-red-500">*</span>
                       </Label>
                       <Input
                         id={uiIds.repoPickerName}
                         type="text"
                         value={repoName}
                         onChange={(e) => setRepoName(e.target.value)}
-                        placeholder="my-project"
+                        placeholder={t('repoPicker.new.namePlaceholder')}
                         disabled={isWorking}
                       />
                       <p className="text-xs text-muted-foreground">
-                        This will be the folder name for your new repository
+                        {t('repoPicker.new.nameHelper')}
                       </p>
                     </div>
 
                     <div className="space-y-2">
                       <Label htmlFor={uiIds.repoPickerParentPath}>
-                        Parent Directory
+                        {t('repoPicker.new.parentLabel')}
                       </Label>
                       <div className="flex space-x-2">
                         <Input
@@ -342,7 +349,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                           type="text"
                           value={parentPath}
                           onChange={(e) => setParentPath(e.target.value)}
-                          placeholder="Current Directory"
+                          placeholder={t('repoPicker.new.parentPlaceholder')}
                           className="flex-1"
                           disabled={isWorking}
                         />
@@ -351,11 +358,14 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                           variant="ghost"
                           size="icon"
                           disabled={isWorking}
+                          aria-label={t('repoPicker.new.browseParentAria')}
+                          title={t('repoPicker.new.browseParentAria')}
                           onClick={async () => {
                             const selectedPath = await FolderPickerDialog.show({
-                              title: 'Select Parent Directory',
-                              description:
-                                'Choose where to create the new repository',
+                              title: t('repoPicker.new.browseParent.title'),
+                              description: t(
+                                'repoPicker.new.browseParent.description'
+                              ),
                               value: parentPath,
                             });
                             if (selectedPath) {
@@ -367,7 +377,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                         </Button>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Leave empty to use your current working directory
+                        {t('repoPicker.new.parentHelper')}
                       </p>
                     </div>
 
@@ -380,10 +390,10 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
                       {isWorking ? (
                         <>
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Creating...
+                          {t('repoPicker.new.creating')}
                         </>
                       ) : (
-                        'Create Repository'
+                        t('repoPicker.new.create')
                       )}
                     </Button>
                   </div>
@@ -400,7 +410,7 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
               {isWorking && stage === 'existing' && (
                 <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Registering repository...
+                  {t('repoPicker.existing.registering')}
                 </div>
               )}
             </div>

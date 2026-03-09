@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Dialog,
   DialogContent,
@@ -9,7 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Alert } from '@/components/ui/alert';
-import { tasksApi } from '@/lib/api';
+import { useTaskMutations } from '@/hooks/tasks/useTaskMutations';
 import type { TaskWithAttemptStatus } from 'shared/types';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { defineModal } from '@/lib/modals';
@@ -20,8 +21,10 @@ export interface DeleteTaskConfirmationDialogProps {
 }
 
 const DeleteTaskConfirmationDialogImpl =
-  NiceModal.create<DeleteTaskConfirmationDialogProps>(({ task }) => {
+  NiceModal.create<DeleteTaskConfirmationDialogProps>(({ task, projectId }) => {
     const modal = useModal();
+    const { t } = useTranslation(['tasks', 'common']);
+    const { deleteTask } = useTaskMutations(projectId);
     const [isDeleting, setIsDeleting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -30,12 +33,12 @@ const DeleteTaskConfirmationDialogImpl =
       setError(null);
 
       try {
-        await tasksApi.delete(task.id);
+        await deleteTask.mutateAsync(task.id);
         modal.resolve();
         modal.hide();
       } catch (err: unknown) {
         const errorMessage =
-          err instanceof Error ? err.message : 'Failed to delete task';
+          err instanceof Error ? err.message : t('tasks:errors.deleteFailed');
         setError(errorMessage);
       } finally {
         setIsDeleting(false);
@@ -54,16 +57,14 @@ const DeleteTaskConfirmationDialogImpl =
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Task</DialogTitle>
+            <DialogTitle>{t('tasks:deleteTaskDialog.title')}</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete{' '}
-              <span className="font-semibold">"{task.title}"</span>?
+              {t('tasks:deleteTaskDialog.description', { title: task.title })}
             </DialogDescription>
           </DialogHeader>
 
           <Alert variant="destructive" className="mb-4">
-            <strong>Warning:</strong> This action will permanently delete the
-            task and cannot be undone.
+            {t('tasks:deleteTaskDialog.warning')}
           </Alert>
 
           {error && (
@@ -79,14 +80,16 @@ const DeleteTaskConfirmationDialogImpl =
               disabled={isDeleting}
               autoFocus
             >
-              Cancel
+              {t('common:buttons.cancel')}
             </Button>
             <Button
               variant="destructive"
               onClick={handleConfirmDelete}
               disabled={isDeleting}
             >
-              {isDeleting ? 'Deleting...' : 'Delete Task'}
+              {isDeleting
+                ? t('tasks:deleteTaskDialog.deleting')
+                : t('common:buttons.delete')}
             </Button>
           </DialogFooter>
         </DialogContent>

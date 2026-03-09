@@ -2,11 +2,13 @@
   "buttons": {
     "save": "Save",
     "cancel": "Cancel",
+    "back": "Back",
     "send": "Send",
     "delete": "Delete",
     "edit": "Edit",
     "create": "Create",
     "continue": "Continue",
+    "change": "Change",
     "reset": "Reset",
     "manage": "Manage",
     "connect": "Connect",
@@ -71,6 +73,62 @@
   },
   "breadcrumb": {
     "more": "More"
+  },
+  "navigation": {
+    "settings": "Settings",
+    "mainNavigation": "Main navigation",
+    "docs": "Docs",
+    "support": "Support"
+  },
+  "repoPicker": {
+    "title": "Select Repository",
+    "description": "Choose or create a git repository",
+    "backToOptions": "Back to options",
+    "options": {
+      "existing": {
+        "title": "From Git Repository",
+        "description": "Select an existing repository from your system"
+      },
+      "new": {
+        "title": "Create New Repository",
+        "description": "Initialize a new git repository"
+      }
+    },
+    "browseExisting": {
+      "title": "Select Git Repository",
+      "description": "Choose an existing git repository"
+    },
+    "existing": {
+      "loading": "Loading repositories...",
+      "showMore": "Show {{count}} more repositories",
+      "showLess": "Show less",
+      "browse": {
+        "title": "Browse for repository",
+        "description": "Browse and select any repository on your system"
+      },
+      "registering": "Registering repository..."
+    },
+    "new": {
+      "nameRequired": "Repository name is required",
+      "nameLabel": "Repository Name",
+      "namePlaceholder": "my-project",
+      "nameHelper": "This will be the folder name for your new repository",
+      "parentLabel": "Parent Directory",
+      "parentPlaceholder": "Current Directory",
+      "parentHelper": "Leave empty to use your current working directory",
+      "browseParentAria": "Select parent directory",
+      "browseParent": {
+        "title": "Select Parent Directory",
+        "description": "Choose where to create the new repository"
+      },
+      "create": "Create Repository",
+      "creating": "Creating..."
+    },
+    "errors": {
+      "loadFailed": "Failed to load repositories",
+      "registerFailed": "Failed to register repository",
+      "createFailed": "Failed to create repository"
+    }
   },
   "orgMembers": {
     "moreCount": "+{{count}} more"

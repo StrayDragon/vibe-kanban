@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
-import { useNavigateWithSearch } from '@/hooks';
+import { useNavigateWithSearch, useProjectRepos } from '@/hooks';
 import {
   Card,
   CardContent,
@@ -16,6 +16,7 @@ import { attemptsApi, projectsApi } from '@/lib/api';
 import { WorkspaceHookMenuSummary } from '@/components/tasks/WorkspaceHookMenuSummary';
 import { useProjects } from '@/hooks/projects/useProjects';
 import { useProjectTasks } from '@/hooks/projects/useProjectTasks';
+import { ConfirmDialog } from '@/components/dialogs';
 import {
   AlertCircle,
   ArrowLeft,
@@ -51,6 +52,7 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
   );
   const { tasks: projectTasks, isLoading: projectTasksLoading } =
     useProjectTasks(projectId);
+  const { data: repos } = useProjectRepos(projectId);
   const lifecycleHookCandidateTasks = useMemo(
     () =>
       [...projectTasks]
@@ -195,12 +197,25 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
 
   const handleDelete = async () => {
     if (!project) return;
-    if (
-      !confirm(
-        `Are you sure you want to delete "${project.name}"? This action cannot be undone.`
-      )
-    )
-      return;
+
+    const repoPath = repos?.[0]?.path ?? '';
+    const repoPathLine = repoPath
+      ? `\nRepo: ${repoPath}${repos && repos.length > 1 ? ` (+${repos.length - 1} more)` : ''}`
+      : '';
+
+    const result = await ConfirmDialog.show({
+      title: t('delete.confirmTitle'),
+      message: t('delete.confirmMessage', {
+        name: project.name,
+        id: project.id,
+        repoPathLine,
+      }),
+      confirmText: t('common:buttons.delete'),
+      cancelText: t('common:buttons.cancel'),
+      variant: 'destructive',
+    });
+
+    if (result !== 'confirmed') return;
 
     try {
       await projectsApi.delete(projectId);

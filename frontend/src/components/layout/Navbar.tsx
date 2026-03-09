@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import {
@@ -44,12 +44,12 @@ import type { Project } from 'shared/types';
 
 const EXTERNAL_LINKS = [
   {
-    label: 'Docs',
+    labelKey: 'navigation.docs',
     icon: BookOpen,
     href: 'https://vibekanban.com/docs',
   },
   {
-    label: 'Support',
+    labelKey: 'navigation.support',
     icon: MessageCircleQuestion,
     href: 'https://github.com/BloopAI/vibe-kanban/issues',
   },
@@ -68,6 +68,7 @@ function NavDivider() {
 export function Navbar() {
   const { t } = useTranslation('projects');
   const { t: tTasks } = useTranslation('tasks');
+  const { t: tCommon } = useTranslation('common');
   const location = useLocation();
   const {
     projectId,
@@ -117,8 +118,26 @@ export function Navbar() {
     : hasProjects
       ? paths.projectArchives(projects[0].id)
       : '/tasks';
+  const projectNameCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    projects.forEach((item) => {
+      counts.set(item.name, (counts.get(item.name) ?? 0) + 1);
+    });
+    return counts;
+  }, [projects]);
+
+  const formatProjectLabel = useCallback(
+    (item: Project | null | undefined): string => {
+      if (!item) return '';
+      const needsDisambiguation = (projectNameCounts.get(item.name) ?? 0) > 1;
+      if (!needsDisambiguation) return item.name;
+      return `${item.name} · ${item.id.slice(0, 8)}`;
+    },
+    [projectNameCounts]
+  );
+
   const switcherLabel =
-    project?.name ??
+    (project ? formatProjectLabel(project) : null) ??
     (projectsLoading ? t('loading') : t('switcher.placeholder'));
 
   const setSearchBarRef = useCallback(
@@ -164,7 +183,11 @@ export function Navbar() {
   const handleDeleteProject = async (projectToDelete: Project) => {
     const result = await ConfirmDialog.show({
       title: t('delete.confirmTitle'),
-      message: t('delete.confirmMessage', { name: projectToDelete.name }),
+      message: t('delete.confirmMessage', {
+        name: projectToDelete.name,
+        id: projectToDelete.id,
+        repoPathLine: '',
+      }),
       confirmText: t('common:buttons.delete'),
       cancelText: t('common:buttons.cancel'),
       variant: 'destructive',
@@ -197,6 +220,7 @@ export function Navbar() {
   };
 
   const renderProjectOption = (item: Project) => (
+    // Disambiguate same-name projects by showing a stable identifier.
     <DropdownMenuRadioItem
       key={item.id}
       value={item.id}
@@ -208,7 +232,14 @@ export function Navbar() {
         }
       }}
     >
-      <span className="min-w-0 flex-1 truncate">{item.name}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{item.name}</span>
+        {(projectNameCounts.get(item.name) ?? 0) > 1 && (
+          <span className="block truncate text-xs font-mono text-muted-foreground">
+            {item.id}
+          </span>
+        )}
+      </span>
       <button
         type="button"
         data-project-delete
@@ -337,7 +368,8 @@ export function Navbar() {
                       size="icon"
                       className="h-9 w-9"
                       onClick={handleCreateTask}
-                      aria-label="Create new task"
+                      aria-label={tTasks('actions.createTask')}
+                      title={tTasks('actions.createTask')}
                       id={uiIds.navbarCreateTask}
                     >
                       <Plus className="h-4 w-4" />
@@ -363,7 +395,7 @@ export function Navbar() {
                 size="icon"
                 className="h-9 w-9"
                 asChild
-                aria-label="Settings"
+                aria-label={tCommon('navigation.settings')}
               >
                 <Link
                   to={
@@ -382,7 +414,7 @@ export function Navbar() {
                     variant="ghost"
                     size="icon"
                     className="h-9 w-9"
-                    aria-label="Main navigation"
+                    aria-label={tCommon('navigation.mainNavigation')}
                   >
                     <Menu className="h-4 w-4" />
                   </Button>
@@ -395,7 +427,7 @@ export function Navbar() {
                   >
                     <Link to="/tasks">
                       <List className="mr-2 h-4 w-4" />
-                      All Tasks
+                      {tTasks('overview.title')}
                     </Link>
                   </DropdownMenuItem>
                   {hasProjects ? (
@@ -409,13 +441,13 @@ export function Navbar() {
                     >
                       <Link to={kanbanPath}>
                         <Kanban className="mr-2 h-4 w-4" />
-                        Kanbans
+                        {tTasks('navigation.kanbans')}
                       </Link>
                     </DropdownMenuItem>
                   ) : (
                     <DropdownMenuItem disabled>
                       <Kanban className="mr-2 h-4 w-4" />
-                      Kanbans
+                      {tTasks('navigation.kanbans')}
                     </DropdownMenuItem>
                   )}
                   {hasProjects ? (
@@ -427,13 +459,13 @@ export function Navbar() {
                     >
                       <Link to={archivesPath}>
                         <Archive className="mr-2 h-4 w-4" />
-                        Archives
+                        {tTasks('archives.title')}
                       </Link>
                     </DropdownMenuItem>
                   ) : (
                     <DropdownMenuItem disabled>
                       <Archive className="mr-2 h-4 w-4" />
-                      Archives
+                      {tTasks('archives.title')}
                     </DropdownMenuItem>
                   )}
                   {isProjectTasksRoute && (
@@ -476,6 +508,7 @@ export function Navbar() {
 
                   {EXTERNAL_LINKS.map((item) => {
                     const Icon = item.icon;
+                    const label = tCommon(item.labelKey);
                     return (
                       <DropdownMenuItem key={item.href} asChild>
                         <a
@@ -484,7 +517,7 @@ export function Navbar() {
                           rel="noopener noreferrer"
                         >
                           <Icon className="mr-2 h-4 w-4" />
-                          {item.label}
+                          {label}
                         </a>
                       </DropdownMenuItem>
                     );

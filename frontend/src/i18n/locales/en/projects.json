@@ -2,6 +2,39 @@
   "title": "Projects",
   "subtitle": "Manage your projects and track their progress",
   "createProject": "Create Project",
+  "createWizard": {
+    "title": "Create Project",
+    "repoPicker": {
+      "title": "Select Repository",
+      "description": "Choose or create a git repository for your project."
+    },
+    "repoStep": {
+      "description": "Choose a repository for your new project. Selecting a repo will not create the project until you confirm.",
+      "pickRepo": "Choose repository",
+      "changeRepo": "Change repository"
+    },
+    "detailsStep": {
+      "description": "Confirm the project name, then explicitly create the project.",
+      "projectName": {
+        "label": "Project name",
+        "placeholder": "My project"
+      },
+      "create": "Create project",
+      "creating": "Creating..."
+    },
+    "unsafePath": {
+      "title": "Potentially unsafe repository path",
+      "description": "This repository path looks temporary or worktree-like. The project may break if the directory is cleaned up or moved.",
+      "warnings": {
+        "tempDir": "Path is under a temporary directory.",
+        "gitWorktree": "Path looks like a git worktree."
+      },
+      "ackLabel": "I understand and want to continue"
+    },
+    "errors": {
+      "createFailed": "Failed to create project"
+    }
+  },
   "switcher": {
     "label": "Switch project",
     "placeholder": "Select project",
@@ -15,7 +48,9 @@
   },
   "delete": {
     "confirmTitle": "Delete project?",
-    "confirmMessage": "Are you sure you want to delete \"{{name}}\"? This action cannot be undone."
+    "confirmMessage": "Are you sure you want to delete \"{{name}}\"?\n\nID: {{id}}{{repoPathLine}}\nThis action cannot be undone.",
+    "repoPathLine": "\nRepo: {{path}}",
+    "repoPathLineExtra": "\nRepo: {{path}} (+{{count}} more)"
   },
   "empty": {
     "title": "No projects yet",

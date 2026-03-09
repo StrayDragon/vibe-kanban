@@ -2,11 +2,13 @@
   "buttons": {
     "save": "保存",
     "cancel": "取消",
+    "back": "返回",
     "send": "发送",
     "delete": "删除",
     "edit": "编辑",
     "create": "创建",
     "continue": "继续",
+    "change": "更改",
     "reset": "重置",
     "manage": "管理",
     "connect": "连接",
@@ -71,6 +73,62 @@
   },
   "breadcrumb": {
     "more": "更多"
+  },
+  "navigation": {
+    "settings": "设置",
+    "mainNavigation": "主导航",
+    "docs": "文档",
+    "support": "支持"
+  },
+  "repoPicker": {
+    "title": "选择仓库",
+    "description": "选择或创建一个 git 仓库",
+    "backToOptions": "返回选项",
+    "options": {
+      "existing": {
+        "title": "从 Git 仓库选择",
+        "description": "从你的系统中选择一个已有仓库"
+      },
+      "new": {
+        "title": "创建新仓库",
+        "description": "初始化一个新的 git 仓库"
+      }
+    },
+    "browseExisting": {
+      "title": "选择 Git 仓库",
+      "description": "选择一个已有的 git 仓库"
+    },
+    "existing": {
+      "loading": "加载仓库中...",
+      "showMore": "显示另外 {{count}} 个仓库",
+      "showLess": "收起",
+      "browse": {
+        "title": "浏览仓库",
+        "description": "浏览并选择系统中的任意仓库"
+      },
+      "registering": "正在注册仓库..."
+    },
+    "new": {
+      "nameRequired": "仓库名称为必填项",
+      "nameLabel": "仓库名称",
+      "namePlaceholder": "my-project",
+      "nameHelper": "这将作为新仓库的文件夹名称",
+      "parentLabel": "父目录",
+      "parentPlaceholder": "当前目录",
+      "parentHelper": "留空将使用当前工作目录",
+      "browseParentAria": "选择父目录",
+      "browseParent": {
+        "title": "选择父目录",
+        "description": "选择新仓库的创建位置"
+      },
+      "create": "创建仓库",
+      "creating": "创建中..."
+    },
+    "errors": {
+      "loadFailed": "加载仓库失败",
+      "registerFailed": "注册仓库失败",
+      "createFailed": "创建仓库失败"
+    }
   },
   "orgMembers": {
     "moreCount": "还有 {{count}} 位"

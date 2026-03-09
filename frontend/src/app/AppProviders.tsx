@@ -7,6 +7,7 @@ import { UserSystemProvider } from '@/components/ConfigProvider';
 import { ClickedElementsProvider } from '@/contexts/ClickedElementsProvider';
 import { ProjectProvider } from '@/contexts/ProjectContext';
 import { EventStreamProvider } from '@/contexts/EventStreamContext';
+import { ToastViewport } from '@/components/ui/toast';
 
 type ModalProviderProps = { children: ReactNode };
 
@@ -28,7 +29,10 @@ export function AppProviders({
           <ProjectProvider>
             <EventStreamProvider>
               <ModalProvider>
-                <I18nextProvider i18n={i18n}>{children}</I18nextProvider>
+                <I18nextProvider i18n={i18n}>
+                  {children}
+                  <ToastViewport />
+                </I18nextProvider>
               </ModalProvider>
             </EventStreamProvider>
           </ProjectProvider>

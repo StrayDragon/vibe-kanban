@@ -45,9 +45,15 @@ export type KanbanBoardProps = {
   id: Status['id'];
   children: ReactNode;
   className?: string;
+  testId?: string;
 };
 
-export const KanbanBoard = ({ id, children, className }: KanbanBoardProps) => {
+export const KanbanBoard = ({
+  id,
+  children,
+  className,
+  testId,
+}: KanbanBoardProps) => {
   const { isOver, setNodeRef } = useDroppable({ id });
 
   return (
@@ -58,6 +64,7 @@ export const KanbanBoard = ({ id, children, className }: KanbanBoardProps) => {
         className
       )}
       ref={setNodeRef}
+      data-testid={testId}
     >
       {children}
     </div>
@@ -153,6 +160,7 @@ export type KanbanHeaderProps =
       color: Status['color'];
       className?: string;
       onAddTask?: () => void;
+      addTaskButtonTestId?: string;
     };
 
 export const KanbanHeader = (props: KanbanHeaderProps) => {
@@ -187,9 +195,11 @@ export const KanbanHeader = (props: KanbanHeaderProps) => {
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
-                className="m-0 p-0 h-0 text-foreground/50 hover:text-foreground"
+                size="icon"
+                className="h-8 w-8 p-0 text-foreground/50 hover:text-foreground"
                 onClick={props.onAddTask}
                 aria-label={t('actions.addTask')}
+                data-testid={props.addTaskButtonTestId}
               >
                 <Plus className="h-4 w-4" />
               </Button>

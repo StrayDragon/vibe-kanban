@@ -1,9 +1,23 @@
 import * as React from 'react';
 import { X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import { cn } from '@/lib/utils';
 import { useHotkeysContext } from 'react-hotkeys-hook';
 import { useKeyExit, useKeySubmit, Scope } from '@/keyboard';
+
+type DialogA11yContextValue = {
+  titleId: string;
+  descriptionId: string;
+  registerTitle: () => void;
+  unregisterTitle: () => void;
+  registerDescription: () => void;
+  unregisterDescription: () => void;
+};
+
+const DialogA11yContext = React.createContext<DialogA11yContextValue | null>(
+  null
+);
 
 const Dialog = React.forwardRef<
   HTMLDivElement,
@@ -14,6 +28,48 @@ const Dialog = React.forwardRef<
   }
 >(({ className, open, onOpenChange, children, uncloseable, ...props }, ref) => {
   const { enableScope, disableScope } = useHotkeysContext();
+  const { t } = useTranslation('common');
+  const titleId = React.useId();
+  const descriptionId = React.useId();
+  const [titleCount, setTitleCount] = React.useState(0);
+  const [descriptionCount, setDescriptionCount] = React.useState(0);
+
+  const registerTitle = React.useCallback(() => {
+    setTitleCount((count) => count + 1);
+  }, []);
+
+  const unregisterTitle = React.useCallback(() => {
+    setTitleCount((count) => Math.max(0, count - 1));
+  }, []);
+
+  const registerDescription = React.useCallback(() => {
+    setDescriptionCount((count) => count + 1);
+  }, []);
+
+  const unregisterDescription = React.useCallback(() => {
+    setDescriptionCount((count) => Math.max(0, count - 1));
+  }, []);
+
+  const a11y = React.useMemo(
+    () => ({
+      titleId,
+      descriptionId,
+      registerTitle,
+      unregisterTitle,
+      registerDescription,
+      unregisterDescription,
+    }),
+    [
+      titleId,
+      descriptionId,
+      registerTitle,
+      unregisterTitle,
+      registerDescription,
+      unregisterDescription,
+    ]
+  );
+  const hasTitle = titleCount > 0;
+  const hasDescription = descriptionCount > 0;
 
   // Manage dialog scope when open/closed
   React.useEffect(() => {
@@ -107,32 +163,50 @@ const Dialog = React.forwardRef<
 
   if (!open) return null;
 
+  const ariaLabelledByProp = props['aria-labelledby'];
+  const ariaDescribedByProp = props['aria-describedby'];
+  const roleProp = props.role;
+  const ariaModalProp = props['aria-modal'];
+  const tabIndexProp = props.tabIndex;
+
   return (
-    <div className="fixed inset-0 z-[9999] flex items-start justify-center p-4 overflow-y-auto">
-      <div
-        className="fixed inset-0 bg-black/50"
-        onClick={() => (uncloseable ? {} : onOpenChange?.(false))}
-      />
-      <div
-        ref={ref}
-        className={cn(
-          'relative z-[9999] flex flex-col w-full max-w-lg gap-4 bg-primary p-6 shadow-lg duration-200 sm:rounded-lg my-8',
-          className
-        )}
-        {...props}
-      >
-        {!uncloseable && (
-          <button
-            className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 z-10"
-            onClick={() => onOpenChange?.(false)}
-          >
-            <X className="h-4 w-4" />
-            <span className="sr-only">Close</span>
-          </button>
-        )}
-        {children}
+    <DialogA11yContext.Provider value={a11y}>
+      <div className="fixed inset-0 z-[9999] flex items-start justify-center p-4 overflow-y-auto">
+        <div
+          className="fixed inset-0 bg-black/50"
+          onClick={() => (uncloseable ? {} : onOpenChange?.(false))}
+        />
+        <div
+          ref={ref}
+          className={cn(
+            'relative z-[9999] flex flex-col w-full max-w-lg gap-4 bg-primary p-6 shadow-lg duration-200 sm:rounded-lg my-8',
+            className
+          )}
+          {...props}
+          role={roleProp ?? 'dialog'}
+          aria-modal={ariaModalProp ?? true}
+          aria-labelledby={
+            ariaLabelledByProp ?? (hasTitle ? titleId : undefined)
+          }
+          aria-describedby={
+            ariaDescribedByProp ?? (hasDescription ? descriptionId : undefined)
+          }
+          tabIndex={tabIndexProp ?? -1}
+        >
+          {!uncloseable && (
+            <button
+              type="button"
+              className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 z-10"
+              onClick={() => onOpenChange?.(false)}
+            >
+              <X className="h-4 w-4" />
+              <span className="sr-only">{t('buttons.close')}</span>
+            </button>
+          )}
+          {children}
+        </div>
       </div>
-    </div>
+    </DialogA11yContext.Provider>
   );
 });
 Dialog.displayName = 'Dialog';
@@ -152,30 +226,52 @@ const DialogHeader = ({
 DialogHeader.displayName = 'DialogHeader';
 
 const DialogTitle = React.forwardRef<
-  HTMLParagraphElement,
+  HTMLHeadingElement,
   React.HTMLAttributes<HTMLHeadingElement>
->(({ className, ...props }, ref) => (
-  <h3
-    ref={ref}
-    className={cn(
-      'text-lg font-semibold leading-none tracking-tight',
-      className
-    )}
-    {...props}
-  />
-));
+>(({ className, id, ...props }, ref) => {
+  const a11y = React.useContext(DialogA11yContext);
+
+  React.useEffect(() => {
+    if (!a11y) return;
+    a11y.registerTitle();
+    return () => a11y.unregisterTitle();
+  }, [a11y]);
+
+  return (
+    <h3
+      ref={ref}
+      id={a11y ? a11y.titleId : id}
+      className={cn(
+        'text-lg font-semibold leading-none tracking-tight',
+        className
+      )}
+      {...props}
+    />
+  );
+});
 DialogTitle.displayName = 'DialogTitle';
 
 const DialogDescription = React.forwardRef<
   HTMLParagraphElement,
   React.HTMLAttributes<HTMLParagraphElement>
->(({ className, ...props }, ref) => (
-  <p
-    ref={ref}
-    className={cn('text-sm text-muted-foreground', className)}
-    {...props}
-  />
-));
+>(({ className, id, ...props }, ref) => {
+  const a11y = React.useContext(DialogA11yContext);
+
+  React.useEffect(() => {
+    if (!a11y) return;
+    a11y.registerDescription();
+    return () => a11y.unregisterDescription();
+  }, [a11y]);
+
+  return (
+    <p
+      ref={ref}
+      id={a11y ? a11y.descriptionId : id}
+      className={cn('text-sm text-muted-foreground', className)}
+      {...props}
+    />
+  );
+});
 DialogDescription.displayName = 'DialogDescription';
 
 const DialogContent = React.forwardRef<

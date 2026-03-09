@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -67,6 +67,8 @@ import { AttemptHeaderActions } from '@/components/panels/AttemptHeaderActions';
 import { TaskPanelHeaderActions } from '@/components/panels/TaskPanelHeaderActions';
 import { getTaskGroupId, isTaskGroupSubtask } from '@/utils/taskGroup';
 import { matchesOrchestrationFilters } from '@/utils/automation';
+import { toast } from '@/components/ui/toast';
+import { useOptimisticTasksStore } from '@/stores/useOptimisticTasksStore';
 
 import type { TaskWithAttemptStatus, TaskStatus } from 'shared/types';
 
@@ -627,6 +629,8 @@ export function ProjectTasks() {
     };
   }, [clearReviewInbox, handleViewTaskDetails, reviewInboxTasks, setReviewInbox]);
 
+  const dragSeqRef = useRef<Record<string, number>>({});
+
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
       const { active, over } = event;
@@ -636,6 +640,13 @@ export function ProjectTasks() {
       const newStatus = over.id as Task['status'];
       const task = tasksById[draggedTaskId];
       if (!task || task.status === newStatus) return;
+
+      const seq = (dragSeqRef.current[draggedTaskId] ?? 0) + 1;
+      dragSeqRef.current[draggedTaskId] = seq;
+
+      const store = useOptimisticTasksStore.getState();
+      const snapshot = store.getSnapshot(draggedTaskId);
+      store.setOverride(draggedTaskId, { status: newStatus });
 
       try {
         await tasksApi.update(draggedTaskId, {
@@ -648,9 +659,16 @@ export function ProjectTasks() {
         });
       } catch (err) {
         console.error('Failed to update task status:', err);
+        if (dragSeqRef.current[draggedTaskId] !== seq) return;
+        store.restoreSnapshot(draggedTaskId, snapshot);
+        toast({
+          variant: 'destructive',
+          title: t('common:states.error'),
+          description: t('tasks:errors.updateStatusFailed'),
+        });
       }
     },
-    [tasksById]
+    [t, tasksById]
   );
 
   const isInitialTasksLoad = isLoading && tasks.length === 0;
@@ -664,7 +682,7 @@ export function ProjectTasks() {
             {t('common:states.error')}
           </AlertTitle>
           <AlertDescription>
-            {projectError.message || 'Failed to load project'}
+            {projectError.message || t('errors.loadProjectFailed')}
           </AlertDescription>
         </Alert>
       </div>
@@ -676,7 +694,7 @@ export function ProjectTasks() {
   }
 
   const truncateTitle = (title: string | undefined, maxLength = 20) => {
-    if (!title) return 'Task';
+    if (!title) return t('labels.task');
     if (title.length <= maxLength) return title;
 
     const truncated = title.substring(0, maxLength);
@@ -721,7 +739,7 @@ export function ProjectTasks() {
                 className="mt-4"
                 onClick={handleResetVisibleFilters}
               >
-                {t('common:reset')}
+                {t('common:buttons.reset')}
               </Button>
             )}
           </CardContent>

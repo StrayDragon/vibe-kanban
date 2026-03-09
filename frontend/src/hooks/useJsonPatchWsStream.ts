@@ -34,7 +34,9 @@ interface UseJsonPatchStreamOptions<T> {
 interface UseJsonPatchStreamResult<T> {
   data: T | undefined;
   isConnected: boolean;
+  isResyncing: boolean;
   error: string | null;
+  resync: (reason?: string) => void;
 }
 
 /**
@@ -48,19 +50,28 @@ export const useJsonPatchWsStream = <T extends object>(
 ): UseJsonPatchStreamResult<T> => {
   const [data, setData] = useState<T | undefined>(undefined);
   const [isConnected, setIsConnected] = useState(false);
+  const [isResyncing, setIsResyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const dataRef = useRef<T | undefined>(undefined);
   const retryTimerRef = useRef<number | null>(null);
   const retryAttemptsRef = useRef<number>(0);
-  const [retryNonce, setRetryNonce] = useState(0);
   const finishedRef = useRef<boolean>(false);
   const hadErrorRef = useRef<boolean>(false);
+  const connectRef = useRef<(kind: 'initial' | 'retry' | 'resync') => void>();
+  const closeForResyncRef = useRef<boolean>(false);
+  const closeOnOpenForResyncRef = useRef<boolean>(false);
 
   const injectInitialEntry = options?.injectInitialEntry;
   const deduplicatePatches = options?.deduplicatePatches;
   const reconnectOnCleanClose = options?.reconnectOnCleanClose ?? true;
   const reconnectOnError = options?.reconnectOnError ?? true;
+
+  const clearRetryTimer = useCallback(() => {
+    if (!retryTimerRef.current) return;
+    window.clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = null;
+  }, []);
 
   const scheduleReconnect = useCallback(() => {
     // Exponential backoff with cap: 1s, 2s, 4s, 8s (max), then stay at 8s
@@ -68,9 +79,9 @@ export const useJsonPatchWsStream = <T extends object>(
     const delay = Math.min(8000, 1000 * Math.pow(2, attempt));
     retryTimerRef.current = window.setTimeout(() => {
       retryTimerRef.current = null;
-      setRetryNonce((n) => n + 1);
+      connectRef.current?.('retry');
     }, delay);
-  }, [setRetryNonce]);
+  }, []);
 
   const requestReconnect = useCallback(() => {
     if (retryTimerRef.current) return; // already scheduled
@@ -100,19 +111,19 @@ export const useJsonPatchWsStream = <T extends object>(
     };
 
     if (!enabled || !endpoint) {
-      // Close connection and reset state
+      // Close connection and hard-reset state
       if (wsRef.current) {
         closeWebSocket(wsRef.current);
         wsRef.current = null;
       }
-      if (retryTimerRef.current) {
-        window.clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
-      }
+      clearRetryTimer();
       retryAttemptsRef.current = 0;
       finishedRef.current = false;
+      closeForResyncRef.current = false;
+      closeOnOpenForResyncRef.current = false;
       setData(undefined);
       setIsConnected(false);
+      setIsResyncing(false);
       setError(null);
       dataRef.current = undefined;
       return;
@@ -128,25 +139,37 @@ export const useJsonPatchWsStream = <T extends object>(
       }
     }
 
-    // Create WebSocket if it doesn't exist
-    if (!wsRef.current) {
+    connectRef.current = (kind) => {
+      if (!enabled || !endpoint) return;
+      if (wsRef.current) return;
+
       // Reset finished flag for new connection
       finishedRef.current = false;
+      hadErrorRef.current = false;
+
+      if (kind === 'resync') {
+        setIsResyncing(true);
+      }
 
       // Convert HTTP endpoint to WebSocket endpoint
       const wsEndpoint = withApiTokenQuery(endpoint.replace(/^http/, 'ws'));
       const ws = new WebSocket(wsEndpoint);
 
       ws.onopen = () => {
+        if (closeOnOpenForResyncRef.current) {
+          closeOnOpenForResyncRef.current = false;
+          closeForResyncRef.current = true;
+          ws.close(4000, 'resync');
+          return;
+        }
+
         setError(null);
         setIsConnected(true);
+        setIsResyncing(false);
         hadErrorRef.current = false;
         // Reset backoff on successful connection
         retryAttemptsRef.current = 0;
-        if (retryTimerRef.current) {
-          window.clearTimeout(retryTimerRef.current);
-          retryTimerRef.current = null;
-        }
+        clearRetryTimer();
       };
 
       ws.onmessage = (event) => {
@@ -178,8 +201,6 @@ export const useJsonPatchWsStream = <T extends object>(
           if ('finished' in msg) {
             finishedRef.current = true;
             ws.close(1000, 'finished');
-            wsRef.current = null;
-            setIsConnected(false);
           }
         } catch (err) {
           console.error('Failed to process WebSocket message:', err);
@@ -198,18 +219,39 @@ export const useJsonPatchWsStream = <T extends object>(
         setIsConnected(false);
         wsRef.current = null;
 
-        const isCleanClose = evt?.code === 1000 && evt?.wasClean;
-        if (finishedRef.current || (isCleanClose && !reconnectOnCleanClose)) {
-          return;
-        }
-        if (hadErrorRef.current && !reconnectOnError) {
+        if (finishedRef.current) {
+          setIsResyncing(false);
           return;
         }
 
+        if (closeForResyncRef.current) {
+          closeForResyncRef.current = false;
+          // Immediate reconnect, keep current UI state.
+          connectRef.current?.('resync');
+          return;
+        }
+
+        const isCleanClose = evt?.code === 1000 && evt?.wasClean;
+        if (isCleanClose && !reconnectOnCleanClose) {
+          setIsResyncing(false);
+          return;
+        }
+        if (hadErrorRef.current && !reconnectOnError) {
+          setIsResyncing(false);
+          return;
+        }
+
+        setIsResyncing(false);
         requestReconnect();
       };
 
       wsRef.current = ws;
+    };
+
+    // Create WebSocket if it doesn't exist.
+    // This preserves existing UI state while (re)connecting.
+    if (!wsRef.current) {
+      connectRef.current('initial');
     }
 
     return () => {
@@ -217,13 +259,13 @@ export const useJsonPatchWsStream = <T extends object>(
         closeWebSocket(wsRef.current);
         wsRef.current = null;
       }
-      if (retryTimerRef.current) {
-        window.clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
-      }
+      clearRetryTimer();
       finishedRef.current = false;
+      closeForResyncRef.current = false;
+      closeOnOpenForResyncRef.current = false;
       dataRef.current = undefined;
       setData(undefined);
+      setIsResyncing(false);
     };
   }, [
     endpoint,
@@ -234,8 +276,34 @@ export const useJsonPatchWsStream = <T extends object>(
     reconnectOnCleanClose,
     reconnectOnError,
     requestReconnect,
-    retryNonce,
+    clearRetryTimer,
   ]);
 
-  return { data, isConnected, error };
+  const resync = useCallback(
+    (reason?: string) => {
+      if (!enabled || !endpoint) return;
+
+      clearRetryTimer();
+      retryAttemptsRef.current = 0;
+
+      if (!wsRef.current) {
+        connectRef.current?.('resync');
+        return;
+      }
+
+      setIsResyncing(true);
+      closeForResyncRef.current = true;
+
+      if (wsRef.current.readyState === WebSocket.CONNECTING) {
+        closeOnOpenForResyncRef.current = true;
+        return;
+      }
+
+      const closeReason = reason ? `resync:${reason}` : 'resync';
+      wsRef.current.close(4000, closeReason.slice(0, 120));
+    },
+    [clearRetryTimer, enabled, endpoint]
+  );
+
+  return { data, isConnected, isResyncing, error, resync };
 };

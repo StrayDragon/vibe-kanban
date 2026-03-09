@@ -95,7 +95,7 @@ export function TaskOrchestrationFilterMenu({
           disabled={selectedFilters.length === 0}
         >
           <RotateCcw className="mr-2 h-4 w-4" />
-          {t('common:reset')}
+          {t('common:buttons.reset')}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         {ORCHESTRATION_LANES.map((filter) => (

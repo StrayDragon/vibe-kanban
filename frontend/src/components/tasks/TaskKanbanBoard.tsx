@@ -104,11 +104,18 @@ function TaskKanbanBoard({
         const statusKey = status as TaskStatus;
         const items = buildColumnGroups[statusKey] ?? [];
         return (
-          <KanbanBoard key={status} id={statusKey}>
+          <KanbanBoard
+            key={status}
+            id={statusKey}
+            testId={`kanban-column-${statusKey}`}
+          >
             <KanbanHeader
               name={statusLabels[statusKey]}
               color={statusBoardColors[statusKey]}
               onAddTask={readOnly ? undefined : onCreateTask}
+              addTaskButtonTestId={
+                readOnly ? undefined : `kanban-add-task-${statusKey}`
+              }
             />
             <KanbanCards>
               {items.map((item) => {

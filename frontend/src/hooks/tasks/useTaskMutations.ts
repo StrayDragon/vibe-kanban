@@ -3,6 +3,9 @@ import { useNavigateWithSearch } from '@/hooks';
 import { tasksApi } from '@/lib/api';
 import { paths } from '@/lib/paths';
 import { taskRelationshipsKeys } from '@/hooks/tasks/useTaskRelationships';
+import { useTranslation } from 'react-i18next';
+import { toast } from '@/components/ui/toast';
+import { useOptimisticTasksStore } from '@/stores/useOptimisticTasksStore';
 import type {
   CreateTask,
   CreateAndStartTaskRequest,
@@ -16,6 +19,7 @@ import { taskLineageKeys } from './useTaskLineage';
 export function useTaskMutations(projectId?: string) {
   const queryClient = useQueryClient();
   const navigate = useNavigateWithSearch();
+  const { t } = useTranslation(['tasks', 'common']);
 
   const invalidateQueries = (taskId?: string) => {
     queryClient.invalidateQueries({ queryKey: taskKeys.all });
@@ -55,6 +59,12 @@ export function useTaskMutations(projectId?: string) {
       if (projectId) {
         navigate(`${paths.task(projectId, createdTask.id)}/attempts/latest`);
       }
+
+      // Populate optimistic stream state best-effort for create-only flows.
+      void tasksApi
+        .getById(createdTask.id)
+        .then((full) => useOptimisticTasksStore.getState().insertTask(full))
+        .catch(() => {});
     },
     onError: (err) => {
       console.error('Failed to create task:', err);
@@ -65,6 +75,7 @@ export function useTaskMutations(projectId?: string) {
     mutationFn: (data: CreateAndStartTaskRequest) =>
       tasksApi.createAndStart(data),
     onSuccess: (createdTask: TaskWithAttemptStatus) => {
+      useOptimisticTasksStore.getState().insertTask(createdTask);
       invalidateQueries();
       // Invalidate parent's relationships cache if this is a subtask
       if (createdTask.parent_workspace_id) {
@@ -94,6 +105,32 @@ export function useTaskMutations(projectId?: string) {
   const updateTask = useMutation({
     mutationFn: ({ taskId, data }: { taskId: string; data: UpdateTask }) =>
       tasksApi.update(taskId, data),
+    onMutate: async ({ taskId, data }) => {
+      const store = useOptimisticTasksStore.getState();
+      const snapshot = store.getSnapshot(taskId);
+      const patch: Partial<TaskWithAttemptStatus> = {};
+
+      if (typeof data.title === 'string') patch.title = data.title;
+      if (typeof data.description === 'string' || data.description === null) {
+        patch.description = data.description;
+      }
+      if (typeof data.status === 'string') patch.status = data.status;
+      if (typeof data.automation_mode === 'string') {
+        patch.automation_mode = data.automation_mode;
+      }
+      if (
+        typeof data.parent_workspace_id === 'string' ||
+        data.parent_workspace_id === null
+      ) {
+        patch.parent_workspace_id = data.parent_workspace_id;
+      }
+
+      if (Object.keys(patch).length > 0) {
+        store.setOverride(taskId, patch);
+      }
+
+      return { snapshot };
+    },
     onSuccess: (updatedTask: Task) => {
       invalidateQueries(updatedTask.id);
       queryClient.invalidateQueries({
@@ -105,13 +142,24 @@ export function useTaskMutations(projectId?: string) {
         });
       }
     },
-    onError: (err) => {
+    onError: (err, variables, context) => {
+      if (context?.snapshot) {
+        useOptimisticTasksStore
+          .getState()
+          .restoreSnapshot(variables.taskId, context.snapshot);
+      }
       console.error('Failed to update task:', err);
     },
   });
 
   const deleteTask = useMutation({
     mutationFn: (taskId: string) => tasksApi.delete(taskId),
+    onMutate: async (taskId) => {
+      const store = useOptimisticTasksStore.getState();
+      const snapshot = store.getSnapshot(taskId);
+      store.tombstoneTask(taskId);
+      return { snapshot };
+    },
     onSuccess: (_: unknown, taskId: string) => {
       invalidateQueries(taskId);
       // Remove single-task cache entry to avoid stale data flashes
@@ -119,7 +167,17 @@ export function useTaskMutations(projectId?: string) {
       // Invalidate all task relationships caches (safe approach since we don't know parent)
       queryClient.invalidateQueries({ queryKey: taskRelationshipsKeys.all });
     },
-    onError: (err) => {
+    onError: (err, taskId, context) => {
+      if (context?.snapshot) {
+        useOptimisticTasksStore
+          .getState()
+          .restoreSnapshot(taskId, context.snapshot);
+      }
+      toast({
+        variant: 'destructive',
+        title: t('tasks:errors.deleteFailed'),
+        description: err instanceof Error ? err.message : undefined,
+      });
       console.error('Failed to delete task:', err);
     },
   });

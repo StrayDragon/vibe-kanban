@@ -75,7 +75,14 @@
     }
   },
   "actions": {
-    "addTask": "添加任务"
+    "addTask": "添加任务",
+    "createTask": "新建任务"
+  },
+  "navigation": {
+    "kanbans": "看板"
+  },
+  "labels": {
+    "task": "任务"
   },
   "filters": {
     "sharedToggleAria": "切换共享任务",
@@ -293,6 +300,17 @@
     "editTask": "编辑任务",
     "deleteTask": "删除任务",
     "closePanel": "关闭面板"
+  },
+  "deleteTaskDialog": {
+    "title": "删除任务",
+    "description": "确定要删除“{{title}}”吗？",
+    "warning": "警告：此操作将永久删除任务且无法撤销。",
+    "deleting": "正在删除..."
+  },
+  "errors": {
+    "deleteFailed": "删除任务失败",
+    "loadProjectFailed": "加载项目失败",
+    "updateStatusFailed": "更新任务状态失败"
   },
   "navigateToParent": "导航到父任务尝试",
   "openTaskGroup": "打开任务组",

@@ -233,18 +233,27 @@ impl EventService {
             return Ok(());
         }
 
-        let tasks =
-            Task::find_by_project_id_with_attempt_status(&self.db.pool, payload.project_id).await?;
+        // Prefer the "active task list" view so automation diagnostics remain consistent,
+        // but fall back to fetching by id so archived task updates still broadcast.
+        let mut task = Task::find_by_project_id_with_attempt_status(&self.db.pool, payload.project_id)
+            .await?
+            .into_iter()
+            .find(|t| t.id == payload.task_id);
 
-        let task = tasks.into_iter().find(|t| t.id == payload.task_id);
-        match (task, kind) {
-            (Some(task), PatchKind::Add) => {
-                self.msg_store.push_patch(task_patch::add(&task));
+        if task.is_none() {
+            task = Task::find_by_id_with_attempt_status(&self.db.pool, payload.task_id).await?;
+        }
+
+        if let Some(task) = task {
+            match kind {
+                PatchKind::Add => {
+                    self.msg_store.push_patch(task_patch::add(&task));
+                }
+                PatchKind::Replace => {
+                    self.msg_store.push_patch(task_patch::replace(&task));
+                }
+                PatchKind::Remove => {}
             }
-            (Some(task), PatchKind::Replace) => {
-                self.msg_store.push_patch(task_patch::replace(&task));
-            }
-            _ => {}
         }
 
         Ok(())
@@ -364,6 +373,7 @@ mod tests {
     use logs_protocol::LogMsg;
     use sea_orm::Database;
     use sea_orm_migration::MigratorTrait;
+    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
     use super::*;
 
@@ -441,5 +451,136 @@ mod tests {
             .filter(|msg| matches!(msg, LogMsg::JsonPatch(_)))
             .count();
         assert!(patch_count >= 2);
+    }
+
+    #[tokio::test]
+    async fn task_update_for_archived_task_emits_patch() {
+        let db = setup_db().await;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &db.pool,
+            &db::models::project::CreateProject {
+                name: "Archive project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &db.pool,
+            &db::models::task::CreateTask::from_title_description(
+                project_id,
+                "Archive me".to_string(),
+                None,
+            ),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        // Flush initial create events so the next flush only covers the archived update.
+        {
+            let msg_store = Arc::new(MsgStore::new());
+            let service = EventService {
+                msg_store,
+                db: db.clone(),
+                entry_count: Arc::new(RwLock::new(0)),
+                shutdown_token: CancellationToken::new(),
+            };
+
+            loop {
+                if service.flush_pending().await.unwrap() == 0 {
+                    break;
+                }
+            }
+
+            assert!(
+                EventOutbox::fetch_unpublished(&service.db.pool, 10)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+
+        let archive = db::models::archived_kanban::ArchivedKanban::create(
+            &db.pool,
+            project_id,
+            "Archived".to_string(),
+        )
+        .await
+        .unwrap();
+        let archive_row_id = db::models::archived_kanban::ArchivedKanban::row_id_by_uuid(
+            &db.pool,
+            archive.id,
+        )
+        .await
+        .unwrap()
+        .expect("archive row id");
+
+        // Mark the task as archived via the underlying entity to mimic the archive flow.
+        let record = db::entities::task::Entity::find()
+            .filter(db::entities::task::Column::Uuid.eq(task_id))
+            .one(&db.pool)
+            .await
+            .unwrap()
+            .expect("task record");
+        let mut active: db::entities::task::ActiveModel = record.into();
+        active.archived_kanban_id = Set(Some(archive_row_id));
+        active.update(&db.pool).await.unwrap();
+
+        let payload = serde_json::to_value(TaskEventPayload {
+            task_id,
+            project_id,
+        })
+        .unwrap();
+        EventOutbox::enqueue(&db.pool, EVENT_TASK_UPDATED, "task", task_id, payload)
+            .await
+            .unwrap();
+
+        let msg_store = Arc::new(MsgStore::new());
+        let service = EventService {
+            msg_store: msg_store.clone(),
+            db: db.clone(),
+            entry_count: Arc::new(RwLock::new(0)),
+            shutdown_token: CancellationToken::new(),
+        };
+
+        let processed = service.flush_pending().await.unwrap();
+        assert_eq!(processed, 1);
+
+        assert!(
+            EventOutbox::fetch_unpublished(&service.db.pool, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let task_path = format!("/tasks/{task_id}");
+        let archive_id = archive.id.to_string();
+        let emitted = msg_store.get_history().into_iter().any(|msg| {
+            let LogMsg::JsonPatch(patch) = msg else {
+                return false;
+            };
+            let Some(op) = patch.0.first() else {
+                return false;
+            };
+            if op.path() != task_path.as_str() {
+                return false;
+            }
+            match op {
+                json_patch::PatchOperation::Replace(op) => op
+                    .value
+                    .get("archived_kanban_id")
+                    .and_then(|v| v.as_str())
+                    == Some(archive_id.as_str()),
+                _ => false,
+            }
+        });
+
+        assert!(emitted, "expected task patch for archived task update");
     }
 }

@@ -27,6 +27,7 @@ import { projectsApi } from '@/lib/api';
 import { useTranslation } from 'react-i18next';
 import { Badge } from '@/components/ui/badge.tsx';
 import { getProjectExecutionModeLabel } from '@/utils/automation';
+import { ConfirmDialog } from '@/components/dialogs';
 
 type Props = {
   project: Project;
@@ -52,18 +53,33 @@ function ProjectCard({ project, isFocused, setError, onEdit }: Props) {
   }, [isFocused]);
 
   const handleDelete = async (id: string, name: string) => {
-    if (
-      !confirm(
-        `Are you sure you want to delete "${name}"? This action cannot be undone.`
-      )
-    )
-      return;
+    const repoPath = repos?.[0]?.path ?? '';
+    const extraRepoCount = repos && repos.length > 1 ? repos.length - 1 : 0;
+    const repoPathLine = repoPath
+      ? extraRepoCount > 0
+        ? t('delete.repoPathLineExtra', { path: repoPath, count: extraRepoCount })
+        : t('delete.repoPathLine', { path: repoPath })
+      : '';
+
+    const result = await ConfirmDialog.show({
+      title: t('delete.confirmTitle'),
+      message: t('delete.confirmMessage', {
+        name,
+        id,
+        repoPathLine,
+      }),
+      confirmText: t('common:buttons.delete'),
+      cancelText: t('common:buttons.cancel'),
+      variant: 'destructive',
+    });
+
+    if (result !== 'confirmed') return;
 
     try {
       await projectsApi.delete(id);
     } catch (error) {
       console.error('Failed to delete project:', error);
-      setError('Failed to delete project');
+      setError(t('errors.deleteFailed'));
     }
   };
 

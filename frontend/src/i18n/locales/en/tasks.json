@@ -78,7 +78,14 @@
     "workflowMissing": "Workflow not found."
   },
   "actions": {
-    "addTask": "Add task"
+    "addTask": "Add task",
+    "createTask": "Create new task"
+  },
+  "navigation": {
+    "kanbans": "Kanbans"
+  },
+  "labels": {
+    "task": "Task"
   },
   "filters": {
     "sharedToggleAria": "Toggle shared tasks",
@@ -283,6 +290,17 @@
     "editTask": "Edit task",
     "deleteTask": "Delete task",
     "closePanel": "Close panel"
+  },
+  "deleteTaskDialog": {
+    "title": "Delete task",
+    "description": "Are you sure you want to delete \"{{title}}\"?",
+    "warning": "Warning: This action will permanently delete the task and cannot be undone.",
+    "deleting": "Deleting..."
+  },
+  "errors": {
+    "deleteFailed": "Failed to delete task",
+    "loadProjectFailed": "Failed to load project",
+    "updateStatusFailed": "Failed to update task status"
   },
   "navigateToParent": "Navigate to parent task attempt",
   "openTaskGroup": "Open task group",

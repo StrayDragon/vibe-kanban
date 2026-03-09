@@ -2,6 +2,39 @@
   "title": "项目",
   "subtitle": "管理您的项目并跟踪其进度",
   "createProject": "创建项目",
+  "createWizard": {
+    "title": "创建项目",
+    "repoPicker": {
+      "title": "选择仓库",
+      "description": "为你的项目选择或创建一个 git 仓库。"
+    },
+    "repoStep": {
+      "description": "为新项目选择一个仓库。选择仓库不会创建项目，只有在确认后才会创建。",
+      "pickRepo": "选择仓库",
+      "changeRepo": "更换仓库"
+    },
+    "detailsStep": {
+      "description": "确认项目名称，然后明确创建项目。",
+      "projectName": {
+        "label": "项目名称",
+        "placeholder": "我的项目"
+      },
+      "create": "创建项目",
+      "creating": "创建中..."
+    },
+    "unsafePath": {
+      "title": "仓库路径可能不安全",
+      "description": "该仓库路径看起来像临时目录或 worktree。目录被清理或移动后项目可能失效。",
+      "warnings": {
+        "tempDir": "路径位于临时目录下。",
+        "gitWorktree": "路径看起来像 git worktree。"
+      },
+      "ackLabel": "我已了解风险并继续"
+    },
+    "errors": {
+      "createFailed": "创建项目失败"
+    }
+  },
   "switcher": {
     "label": "切换项目",
     "placeholder": "选择项目",
@@ -15,7 +48,9 @@
   },
   "delete": {
     "confirmTitle": "删除项目？",
-    "confirmMessage": "确定要删除“{{name}}”吗？此操作无法撤销。"
+    "confirmMessage": "确定要删除“{{name}}”吗？\n\nID: {{id}}{{repoPathLine}}\n此操作无法撤销。",
+    "repoPathLine": "\n仓库: {{path}}",
+    "repoPathLineExtra": "\n仓库: {{path}}（+{{count}} 个）"
   },
   "empty": {
     "title": "还没有项目",
