@@ -53,6 +53,8 @@ The existing lifecycle-hooks editor in project settings is the natural place to 
 
 The summary should reuse the compact hook-summary presentation rather than the larger task/attempt detail card.
 
+Implementation note: keep this frontend-scoped by reusing the existing `ProjectDetail` approach for now (scan a small set of recently updated tasks, fetch attempts, select the most recent workspace hook outcome). This keeps backend untouched while achieving parity.
+
 ### 4. Remove the standalone detail-only page after parity is reached
 
 Once settings provides the needed readonly metadata and hook summary, the following should be removed or retired:

@@ -9,6 +9,16 @@ Symphony's value is not “more turns” by itself. Its real value is maintainin
 
 That means VK can implement continuation without introducing a tracker-driven loop, extra workspaces, or any change to manual-task behavior.
 
+## Reference: Symphony Continuation Loop
+
+Symphony implements bounded continuation by **re-checking external tracker state** after every normal turn completion:
+
+- Inside one worker run, it keeps the same Codex thread and loops `turn/start` again while the issue remains in an “active” tracker state, capped by `agent.max_turns`. (See `../symphony/elixir/lib/symphony_elixir/agent_runner.ex`, `continue_with_issue?/2` and `build_turn_prompt/4`.)
+- The first turn sends the full rendered prompt, while continuation turns send only short continuation guidance (not the base prompt).
+- After a clean worker exit, the orchestrator still schedules a short “continuation retry” (~1s) to re-check tracker state and re-dispatch if the issue remains active. (See `../symphony/elixir/lib/symphony_elixir/orchestrator.ex` `@continuation_retry_delay_ms` and the `:DOWN` handler.)
+
+VK does not have an external tracker state loop by default, so VK must define a **VK-native “still active / still incomplete” signal** for continuation turns, rather than inheriting Symphony’s tracker-driven decision.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -44,7 +54,7 @@ Continuation needs a simple override model similar to `automation_mode`:
   - `0` → explicitly disable continuation for this task even if the project default is non-zero
   - `> 0` → allow up to that many continuation turns for this task, even if the project default is `0`
 
-The scheduler computes an **effective continuation budget** per task from this precedence rule and uses it for eligibility and diagnostics.
+VK computes an **effective continuation budget** per task from this precedence rule and uses it for eligibility and diagnostics.
 
 ### 3. Evaluate continuation only after a successful but incomplete turn
 
@@ -59,14 +69,35 @@ Continuation is considered only when all of the following are true:
 
 This keeps continuation distinct from retry-on-error recovery.
 
-### 4. Reuse same-session follow-up infrastructure
+**Define “incomplete” for VK (v1).**
 
-The scheduler should:
+Symphony uses tracker issue state as the continuation signal. VK has no equivalent external truth source, so VK needs an explicit VK-native signal.
+
+Recommendation for v1: require the coding agent to emit a simple parseable “next state” marker in its final assistant message, for example:
+
+```
+VK_NEXT: continue | review
+```
+
+Rules:
+- Missing marker defaults to `review` (safe default-off; prevents “budget>0 => run to the cap”).
+- `VK_NEXT: continue` is necessary but not sufficient; the eligibility gates above still apply.
+- The auto-orchestration prompt template should instruct the agent to include this marker and to use `continue` only when meaningful work remains.
+
+This is intentionally simpler and safer than introducing a second “judge agent” turn as a hard dependency for v1. If needed later, an optional judge can be added as an enhancement without changing the persistence model.
+
+### 4. Reuse same-session follow-up infrastructure (and keep user queued messages highest priority)
+
+VK should:
 - find the latest coding-agent session for the workspace
-- queue or start a `CodingAgentFollowUpRequest`
-- continue in the same workspace and session
+- start a `CodingAgentFollowUpRequest` in the same workspace and session
+- reuse the same agent session identifier (thread) so prompt history stays continuous
 
-Continuation remains scheduler-owned rather than UI-owned.
+Priority rule:
+- If a human queued a follow-up message for the session, it must run first. Continuation must not overwrite or starve human queued messages.
+
+Implementation boundary (important):
+- Continuation should be evaluated and started from the execution finalization path (after a successful coding-agent turn) *before* the normal task finalization that moves tasks to `inreview`. This avoids races with the current `finalize_task -> inreview` handoff behavior and aligns with Symphony’s “continue inside the worker” loop semantics.
 
 ### 5. Use a short, stateful continuation prompt (not a repeated fixed base prompt)
 
@@ -111,11 +142,19 @@ Persist enough continuation state for auditability and diagnostics:
 
 These fields should appear only in auto-managed task/task-feed reads. Manual-task surfaces should omit them entirely.
 
+**Persistence shape recommendation.**
+
+Do not overload `task_dispatch_states` (scheduler/retry state). Instead, introduce a dedicated “task orchestration state” record keyed by `task_id` that can also be reused by MCP collaboration follow-ups:
+
+- `task_orchestration_states` (new table): continuation counters, last stop reason, timestamps, plus future orchestration diagnostics.
+- `projects` (new columns): default continuation policy (default-off).
+- `tasks` (new column): optional per-task override (`NULL` inherit; `0` disable; `>0` override).
+
 ## Migration Plan
 
 - Add continuation policy to the project settings with conservative default-off behavior.
 - Add an optional task-level override field with inheritance/disable semantics.
-- Persist counters and stop reasons additively so existing tasks remain valid.
+- Add `task_orchestration_states` to persist counters and stop reasons additively so existing tasks remain valid.
 - Regenerate shared TypeScript types if continuation diagnostics become part of task DTOs.
 - Roll out continuation behind opt-in settings first, then validate with one managed project before broader use.
 

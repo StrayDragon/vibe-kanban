@@ -30,7 +30,6 @@ The collaboration layer is derived from existing task/attempt state rather than 
 ### 2. Persist structured control-transfer reasons
 
 Task orchestration state should persist a small enum-like reason set that covers at least:
-- `human_pause`
 - `human_takeover`
 - `human_resume`
 - `awaiting_human_review`
@@ -38,20 +37,37 @@ Task orchestration state should persist a small enum-like reason set that covers
 
 These reasons must be readable from task detail, task list data, and MCP responses without log inspection.
 
+**Implementation recommendation (grounded in VK).**
+
+Do not overload scheduler dispatch state. Introduce a dedicated `task_orchestration_states` record keyed by `task_id` to store:
+- `last_control_transfer_reason_code`
+- `last_control_transfer_at`
+- `last_control_transfer_detail` (optional short string)
+- `last_policy_rejection_*` (optional, structured)
+
+This table can be shared with `add-turn-continuation-orchestration` so “continuation diagnostics” and “MCP collaboration diagnostics” live in one maintainable place.
+
 ### 3. Add project-level executor/profile policy for auto-managed work
 
 Auto-managed MCP requests need an explicit project policy layer so callers can request automation without escalating rights implicitly.
 
 Recommended shape:
 - policy mode: `inherit_all` or `allow_list`
-- allow-list entries as structured executor/profile identifiers
+- allow-list entries as structured **executor + variant** identifiers (full profile)
 - persisted rejection diagnostic when a request is denied by policy
 
-If these settings live in versioned project config, add a new latest config version with default `inherit_all` to preserve current behavior.
+**Scope recommendation.**
+
+- Enforce this policy only at MCP entry points (`start_attempt`, `send_follow_up`) when an MCP caller explicitly requests an executor/profile override.
+- Do not apply the policy retroactively to human UI flows in v1. Keep defaults conservative so existing manual workflows do not start failing unexpectedly.
+
+**Storage recommendation (grounded in VK).**
+
+VK project settings are stored as DB columns, so policy should be stored in the `projects` table (plus an allow-list representation), migrated with default `inherit_all`.
 
 ### 4. Provide a dedicated MCP handoff reader
 
-Add a focused read tool such as `get_review_handoff` keyed by `task_id` or `attempt_id`.
+Add a focused read tool `get_review_handoff` keyed by `task_id` (primary). Optionally accept `attempt_id` as a convenience, but the payload should be task-centric.
 
 The payload should include:
 - task identity and orchestration state
@@ -92,7 +108,7 @@ Human-facing changes should stay limited to showing the same transfer/policy rea
 ## Migration Plan
 
 - Add any new orchestration enums/fields in Rust DTOs and regenerate TypeScript types.
-- If project policy is stored in versioned config, add a new latest config version and migration with conservative defaults.
+- Add project policy persistence + migration with conservative defaults (`inherit_all`).
 - Keep all new API and MCP fields additive/optional so older clients degrade gracefully.
 - Do not backfill derived handoff payloads; compute them from existing records at read time first.
 
