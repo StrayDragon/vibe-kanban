@@ -75,11 +75,15 @@ const RestoreArchivedKanbanDialogImpl =
           statuses: restoreAll ? null : selectedStatuses,
         });
 
-        modal.resolve({ restoredTaskCount: Number(response.restored_task_count) });
+        modal.resolve({
+          restoredTaskCount: Number(response.restored_task_count),
+        });
         modal.hide();
       } catch (err: unknown) {
         const message =
-          err instanceof Error ? err.message : t('archives.restoreDialog.error');
+          err instanceof Error
+            ? err.message
+            : t('archives.restoreDialog.error');
         setError(message);
       } finally {
         setIsSubmitting(false);
@@ -87,7 +91,10 @@ const RestoreArchivedKanbanDialogImpl =
     };
 
     return (
-      <Dialog open={modal.visible} onOpenChange={(open) => !open && handleCancel()}>
+      <Dialog
+        open={modal.visible}
+        onOpenChange={(open) => !open && handleCancel()}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t('archives.restoreDialog.title')}</DialogTitle>

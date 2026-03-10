@@ -111,7 +111,9 @@ pub struct CreateWorkspace {
     pub agent_working_dir: Option<String>,
 }
 
-fn latest_hook_run_from_model(model: &workspace::Model) -> Option<WorkspaceLifecycleHookRunSummary> {
+fn latest_hook_run_from_model(
+    model: &workspace::Model,
+) -> Option<WorkspaceLifecycleHookRunSummary> {
     let after_prepare = match (
         model.after_prepare_hook_status.clone(),
         model.after_prepare_hook_ran_at,

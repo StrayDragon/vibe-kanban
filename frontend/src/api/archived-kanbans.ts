@@ -11,7 +11,9 @@ import type {
 import { handleApiResponse, makeRequest } from './client';
 
 export const archivedKanbansApi = {
-  listByProject: async (projectId: string): Promise<ArchivedKanbanWithTaskCount[]> => {
+  listByProject: async (
+    projectId: string
+  ): Promise<ArchivedKanbanWithTaskCount[]> => {
     const response = await makeRequest(
       `/api/projects/${encodeURIComponent(projectId)}/archived-kanbans`
     );
@@ -63,4 +65,3 @@ export const archivedKanbansApi = {
     return handleApiResponse<DeleteArchivedKanbanResponse>(response);
   },
 };
-

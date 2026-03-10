@@ -55,7 +55,10 @@ function ProjectCard({ project, isFocused, setError, onEdit }: Props) {
     const extraRepoCount = repos && repos.length > 1 ? repos.length - 1 : 0;
     const repoPathLine = repoPath
       ? extraRepoCount > 0
-        ? t('delete.repoPathLineExtra', { path: repoPath, count: extraRepoCount })
+        ? t('delete.repoPathLineExtra', {
+            path: repoPath,
+            count: extraRepoCount,
+          })
         : t('delete.repoPathLine', { path: repoPath })
       : '';
 

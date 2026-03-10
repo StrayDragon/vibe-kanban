@@ -2332,15 +2332,15 @@ mod tests {
             CreateExecutionProcess, ExecutionProcess, ExecutionProcessRunReason,
             ExecutionProcessStatus,
         },
+        milestone::{
+            MilestoneEdge, MilestoneGraph, MilestoneNode, MilestoneNodeBaseStrategy,
+            MilestoneNodeKind, MilestoneNodeLayout,
+        },
         project::{CreateProject, Project},
         project_repo::{CreateProjectRepo, ProjectRepo},
         repo::Repo,
         session::{CreateSession, Session},
         task::{CreateTask, Task, TaskStatus},
-        milestone::{
-            MilestoneEdge, MilestoneGraph, MilestoneNode, MilestoneNodeBaseStrategy,
-            MilestoneNodeKind, MilestoneNodeLayout,
-        },
         workspace::{CreateWorkspace, Workspace},
         workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
     };

@@ -9,7 +9,10 @@ use std::{
 };
 
 use async_trait::async_trait;
-use codex_app_server_protocol::{AskForApproval as ProtocolAskForApproval, SandboxMode as ProtocolSandboxMode, ThreadForkParams, ThreadStartParams, UserInput};
+use codex_app_server_protocol::{
+    AskForApproval as ProtocolAskForApproval, SandboxMode as ProtocolSandboxMode, ThreadForkParams,
+    ThreadStartParams, UserInput,
+};
 use command_group::AsyncCommandGroup;
 use derivative::Derivative;
 use executors_core::{

@@ -86,10 +86,15 @@ export function ProjectArchives() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={() => navigate(paths.projectTasks(projectId))}>
+            <Button
+              variant="outline"
+              onClick={() => navigate(paths.projectTasks(projectId))}
+            >
               {t('archives.backToKanban')}
             </Button>
-            <Button onClick={handleArchive}>{t('archives.archiveButton')}</Button>
+            <Button onClick={handleArchive}>
+              {t('archives.archiveButton')}
+            </Button>
           </div>
         </div>
 
@@ -111,9 +116,7 @@ export function ProjectArchives() {
               >
                 <CardContent className="py-4 flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <div className="font-medium truncate">
-                      {entry.title}
-                    </div>
+                    <div className="font-medium truncate">{entry.title}</div>
                     <div className="text-xs text-muted-foreground mt-1">
                       {new Date(entry.created_at).toLocaleString()}
                     </div>

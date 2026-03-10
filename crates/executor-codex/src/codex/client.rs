@@ -10,10 +10,11 @@ use codex_app_server_protocol::{
     ApplyPatchApprovalResponse, ClientInfo, ClientNotification, ClientRequest,
     CommandExecutionApprovalDecision, CommandExecutionRequestApprovalResponse,
     ExecCommandApprovalResponse, ExecPolicyAmendment, FileChangeApprovalDecision,
-    FileChangeRequestApprovalResponse, GetAuthStatusParams, GetAuthStatusResponse, InitializeParams,
-    InitializeResponse, JSONRPCError, JSONRPCNotification, JSONRPCRequest, JSONRPCResponse,
-    RequestId, ServerNotification, ServerRequest, ThreadForkParams, ThreadForkResponse,
-    ThreadStartParams, ThreadStartResponse, TurnStartParams, TurnStartResponse, UserInput,
+    FileChangeRequestApprovalResponse, GetAuthStatusParams, GetAuthStatusResponse,
+    InitializeParams, InitializeResponse, JSONRPCError, JSONRPCNotification, JSONRPCRequest,
+    JSONRPCResponse, RequestId, ServerNotification, ServerRequest, ThreadForkParams,
+    ThreadForkResponse, ThreadStartParams, ThreadStartResponse, TurnStartParams, TurnStartResponse,
+    UserInput,
 };
 use codex_protocol::protocol::ReviewDecision;
 use executors_core::{
@@ -216,10 +217,7 @@ impl AppServerClient {
 
                 let call_id = params.item_id.clone();
 
-                let status = match self
-                    .request_tool_approval("bash", input, &call_id)
-                    .await
-                {
+                let status = match self.request_tool_approval("bash", input, &call_id).await {
                     Ok(status) => status,
                     Err(err) => {
                         tracing::error!("failed to request command approval: {err}");
@@ -294,10 +292,13 @@ impl AppServerClient {
 
                 let (review_decision, feedback) = self.review_decision(&status).await?;
                 let decision = match review_decision {
-                    ReviewDecision::Approved | ReviewDecision::ApprovedExecpolicyAmendment { .. } => {
+                    ReviewDecision::Approved
+                    | ReviewDecision::ApprovedExecpolicyAmendment { .. } => {
                         FileChangeApprovalDecision::Accept
                     }
-                    ReviewDecision::ApprovedForSession => FileChangeApprovalDecision::AcceptForSession,
+                    ReviewDecision::ApprovedForSession => {
+                        FileChangeApprovalDecision::AcceptForSession
+                    }
                     ReviewDecision::Denied => FileChangeApprovalDecision::Decline,
                     ReviewDecision::Abort => FileChangeApprovalDecision::Cancel,
                 };
@@ -442,11 +443,7 @@ impl AppServerClient {
         };
         tokio::spawn(async move {
             if let Err(err) = peer
-                .request::<TurnStartResponse, _>(
-                    request_id(&request),
-                    &request,
-                    "turn/start",
-                )
+                .request::<TurnStartResponse, _>(request_id(&request), &request, "turn/start")
                 .await
             {
                 tracing::error!("failed to send feedback follow-up message: {err}");

@@ -35,9 +35,9 @@ export function KeyboardCommandsPlugin({
         event.preventDefault();
         event.stopPropagation();
 
-        const markdown = editor.getEditorState().read(() =>
-          $convertToMarkdownString(transformers)
-        );
+        const markdown = editor
+          .getEditorState()
+          .read(() => $convertToMarkdownString(transformers));
 
         if (event.shiftKey && onShiftCmdEnter) {
           onShiftCmdEnter(markdown);

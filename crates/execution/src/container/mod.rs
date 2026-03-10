@@ -22,11 +22,11 @@ use db::{
         execution_process_repo_state::{
             CreateExecutionProcessRepoState, ExecutionProcessRepoState,
         },
+        milestone::Milestone,
         project::{Project, UpdateProject},
         project_repo::{ProjectRepo, ProjectRepoWithName},
         repo::Repo,
         session::{CreateSession, Session, SessionError},
-        milestone::Milestone,
         task::{Task, TaskStatus},
         workspace::{Workspace, WorkspaceError},
         workspace_repo::WorkspaceRepo,

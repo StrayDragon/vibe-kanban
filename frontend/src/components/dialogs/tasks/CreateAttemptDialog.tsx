@@ -28,21 +28,21 @@ import { paths } from '@/lib/paths';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { defineModal } from '@/lib/modals';
 import { MilestoneNodeBaseStrategy } from 'shared/types';
-import type { BaseCodingAgent, ExecutorProfileId, MilestoneNode } from 'shared/types';
+import type {
+  BaseCodingAgent,
+  ExecutorProfileId,
+  MilestoneNode,
+} from 'shared/types';
 import { useKeySubmitTask, Scope } from '@/keyboard';
 import { useCliDependencyPreflight } from '@/hooks/config/useCliDependencyPreflight';
 
-const getNodeTaskId = (node: MilestoneNode): string | undefined =>
-  node.task_id;
+const getNodeTaskId = (node: MilestoneNode): string | undefined => node.task_id;
 
 const getNodeExecutorProfileId = (
   node: MilestoneNode
-): ExecutorProfileId | null =>
-  node.executor_profile_id;
+): ExecutorProfileId | null => node.executor_profile_id;
 
-const getNodeBaseStrategy = (
-  node: MilestoneNode
-): MilestoneNodeBaseStrategy =>
+const getNodeBaseStrategy = (node: MilestoneNode): MilestoneNodeBaseStrategy =>
   node.base_strategy;
 
 export interface CreateAttemptDialogProps {

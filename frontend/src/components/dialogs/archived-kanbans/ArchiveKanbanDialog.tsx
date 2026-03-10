@@ -39,8 +39,8 @@ const STATUS_OPTIONS: TaskStatus[] = [
 
 const DEFAULT_STATUSES: TaskStatus[] = ['done', 'cancelled'];
 
-const ArchiveKanbanDialogImpl =
-  NiceModal.create<ArchiveKanbanDialogProps>(({ projectId }) => {
+const ArchiveKanbanDialogImpl = NiceModal.create<ArchiveKanbanDialogProps>(
+  ({ projectId }) => {
     const { t } = useTranslation('tasks');
     const modal = useModal();
     const [title, setTitle] = useState('');
@@ -71,10 +71,13 @@ const ArchiveKanbanDialogImpl =
 
       setIsSubmitting(true);
       try {
-        const response = await archivedKanbansApi.archiveProjectKanban(projectId, {
-          statuses: selectedStatuses,
-          title: normalizedTitle ? normalizedTitle : null,
-        });
+        const response = await archivedKanbansApi.archiveProjectKanban(
+          projectId,
+          {
+            statuses: selectedStatuses,
+            title: normalizedTitle ? normalizedTitle : null,
+          }
+        );
 
         modal.resolve({
           archiveId: response.archived_kanban.id,
@@ -82,7 +85,9 @@ const ArchiveKanbanDialogImpl =
         modal.hide();
       } catch (err: unknown) {
         const message =
-          err instanceof Error ? err.message : t('archives.archiveDialog.error');
+          err instanceof Error
+            ? err.message
+            : t('archives.archiveDialog.error');
         setError(message);
       } finally {
         setIsSubmitting(false);
@@ -90,7 +95,10 @@ const ArchiveKanbanDialogImpl =
     };
 
     return (
-      <Dialog open={modal.visible} onOpenChange={(open) => !open && handleCancel()}>
+      <Dialog
+        open={modal.visible}
+        onOpenChange={(open) => !open && handleCancel()}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t('archives.archiveDialog.title')}</DialogTitle>
@@ -100,9 +108,7 @@ const ArchiveKanbanDialogImpl =
           </DialogHeader>
 
           <div className="space-y-4">
-            <Alert>
-              {t('archives.archiveDialog.warning')}
-            </Alert>
+            <Alert>{t('archives.archiveDialog.warning')}</Alert>
 
             <div className="space-y-2">
               <div className="text-sm font-medium">
@@ -143,7 +149,9 @@ const ArchiveKanbanDialogImpl =
                         }}
                         disabled={isSubmitting}
                       />
-                      <span className="text-foreground">{statusLabels[status]}</span>
+                      <span className="text-foreground">
+                        {statusLabels[status]}
+                      </span>
                     </label>
                   );
                 })}
@@ -171,7 +179,8 @@ const ArchiveKanbanDialogImpl =
         </DialogContent>
       </Dialog>
     );
-  });
+  }
+);
 
 export const ArchiveKanbanDialog = defineModal<
   ArchiveKanbanDialogProps,

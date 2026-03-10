@@ -75,7 +75,11 @@ import { cn } from '@/lib/utils';
 import { paths } from '@/lib/paths';
 import { uiIds } from '@/lib/uiIds';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
-import { getMilestoneId, isMilestoneEntry, isMilestoneSubtask } from '@/utils/milestone';
+import {
+  getMilestoneId,
+  isMilestoneEntry,
+  isMilestoneSubtask,
+} from '@/utils/milestone';
 
 import type {
   RepoBranchStatus,
@@ -819,7 +823,6 @@ export function TasksOverview() {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-
       </>
     ) : null;
 

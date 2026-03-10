@@ -144,10 +144,6 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
       .map((c) => ({ repoId: c.repoId, branch: c.targetBranch! }));
   }, [repoBranchConfigs]);
 
-  const defaultBaselineRef = useMemo(() => {
-    return repoBranchConfigs[0]?.targetBranch ?? 'main';
-  }, [repoBranchConfigs]);
-
   const createMilestone = useMutation({
     mutationFn: (data: CreateMilestone) => milestonesApi.create(data),
     onSuccess: (created) => {
@@ -174,7 +170,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: false,
-          baselineRef: defaultBaselineRef,
+          baselineRef: '',
         };
 
       case 'duplicate':
@@ -185,7 +181,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: true,
-          baselineRef: defaultBaselineRef,
+          baselineRef: '',
         };
 
       case 'subtask':
@@ -198,16 +194,10 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           executorProfileId: baseProfile,
           repoBranches: defaultRepoBranches,
           autoStart: true,
-          baselineRef: defaultBaselineRef,
+          baselineRef: '',
         };
     }
-  }, [
-    mode,
-    props,
-    system.config?.executor_profile,
-    defaultRepoBranches,
-    defaultBaselineRef,
-  ]);
+  }, [mode, props, system.config?.executor_profile, defaultRepoBranches]);
 
   // Form submission handler
   const handleSubmit = async ({ value }: { value: TaskFormValues }) => {
@@ -226,10 +216,9 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
         { onSuccess: () => modal.remove() }
       );
     } else if (isMilestoneCreate) {
-      const baselineRef =
-        value.baselineRef.trim().length > 0
-          ? value.baselineRef.trim()
-          : defaultBaselineRef;
+      const baselineRef = value.baselineRef.trim().length
+        ? value.baselineRef.trim()
+        : null;
       const payload: CreateMilestone = {
         project_id: projectId,
         title: value.title,
@@ -287,10 +276,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
 
   const validator = (value: TaskFormValues): string | undefined => {
     if (!value.title.trim().length) return 'need title';
-    if (isMilestoneCreate) {
-      if (!value.baselineRef.trim().length) return 'need baseline';
-      return;
-    }
+    if (isMilestoneCreate) return;
     if (value.autoStart && !forceCreateOnlyRef.current) {
       if (!value.executorProfileId) return 'need executor profile';
       if (
@@ -317,17 +303,6 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
   const isSubmitting = useStore(form.store, (state) => state.isSubmitting);
   const isDirty = useStore(form.store, (state) => state.isDirty);
   const canSubmit = useStore(form.store, (state) => state.canSubmit);
-  const baselineRefValue = useStore(
-    form.store,
-    (state) => state.values.baselineRef
-  );
-
-  useEffect(() => {
-    if (editMode || !isMilestoneCreate) return;
-    if (!baselineRefValue.trim().length) {
-      form.setFieldValue('baselineRef', defaultBaselineRef);
-    }
-  }, [baselineRefValue, defaultBaselineRef, editMode, form, isMilestoneCreate]);
 
   // Load images for edit mode
   useEffect(() => {
@@ -656,6 +631,9 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                       placeholder={t('taskFormDialog.baselinePlaceholder')}
                       disabled={isSubmitting}
                     />
+                    <div className="text-xs text-muted-foreground">
+                      Leave empty to auto-generate an integration branch.
+                    </div>
                   </div>
                 )}
               </form.Field>
@@ -745,11 +723,14 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                             <RepoBranchSelector
                               configs={configs}
                               onBranchChange={(repoId, branch) => {
-                                const newValue = field.state.value.map((v: RepoBranch) =>
-                                  v.repoId === repoId ? { ...v, branch } : v
+                                const newValue = field.state.value.map(
+                                  (v: RepoBranch) =>
+                                    v.repoId === repoId ? { ...v, branch } : v
                                 );
                                 if (
-                                  !newValue.find((v: RepoBranch) => v.repoId === repoId)
+                                  !newValue.find(
+                                    (v: RepoBranch) => v.repoId === repoId
+                                  )
                                 ) {
                                   newValue.push({ repoId, branch });
                                 }
@@ -829,7 +810,10 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                     : isMilestoneCreate
                       ? isSubmitting
                         ? t('taskFormDialog.creating')
-                        : t('taskFormDialog.createMilestone', 'Create milestone')
+                        : t(
+                            'taskFormDialog.createMilestone',
+                            'Create milestone'
+                          )
                       : isSubmitting
                         ? values.autoStart
                           ? t('taskFormDialog.starting')

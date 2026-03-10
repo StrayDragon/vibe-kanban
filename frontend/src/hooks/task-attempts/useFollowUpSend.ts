@@ -28,54 +28,57 @@ export function useFollowUpSend({
   const [isSendingFollowUp, setIsSendingFollowUp] = useState(false);
   const [followUpError, setFollowUpError] = useState<string | null>(null);
 
-  const onSendFollowUp = useCallback(async (messageOverride?: string) => {
-    if (!sessionId) return;
-    const override =
-      typeof messageOverride === 'string' ? messageOverride : undefined;
-    const extraMessage = (override ?? message).trim();
-    const finalPrompt = [
+  const onSendFollowUp = useCallback(
+    async (messageOverride?: string) => {
+      if (!sessionId) return;
+      const override =
+        typeof messageOverride === 'string' ? messageOverride : undefined;
+      const extraMessage = (override ?? message).trim();
+      const finalPrompt = [
+        conflictMarkdown,
+        clickedMarkdown?.trim(),
+        reviewMarkdown?.trim(),
+        extraMessage,
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+      if (!finalPrompt) return;
+      try {
+        setIsSendingFollowUp(true);
+        setFollowUpError(null);
+        const body: CreateFollowUpAttempt = {
+          prompt: finalPrompt,
+          variant: selectedVariant,
+          retry_process_id: null,
+          force_when_dirty: null,
+          perform_git_reset: null,
+        };
+        await sessionsApi.followUp(sessionId, body);
+        clearComments();
+        clearClickedElements?.();
+        onAfterSendCleanup();
+        // Don't call jumpToLogsTab() - preserves focus on the follow-up editor
+      } catch (error: unknown) {
+        const err = error as { message?: string };
+        setFollowUpError(
+          `Failed to start follow-up execution: ${err.message ?? 'Unknown error'}`
+        );
+      } finally {
+        setIsSendingFollowUp(false);
+      }
+    },
+    [
+      sessionId,
+      message,
       conflictMarkdown,
-      clickedMarkdown?.trim(),
-      reviewMarkdown?.trim(),
-      extraMessage,
+      reviewMarkdown,
+      clickedMarkdown,
+      selectedVariant,
+      clearComments,
+      clearClickedElements,
+      onAfterSendCleanup,
     ]
-      .filter(Boolean)
-      .join('\n\n');
-    if (!finalPrompt) return;
-    try {
-      setIsSendingFollowUp(true);
-      setFollowUpError(null);
-      const body: CreateFollowUpAttempt = {
-        prompt: finalPrompt,
-        variant: selectedVariant,
-        retry_process_id: null,
-        force_when_dirty: null,
-        perform_git_reset: null,
-      };
-      await sessionsApi.followUp(sessionId, body);
-      clearComments();
-      clearClickedElements?.();
-      onAfterSendCleanup();
-      // Don't call jumpToLogsTab() - preserves focus on the follow-up editor
-    } catch (error: unknown) {
-      const err = error as { message?: string };
-      setFollowUpError(
-        `Failed to start follow-up execution: ${err.message ?? 'Unknown error'}`
-      );
-    } finally {
-      setIsSendingFollowUp(false);
-    }
-  }, [
-    sessionId,
-    message,
-    conflictMarkdown,
-    reviewMarkdown,
-    clickedMarkdown,
-    selectedVariant,
-    clearComments,
-    clearClickedElements,
-    onAfterSendCleanup,
-  ]);
+  );
 
   return {
     isSendingFollowUp,

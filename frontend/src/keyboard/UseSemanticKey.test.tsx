@@ -46,4 +46,3 @@ describe('createSemanticHook', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 });
-

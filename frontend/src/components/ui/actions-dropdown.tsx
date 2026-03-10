@@ -244,8 +244,13 @@ export function ActionsDropdown({
         >
           {hasHookSection && latestHookAttempt && (
             <>
-              <DropdownMenuLabel>{t('taskPanel.hooks.title')}</DropdownMenuLabel>
-              <div className="px-2 pb-2" onPointerDown={(e) => e.stopPropagation()}>
+              <DropdownMenuLabel>
+                {t('taskPanel.hooks.title')}
+              </DropdownMenuLabel>
+              <div
+                className="px-2 pb-2"
+                onPointerDown={(e) => e.stopPropagation()}
+              >
                 <WorkspaceHookMenuSummary workspace={latestHookAttempt} />
               </div>
               <DropdownMenuSeparator />

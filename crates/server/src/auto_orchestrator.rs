@@ -20,8 +20,7 @@ use crate::{
     DeploymentImpl,
     auto_orchestrator_prompt::{PromptRepoContext, render_auto_orchestration_prompt},
     milestone_dispatch::{
-        milestone_dispatch_enabled, milestone_has_active_attempt,
-        next_milestone_dispatch_candidate,
+        milestone_dispatch_enabled, milestone_has_active_attempt, next_milestone_dispatch_candidate,
     },
     task_runtime::DeploymentTaskRuntime,
 };

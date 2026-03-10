@@ -30,6 +30,8 @@ pub enum GitServiceError {
     IoError(#[from] std::io::Error),
     #[error("Invalid repository: {0}")]
     InvalidRepository(String),
+    #[error("Invalid branch name: {0}")]
+    InvalidBranchName(String),
     #[error("Branch not found: {0}")]
     BranchNotFound(String),
     #[error("Merge conflicts: {0}")]
@@ -190,6 +192,75 @@ impl GitService {
 
     pub fn is_branch_name_valid(&self, name: &str) -> bool {
         git2::Branch::name_is_valid(name).unwrap_or(false)
+    }
+
+    /// Ensure a local branch exists, creating it from `base_branch` when missing.
+    ///
+    /// - If the branch already exists locally, this is a no-op.
+    /// - `base_branch` may be local or remote (for example `origin/main`).
+    /// - This does not check out the branch or mutate the worktree.
+    pub fn ensure_local_branch_from_base(
+        &self,
+        repo_path: &Path,
+        branch_name: &str,
+        base_branch: &str,
+    ) -> Result<(), GitServiceError> {
+        let branch_name = branch_name.trim();
+        if branch_name.is_empty() || !self.is_branch_name_valid(branch_name) {
+            return Err(GitServiceError::InvalidBranchName(branch_name.to_string()));
+        }
+
+        let base_branch = base_branch.trim();
+        if base_branch.is_empty() {
+            return Err(GitServiceError::BranchNotFound(
+                "base branch cannot be empty".to_string(),
+            ));
+        }
+
+        let repo = self.open_repo(repo_path)?;
+
+        // Already exists locally.
+        if repo.find_branch(branch_name, BranchType::Local).is_ok() {
+            return Ok(());
+        }
+
+        let base_branch_ref = match Self::find_branch(&repo, base_branch) {
+            Ok(branch) => branch,
+            Err(GitServiceError::BranchNotFound(_)) if !base_branch.contains('/') => {
+                let remote_name = self.default_remote_name(&repo);
+                let remote_candidate = format!("{remote_name}/{base_branch}");
+                Self::find_branch(&repo, &remote_candidate)?
+            }
+            Err(err) => return Err(err),
+        }
+        .into_reference();
+
+        repo.branch(branch_name, &base_branch_ref.peel_to_commit()?, false)?;
+
+        Ok(())
+    }
+
+    /// Push a local branch ref to the default remote (if any).
+    ///
+    /// This is intended for "integration branch" publishing and does not require
+    /// the worktree to be clean.
+    pub fn push_branch_ref(
+        &self,
+        repo_path: &Path,
+        branch_name: &str,
+        force: bool,
+    ) -> Result<(), GitServiceError> {
+        let repo = self.open_repo(repo_path)?;
+        let remote_name = self.default_remote_name(&repo);
+        let remote = repo.find_remote(&remote_name).map_err(|_| {
+            GitServiceError::InvalidRepository(format!("No '{remote_name}' remote found"))
+        })?;
+        let remote_url = remote
+            .url()
+            .ok_or_else(|| GitServiceError::InvalidRepository("Remote has no URL".to_string()))?;
+        let git_cli = GitCli::new();
+        git_cli.push(repo_path, remote_url, branch_name, force)?;
+        Ok(())
     }
 
     /// Open the repository

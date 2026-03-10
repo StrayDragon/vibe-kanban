@@ -147,7 +147,10 @@ const TaskPanel = ({
                   variant="outline"
                   onClick={() =>
                     navigate(
-                      paths.milestoneWorkflow(resolvedProjectId, task.milestone_id!)
+                      paths.milestoneWorkflow(
+                        resolvedProjectId,
+                        task.milestone_id!
+                      )
                     )
                   }
                 >

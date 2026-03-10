@@ -134,9 +134,9 @@ pub async fn archive_project_kanban<R: TaskRuntime + Sync>(
 
         // Reject archiving if any selected milestone is already split (some tasks already archived).
         for milestone_row_id in &milestone_row_ids {
-            let split = milestone_tasks
-                .iter()
-                .any(|t| t.milestone_id == Some(*milestone_row_id) && t.archived_kanban_id.is_some());
+            let split = milestone_tasks.iter().any(|t| {
+                t.milestone_id == Some(*milestone_row_id) && t.archived_kanban_id.is_some()
+            });
             if split {
                 return Err(TasksError::Conflict(
                     "Milestone is already archived/split. Restore the milestone first before archiving again.".to_string(),

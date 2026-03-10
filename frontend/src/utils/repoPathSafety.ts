@@ -24,12 +24,13 @@ const RULES: WarningRule[] = [
   {
     warning: 'git_worktree',
     matches: (p) =>
-      p.includes('/.git/worktrees/') ||
-      /(^|\/)worktrees?(\/|$)/.test(p),
+      p.includes('/.git/worktrees/') || /(^|\/)worktrees?(\/|$)/.test(p),
   },
 ];
 
-export function getUnsafeRepoPathWarnings(path: string): UnsafeRepoPathWarning[] {
+export function getUnsafeRepoPathWarnings(
+  path: string
+): UnsafeRepoPathWarning[] {
   const trimmed = path.trim();
   if (!trimmed) return [];
   const normalized = normalizePath(trimmed);
@@ -46,4 +47,3 @@ export function getUnsafeRepoPathWarnings(path: string): UnsafeRepoPathWarning[]
 export function isUnsafeRepoPath(path: string): boolean {
   return getUnsafeRepoPathWarnings(path).length > 0;
 }
-

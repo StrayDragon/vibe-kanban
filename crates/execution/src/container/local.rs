@@ -28,6 +28,10 @@ use db::{
         workspace::{Workspace, WorkspaceError},
         workspace_repo::WorkspaceRepo,
     },
+    types::{
+        WorkspaceLifecycleHookFailurePolicy, WorkspaceLifecycleHookPhase,
+        WorkspaceLifecycleHookRunMode, WorkspaceLifecycleHookStatus,
+    },
 };
 use executors::{
     actions::Executable,
@@ -67,10 +71,6 @@ use utils_core::{
     diff::DiffSummary,
     notifications::SharedNotifier,
     text::{git_branch_id, short_uuid, truncate_to_char_boundary},
-};
-use db::types::{
-    WorkspaceLifecycleHookFailurePolicy, WorkspaceLifecycleHookPhase,
-    WorkspaceLifecycleHookRunMode, WorkspaceLifecycleHookStatus,
 };
 use uuid::Uuid;
 
@@ -288,7 +288,10 @@ impl LocalContainerService {
         self.finalization_tracker.end(execution_process_id).await;
     }
 
-    async fn workspace_dir_for(db: &DBService, workspace: &Workspace) -> Result<PathBuf, ContainerError> {
+    async fn workspace_dir_for(
+        db: &DBService,
+        workspace: &Workspace,
+    ) -> Result<PathBuf, ContainerError> {
         if let Some(container_ref) = &workspace.container_ref {
             return Ok(PathBuf::from(container_ref));
         }
@@ -401,10 +404,7 @@ impl LocalContainerService {
                 Ok(Some(summary))
             }
             Err(err) => {
-                let summary = format!(
-                    "Workspace lifecycle hook failed during {}: {}",
-                    phase, err
-                );
+                let summary = format!("Workspace lifecycle hook failed during {}: {}", phase, err);
                 Workspace::record_hook_outcome(
                     &db.pool,
                     workspace.id,
@@ -474,7 +474,9 @@ impl LocalContainerService {
             .await?
         {
             if hook.failure_policy == WorkspaceLifecycleHookFailurePolicy::BlockCleanup {
-                return Err(ContainerError::Workspace(WorkspaceError::ValidationError(summary)));
+                return Err(ContainerError::Workspace(WorkspaceError::ValidationError(
+                    summary,
+                )));
             }
             tracing::warn!(
                 workspace_id = %fresh_workspace.id,
@@ -2381,7 +2383,10 @@ mod tests {
             run_mode: Some(WorkspaceLifecycleHookRunMode::OncePerWorkspace),
         };
 
-        assert_eq!(resolve_hook_working_dir(workspace_dir, &hook), workspace_dir);
+        assert_eq!(
+            resolve_hook_working_dir(workspace_dir, &hook),
+            workspace_dir
+        );
     }
 
     #[test]

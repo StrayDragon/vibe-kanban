@@ -11,4 +11,3 @@ export function useEditorIntegrationEnabled(): boolean {
   const { config } = useUserSystem();
   return isEditorIntegrationEnabled(config?.editor?.editor_type);
 }
-

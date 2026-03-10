@@ -249,10 +249,18 @@ async fn delete_single_task_with_cleanup<R: TaskRuntime + Sync>(
     tokio::spawn(async move {
         match Repo::delete_orphaned(&db).await {
             Ok(count) if count > 0 => {
-                tracing::info!("Deleted {} orphaned repo records after deleting task {}", count, task_id);
+                tracing::info!(
+                    "Deleted {} orphaned repo records after deleting task {}",
+                    count,
+                    task_id
+                );
             }
             Err(err) => {
-                tracing::error!("Failed to delete orphaned repos after deleting task {}: {}", task_id, err);
+                tracing::error!(
+                    "Failed to delete orphaned repos after deleting task {}: {}",
+                    task_id,
+                    err
+                );
             }
             _ => {}
         }

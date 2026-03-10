@@ -8,4 +8,3 @@ export const getMilestoneId = (task: TaskWithAttemptStatus): string | null =>
 
 export const isMilestoneSubtask = (task: TaskWithAttemptStatus): boolean =>
   Boolean(task.milestone_id) && task.task_kind !== 'milestone';
-

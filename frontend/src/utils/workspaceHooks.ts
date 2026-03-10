@@ -38,7 +38,10 @@ export function getWorkspaceHookSnapshots(
 
   const snapshots: WorkspaceHookSnapshot[] = [];
 
-  if (workspace.after_prepare_hook_status && workspace.after_prepare_hook_ran_at) {
+  if (
+    workspace.after_prepare_hook_status &&
+    workspace.after_prepare_hook_ran_at
+  ) {
     snapshots.push({
       phase: 'after_prepare',
       status: workspace.after_prepare_hook_status,
@@ -47,7 +50,10 @@ export function getWorkspaceHookSnapshots(
     });
   }
 
-  if (workspace.before_cleanup_hook_status && workspace.before_cleanup_hook_ran_at) {
+  if (
+    workspace.before_cleanup_hook_status &&
+    workspace.before_cleanup_hook_ran_at
+  ) {
     snapshots.push({
       phase: 'before_cleanup',
       status: workspace.before_cleanup_hook_status,
@@ -91,4 +97,3 @@ export function hasWorkspaceHookOutcome(
 ): boolean {
   return getWorkspaceHookOutcome(workspace) !== null;
 }
-

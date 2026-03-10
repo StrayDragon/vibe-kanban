@@ -3,9 +3,9 @@ pub mod auto_orchestrator;
 pub mod auto_orchestrator_prompt;
 pub mod error;
 pub mod http;
-pub mod milestone_dispatch;
 pub mod mcp;
 pub mod middleware;
+pub mod milestone_dispatch;
 pub mod routes;
 pub mod task_runtime;
 #[cfg(test)]

@@ -44,12 +44,10 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
     []
   );
 
-  const { data, isConnected, isResyncing, error, resync } = useJsonPatchWsStream(
-    endpoint,
-    connectEnabled,
-    initialData,
-    { deduplicatePatches }
-  );
+  const { data, isConnected, isResyncing, error, resync } =
+    useJsonPatchWsStream(endpoint, connectEnabled, initialData, {
+      deduplicatePatches,
+    });
 
   const {
     inserts,
@@ -96,7 +94,9 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
   }, [inserts, overrides, projectId, streamTasksById, tombstones]);
 
   const { tasks, tasksById, tasksByStatus } = useMemo(() => {
-    const merged: Record<string, TaskWithAttemptStatus> = { ...mergedTasksById };
+    const merged: Record<string, TaskWithAttemptStatus> = {
+      ...mergedTasksById,
+    };
     const byStatus: Record<TaskStatus, TaskWithAttemptStatus[]> = {
       todo: [],
       inprogress: [],
@@ -174,10 +174,15 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
     const minResyncGapMs = 800;
     const maxAttempts = 2;
 
-    const shouldResync = (meta: { setAt: number; resyncAttempts: number; lastResyncAt: number | null }) => {
+    const shouldResync = (meta: {
+      setAt: number;
+      resyncAttempts: number;
+      lastResyncAt: number | null;
+    }) => {
       if (now - meta.setAt < resyncAfterMs) return false;
       if (meta.resyncAttempts >= maxAttempts) return false;
-      if (meta.lastResyncAt && now - meta.lastResyncAt < minResyncGapMs) return false;
+      if (meta.lastResyncAt && now - meta.lastResyncAt < minResyncGapMs)
+        return false;
       return true;
     };
 

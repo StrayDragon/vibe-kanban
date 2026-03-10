@@ -43,12 +43,8 @@ export const useAllTasks = (
     []
   );
 
-  const { data, isConnected, isResyncing, error, resync } = useJsonPatchWsStream(
-    endpoint,
-    true,
-    initialData,
-    { deduplicatePatches }
-  );
+  const { data, isConnected, isResyncing, error, resync } =
+    useJsonPatchWsStream(endpoint, true, initialData, { deduplicatePatches });
 
   const {
     inserts,
@@ -94,7 +90,9 @@ export const useAllTasks = (
   }, [includeArchived, inserts, overrides, streamTasksById, tombstones]);
 
   const { tasks, tasksById, tasksByStatus } = useMemo(() => {
-    const merged: Record<string, TaskWithAttemptStatus> = { ...mergedTasksById };
+    const merged: Record<string, TaskWithAttemptStatus> = {
+      ...mergedTasksById,
+    };
     const byStatus: Record<TaskStatus, TaskWithAttemptStatus[]> = {
       todo: [],
       inprogress: [],
@@ -208,7 +206,14 @@ export const useAllTasks = (
 
     resync('optimistic-stale');
     candidates.forEach(markResyncAttempt);
-  }, [inserts, markResyncAttempt, overrides, resync, streamTasksById, tombstones]);
+  }, [
+    inserts,
+    markResyncAttempt,
+    overrides,
+    resync,
+    streamTasksById,
+    tombstones,
+  ]);
 
   return {
     tasks,

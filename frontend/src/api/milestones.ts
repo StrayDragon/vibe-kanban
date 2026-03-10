@@ -1,6 +1,8 @@
 import type {
   CreateMilestone,
   Milestone,
+  PushMilestoneBaselineRequest,
+  PushMilestoneBaselineResponse,
   RunNextMilestoneStepResponse,
   UpdateMilestone,
 } from 'shared/types';
@@ -21,7 +23,10 @@ export const milestonesApi = {
     return handleApiResponse<Milestone>(response);
   },
 
-  update: async (milestoneId: string, data: UpdateMilestone): Promise<Milestone> => {
+  update: async (
+    milestoneId: string,
+    data: UpdateMilestone
+  ): Promise<Milestone> => {
     const response = await makeRequest(`/api/milestones/${milestoneId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -39,5 +44,19 @@ export const milestonesApi = {
       }
     );
     return handleApiResponse<RunNextMilestoneStepResponse>(response);
+  },
+
+  pushBaselineBranch: async (
+    milestoneId: string,
+    data: PushMilestoneBaselineRequest
+  ): Promise<PushMilestoneBaselineResponse> => {
+    const response = await makeRequest(
+      `/api/milestones/${milestoneId}/push-baseline-branch`,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+    return handleApiResponse<PushMilestoneBaselineResponse>(response);
   },
 };

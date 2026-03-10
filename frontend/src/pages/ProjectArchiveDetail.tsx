@@ -30,7 +30,11 @@ export function ProjectArchiveDetail() {
     undefined
   );
 
-  const { data: archiveData, isLoading, error } = useQuery({
+  const {
+    data: archiveData,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ['archived-kanban', archiveId],
     queryFn: () => archivedKanbansApi.getById(archiveId!),
     enabled: Boolean(archiveId),
@@ -46,15 +50,18 @@ export function ProjectArchiveDetail() {
     error: tasksError,
   } = useArchivedKanbanTasks(archiveId ?? '');
 
-  const handleViewTaskDetails = useCallback(async (task: TaskWithAttemptStatus) => {
-    setSelectedTaskId(task.id);
-    try {
-      await ArchivedTaskDetailsDialog.show({ task });
-    } finally {
-      ArchivedTaskDetailsDialog.hide();
-      setSelectedTaskId(undefined);
-    }
-  }, []);
+  const handleViewTaskDetails = useCallback(
+    async (task: TaskWithAttemptStatus) => {
+      setSelectedTaskId(task.id);
+      try {
+        await ArchivedTaskDetailsDialog.show({ task });
+      } finally {
+        ArchivedTaskDetailsDialog.hide();
+        setSelectedTaskId(undefined);
+      }
+    },
+    []
+  );
 
   const handleRestore = useCallback(async () => {
     if (!archiveId) return;

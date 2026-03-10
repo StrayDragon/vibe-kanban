@@ -8,13 +8,13 @@ pub mod filesystem;
 pub mod health;
 pub(crate) mod idempotency;
 pub mod images;
+pub mod milestones;
 pub mod projects;
 pub mod repo;
 pub mod scratch;
 pub mod sessions;
 pub mod tags;
 pub mod task_attempts;
-pub mod milestones;
 pub mod tasks;
 pub mod translation;
 

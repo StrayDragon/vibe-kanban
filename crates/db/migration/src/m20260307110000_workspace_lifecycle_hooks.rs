@@ -20,7 +20,10 @@ impl MigrationTrait for Migration {
 
 async fn add_project_columns(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
     let columns = vec![
-        ColumnDef::new(Projects::AfterPrepareHookCommand).text().null().to_owned(),
+        ColumnDef::new(Projects::AfterPrepareHookCommand)
+            .text()
+            .null()
+            .to_owned(),
         ColumnDef::new(Projects::AfterPrepareHookWorkingDir)
             .text()
             .null()
@@ -50,7 +53,12 @@ async fn add_project_columns(manager: &SchemaManager<'_>) -> Result<(), DbErr> {
     if matches!(manager.get_database_backend(), DatabaseBackend::Sqlite) {
         for column in columns {
             manager
-                .alter_table(Table::alter().table(Projects::Table).add_column(column).to_owned())
+                .alter_table(
+                    Table::alter()
+                        .table(Projects::Table)
+                        .add_column(column)
+                        .to_owned(),
+                )
                 .await?;
         }
     } else {
@@ -95,7 +103,12 @@ async fn add_workspace_columns(manager: &SchemaManager<'_>) -> Result<(), DbErr>
     if matches!(manager.get_database_backend(), DatabaseBackend::Sqlite) {
         for column in columns {
             manager
-                .alter_table(Table::alter().table(Workspaces::Table).add_column(column).to_owned())
+                .alter_table(
+                    Table::alter()
+                        .table(Workspaces::Table)
+                        .add_column(column)
+                        .to_owned(),
+                )
                 .await?;
         }
     } else {
@@ -123,7 +136,12 @@ async fn drop_project_columns(manager: &SchemaManager<'_>) -> Result<(), DbErr> 
     if matches!(manager.get_database_backend(), DatabaseBackend::Sqlite) {
         for column in columns {
             manager
-                .alter_table(Table::alter().table(Projects::Table).drop_column(column).to_owned())
+                .alter_table(
+                    Table::alter()
+                        .table(Projects::Table)
+                        .drop_column(column)
+                        .to_owned(),
+                )
                 .await?;
         }
     } else {
@@ -150,7 +168,12 @@ async fn drop_workspace_columns(manager: &SchemaManager<'_>) -> Result<(), DbErr
     if matches!(manager.get_database_backend(), DatabaseBackend::Sqlite) {
         for column in columns {
             manager
-                .alter_table(Table::alter().table(Workspaces::Table).drop_column(column).to_owned())
+                .alter_table(
+                    Table::alter()
+                        .table(Workspaces::Table)
+                        .drop_column(column)
+                        .to_owned(),
+                )
                 .await?;
         }
     } else {

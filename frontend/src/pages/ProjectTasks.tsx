@@ -393,7 +393,6 @@ export function ProjectTasks() {
     [kanbanColumns]
   );
 
-
   useKeyNavUp(
     () => {
       selectPreviousTask();
@@ -626,7 +625,12 @@ export function ProjectTasks() {
     return () => {
       clearReviewInbox();
     };
-  }, [clearReviewInbox, handleViewTaskDetails, reviewInboxTasks, setReviewInbox]);
+  }, [
+    clearReviewInbox,
+    handleViewTaskDetails,
+    reviewInboxTasks,
+    setReviewInbox,
+  ]);
 
   const dragSeqRef = useRef<Record<string, number>>({});
 
@@ -715,10 +719,16 @@ export function ProjectTasks() {
         <Card>
           <CardContent className="text-center py-8">
             <p className="text-muted-foreground">{t('empty.noTasks')}</p>
-            <Button className="mt-4" onClick={handleCreateNewTask}>
-              <Plus className="h-4 w-4 mr-2" />
-              {t('empty.createFirst')}
-            </Button>
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+              <Button onClick={handleCreateNewTask}>
+                <Plus className="h-4 w-4 mr-2" />
+                {t('empty.createFirst')}
+              </Button>
+              <Button variant="outline" onClick={handleCreateMilestone}>
+                <Plus className="h-4 w-4 mr-2" />
+                {t('actions.createMilestone', 'Create milestone')}
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -754,7 +764,6 @@ export function ProjectTasks() {
         />
       </div>
     );
-
 
   const kanbanContent = (
     <div className="flex h-full min-h-0 flex-col">

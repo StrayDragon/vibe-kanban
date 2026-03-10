@@ -12,7 +12,11 @@ vi.mock('react-virtuoso', async () => {
     data?: unknown[];
     context?: unknown;
     computeItemKey?: (index: number, data: unknown) => string;
-    itemContent?: (index: number, data: unknown, context: unknown) => React.ReactNode;
+    itemContent?: (
+      index: number,
+      data: unknown,
+      context: unknown
+    ) => React.ReactNode;
     scrollerRef?: (element: HTMLElement | Window | null) => void;
   };
 
@@ -30,66 +34,68 @@ vi.mock('react-virtuoso', async () => {
         scrollerRef: scrollerRefProp,
       } = props;
 
-    React.useImperativeHandle(ref, () => ({ scrollToIndex: scrollToIndexMock }));
+      React.useImperativeHandle(ref, () => ({
+        scrollToIndex: scrollToIndexMock,
+      }));
 
-    const scrollerRef = React.useRef<HTMLDivElement | null>(null);
-    const itemElsRef = React.useRef<Map<number, HTMLDivElement>>(new Map());
+      const scrollerRef = React.useRef<HTMLDivElement | null>(null);
+      const itemElsRef = React.useRef<Map<number, HTMLDivElement>>(new Map());
 
-    React.useEffect(() => {
-      scrollerRefProp?.(scrollerRef.current);
-    }, [scrollerRefProp]);
+      React.useEffect(() => {
+        scrollerRefProp?.(scrollerRef.current);
+      }, [scrollerRefProp]);
 
-    React.useLayoutEffect(() => {
-      const scroller = scrollerRef.current;
-      if (scroller) {
-        scroller.getBoundingClientRect = () =>
-          ({
-            top: 0,
-            bottom: 100,
-            left: 0,
-            right: 100,
-            width: 100,
-            height: 100,
-            x: 0,
-            y: 0,
-            toJSON: () => {},
-          }) as DOMRect;
-      }
+      React.useLayoutEffect(() => {
+        const scroller = scrollerRef.current;
+        if (scroller) {
+          scroller.getBoundingClientRect = () =>
+            ({
+              top: 0,
+              bottom: 100,
+              left: 0,
+              right: 100,
+              width: 100,
+              height: 100,
+              x: 0,
+              y: 0,
+              toJSON: () => {},
+            }) as DOMRect;
+        }
 
-      for (const [index, el] of itemElsRef.current.entries()) {
-        el.getBoundingClientRect = () =>
-          ({
-            top: index * 20,
-            bottom: (index + 1) * 20,
-            left: 0,
-            right: 100,
-            width: 100,
-            height: 20,
-            x: 0,
-            y: index * 20,
-            toJSON: () => {},
-          }) as DOMRect;
-      }
-    }, [data]);
+        for (const [index, el] of itemElsRef.current.entries()) {
+          el.getBoundingClientRect = () =>
+            ({
+              top: index * 20,
+              bottom: (index + 1) * 20,
+              left: 0,
+              right: 100,
+              width: 100,
+              height: 20,
+              x: 0,
+              y: index * 20,
+              toJSON: () => {},
+            }) as DOMRect;
+        }
+      }, [data]);
 
-    return (
-      <div ref={scrollerRef}>
-        {data.map((item, index) => {
-          const key = computeItemKey?.(index, item) ?? String(index);
-          return (
-            <div
-              key={key}
-              data-index={index}
-              ref={(el) => {
-                if (el) itemElsRef.current.set(index, el);
-              }}
-            >
-              {itemContent?.(index, item, context)}
-            </div>
-          );
-        })}
-      </div>
-    );
+      return (
+        <div ref={scrollerRef}>
+          {data.map((item, index) => {
+            const key = computeItemKey?.(index, item) ?? String(index);
+            return (
+              <div
+                key={key}
+                data-index={index}
+                ref={(el) => {
+                  if (el) itemElsRef.current.set(index, el);
+                }}
+              >
+                {itemContent?.(index, item, context)}
+              </div>
+            );
+          })}
+        </div>
+      );
     }
   );
 
@@ -154,9 +160,8 @@ vi.mock('@/hooks/execution-processes/useConversationHistory', async () => {
       attempt,
       onEntriesUpdated,
     }: UseConversationHistoryParamsLike) => {
-      const onEntriesUpdatedRef = React.useRef<OnEntriesUpdatedLike>(
-        onEntriesUpdated
-      );
+      const onEntriesUpdatedRef =
+        React.useRef<OnEntriesUpdatedLike>(onEntriesUpdated);
 
       React.useEffect(() => {
         onEntriesUpdatedRef.current = onEntriesUpdated;

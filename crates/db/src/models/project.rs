@@ -18,9 +18,7 @@ use crate::{
         ProjectEventPayload, TaskEventPayload,
     },
     models::event_outbox::EventOutbox,
-    types::{
-        WorkspaceLifecycleHookFailurePolicy, WorkspaceLifecycleHookRunMode,
-    },
+    types::{WorkspaceLifecycleHookFailurePolicy, WorkspaceLifecycleHookRunMode},
 };
 
 #[derive(Debug, Error)]
@@ -76,9 +74,15 @@ pub struct UpdateProject {
     pub git_no_verify_override: Option<Option<bool>>,
     pub scheduler_max_concurrent: Option<i32>,
     pub scheduler_max_retries: Option<i32>,
-    #[serde(default, deserialize_with = "deserialize_optional_hook_config_as_double_option")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_hook_config_as_double_option"
+    )]
     pub after_prepare_hook: Option<Option<WorkspaceLifecycleHookConfig>>,
-    #[serde(default, deserialize_with = "deserialize_optional_hook_config_as_double_option")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_hook_config_as_double_option"
+    )]
     pub before_cleanup_hook: Option<Option<WorkspaceLifecycleHookConfig>>,
 }
 
@@ -97,7 +101,9 @@ fn deserialize_optional_hook_config_as_double_option<'de, D>(
 where
     D: serde::Deserializer<'de>,
 {
-    Ok(Some(Option::<WorkspaceLifecycleHookConfig>::deserialize(deserializer)?))
+    Ok(Some(Option::<WorkspaceLifecycleHookConfig>::deserialize(
+        deserializer,
+    )?))
 }
 
 #[derive(Debug, Serialize, TS)]

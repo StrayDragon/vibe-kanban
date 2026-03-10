@@ -31,10 +31,15 @@ const ArchivedTaskDetailsDialogImpl =
     };
 
     return (
-      <Dialog open={modal.visible} onOpenChange={(open) => !open && handleClose()}>
+      <Dialog
+        open={modal.visible}
+        onOpenChange={(open) => !open && handleClose()}
+      >
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{task.title || t('archives.taskDetails.untitled')}</DialogTitle>
+            <DialogTitle>
+              {task.title || t('archives.taskDetails.untitled')}
+            </DialogTitle>
             <DialogDescription>
               {t('archives.taskDetails.status')}: {statusLabels[task.status]}
             </DialogDescription>
@@ -64,4 +69,3 @@ export const ArchivedTaskDetailsDialog = defineModal<
   ArchivedTaskDetailsDialogProps,
   void
 >(ArchivedTaskDetailsDialogImpl);
-

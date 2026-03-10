@@ -27,10 +27,11 @@ import {
   Loader2,
   Trash2,
 } from 'lucide-react';
-import {
-  getWorkspaceHookOutcome,
-} from '@/utils/workspaceHooks';
-import type { TaskWithAttemptStatus, WorkspaceLifecycleHookConfig } from 'shared/types';
+import { getWorkspaceHookOutcome } from '@/utils/workspaceHooks';
+import type {
+  TaskWithAttemptStatus,
+  WorkspaceLifecycleHookConfig,
+} from 'shared/types';
 import type { WorkspaceWithSession } from '@/types/attempt';
 
 interface ProjectDetailProps {
@@ -72,7 +73,8 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
       projectId,
       lifecycleHookCandidateTasks.map((task) => task.id),
     ],
-    enabled: hasConfiguredLifecycleHooks && lifecycleHookCandidateTasks.length > 0,
+    enabled:
+      hasConfiguredLifecycleHooks && lifecycleHookCandidateTasks.length > 0,
     staleTime: 5_000,
     queryFn: async () => {
       const results = await Promise.allSettled(
@@ -147,8 +149,12 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
               <h4 className="text-sm font-medium">{title}</h4>
               <Badge variant={isEnabled ? 'secondary' : 'outline'}>
                 {isEnabled
-                  ? tSettings('settings.projects.lifecycleHooks.summary.enabled')
-                  : tSettings('settings.projects.lifecycleHooks.summary.disabled')}
+                  ? tSettings(
+                      'settings.projects.lifecycleHooks.summary.enabled'
+                    )
+                  : tSettings(
+                      'settings.projects.lifecycleHooks.summary.disabled'
+                    )}
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground">{description}</p>
@@ -168,7 +174,9 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
                 {': '}
                 <span className="ml-1 font-mono text-foreground">
                   {hook.working_dir?.trim() ||
-                    tSettings('settings.projects.lifecycleHooks.summary.workspaceRoot')}
+                    tSettings(
+                      'settings.projects.lifecycleHooks.summary.workspaceRoot'
+                    )}
                 </span>
               </span>
               <span className="inline-flex items-center rounded-full border border-border/60 bg-background px-2.5 py-1">
@@ -176,7 +184,9 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
                   'settings.projects.lifecycleHooks.shared.failurePolicy.label'
                 )}
                 {': '}
-                <span className="ml-1 text-foreground">{failurePolicyLabel}</span>
+                <span className="ml-1 text-foreground">
+                  {failurePolicyLabel}
+                </span>
               </span>
               {runModeLabel ? (
                 <span className="inline-flex items-center rounded-full border border-border/60 bg-background px-2.5 py-1">
@@ -333,7 +343,9 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
                 <span>{project.scheduler_max_concurrent}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Scheduler retries:</span>
+                <span className="text-muted-foreground">
+                  Scheduler retries:
+                </span>
                 <span>{project.scheduler_max_retries}</span>
               </div>
               <div className="flex items-center text-sm">
@@ -393,13 +405,17 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
                   {tSettings('settings.projects.lifecycleHooks.summary.title')}
                 </h4>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {tSettings('settings.projects.lifecycleHooks.summary.description')}
+                  {tSettings(
+                    'settings.projects.lifecycleHooks.summary.description'
+                  )}
                 </p>
               </div>
 
               <div className="grid gap-3 lg:grid-cols-2">
                 {renderLifecycleHookConfig(
-                  tSettings('settings.projects.lifecycleHooks.afterPrepare.title'),
+                  tSettings(
+                    'settings.projects.lifecycleHooks.afterPrepare.title'
+                  ),
                   tSettings(
                     'settings.projects.lifecycleHooks.afterPrepare.description'
                   ),
@@ -407,7 +423,9 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
                   'after_prepare'
                 )}
                 {renderLifecycleHookConfig(
-                  tSettings('settings.projects.lifecycleHooks.beforeCleanup.title'),
+                  tSettings(
+                    'settings.projects.lifecycleHooks.beforeCleanup.title'
+                  ),
                   tSettings(
                     'settings.projects.lifecycleHooks.beforeCleanup.description'
                   ),
@@ -418,7 +436,8 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
 
               {hasConfiguredLifecycleHooks ? (
                 <div className="rounded-lg border border-border/60 bg-muted/10 p-4">
-                  {latestLifecycleHookResult.isLoading || projectTasksLoading ? (
+                  {latestLifecycleHookResult.isLoading ||
+                  projectTasksLoading ? (
                     <p className="text-sm text-muted-foreground">
                       {tSettings(
                         'settings.projects.lifecycleHooks.summary.loadingLatest'
@@ -444,7 +463,9 @@ export function ProjectDetail({ projectId, onBack }: ProjectDetailProps) {
                     </div>
                   ) : (
                     <p className="text-sm text-muted-foreground">
-                      {tSettings('settings.projects.lifecycleHooks.summary.noRuns')}
+                      {tSettings(
+                        'settings.projects.lifecycleHooks.summary.noRuns'
+                      )}
                     </p>
                   )}
                 </div>

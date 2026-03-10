@@ -77,22 +77,15 @@ export function Navbar() {
   } = useProject();
   const editorIntegrationEnabled = useEditorIntegrationEnabled();
   const navigateWithSearch = useNavigateWithSearch();
-  const {
-    query,
-    setQuery,
-    active,
-    clear,
-    registerInputRef,
-    reviewInbox,
-  } = useSearch();
+  const { query, setQuery, active, clear, registerInputRef, reviewInbox } =
+    useSearch();
   const handleOpenInEditor = useOpenProjectInEditor(project || null);
   const isOverviewRoute = location.pathname.startsWith('/tasks');
   const isProjectTasksRoute = /^\/projects\/[^/]+\/tasks/.test(
     location.pathname
   );
-  const isProjectArchiveDetailRoute = /^\/projects\/[^/]+\/archives\/[^/]+\/?$/.test(
-    location.pathname
-  );
+  const isProjectArchiveDetailRoute =
+    /^\/projects\/[^/]+\/archives\/[^/]+\/?$/.test(location.pathname);
 
   const { data: repos } = useProjectRepos(projectId);
   const isSingleRepoProject = repos?.length === 1;
@@ -452,7 +445,9 @@ export function Navbar() {
                     <DropdownMenuItem
                       asChild
                       className={
-                        location.pathname.includes('/archives') ? 'bg-accent' : ''
+                        location.pathname.includes('/archives')
+                          ? 'bg-accent'
+                          : ''
                       }
                     >
                       <Link to={archivesPath}>

@@ -134,10 +134,7 @@ impl ProjectService {
         Ok(())
     }
 
-    fn validate_workspace_hook(
-        phase: &str,
-        hook: &WorkspaceLifecycleHookConfig,
-    ) -> Result<()> {
+    fn validate_workspace_hook(phase: &str, hook: &WorkspaceLifecycleHookConfig) -> Result<()> {
         Self::validate_single_command_text(phase, &hook.command)?;
         if let Some(working_dir) = hook.working_dir.as_deref() {
             Self::validate_workspace_relative_dir(phase, working_dir)?;
@@ -150,8 +147,7 @@ impl ProjectService {
                     | db::types::WorkspaceLifecycleHookFailurePolicy::WarnOnly => {}
                     db::types::WorkspaceLifecycleHookFailurePolicy::BlockCleanup => {
                         return Err(ProjectServiceError::InvalidWorkspaceLifecycleHook(
-                            "after_prepare hooks only support block_start or warn_only"
-                                .to_string(),
+                            "after_prepare hooks only support block_start or warn_only".to_string(),
                         ));
                     }
                 }
@@ -188,21 +184,25 @@ impl ProjectService {
         if let Some(script) = payload.dev_script.as_deref() {
             let trimmed = script.trim();
             if !trimmed.is_empty() {
-                Self::validate_single_command_text("dev_script", trimmed).map_err(|err| match err {
-                    ProjectServiceError::InvalidWorkspaceLifecycleHook(message) => {
-                        ProjectServiceError::InvalidDevScript(message)
-                    }
-                    other => other,
-                })?;
+                Self::validate_single_command_text("dev_script", trimmed).map_err(
+                    |err| match err {
+                        ProjectServiceError::InvalidWorkspaceLifecycleHook(message) => {
+                            ProjectServiceError::InvalidDevScript(message)
+                        }
+                        other => other,
+                    },
+                )?;
             }
         }
 
         if let Some(working_dir) = payload.dev_script_working_dir.as_deref() {
-            Self::validate_workspace_relative_dir("dev_script", working_dir).map_err(|err| match err {
-                ProjectServiceError::InvalidWorkspaceLifecycleHook(message) => {
-                    ProjectServiceError::InvalidDevScriptWorkingDir(message)
+            Self::validate_workspace_relative_dir("dev_script", working_dir).map_err(|err| {
+                match err {
+                    ProjectServiceError::InvalidWorkspaceLifecycleHook(message) => {
+                        ProjectServiceError::InvalidDevScriptWorkingDir(message)
+                    }
+                    other => other,
                 }
-                other => other,
             })?;
         }
 
@@ -661,9 +661,7 @@ mod tests {
             project::{CreateProject, Project, UpdateProject, WorkspaceLifecycleHookConfig},
             project_repo::{CreateProjectRepo, ProjectRepo},
         },
-        types::{
-            WorkspaceLifecycleHookFailurePolicy, WorkspaceLifecycleHookRunMode,
-        },
+        types::{WorkspaceLifecycleHookFailurePolicy, WorkspaceLifecycleHookRunMode},
     };
     use sea_orm::Database;
     use sea_orm_migration::MigratorTrait;
@@ -871,7 +869,9 @@ mod tests {
         .unwrap();
         let mut update = empty_update_payload();
         update.default_agent_working_dir = Some("repo-a".to_string());
-        Project::update(&db.pool, project_id, &update).await.unwrap();
+        Project::update(&db.pool, project_id, &update)
+            .await
+            .unwrap();
 
         let tmp = tempdir().unwrap();
         let repo_a = tmp.path().join("repo-a");

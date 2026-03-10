@@ -76,9 +76,10 @@ vi.mock('@xyflow/react', async () => {
 });
 
 vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual<typeof import('react-router-dom')>(
-    'react-router-dom'
-  );
+  const actual =
+    await vi.importActual<typeof import('react-router-dom')>(
+      'react-router-dom'
+    );
   return {
     ...actual,
     useNavigate: () => vi.fn(),
@@ -202,7 +203,9 @@ describe('MilestoneWorkflow', () => {
 
     const firstCall = milestonesUpdateMock.mock.calls[0];
     expect(firstCall?.[0]).toBe('ms-1');
-    expect(firstCall?.[1]?.graph?.nodes?.[0]?.instructions).toBe('Do the thing');
+    expect(firstCall?.[1]?.graph?.nodes?.[0]?.instructions).toBe(
+      'Do the thing'
+    );
 
     fireEvent.change(textarea, { target: { value: '   ' } });
     await vi.advanceTimersByTimeAsync(700);
@@ -210,7 +213,9 @@ describe('MilestoneWorkflow', () => {
     expect(milestonesUpdateMock).toHaveBeenCalledTimes(2);
 
     const lastCall =
-      milestonesUpdateMock.mock.calls[milestonesUpdateMock.mock.calls.length - 1];
+      milestonesUpdateMock.mock.calls[
+        milestonesUpdateMock.mock.calls.length - 1
+      ];
     expect(lastCall?.[1]?.graph?.nodes?.[0]?.instructions).toBeNull();
   });
 
@@ -261,7 +266,9 @@ describe('MilestoneWorkflow', () => {
     fireEvent.click(screen.getByTestId('node-node-a'));
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
 
-    const textarea = screen.getByPlaceholderText('Optional node-specific guidance');
+    const textarea = screen.getByPlaceholderText(
+      'Optional node-specific guidance'
+    );
     fireEvent.change(textarea, { target: { value: 'Draft instructions' } });
 
     milestoneState.current = {

@@ -58,7 +58,9 @@ const DeleteArchivedKanbanDialogImpl =
           modal.hide();
         } catch (err: unknown) {
           const message =
-            err instanceof Error ? err.message : t('archives.deleteDialog.error');
+            err instanceof Error
+              ? err.message
+              : t('archives.deleteDialog.error');
           setError(message);
         } finally {
           setIsSubmitting(false);
@@ -66,7 +68,10 @@ const DeleteArchivedKanbanDialogImpl =
       };
 
       return (
-        <Dialog open={modal.visible} onOpenChange={(open) => !open && handleCancel()}>
+        <Dialog
+          open={modal.visible}
+          onOpenChange={(open) => !open && handleCancel()}
+        >
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{t('archives.deleteDialog.title')}</DialogTitle>
@@ -78,13 +83,16 @@ const DeleteArchivedKanbanDialogImpl =
             <div className="space-y-4">
               <Alert variant="destructive">
                 {t('archives.deleteDialog.warning', {
-                  count: typeof tasksCount === 'number' ? tasksCount : undefined,
+                  count:
+                    typeof tasksCount === 'number' ? tasksCount : undefined,
                 })}
               </Alert>
 
               <div className="space-y-2">
                 <div className="text-sm text-muted-foreground">
-                  {t('archives.deleteDialog.typeToConfirm', { title: archiveTitle })}
+                  {t('archives.deleteDialog.typeToConfirm', {
+                    title: archiveTitle,
+                  })}
                 </div>
                 <Input
                   value={confirmation}

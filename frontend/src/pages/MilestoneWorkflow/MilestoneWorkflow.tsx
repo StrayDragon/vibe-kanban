@@ -109,17 +109,13 @@ const TASK_STATUSES: TaskStatus[] = [
   'cancelled',
 ];
 
-const getNodeTaskId = (node: MilestoneNode): string | undefined =>
-  node.task_id;
+const getNodeTaskId = (node: MilestoneNode): string | undefined => node.task_id;
 
 const getNodeExecutorProfileId = (
   node: MilestoneNode
-): ExecutorProfileId | null =>
-  node.executor_profile_id;
+): ExecutorProfileId | null => node.executor_profile_id;
 
-const getNodeBaseStrategy = (
-  node: MilestoneNode
-): MilestoneNodeBaseStrategy =>
+const getNodeBaseStrategy = (node: MilestoneNode): MilestoneNodeBaseStrategy =>
   node.base_strategy;
 
 const getEdgeLabel = (edge: MilestoneEdge): string | undefined =>
@@ -327,6 +323,9 @@ export function MilestoneWorkflow() {
     useState<MilestoneAutomationMode>('manual');
   const [isUpdatingMilestone, setIsUpdatingMilestone] = useState(false);
   const [isRequestingNextStep, setIsRequestingNextStep] = useState(false);
+  const [isPushingBaselineBranch, setIsPushingBaselineBranch] = useState(false);
+  const [needsForcePushBaselineBranch, setNeedsForcePushBaselineBranch] =
+    useState(false);
   const [isAddNodeOpen, setIsAddNodeOpen] = useState(false);
   const [newNodeMode, setNewNodeMode] = useState<NewNodeMode>('existing');
   const [newNodeTaskId, setNewNodeTaskId] = useState<string | null>(null);
@@ -494,10 +493,7 @@ export function MilestoneWorkflow() {
   );
 
   const updateNode = useCallback(
-    (
-      nodeId: string,
-      updater: (node: MilestoneNode) => MilestoneNode
-    ) => {
+    (nodeId: string, updater: (node: MilestoneNode) => MilestoneNode) => {
       updateGraphDraft((prev) => ({
         ...prev,
         nodes: prev.nodes.map((node) =>
@@ -509,10 +505,7 @@ export function MilestoneWorkflow() {
   );
 
   const handleInlineNodeUpdate = useCallback(
-    (
-      nodeId: string,
-      updates: { kind?: MilestoneNodeKind; phase?: number }
-    ) => {
+    (nodeId: string, updates: { kind?: MilestoneNodeKind; phase?: number }) => {
       updateNode(nodeId, (node) => {
         const next = { ...node };
         if (updates.kind) {
@@ -573,7 +566,8 @@ export function MilestoneWorkflow() {
             executorProfileId: getNodeExecutorProfileId(node),
             baseStrategy: getNodeBaseStrategy(node),
             requiresApproval:
-              node.requires_approval ?? node.kind === MilestoneNodeKind.checkpoint,
+              node.requires_approval ??
+              node.kind === MilestoneNodeKind.checkpoint,
             onUpdate: (updates: { kind?: MilestoneNodeKind; phase?: number }) =>
               handleInlineNodeUpdate(node.id, updates),
           },
@@ -759,7 +753,10 @@ export function MilestoneWorkflow() {
         toast({
           variant: 'destructive',
           title: t('common:states.error', 'Error'),
-          description: t('tasks:errors.updateStatusFailed', 'Failed to update status'),
+          description: t(
+            'tasks:errors.updateStatusFailed',
+            'Failed to update status'
+          ),
         });
       }
     },
@@ -1056,6 +1053,80 @@ export function MilestoneWorkflow() {
     [handleBaselineSave]
   );
 
+  const handleCopyBaselineBranch = useCallback(async () => {
+    const branch = milestone?.baseline_ref?.trim();
+    if (!branch) return;
+    try {
+      await navigator.clipboard.writeText(branch);
+      toast({ title: 'Copied baseline branch', description: branch });
+    } catch (error) {
+      console.error('Failed to copy baseline branch:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Copy failed',
+        description: 'Unable to access clipboard in this browser context.',
+      });
+    }
+  }, [milestone?.baseline_ref]);
+
+  const handlePushBaselineBranch = useCallback(
+    async (force: boolean) => {
+      if (!milestone) return;
+      const branch = milestone.baseline_ref?.trim();
+      if (!branch) return;
+
+      setIsPushingBaselineBranch(true);
+      try {
+        const response = await milestonesApi.pushBaselineBranch(milestone.id, {
+          force,
+        });
+        const results = response.results ?? [];
+        const pushedCount = results.filter((r) => r.status === 'pushed').length;
+        const forceCount = results.filter(
+          (r) => r.status === 'force_push_required'
+        ).length;
+        const failedCount = results.filter((r) => r.status === 'failed').length;
+        const skippedCount = results.filter(
+          (r) => r.status === 'skipped_no_remote'
+        ).length;
+
+        setNeedsForcePushBaselineBranch(forceCount > 0 && !force);
+
+        if (failedCount > 0) {
+          toast({
+            variant: 'destructive',
+            title: 'Push failed',
+            description: `${failedCount} repo(s) failed to push.`,
+          });
+        } else if (forceCount > 0 && !force) {
+          toast({
+            variant: 'destructive',
+            title: 'Push rejected',
+            description: `${forceCount} repo(s) require force push.`,
+          });
+        } else {
+          toast({
+            title: 'Pushed baseline branch',
+            description: `Pushed ${branch} to ${pushedCount} repo(s).${
+              skippedCount > 0 ? ` Skipped ${skippedCount} with no remote.` : ''
+            }`,
+          });
+        }
+      } catch (error) {
+        console.error('Failed to push baseline branch:', error);
+        toast({
+          variant: 'destructive',
+          title: 'Push failed',
+          description:
+            'Unable to push baseline branch. Check logs for details.',
+        });
+      } finally {
+        setIsPushingBaselineBranch(false);
+      }
+    },
+    [milestone]
+  );
+
   const handleObjectiveSave = useCallback(async () => {
     if (!milestone) return;
     const trimmed = objectiveValue.trim();
@@ -1116,7 +1187,12 @@ export function MilestoneWorkflow() {
     } finally {
       setIsUpdatingMilestone(false);
     }
-  }, [definitionOfDoneValue, refetchMilestone, milestone, buildMilestoneUpdate]);
+  }, [
+    definitionOfDoneValue,
+    refetchMilestone,
+    milestone,
+    buildMilestoneUpdate,
+  ]);
 
   const handleDefaultExecutorProfileSave = useCallback(
     async (profile: ExecutorProfileId | null) => {
@@ -1825,6 +1901,45 @@ export function MilestoneWorkflow() {
                     </div>
 
                     <div className="space-y-2">
+                      <Label className="text-xs">Baseline branch</Label>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Input
+                          value={milestone.baseline_ref ?? ''}
+                          readOnly
+                          className="h-8 font-mono text-xs flex-1 min-w-[180px]"
+                        />
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          onClick={handleCopyBaselineBranch}
+                        >
+                          Copy
+                        </Button>
+                        <Button
+                          size="xs"
+                          onClick={() => void handlePushBaselineBranch(false)}
+                          disabled={isPushingBaselineBranch}
+                        >
+                          {isPushingBaselineBranch ? 'Pushing...' : 'Push'}
+                        </Button>
+                        {needsForcePushBaselineBranch && (
+                          <Button
+                            size="xs"
+                            variant="destructive"
+                            onClick={() => void handlePushBaselineBranch(true)}
+                            disabled={isPushingBaselineBranch}
+                          >
+                            Force push
+                          </Button>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        Push publishes the baseline branch to each repo's
+                        default remote.
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <Label className="text-xs">Automation</Label>
                         <Switch
@@ -1855,7 +1970,9 @@ export function MilestoneWorkflow() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label className="text-xs">Default executor profile</Label>
+                      <Label className="text-xs">
+                        Default executor profile
+                      </Label>
                       <ExecutorProfileSelector
                         profiles={profiles}
                         selectedProfile={defaultExecutorProfileValue}

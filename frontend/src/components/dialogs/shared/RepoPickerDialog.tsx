@@ -36,10 +36,7 @@ export interface RepoPickerDialogProps {
 type Stage = 'options' | 'existing' | 'new';
 
 const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
-  ({
-    title,
-    description,
-  }) => {
+  ({ title, description }) => {
     const modal = useModal();
     const { t } = useTranslation('common');
     const resolvedTitle = title ?? t('repoPicker.title');
@@ -97,7 +94,9 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
         modal.hide();
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : t('repoPicker.errors.registerFailed')
+          err instanceof Error
+            ? err.message
+            : t('repoPicker.errors.registerFailed')
         );
       } finally {
         setIsWorking(false);
@@ -136,7 +135,9 @@ const RepoPickerDialogImpl = NiceModal.create<RepoPickerDialogProps>(
         modal.hide();
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : t('repoPicker.errors.createFailed')
+          err instanceof Error
+            ? err.message
+            : t('repoPicker.errors.createFailed')
         );
       } finally {
         setIsWorking(false);

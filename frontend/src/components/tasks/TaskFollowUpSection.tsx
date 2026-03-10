@@ -423,49 +423,52 @@ export function TaskFollowUpSection({
   }, [workspaceId, isAttemptRunning, hasCleanupScript]);
 
   // Handler to queue the current message for execution after agent finishes
-  const handleQueueMessage = useCallback(async (messageOverride?: string) => {
-    const extraMessage =
-      typeof messageOverride === 'string' ? messageOverride : localMessage;
-    if (
-      typeof messageOverride === 'string' &&
-      messageOverride !== localMessage
-    ) {
-      setLocalMessage(messageOverride);
-    }
-    if (
-      !extraMessage.trim() &&
-      !conflictResolutionInstructions &&
-      !reviewMarkdown &&
-      !clickedMarkdown
-    ) {
-      return;
-    }
+  const handleQueueMessage = useCallback(
+    async (messageOverride?: string) => {
+      const extraMessage =
+        typeof messageOverride === 'string' ? messageOverride : localMessage;
+      if (
+        typeof messageOverride === 'string' &&
+        messageOverride !== localMessage
+      ) {
+        setLocalMessage(messageOverride);
+      }
+      if (
+        !extraMessage.trim() &&
+        !conflictResolutionInstructions &&
+        !reviewMarkdown &&
+        !clickedMarkdown
+      ) {
+        return;
+      }
 
-    // Cancel any pending debounced save and save immediately before queueing
-    // This prevents the race condition where the debounce fires after queueing
-    cancelDebouncedSave();
-    await saveToScratch(extraMessage, selectedVariant);
+      // Cancel any pending debounced save and save immediately before queueing
+      // This prevents the race condition where the debounce fires after queueing
+      cancelDebouncedSave();
+      await saveToScratch(extraMessage, selectedVariant);
 
-    // Combine all the content that would be sent (same as follow-up send)
-    const parts = [
+      // Combine all the content that would be sent (same as follow-up send)
+      const parts = [
+        conflictResolutionInstructions,
+        clickedMarkdown,
+        reviewMarkdown,
+        extraMessage,
+      ].filter(Boolean);
+      const combinedMessage = parts.join('\n\n');
+      await queueMessage(combinedMessage, selectedVariant);
+    },
+    [
+      localMessage,
+      setLocalMessage,
       conflictResolutionInstructions,
-      clickedMarkdown,
       reviewMarkdown,
-      extraMessage,
-    ].filter(Boolean);
-    const combinedMessage = parts.join('\n\n');
-    await queueMessage(combinedMessage, selectedVariant);
-  }, [
-    localMessage,
-    setLocalMessage,
-    conflictResolutionInstructions,
-    reviewMarkdown,
-    clickedMarkdown,
-    selectedVariant,
-    queueMessage,
-    cancelDebouncedSave,
-    saveToScratch,
-  ]);
+      clickedMarkdown,
+      selectedVariant,
+      queueMessage,
+      cancelDebouncedSave,
+      saveToScratch,
+    ]
+  );
 
   // Keyboard shortcut handler - send follow-up or queue depending on state
   const handleSubmitShortcut = useCallback(

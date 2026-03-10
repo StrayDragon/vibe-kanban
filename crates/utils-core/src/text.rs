@@ -23,6 +23,14 @@ pub fn short_uuid(u: &Uuid) -> String {
     full.chars().take(4).collect() // grab the first 4 chars
 }
 
+/// Stable per-milestone integration branch name.
+///
+/// This is intended to be unique across all repos in a project and safe to use as
+/// a local-only integration branch unless explicitly pushed.
+pub fn milestone_integration_branch_name(milestone_id: &Uuid) -> String {
+    format!("vk/milestone/{milestone_id}")
+}
+
 pub fn truncate_to_char_boundary(content: &str, max_len: usize) -> &str {
     if content.len() <= max_len {
         return content;
@@ -56,5 +64,18 @@ mod tests {
         let input = "🔥🔥🔥"; // each fire emoji is 4 bytes
         assert_eq!(truncate_to_char_boundary(input, 5), "🔥");
         assert_eq!(truncate_to_char_boundary(input, 3), "");
+    }
+
+    #[test]
+    fn milestone_integration_branch_name_is_stable_and_non_empty() {
+        use uuid::Uuid;
+
+        use super::milestone_integration_branch_name;
+
+        let id = Uuid::new_v4();
+        let name = milestone_integration_branch_name(&id);
+        assert!(!name.trim().is_empty());
+        assert!(name.contains(&id.to_string()));
+        assert!(name.starts_with("vk/milestone/"));
     }
 }

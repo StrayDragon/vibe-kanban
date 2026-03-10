@@ -71,12 +71,7 @@ pub fn next_milestone_dispatch_candidate<'a>(
         if task.milestone_id != Some(milestone.id) {
             continue;
         }
-        if task
-            .milestone_node_id
-            .as_deref()
-            .map(str::trim)
-            != Some(node_id)
-        {
+        if task.milestone_node_id.as_deref().map(str::trim) != Some(node_id) {
             continue;
         }
         if !task_dispatch_candidate(task) || !retry_ready(task) {

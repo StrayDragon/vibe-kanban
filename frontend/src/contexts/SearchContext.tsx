@@ -49,10 +49,7 @@ export function SearchProvider({ children }: SearchProviderProps) {
   const isTasksRoute = isProjectTasksRoute || isOverviewTasksRoute;
 
   useEffect(() => {
-    if (
-      !isTasksRoute &&
-      (query !== '' || reviewInbox !== null)
-    ) {
+    if (!isTasksRoute && (query !== '' || reviewInbox !== null)) {
       setQuery('');
       setReviewInboxState(null);
     }
@@ -76,9 +73,12 @@ export function SearchProvider({ children }: SearchProviderProps) {
     inputRef.current = ref;
   }, []);
 
-  const setReviewInbox = useCallback((registration: ReviewInboxRegistration | null) => {
-    setReviewInboxState(registration);
-  }, []);
+  const setReviewInbox = useCallback(
+    (registration: ReviewInboxRegistration | null) => {
+      setReviewInboxState(registration);
+    },
+    []
+  );
 
   const clearReviewInbox = useCallback(() => {
     setReviewInboxState(null);

@@ -19,4 +19,3 @@ export function useMilestone(milestoneId?: string, opts?: Options) {
     enabled,
   });
 }
-

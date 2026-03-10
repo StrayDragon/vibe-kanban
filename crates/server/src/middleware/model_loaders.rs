@@ -10,8 +10,8 @@ use axum::{
 use db::{
     DBService,
     models::{
-        execution_process::ExecutionProcess, project::Project, session::Session, tag::Tag,
-        milestone::Milestone, task::Task, workspace::Workspace,
+        execution_process::ExecutionProcess, milestone::Milestone, project::Project,
+        session::Session, tag::Tag, task::Task, workspace::Workspace,
     },
 };
 use uuid::Uuid;

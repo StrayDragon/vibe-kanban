@@ -11,12 +11,14 @@ use axum::{
     response::{IntoResponse, Json as ResponseJson},
     routing::{delete, get, post, put},
 };
-use events::EventError;
 use db::models::{
     image::TaskImage,
-    task::{CreateTask, Task, TaskLineageSummary, TaskUpdateParams, TaskWithAttemptStatus, UpdateTask},
+    task::{
+        CreateTask, Task, TaskLineageSummary, TaskUpdateParams, TaskWithAttemptStatus, UpdateTask,
+    },
     workspace_repo::CreateWorkspaceRepo,
 };
+use events::EventError;
 use executors_protocol::ExecutorProfileId;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use logs_axum::LogMsgAxumExt;

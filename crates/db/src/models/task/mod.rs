@@ -719,7 +719,9 @@ impl Task {
                 let milestone_row_id = ids::milestone_id_by_uuid(db, id)
                     .await?
                     .ok_or(DbErr::RecordNotFound("Milestone not found".to_string()))?;
-                if let Some(milestone) = milestone::Entity::find_by_id(milestone_row_id).one(db).await?
+                if let Some(milestone) = milestone::Entity::find_by_id(milestone_row_id)
+                    .one(db)
+                    .await?
                     && milestone.project_id != project_row_id
                 {
                     return Err(DbErr::Custom(

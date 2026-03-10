@@ -2,8 +2,8 @@ use sea_orm::{ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, Que
 use uuid::Uuid;
 
 use crate::entities::{
-    archived_kanban, execution_process, image, merge, project, project_repo, repo, session,
-    shared_task, task, milestone, workspace, workspace_repo,
+    archived_kanban, execution_process, image, merge, milestone, project, project_repo, repo,
+    session, shared_task, task, workspace, workspace_repo,
 };
 
 pub async fn project_id_by_uuid<C: ConnectionTrait>(

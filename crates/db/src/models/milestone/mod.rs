@@ -9,6 +9,7 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
+use utils_core::text::milestone_integration_branch_name;
 use uuid::Uuid;
 
 use crate::{
@@ -74,7 +75,7 @@ pub struct CreateMilestone {
     pub default_executor_profile_id: Option<ExecutorProfileId>,
     pub automation_mode: Option<MilestoneAutomationMode>,
     pub status: Option<TaskStatus>,
-    pub baseline_ref: String,
+    pub baseline_ref: Option<String>,
     pub schema_version: i32,
     pub graph: MilestoneGraph,
 }
@@ -446,6 +447,13 @@ impl Milestone {
             None => None,
         };
         let now = Utc::now();
+        let baseline_ref = data
+            .baseline_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| milestone_integration_branch_name(&milestone_id));
         let active = milestone::ActiveModel {
             uuid: Set(milestone_id),
             project_id: Set(project_row_id),
@@ -457,7 +465,7 @@ impl Milestone {
             automation_mode: Set(data.automation_mode.clone().unwrap_or_default()),
             run_next_step_requested_at: Set(None),
             status: Set(data.status.clone().unwrap_or_default()),
-            baseline_ref: Set(data.baseline_ref.clone()),
+            baseline_ref: Set(baseline_ref),
             schema_version: Set(data.schema_version),
             graph_json: Set(graph_json),
             created_at: Set(now.into()),
@@ -564,7 +572,10 @@ impl Milestone {
             status = value;
         }
         if let Some(value) = &data.baseline_ref {
-            baseline_ref = value.clone();
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                baseline_ref = trimmed.to_string();
+            }
         }
         if let Some(value) = data.schema_version {
             schema_version = value;
@@ -1003,7 +1014,7 @@ mod tests {
                 default_executor_profile_id: None,
                 automation_mode: None,
                 status: None,
-                baseline_ref: "main".to_string(),
+                baseline_ref: Some("main".to_string()),
                 schema_version: SUPPORTED_SCHEMA_VERSION,
                 graph,
             },
@@ -1106,7 +1117,7 @@ mod tests {
                 default_executor_profile_id: None,
                 automation_mode: None,
                 status: None,
-                baseline_ref: "main".to_string(),
+                baseline_ref: Some("main".to_string()),
                 schema_version: SUPPORTED_SCHEMA_VERSION,
                 graph,
             },
@@ -1274,7 +1285,7 @@ mod tests {
                 default_executor_profile_id: None,
                 automation_mode: None,
                 status: None,
-                baseline_ref: "main".to_string(),
+                baseline_ref: Some("main".to_string()),
                 schema_version: SUPPORTED_SCHEMA_VERSION,
                 graph,
             },

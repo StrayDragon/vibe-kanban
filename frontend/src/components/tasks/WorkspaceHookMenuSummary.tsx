@@ -95,7 +95,8 @@ export function WorkspaceHookMenuSummary({
             </div>
           </div>
           <Badge variant={getStatusVariant(latest.status)}>
-            {formatPhaseLabel(latest.phase, t)} · {formatStatusLabel(latest.status, t)}
+            {formatPhaseLabel(latest.phase, t)} ·{' '}
+            {formatStatusLabel(latest.status, t)}
           </Badge>
         </div>
       ) : null}
@@ -104,7 +105,10 @@ export function WorkspaceHookMenuSummary({
         {entries.map((entry) => {
           const Icon = entry.icon;
           return (
-            <div key={entry.key} className="rounded-md border bg-card px-3 py-2">
+            <div
+              key={entry.key}
+              className="rounded-md border bg-card px-3 py-2"
+            >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <Icon className="h-3.5 w-3.5 text-muted-foreground" />

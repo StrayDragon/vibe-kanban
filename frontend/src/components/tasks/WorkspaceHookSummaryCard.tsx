@@ -103,7 +103,9 @@ export function WorkspaceHookSummaryCard({
           </p>
         </div>
         {workspace.latest_hook_run ? (
-          <Badge variant={getStatusBadgeVariant(workspace.latest_hook_run.status)}>
+          <Badge
+            variant={getStatusBadgeVariant(workspace.latest_hook_run.status)}
+          >
             {formatPhaseLabel(workspace.latest_hook_run.phase, t)} ·{' '}
             {formatStatusLabel(workspace.latest_hook_run.status, t)}
           </Badge>

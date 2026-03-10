@@ -235,10 +235,11 @@ impl EventService {
 
         // Prefer the "active task list" view so automation diagnostics remain consistent,
         // but fall back to fetching by id so archived task updates still broadcast.
-        let mut task = Task::find_by_project_id_with_attempt_status(&self.db.pool, payload.project_id)
-            .await?
-            .into_iter()
-            .find(|t| t.id == payload.task_id);
+        let mut task =
+            Task::find_by_project_id_with_attempt_status(&self.db.pool, payload.project_id)
+                .await?
+                .into_iter()
+                .find(|t| t.id == payload.task_id);
 
         if task.is_none() {
             task = Task::find_by_id_with_attempt_status(&self.db.pool, payload.task_id).await?;
@@ -371,9 +372,8 @@ impl EventService {
 #[cfg(test)]
 mod tests {
     use logs_protocol::LogMsg;
-    use sea_orm::Database;
+    use sea_orm::{ActiveModelTrait, ColumnTrait, Database, EntityTrait, QueryFilter, Set};
     use sea_orm_migration::MigratorTrait;
-    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
     use super::*;
 
@@ -513,13 +513,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let archive_row_id = db::models::archived_kanban::ArchivedKanban::row_id_by_uuid(
-            &db.pool,
-            archive.id,
-        )
-        .await
-        .unwrap()
-        .expect("archive row id");
+        let archive_row_id =
+            db::models::archived_kanban::ArchivedKanban::row_id_by_uuid(&db.pool, archive.id)
+                .await
+                .unwrap()
+                .expect("archive row id");
 
         // Mark the task as archived via the underlying entity to mimic the archive flow.
         let record = db::entities::task::Entity::find()
@@ -572,11 +570,10 @@ mod tests {
                 return false;
             }
             match op {
-                json_patch::PatchOperation::Replace(op) => op
-                    .value
-                    .get("archived_kanban_id")
-                    .and_then(|v| v.as_str())
-                    == Some(archive_id.as_str()),
+                json_patch::PatchOperation::Replace(op) => {
+                    op.value.get("archived_kanban_id").and_then(|v| v.as_str())
+                        == Some(archive_id.as_str())
+                }
                 _ => false,
             }
         });

@@ -342,8 +342,10 @@ export function GeneralSettings() {
             {/* Editor availability status indicator */}
             {draft?.editor.editor_type !== EditorType.CUSTOM &&
               draft?.editor.editor_type !== EditorType.NONE && (
-              <EditorAvailabilityIndicator availability={editorAvailability} />
-            )}
+                <EditorAvailabilityIndicator
+                  availability={editorAvailability}
+                />
+              )}
 
             <p className="text-sm text-muted-foreground">
               {t('settings.general.editor.type.helper')}

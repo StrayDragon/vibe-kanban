@@ -76,7 +76,7 @@ export type UpdateTask = { title: string | null, description: string | null, sta
 
 export type Milestone = { id: string, project_id: string, title: string, description: string | null, objective: string | null, definition_of_done: string | null, default_executor_profile_id: ExecutorProfileId | null, automation_mode: MilestoneAutomationMode, run_next_step_requested_at: string | null, status: TaskStatus, baseline_ref: string, schema_version: number, graph: MilestoneGraph, suggested_status: TaskStatus, created_at: string, updated_at: string, };
 
-export type CreateMilestone = { project_id: string, title: string, description: string | null, objective: string | null, definition_of_done: string | null, default_executor_profile_id: ExecutorProfileId | null, automation_mode: MilestoneAutomationMode | null, status: TaskStatus | null, baseline_ref: string, schema_version: number, graph: MilestoneGraph, };
+export type CreateMilestone = { project_id: string, title: string, description: string | null, objective: string | null, definition_of_done: string | null, default_executor_profile_id: ExecutorProfileId | null, automation_mode: MilestoneAutomationMode | null, status: TaskStatus | null, baseline_ref: string | null, schema_version: number, graph: MilestoneGraph, };
 
 export type UpdateMilestone = { title: string | null, description: string | null, objective: string | null, definition_of_done: string | null, default_executor_profile_id: ExecutorProfileId | null | null, automation_mode: MilestoneAutomationMode | null, status: TaskStatus | null, baseline_ref: string | null, schema_version: number | null, graph: MilestoneGraph | null, };
 
@@ -85,6 +85,14 @@ export type MilestoneAutomationMode = "manual" | "auto";
 export type RunNextMilestoneStepStatus = "queued" | "queued_waiting_for_active_attempt" | "not_eligible";
 
 export type RunNextMilestoneStepResponse = { status: RunNextMilestoneStepStatus, requested_at: string | null, candidate_task_id: string | null, message: string | null, };
+
+export type PushMilestoneBaselineRequest = { force: boolean, };
+
+export type PushMilestoneBaselineStatus = "pushed" | "force_push_required" | "skipped_no_remote" | "failed";
+
+export type PushMilestoneBaselineRepoResult = { repo_id: string, repo_display_name: string, status: PushMilestoneBaselineStatus, message: string | null, };
+
+export type PushMilestoneBaselineResponse = { branch: string, results: Array<PushMilestoneBaselineRepoResult>, };
 
 export type MilestoneGraph = { nodes: Array<MilestoneNode>, edges: Array<MilestoneEdge>, };
 

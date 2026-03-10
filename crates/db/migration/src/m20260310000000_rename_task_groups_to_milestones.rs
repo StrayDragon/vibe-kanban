@@ -22,9 +22,7 @@ impl MigrationTrait for Migration {
         // Rename linkage columns on tasks.
         manager
             .get_connection()
-            .execute_unprepared(
-                "ALTER TABLE tasks RENAME COLUMN task_group_id TO milestone_id;",
-            )
+            .execute_unprepared("ALTER TABLE tasks RENAME COLUMN task_group_id TO milestone_id;")
             .await?;
         manager
             .get_connection()
@@ -108,9 +106,7 @@ impl MigrationTrait for Migration {
             .await?;
         manager
             .get_connection()
-            .execute_unprepared(
-                "ALTER TABLE tasks RENAME COLUMN milestone_id TO task_group_id;",
-            )
+            .execute_unprepared("ALTER TABLE tasks RENAME COLUMN milestone_id TO task_group_id;")
             .await?;
 
         // Restore the core table name.
@@ -135,4 +131,3 @@ impl MigrationTrait for Migration {
         Ok(())
     }
 }
-

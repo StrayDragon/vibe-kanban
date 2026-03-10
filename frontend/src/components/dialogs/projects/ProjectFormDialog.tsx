@@ -122,13 +122,7 @@ const ProjectFormDialogImpl = NiceModal.create<ProjectFormDialogProps>(() => {
     };
 
     createProject.mutate(createData);
-  }, [
-    createProject,
-    projectName,
-    requiresUnsafeAck,
-    selectedRepo,
-    unsafeAck,
-  ]);
+  }, [createProject, projectName, requiresUnsafeAck, selectedRepo, unsafeAck]);
 
   const canCreate = Boolean(
     selectedRepo &&

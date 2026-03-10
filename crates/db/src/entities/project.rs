@@ -1,8 +1,6 @@
 use sea_orm::entity::prelude::*;
 
-use crate::types::{
-    WorkspaceLifecycleHookFailurePolicy, WorkspaceLifecycleHookRunMode,
-};
+use crate::types::{WorkspaceLifecycleHookFailurePolicy, WorkspaceLifecycleHookRunMode};
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "projects")]

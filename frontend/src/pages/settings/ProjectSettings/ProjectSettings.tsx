@@ -126,9 +126,7 @@ function hookConfigToBeforeCleanupFormState(
     command: hook?.command ?? '',
     working_dir: hook?.working_dir ?? '',
     failure_policy:
-      hook?.failure_policy === 'block_cleanup'
-        ? 'block_cleanup'
-        : 'warn_only',
+      hook?.failure_policy === 'block_cleanup' ? 'block_cleanup' : 'warn_only',
   };
 }
 
@@ -558,7 +556,9 @@ export function ProjectSettings() {
       !draft.after_prepare_hook.command.trim()
     ) {
       setError(
-        t('settings.projects.lifecycleHooks.validation.afterPrepareCommandRequired')
+        t(
+          'settings.projects.lifecycleHooks.validation.afterPrepareCommandRequired'
+        )
       );
       setSaving(false);
       return;
@@ -569,7 +569,9 @@ export function ProjectSettings() {
       !draft.before_cleanup_hook.command.trim()
     ) {
       setError(
-        t('settings.projects.lifecycleHooks.validation.beforeCleanupCommandRequired')
+        t(
+          'settings.projects.lifecycleHooks.validation.beforeCleanupCommandRequired'
+        )
       );
       setSaving(false);
       return;
@@ -952,7 +954,9 @@ export function ProjectSettings() {
                     <div className="flex items-start justify-between gap-4">
                       <div className="space-y-1">
                         <Label htmlFor="project-after-prepare-hook-enabled">
-                          {t('settings.projects.lifecycleHooks.afterPrepare.title')}
+                          {t(
+                            'settings.projects.lifecycleHooks.afterPrepare.title'
+                          )}
                         </Label>
                         <p className="text-sm text-muted-foreground">
                           {t(
@@ -1070,7 +1074,8 @@ export function ProjectSettings() {
                               value={draft.after_prepare_hook.run_mode}
                               onValueChange={(value) =>
                                 updateAfterPrepareHookDraft({
-                                  run_mode: value as WorkspaceLifecycleHookRunMode,
+                                  run_mode:
+                                    value as WorkspaceLifecycleHookRunMode,
                                 })
                               }
                             >
@@ -1100,7 +1105,9 @@ export function ProjectSettings() {
                     <div className="flex items-start justify-between gap-4">
                       <div className="space-y-1">
                         <Label htmlFor="project-before-cleanup-hook-enabled">
-                          {t('settings.projects.lifecycleHooks.beforeCleanup.title')}
+                          {t(
+                            'settings.projects.lifecycleHooks.beforeCleanup.title'
+                          )}
                         </Label>
                         <p className="text-sm text-muted-foreground">
                           {t(

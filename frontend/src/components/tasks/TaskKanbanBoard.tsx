@@ -59,10 +59,7 @@ function TaskKanbanBoard({
         if (!isMilestoneEntry(task)) return;
         const groupId = getMilestoneId(task);
         if (!groupId || map.has(groupId)) return;
-        map.set(
-          groupId,
-          task.title || t('taskTypes.milestone', 'Milestone')
-        );
+        map.set(groupId, task.title || t('taskTypes.milestone', 'Milestone'));
       });
     });
 
