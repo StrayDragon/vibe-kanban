@@ -109,17 +109,18 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
   );
   const [showDiscardWarning, setShowDiscardWarning] = useState(false);
   const forceCreateOnlyRef = useRef(false);
+  const createKindProp = mode === 'create' ? props.kind : undefined;
 
   useEffect(() => {
     if (!modal.visible) return;
 
     if (mode === 'create') {
-      setCreateKind(props.kind ?? 'task');
+      setCreateKind(createKindProp ?? 'task');
       return;
     }
 
     setCreateKind('task');
-  }, [modal.visible, mode, mode === 'create' ? props.kind : undefined]);
+  }, [modal.visible, mode, createKindProp]);
 
   const { data: taskImages } = useTaskImages(
     editMode ? props.task.id : undefined
