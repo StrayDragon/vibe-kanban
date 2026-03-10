@@ -48,10 +48,10 @@ export function TaskCard({
   const showSubtaskTitle =
     isGroupedTask && groupTitle && groupTitle !== task.title;
   const typeLabel = isTaskGroup
-    ? 'Milestone'
+    ? t('taskTypes.milestone', 'Milestone')
     : isGroupedTask
-      ? 'Subtask'
-      : 'Task';
+      ? t('taskTypes.subtask', 'Subtask')
+      : t('taskTypes.task', 'Task');
 
   const handleClick = useCallback(() => {
     onViewDetails(task);

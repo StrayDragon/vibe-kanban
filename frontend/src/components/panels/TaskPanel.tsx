@@ -151,7 +151,7 @@ const TaskPanel = ({
                     )
                   }
                 >
-                  {t('taskGroup.openWorkflow', 'Open milestone')}
+                  {t('openTaskGroup', 'Open milestone')}
                 </Button>
               )}
               {!isTaskGroupEntry && (

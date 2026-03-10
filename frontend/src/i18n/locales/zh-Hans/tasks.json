@@ -84,6 +84,11 @@
   "labels": {
     "task": "任务"
   },
+  "taskTypes": {
+    "milestone": "里程碑",
+    "subtask": "子任务",
+    "task": "任务"
+  },
   "filters": {
     "sharedToggleAria": "切换共享任务",
     "sharedToggleTooltip": "显示/隐藏共享内容"
@@ -313,7 +318,7 @@
     "updateStatusFailed": "更新任务状态失败"
   },
   "navigateToParent": "导航到父任务尝试",
-  "openTaskGroup": "打开任务组",
+  "openTaskGroup": "打开里程碑",
   "taskGroupSubtaskCount_one": "{{count}} 个子任务",
   "taskGroupSubtaskCount_other": "{{count}} 个子任务",
   "toolbar": {
@@ -641,7 +646,7 @@
     "editTitle": "编辑任务",
     "tabs": {
       "task": "创建任务",
-      "taskGroup": "创建任务组"
+      "taskGroup": "创建里程碑"
     },
     "titlePlaceholder": "任务标题",
     "descriptionPlaceholder": "添加更多详情（可选）。输入 @ 搜索文件。",
@@ -669,7 +674,7 @@
     "updateTask": "更新任务",
     "starting": "开始中...",
     "creating": "创建中...",
-    "createTaskGroup": "创建任务组",
+    "createTaskGroup": "创建里程碑",
     "create": "创建",
     "discardDialog": {
       "title": "放弃未保存的更改？",

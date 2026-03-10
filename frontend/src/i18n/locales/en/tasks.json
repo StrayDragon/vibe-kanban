@@ -87,6 +87,11 @@
   "labels": {
     "task": "Task"
   },
+  "taskTypes": {
+    "milestone": "Milestone",
+    "subtask": "Subtask",
+    "task": "Task"
+  },
   "filters": {
     "sharedToggleAria": "Toggle shared tasks",
     "sharedToggleTooltip": "Show/hide shared content"

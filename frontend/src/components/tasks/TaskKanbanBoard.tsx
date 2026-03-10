@@ -1,4 +1,5 @@
 import { memo, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   type DragEndEvent,
   KanbanBoard,
@@ -42,6 +43,7 @@ function TaskKanbanBoard({
   projectId,
   readOnly = false,
 }: TaskKanbanBoardProps) {
+  const { t } = useTranslation('tasks');
   const taskGroupTitles = useMemo(() => {
     const map = new Map<string, string>();
 
@@ -50,12 +52,15 @@ function TaskKanbanBoard({
         if (!isTaskGroupEntry(task)) return;
         const groupId = getTaskGroupId(task);
         if (!groupId || map.has(groupId)) return;
-        map.set(groupId, task.title || 'Milestone');
+        map.set(
+          groupId,
+          task.title || t('taskTypes.milestone', 'Milestone')
+        );
       });
     });
 
     return map;
-  }, [columns]);
+  }, [columns, t]);
 
   const buildColumnGroups = useMemo(() => {
     const result: Record<TaskStatus, ColumnGroup[]> = {
@@ -82,7 +87,9 @@ function TaskKanbanBoard({
           group = {
             type: 'group',
             groupId,
-            title: taskGroupTitles.get(groupId) ?? 'Milestone',
+            title:
+              taskGroupTitles.get(groupId) ??
+              t('taskTypes.milestone', 'Milestone'),
             tasks: [],
           };
           groups.set(groupId, group);
@@ -96,7 +103,7 @@ function TaskKanbanBoard({
     });
 
     return result;
-  }, [columns, taskGroupTitles]);
+  }, [columns, t, taskGroupTitles]);
 
   return (
     <KanbanProvider onDragEnd={onDragEnd}>

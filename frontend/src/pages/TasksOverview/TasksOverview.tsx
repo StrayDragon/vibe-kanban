@@ -207,6 +207,7 @@ function TaskListItem({
   onSelect: (task: Task) => void;
   agentLabel: string;
 }) {
+  const { t } = useTranslation('tasks');
   const ref = useRef<HTMLButtonElement | null>(null);
   const description = task.description?.trim();
   const isMuted = task.status === 'done' || task.status === 'cancelled';
@@ -214,10 +215,10 @@ function TaskListItem({
   const taskGroupId = getTaskGroupId(task);
   const isGroupedTask = Boolean(taskGroupId) && !isTaskGroup;
   const typeLabel = isTaskGroup
-    ? 'Milestone'
+    ? t('taskTypes.milestone', 'Milestone')
     : isGroupedTask
-      ? 'Subtask'
-      : 'Task';
+      ? t('taskTypes.subtask', 'Subtask')
+      : t('taskTypes.task', 'Task');
 
   useEffect(() => {
     if (!isSelected || !ref.current) return;
