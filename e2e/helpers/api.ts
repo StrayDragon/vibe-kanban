@@ -14,6 +14,14 @@ async function unwrap<T>(response: APIResponse): Promise<T> {
   return json.data;
 }
 
+export async function apiGet<T>(
+  request: APIRequestContext,
+  url: string
+): Promise<T> {
+  const response = await request.get(url);
+  return unwrap<T>(response);
+}
+
 export async function apiPost<T>(
   request: APIRequestContext,
   url: string,
@@ -39,4 +47,3 @@ export async function apiDelete(
   const response = await request.delete(url);
   await unwrap<void>(response);
 }
-
