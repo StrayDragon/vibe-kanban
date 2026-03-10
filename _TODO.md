@@ -12,6 +12,7 @@
   - `pnpm run generate-types:check`
   - `cargo test -p server mcp::task_server::tools`
   - `pnpm run e2e:test -- e2e/milestone-automation.spec.ts`
+  - `pnpm run e2e` (fixed Vite port/baseURL mismatch)
 
 # Manual Validation Notes
 
