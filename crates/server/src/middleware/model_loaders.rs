@@ -11,7 +11,7 @@ use db::{
     DBService,
     models::{
         execution_process::ExecutionProcess, project::Project, session::Session, tag::Tag,
-        task::Task, task_group::TaskGroup, workspace::Workspace,
+        milestone::Milestone, task::Task, workspace::Workspace,
     },
 };
 use uuid::Uuid;
@@ -107,9 +107,9 @@ where
     .await
 }
 
-pub async fn load_task_group_middleware<S>(
+pub async fn load_milestone_middleware<S>(
     State(deployment): State<S>,
-    Path(task_group_id): Path<Uuid>,
+    Path(milestone_id): Path<Uuid>,
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode>
@@ -119,9 +119,9 @@ where
     load_request_extension(
         request,
         next,
-        "TaskGroup",
-        task_group_id,
-        TaskGroup::find_by_id(&deployment.db_service().pool, task_group_id),
+        "Milestone",
+        milestone_id,
+        Milestone::find_by_id(&deployment.db_service().pool, milestone_id),
     )
     .await
 }

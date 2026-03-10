@@ -149,6 +149,12 @@ export function Navbar() {
     }
   };
 
+  const handleCreateMilestone = () => {
+    if (projectId) {
+      openTaskForm({ mode: 'create', projectId, kind: 'milestone' });
+    }
+  };
+
   const handleArchiveKanban = async () => {
     if (!projectId) return;
     try {
@@ -342,17 +348,30 @@ export function Navbar() {
                     </Button>
                   )}
                   {showCreateTask && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-9 w-9"
-                      onClick={handleCreateTask}
-                      aria-label={tTasks('actions.createTask')}
-                      title={tTasks('actions.createTask')}
-                      id={uiIds.navbarCreateTask}
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9"
+                          aria-label={tTasks('actions.createTask')}
+                          title={tTasks('actions.createTask')}
+                          id={uiIds.navbarCreateTask}
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={handleCreateTask}>
+                          <Plus className="mr-2 h-4 w-4" />
+                          {tTasks('actions.createTask')}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={handleCreateMilestone}>
+                          <Plus className="mr-2 h-4 w-4" />
+                          {tTasks('actions.createMilestone')}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
                 </div>
                 <NavDivider />

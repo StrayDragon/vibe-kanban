@@ -9,7 +9,7 @@ import { paths } from '@/lib/paths';
 import { attemptsApi } from '@/lib/api';
 import { TaskCardHeader } from './TaskCardHeader';
 import { useTranslation } from 'react-i18next';
-import { getTaskGroupId, isTaskGroupEntry } from '@/utils/taskGroup';
+import { getMilestoneId, isMilestoneEntry } from '@/utils/milestone';
 
 type Task = TaskWithAttemptStatus;
 
@@ -41,15 +41,15 @@ export function TaskCard({
   const { t } = useTranslation('tasks');
   const navigate = useNavigateWithSearch();
   const [isNavigatingToParent, setIsNavigatingToParent] = useState(false);
-  const isTaskGroup = isTaskGroupEntry(task);
-  const taskGroupId = getTaskGroupId(task);
-  const isGroupedTask = Boolean(taskGroupId) && !isTaskGroup;
-  const displayTitle = isGroupedTask && groupTitle ? groupTitle : task.title;
+  const isMilestone = isMilestoneEntry(task);
+  const milestoneId = getMilestoneId(task);
+  const isMilestoneTask = Boolean(milestoneId) && !isMilestone;
+  const displayTitle = isMilestoneTask && groupTitle ? groupTitle : task.title;
   const showSubtaskTitle =
-    isGroupedTask && groupTitle && groupTitle !== task.title;
-  const typeLabel = isTaskGroup
+    isMilestoneTask && groupTitle && groupTitle !== task.title;
+  const typeLabel = isMilestone
     ? t('taskTypes.milestone', 'Milestone')
-    : isGroupedTask
+    : isMilestoneTask
       ? t('taskTypes.subtask', 'Subtask')
       : t('taskTypes.task', 'Task');
 
@@ -80,13 +80,13 @@ export function TaskCard({
     [task.parent_workspace_id, projectId, navigate, isNavigatingToParent]
   );
 
-  const handleOpenTaskGroup = useCallback(
+  const handleOpenMilestone = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      if (!taskGroupId) return;
-      navigate(paths.taskGroupWorkflow(projectId, taskGroupId));
+      if (!milestoneId) return;
+      navigate(paths.milestoneWorkflow(projectId, milestoneId));
     },
-    [navigate, projectId, taskGroupId]
+    [navigate, projectId, milestoneId]
   );
 
   const localRef = useRef<HTMLDivElement>(null);
@@ -151,20 +151,20 @@ export function TaskCard({
         </div>
         {groupSummary && groupSummary.subtaskCount > 0 && (
           <div className="text-xs text-muted-foreground">
-            {t('taskGroupSubtaskCount', { count: groupSummary.subtaskCount })}
+            {t('milestoneSubtaskCount', { count: groupSummary.subtaskCount })}
           </div>
         )}
-        {!readOnly && isGroupedTask && (
+        {!readOnly && isMilestoneTask && (
           <Button
             variant="link"
             size="xs"
             className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground"
-            onClick={handleOpenTaskGroup}
+            onClick={handleOpenMilestone}
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
-            title={t('openTaskGroup')}
+            title={t('openMilestone')}
           >
-            {t('openTaskGroup')}
+            {t('openMilestone')}
           </Button>
         )}
         {task.description && (

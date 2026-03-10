@@ -3,7 +3,7 @@ use sea_orm::{JsonValue, entity::prelude::*};
 use crate::types::{MilestoneAutomationMode, TaskStatus};
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
-#[sea_orm(table_name = "task_groups")]
+#[sea_orm(table_name = "milestones")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,

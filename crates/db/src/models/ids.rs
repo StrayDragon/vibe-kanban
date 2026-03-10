@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::entities::{
     archived_kanban, execution_process, image, merge, project, project_repo, repo, session,
-    shared_task, task, task_group, workspace, workspace_repo,
+    shared_task, task, milestone, workspace, workspace_repo,
 };
 
 pub async fn project_id_by_uuid<C: ConnectionTrait>(
@@ -52,27 +52,27 @@ pub async fn task_uuid_by_id<C: ConnectionTrait>(db: &C, id: i64) -> Result<Opti
         .await
 }
 
-pub async fn task_group_id_by_uuid<C: ConnectionTrait>(
+pub async fn milestone_id_by_uuid<C: ConnectionTrait>(
     db: &C,
     uuid: Uuid,
 ) -> Result<Option<i64>, DbErr> {
-    task_group::Entity::find()
+    milestone::Entity::find()
         .select_only()
-        .column(task_group::Column::Id)
-        .filter(task_group::Column::Uuid.eq(uuid))
+        .column(milestone::Column::Id)
+        .filter(milestone::Column::Uuid.eq(uuid))
         .into_tuple()
         .one(db)
         .await
 }
 
-pub async fn task_group_uuid_by_id<C: ConnectionTrait>(
+pub async fn milestone_uuid_by_id<C: ConnectionTrait>(
     db: &C,
     id: i64,
 ) -> Result<Option<Uuid>, DbErr> {
-    task_group::Entity::find()
+    milestone::Entity::find()
         .select_only()
-        .column(task_group::Column::Uuid)
-        .filter(task_group::Column::Id.eq(id))
+        .column(milestone::Column::Uuid)
+        .filter(milestone::Column::Id.eq(id))
         .into_tuple()
         .one(db)
         .await

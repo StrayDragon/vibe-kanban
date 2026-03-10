@@ -75,11 +75,7 @@ import { cn } from '@/lib/utils';
 import { paths } from '@/lib/paths';
 import { uiIds } from '@/lib/uiIds';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
-import {
-  getTaskGroupId,
-  isTaskGroupEntry,
-  isTaskGroupSubtask,
-} from '@/utils/taskGroup';
+import { getMilestoneId, isMilestoneEntry, isMilestoneSubtask } from '@/utils/milestone';
 
 import type {
   RepoBranchStatus,
@@ -211,12 +207,12 @@ function TaskListItem({
   const ref = useRef<HTMLButtonElement | null>(null);
   const description = task.description?.trim();
   const isMuted = task.status === 'done' || task.status === 'cancelled';
-  const isTaskGroup = isTaskGroupEntry(task);
-  const taskGroupId = getTaskGroupId(task);
-  const isGroupedTask = Boolean(taskGroupId) && !isTaskGroup;
-  const typeLabel = isTaskGroup
+  const isMilestone = isMilestoneEntry(task);
+  const milestoneId = getMilestoneId(task);
+  const isSubtask = Boolean(milestoneId) && !isMilestone;
+  const typeLabel = isMilestone
     ? t('taskTypes.milestone', 'Milestone')
-    : isGroupedTask
+    : isSubtask
       ? t('taskTypes.subtask', 'Subtask')
       : t('taskTypes.task', 'Task');
 
@@ -416,8 +412,8 @@ export function TasksOverview() {
     () => (taskId ? (tasksById[taskId] ?? null) : null),
     [taskId, tasksById]
   );
-  const selectedTaskGroupId = useMemo(
-    () => (selectedTask ? getTaskGroupId(selectedTask) : null),
+  const selectedMilestoneId = useMemo(
+    () => (selectedTask ? getMilestoneId(selectedTask) : null),
     [selectedTask]
   );
 
@@ -435,10 +431,10 @@ export function TasksOverview() {
 
   useEffect(() => {
     if (!selectedTask) return;
-    const taskGroupId = getTaskGroupId(selectedTask);
-    if (!taskGroupId) return;
+    const milestoneId = getMilestoneId(selectedTask);
+    if (!milestoneId) return;
     navigateWithSearch(
-      paths.taskGroupWorkflow(selectedTask.project_id, taskGroupId),
+      paths.milestoneWorkflow(selectedTask.project_id, milestoneId),
       { replace: true }
     );
   }, [selectedTask, navigateWithSearch]);
@@ -465,7 +461,7 @@ export function TasksOverview() {
 
   useEffect(() => {
     if (!projectId || !taskId) return;
-    if (selectedTaskGroupId) return;
+    if (selectedMilestoneId) return;
     if (!isLatest) return;
     if (isAttemptsLoading) return;
 
@@ -482,7 +478,7 @@ export function TasksOverview() {
     isAttemptsLoading,
     latestAttemptId,
     navigateWithSearch,
-    selectedTaskGroupId,
+    selectedMilestoneId,
   ]);
 
   useEffect(() => {
@@ -500,7 +496,7 @@ export function TasksOverview() {
     isLatestAttemptRoute &&
     !isAttemptsLoading &&
     !latestAttemptId &&
-    !selectedTaskGroupId;
+    !selectedMilestoneId;
   const { data: attempt } = useTaskAttemptWithSession(effectiveAttemptId);
   const { data: branchStatus } = useBranchStatus(attempt?.id);
 
@@ -513,10 +509,10 @@ export function TasksOverview() {
 
   const handleViewTaskDetails = useCallback(
     (task: Task, attemptIdToShow?: string) => {
-      const taskGroupId = getTaskGroupId(task);
-      if (taskGroupId) {
+      const milestoneId = getMilestoneId(task);
+      if (milestoneId) {
         navigateWithSearch(
-          paths.taskGroupWorkflow(task.project_id, taskGroupId)
+          paths.milestoneWorkflow(task.project_id, milestoneId)
         );
         return;
       }
@@ -537,7 +533,7 @@ export function TasksOverview() {
   const normalizedSearch = searchQuery.trim().toLowerCase();
 
   const visibleTasks = useMemo(
-    () => tasks.filter((task) => !isTaskGroupSubtask(task)),
+    () => tasks.filter((task) => !isMilestoneSubtask(task)),
     [tasks]
   );
 

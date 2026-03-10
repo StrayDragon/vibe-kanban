@@ -20,32 +20,29 @@ import {
   useRepoBranchSelection,
   useProjectRepos,
 } from '@/hooks';
-import { useTaskGroup } from '@/hooks/task-groups/useTaskGroup';
+import { useMilestone } from '@/hooks/milestones/useMilestone';
 import { useTaskAttemptsWithSessions } from '@/hooks/task-attempts/useTaskAttempts';
 import { useProject } from '@/contexts/ProjectContext';
 import { useUserSystem } from '@/components/ConfigProvider';
 import { paths } from '@/lib/paths';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { defineModal } from '@/lib/modals';
-import type { ExecutorProfileId, BaseCodingAgent } from 'shared/types';
+import { MilestoneNodeBaseStrategy } from 'shared/types';
+import type { BaseCodingAgent, ExecutorProfileId, MilestoneNode } from 'shared/types';
 import { useKeySubmitTask, Scope } from '@/keyboard';
 import { useCliDependencyPreflight } from '@/hooks/config/useCliDependencyPreflight';
-import type {
-  TaskGroupGraphNode,
-  TaskGroupNodeBaseStrategy,
-} from '@/types/task-group';
 
-const getNodeTaskId = (node: TaskGroupGraphNode): string | undefined =>
+const getNodeTaskId = (node: MilestoneNode): string | undefined =>
   node.task_id;
 
 const getNodeExecutorProfileId = (
-  node: TaskGroupGraphNode
+  node: MilestoneNode
 ): ExecutorProfileId | null =>
   node.executor_profile_id;
 
 const getNodeBaseStrategy = (
-  node: TaskGroupGraphNode
-): TaskGroupNodeBaseStrategy =>
+  node: MilestoneNode
+): MilestoneNodeBaseStrategy =>
   node.base_strategy;
 
 export interface CreateAttemptDialogProps {
@@ -79,9 +76,9 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
     const { data: task, isLoading: isLoadingTask } = useTask(taskId, {
       enabled: modal.visible,
     });
-    const taskGroupId = task?.task_group_id ?? null;
-    const { data: taskGroup } = useTaskGroup(taskGroupId ?? undefined, {
-      enabled: modal.visible && !!taskGroupId,
+    const milestoneId = task?.milestone_id ?? null;
+    const { data: milestone } = useMilestone(milestoneId ?? undefined, {
+      enabled: modal.visible && !!milestoneId,
     });
 
     const parentAttemptId = task?.parent_workspace_id ?? undefined;
@@ -93,32 +90,36 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
     const { data: projectRepos = [], isLoading: isLoadingRepos } =
       useProjectRepos(projectId, { enabled: modal.visible });
 
-    const taskGroupGraph = taskGroup?.graph ?? null;
-    const taskGroupNode = useMemo(() => {
-      if (!taskGroupGraph || !task) return null;
-      return taskGroupGraph.nodes.find(
+    const milestoneGraph = milestone?.graph ?? null;
+    const milestoneNode = useMemo(() => {
+      if (!milestoneGraph || !task) return null;
+      return milestoneGraph.nodes.find(
         (node) => getNodeTaskId(node) === task.id
       );
-    }, [taskGroupGraph, task]);
+    }, [milestoneGraph, task]);
 
-    const nodeExecutorProfile = taskGroupNode
-      ? getNodeExecutorProfileId(taskGroupNode)
+    const nodeExecutorProfile = milestoneNode
+      ? getNodeExecutorProfileId(milestoneNode)
       : null;
-    const nodeBaseStrategy = taskGroupNode
-      ? getNodeBaseStrategy(taskGroupNode)
-      : 'topology';
-    const baselineRef = taskGroup?.baseline_ref ?? null;
+    const nodeBaseStrategy = milestoneNode
+      ? getNodeBaseStrategy(milestoneNode)
+      : MilestoneNodeBaseStrategy.topology;
+    const baselineRef = milestone?.baseline_ref ?? null;
     const hasBaselineRef = Boolean(
       baselineRef && baselineRef.trim().length > 0
     );
-    const isTaskGroupNode = Boolean(
-      task?.task_group_id && task?.task_group_node_id
+    const isMilestoneNodeTask = Boolean(
+      task?.milestone_id && task?.milestone_node_id
     );
     const usesBaselineRef =
-      isTaskGroupNode && nodeBaseStrategy === 'baseline' && hasBaselineRef;
-    const usesTopologyBase = isTaskGroupNode && nodeBaseStrategy === 'topology';
+      isMilestoneNodeTask &&
+      nodeBaseStrategy === MilestoneNodeBaseStrategy.baseline &&
+      hasBaselineRef;
+    const usesTopologyBase =
+      isMilestoneNodeTask &&
+      nodeBaseStrategy === MilestoneNodeBaseStrategy.topology;
     const usesFixedBase =
-      isTaskGroupNode && (usesBaselineRef || usesTopologyBase);
+      isMilestoneNodeTask && (usesBaselineRef || usesTopologyBase);
 
     const {
       configs: repoBranchConfigs,

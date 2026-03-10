@@ -47,7 +47,7 @@ import {
 } from '@/keyboard';
 import { useHotkeysContext } from 'react-hotkeys-hook';
 import { cn } from '@/lib/utils';
-import { taskGroupsApi } from '@/lib/api';
+import { milestonesApi } from '@/lib/api';
 import { paths } from '@/lib/paths';
 import { uiIds } from '@/lib/uiIds';
 import { taskKeys } from '@/hooks/tasks/useTask';
@@ -55,14 +55,14 @@ import type {
   TaskStatus,
   ExecutorProfileId,
   ImageResponse,
-  CreateTaskGroup,
+  CreateMilestone,
   TaskWithAttemptStatus,
 } from 'shared/types';
 
 type Task = TaskWithAttemptStatus;
 
 export type TaskFormDialogProps =
-  | { mode: 'create'; projectId: string }
+  | { mode: 'create'; projectId: string; kind?: 'task' | 'milestone' }
   | { mode: 'edit'; projectId: string; task: Task }
   | { mode: 'duplicate'; projectId: string; initialTask: Task }
   | {
@@ -75,7 +75,7 @@ export type TaskFormDialogProps =
 
 type RepoBranch = { repoId: string; branch: string };
 
-type CreateKind = 'task' | 'taskGroup';
+type CreateKind = 'task' | 'milestone';
 
 type TaskFormValues = {
   title: string;
@@ -111,10 +111,15 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
   const forceCreateOnlyRef = useRef(false);
 
   useEffect(() => {
-    if (!isCreateMode) {
-      setCreateKind('task');
+    if (!modal.visible) return;
+
+    if (mode === 'create') {
+      setCreateKind(props.kind ?? 'task');
+      return;
     }
-  }, [isCreateMode]);
+
+    setCreateKind('task');
+  }, [modal.visible, mode, mode === 'create' ? props.kind : undefined]);
 
   const { data: taskImages } = useTaskImages(
     editMode ? props.task.id : undefined
@@ -130,7 +135,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
       initialBranch,
       enabled: modal.visible && projectRepos.length > 0,
     });
-  const isTaskGroupCreate = isCreateMode && createKind === 'taskGroup';
+  const isMilestoneCreate = isCreateMode && createKind === 'milestone';
 
   const defaultRepoBranches = useMemo((): RepoBranch[] => {
     return repoBranchConfigs
@@ -142,12 +147,12 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
     return repoBranchConfigs[0]?.targetBranch ?? 'main';
   }, [repoBranchConfigs]);
 
-  const createTaskGroup = useMutation({
-    mutationFn: (data: CreateTaskGroup) => taskGroupsApi.create(data),
+  const createMilestone = useMutation({
+    mutationFn: (data: CreateMilestone) => milestonesApi.create(data),
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: taskKeys.all });
       if (projectId) {
-        navigateWithSearch(paths.taskGroupWorkflow(projectId, created.id));
+        navigateWithSearch(paths.milestoneWorkflow(projectId, created.id));
       }
     },
     onError: (err) => {
@@ -219,12 +224,12 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
         },
         { onSuccess: () => modal.remove() }
       );
-    } else if (isTaskGroupCreate) {
+    } else if (isMilestoneCreate) {
       const baselineRef =
         value.baselineRef.trim().length > 0
           ? value.baselineRef.trim()
           : defaultBaselineRef;
-      const payload: CreateTaskGroup = {
+      const payload: CreateMilestone = {
         project_id: projectId,
         title: value.title,
         description: value.description.trim().length ? value.description : null,
@@ -238,7 +243,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
         graph: { nodes: [], edges: [] },
       };
 
-      await createTaskGroup.mutateAsync(payload, {
+      await createMilestone.mutateAsync(payload, {
         onSuccess: () => modal.remove(),
       });
     } else {
@@ -250,8 +255,8 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
         description: value.description,
         status: null,
         task_kind: null,
-        task_group_id: null,
-        task_group_node_id: null,
+        milestone_id: null,
+        milestone_node_id: null,
         parent_workspace_id:
           mode === 'subtask' ? props.parentTaskAttemptId : null,
         origin_task_id: mode === 'subtask' ? props.originTaskId : null,
@@ -281,7 +286,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
 
   const validator = (value: TaskFormValues): string | undefined => {
     if (!value.title.trim().length) return 'need title';
-    if (isTaskGroupCreate) {
+    if (isMilestoneCreate) {
       if (!value.baselineRef.trim().length) return 'need baseline';
       return;
     }
@@ -317,11 +322,11 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
   );
 
   useEffect(() => {
-    if (editMode || !isTaskGroupCreate) return;
+    if (editMode || !isMilestoneCreate) return;
     if (!baselineRefValue.trim().length) {
       form.setFieldValue('baselineRef', defaultBaselineRef);
     }
-  }, [baselineRefValue, defaultBaselineRef, editMode, form, isTaskGroupCreate]);
+  }, [baselineRefValue, defaultBaselineRef, editMode, form, isMilestoneCreate]);
 
   // Load images for edit mode
   useEffect(() => {
@@ -532,21 +537,21 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                     : 'text-muted-foreground border-border hover:text-foreground'
                 )}
               >
-                {t('taskFormDialog.tabs.task')}
+                {t('taskFormDialog.tabs.task', 'Task')}
               </button>
               <button
                 type="button"
                 role="tab"
-                aria-selected={createKind === 'taskGroup'}
-                onClick={() => setCreateKind('taskGroup')}
+                aria-selected={createKind === 'milestone'}
+                onClick={() => setCreateKind('milestone')}
                 className={cn(
                   'rounded-md border px-3 py-1.5 text-sm font-medium transition-colors',
-                  createKind === 'taskGroup'
+                  createKind === 'milestone'
                     ? 'bg-foreground text-background border-transparent'
                     : 'text-muted-foreground border-border hover:text-foreground'
                 )}
               >
-                {t('taskFormDialog.tabs.taskGroup')}
+                {t('taskFormDialog.tabs.milestone', 'Milestone')}
               </button>
             </div>
           )}
@@ -632,7 +637,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
             )}
           </div>
 
-          {isTaskGroupCreate && (
+          {isMilestoneCreate && (
             <div className="flex-none px-4 py-3 border border-1 border-border">
               <form.Field name="baselineRef">
                 {(field) => (
@@ -657,7 +662,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
           )}
 
           {/* Create mode dropdowns */}
-          {!editMode && !isTaskGroupCreate && (
+          {!editMode && !isMilestoneCreate && (
             <form.Field name="autoStart" mode="array">
               {(autoStartField) => {
                 const isSingleRepo = repoBranchConfigs.length === 1;
@@ -782,7 +787,7 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
 
             {/* Autostart switch */}
             <div className="flex items-center gap-3">
-              {!editMode && !isTaskGroupCreate && (
+              {!editMode && !isMilestoneCreate && (
                 <form.Field name="autoStart">
                   {(field) => (
                     <div className="flex items-center gap-2">
@@ -820,10 +825,10 @@ const TaskFormDialogImpl = NiceModal.create<TaskFormDialogProps>((props) => {
                     ? isSubmitting
                       ? t('taskFormDialog.updating')
                       : t('taskFormDialog.updateTask')
-                    : isTaskGroupCreate
+                    : isMilestoneCreate
                       ? isSubmitting
                         ? t('taskFormDialog.creating')
-                        : t('taskFormDialog.createTaskGroup')
+                        : t('taskFormDialog.createMilestone', 'Create milestone')
                       : isSubmitting
                         ? values.autoStart
                           ? t('taskFormDialog.starting')

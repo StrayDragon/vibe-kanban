@@ -2,7 +2,7 @@ export * from './client';
 export * from './token';
 export * from './projects';
 export * from './tasks';
-export * from './task-groups';
+export * from './milestones';
 export * from './sessions';
 export * from './task-attempts';
 export * from './execution-processes';

@@ -259,8 +259,8 @@ pub enum TaskKind {
     #[default]
     #[sea_orm(string_value = "default")]
     Default,
-    #[sea_orm(string_value = "group")]
-    Group,
+    #[sea_orm(string_value = "milestone")]
+    Milestone,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize, TS)]

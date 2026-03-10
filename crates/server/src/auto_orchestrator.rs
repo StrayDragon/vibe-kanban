@@ -4,10 +4,10 @@ use anyhow::{Context, Result};
 use app_runtime::Deployment;
 use chrono::{Duration as ChronoDuration, Utc};
 use db::models::{
+    milestone::Milestone,
     project::Project,
     task::{TaskStatus, TaskWithAttemptStatus},
     task_dispatch_state::{TaskDispatchState, UpsertTaskDispatchState},
-    task_group::TaskGroup,
     workspace_repo::CreateWorkspaceRepo,
 };
 use repos::git::GitService;
@@ -103,9 +103,9 @@ async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Re
     let tasks_by_id: HashMap<Uuid, TaskWithAttemptStatus> =
         tasks.into_iter().map(|task| (task.id, task)).collect();
 
-    let mut milestones = TaskGroup::find_by_project_id(&deployment.db().pool, project.id)
+    let mut milestones = Milestone::find_by_project_id(&deployment.db().pool, project.id)
         .await
-        .context("failed to load task groups for milestone orchestration")?;
+        .context("failed to load milestones for milestone orchestration")?;
     milestones.retain(milestone_dispatch_enabled);
 
     if milestones.is_empty() {
@@ -135,16 +135,16 @@ async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Re
         let Some(task) = next_milestone_dispatch_candidate(&milestone, &tasks_by_id) else {
             if milestone.run_next_step_requested_at.is_some() {
                 warn!(
-                    task_group_id = %milestone.id,
+                    milestone_id = %milestone.id,
                     project_id = %project.id,
                     "run next step requested but no eligible node; clearing request"
                 );
                 if let Err(err) =
-                    TaskGroup::clear_run_next_step_request(&deployment.db().pool, milestone.id)
+                    Milestone::clear_run_next_step_request(&deployment.db().pool, milestone.id)
                         .await
                 {
                     warn!(
-                        task_group_id = %milestone.id,
+                        milestone_id = %milestone.id,
                         project_id = %project.id,
                         error = %err,
                         "failed to clear run next step request"
@@ -159,11 +159,11 @@ async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Re
                 available_slots -= 1;
                 if milestone.run_next_step_requested_at.is_some()
                     && let Err(err) =
-                        TaskGroup::clear_run_next_step_request(&deployment.db().pool, milestone.id)
+                        Milestone::clear_run_next_step_request(&deployment.db().pool, milestone.id)
                             .await
                 {
                     warn!(
-                        task_group_id = %milestone.id,
+                        milestone_id = %milestone.id,
                         project_id = %project.id,
                         error = %err,
                         "failed to clear run next step request after dispatch"
@@ -173,11 +173,11 @@ async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Re
             Ok(DispatchOutcome::Blocked) => {
                 if milestone.run_next_step_requested_at.is_some()
                     && let Err(err) =
-                        TaskGroup::clear_run_next_step_request(&deployment.db().pool, milestone.id)
+                        Milestone::clear_run_next_step_request(&deployment.db().pool, milestone.id)
                             .await
                 {
                     warn!(
-                        task_group_id = %milestone.id,
+                        milestone_id = %milestone.id,
                         project_id = %project.id,
                         error = %err,
                         "failed to clear run next step request after block"
@@ -188,7 +188,7 @@ async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Re
             Err(err) => {
                 warn!(
                     task_id = %task.id,
-                    task_group_id = %milestone.id,
+                    milestone_id = %milestone.id,
                     project_id = %project.id,
                     error = %err,
                     "milestone dispatch failed"

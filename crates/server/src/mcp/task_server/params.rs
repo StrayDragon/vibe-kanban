@@ -162,14 +162,14 @@ pub struct TaskSummary {
     pub title: String,
     #[schemars(description = "Current status of the task")]
     pub status: String,
-    #[schemars(description = "Task kind: default or group")]
+    #[schemars(description = "Task kind: default or milestone")]
     pub task_kind: String,
     #[schemars(
-        description = "Owning milestone/task group id if the task is part of a milestone node (UUID string)"
+        description = "Owning milestone id if the task is part of a milestone (UUID string)"
     )]
-    pub task_group_id: Option<String>,
+    pub milestone_id: Option<String>,
     #[schemars(description = "Owning milestone node id if the task is part of a milestone node")]
-    pub task_group_node_id: Option<String>,
+    pub milestone_node_id: Option<String>,
     #[schemars(description = "Task source kind: human_ui, mcp, scheduler, or agent_followup")]
     pub created_by_kind: String,
     #[schemars(
@@ -218,8 +218,8 @@ impl TaskSummary {
             title: task.title,
             status: task.status.to_string(),
             task_kind: task.task_kind.to_string(),
-            task_group_id: task.task_group_id.map(|id| id.to_string()),
-            task_group_node_id: task.task_group_node_id.clone(),
+            milestone_id: task.milestone_id.map(|id| id.to_string()),
+            milestone_node_id: task.milestone_node_id.clone(),
             created_by_kind: task.created_by_kind.to_string(),
             origin_task_id: task.origin_task_id.map(|id| id.to_string()),
             created_at: task.created_at.to_rfc3339(),
@@ -337,8 +337,8 @@ pub struct McpTask {
     pub description: Option<String>,
     pub status: String,
     pub task_kind: String,
-    pub task_group_id: Option<String>,
-    pub task_group_node_id: Option<String>,
+    pub milestone_id: Option<String>,
+    pub milestone_node_id: Option<String>,
     pub created_by_kind: String,
     pub origin_task_id: Option<String>,
     pub created_at: String,
@@ -355,8 +355,8 @@ impl McpTask {
             description: task.description,
             status: task.status.to_string(),
             task_kind: task.task_kind.to_string(),
-            task_group_id: task.task_group_id.map(|id| id.to_string()),
-            task_group_node_id: task.task_group_node_id.clone(),
+            milestone_id: task.milestone_id.map(|id| id.to_string()),
+            milestone_node_id: task.milestone_node_id.clone(),
             created_by_kind: task.created_by_kind.to_string(),
             origin_task_id: task.origin_task_id.map(|id| id.to_string()),
             created_at: task.created_at.to_rfc3339(),

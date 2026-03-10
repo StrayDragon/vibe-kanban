@@ -2,17 +2,17 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const {
-  taskGroupState,
+  milestoneState,
   projectTasksState,
-  taskGroupsUpdateMock,
-  refetchTaskGroupMock,
+  milestonesUpdateMock,
+  refetchMilestoneMock,
 } = vi.hoisted(() => ({
-  taskGroupState: { current: null as unknown },
+  milestoneState: { current: null as unknown },
   projectTasksState: {
     current: { tasks: [], tasksById: {}, isLoading: false } as unknown,
   },
-  taskGroupsUpdateMock: vi.fn().mockResolvedValue({}),
-  refetchTaskGroupMock: vi.fn().mockResolvedValue({}),
+  milestonesUpdateMock: vi.fn().mockResolvedValue({}),
+  refetchMilestoneMock: vi.fn().mockResolvedValue({}),
 }));
 
 vi.mock('@xyflow/react', async () => {
@@ -82,7 +82,7 @@ vi.mock('react-router-dom', async () => {
   return {
     ...actual,
     useNavigate: () => vi.fn(),
-    useParams: () => ({ projectId: 'project-1', taskGroupId: 'tg-1' }),
+    useParams: () => ({ projectId: 'project-1', milestoneId: 'ms-1' }),
   };
 });
 
@@ -92,11 +92,11 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
-vi.mock('@/hooks/task-groups/useTaskGroup', () => ({
-  useTaskGroup: () => ({
-    data: taskGroupState.current,
+vi.mock('@/hooks/milestones/useMilestone', () => ({
+  useMilestone: () => ({
+    data: milestoneState.current,
     isLoading: false,
-    refetch: refetchTaskGroupMock,
+    refetch: refetchMilestoneMock,
   }),
 }));
 
@@ -123,21 +123,21 @@ vi.mock('@/components/ConfigProvider', () => ({
 }));
 
 vi.mock('@/lib/api', () => ({
-  taskGroupsApi: { update: taskGroupsUpdateMock },
+  milestonesApi: { update: milestonesUpdateMock },
   tasksApi: { create: vi.fn(), update: vi.fn() },
 }));
 
-import { TaskGroupWorkflow } from './TaskGroupWorkflow';
+import { MilestoneWorkflow } from './MilestoneWorkflow';
 
-describe('TaskGroupWorkflow', () => {
+describe('MilestoneWorkflow', () => {
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
   });
 
   it('persists node instructions and clears blank instructions', async () => {
-    taskGroupsUpdateMock.mockClear();
-    refetchTaskGroupMock.mockClear();
+    milestonesUpdateMock.mockClear();
+    refetchMilestoneMock.mockClear();
     vi.useFakeTimers();
 
     const flushMicrotasks = async () => {
@@ -151,11 +151,12 @@ describe('TaskGroupWorkflow', () => {
       description: null,
       status: 'todo',
       task_kind: 'default',
-      task_group_id: null,
+      milestone_id: null,
+      milestone_node_id: null,
     };
 
-    taskGroupState.current = {
-      id: 'tg-1',
+    milestoneState.current = {
+      id: 'ms-1',
       title: 'Workflow',
       description: null,
       status: 'todo',
@@ -167,6 +168,8 @@ describe('TaskGroupWorkflow', () => {
             task_id: taskA.id,
             kind: 'task',
             phase: 0,
+            executor_profile_id: null,
+            base_strategy: 'topology',
             instructions: null,
             requires_approval: false,
             layout: { x: 0, y: 0 },
@@ -182,7 +185,7 @@ describe('TaskGroupWorkflow', () => {
       isLoading: false,
     };
 
-    render(<TaskGroupWorkflow />);
+    render(<MilestoneWorkflow />);
 
     fireEvent.click(screen.getByTestId('node-node-a'));
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
@@ -195,19 +198,19 @@ describe('TaskGroupWorkflow', () => {
     expect((textarea as HTMLTextAreaElement).value).toBe('Do the thing');
     await vi.advanceTimersByTimeAsync(700);
     await flushMicrotasks();
-    expect(taskGroupsUpdateMock).toHaveBeenCalledTimes(1);
+    expect(milestonesUpdateMock).toHaveBeenCalledTimes(1);
 
-    const firstCall = taskGroupsUpdateMock.mock.calls[0];
-    expect(firstCall?.[0]).toBe('tg-1');
+    const firstCall = milestonesUpdateMock.mock.calls[0];
+    expect(firstCall?.[0]).toBe('ms-1');
     expect(firstCall?.[1]?.graph?.nodes?.[0]?.instructions).toBe('Do the thing');
 
     fireEvent.change(textarea, { target: { value: '   ' } });
     await vi.advanceTimersByTimeAsync(700);
     await flushMicrotasks();
-    expect(taskGroupsUpdateMock).toHaveBeenCalledTimes(2);
+    expect(milestonesUpdateMock).toHaveBeenCalledTimes(2);
 
     const lastCall =
-      taskGroupsUpdateMock.mock.calls[taskGroupsUpdateMock.mock.calls.length - 1];
+      milestonesUpdateMock.mock.calls[milestonesUpdateMock.mock.calls.length - 1];
     expect(lastCall?.[1]?.graph?.nodes?.[0]?.instructions).toBeNull();
   });
 
@@ -218,7 +221,8 @@ describe('TaskGroupWorkflow', () => {
       description: null,
       status: 'todo',
       task_kind: 'default',
-      task_group_id: null,
+      milestone_id: null,
+      milestone_node_id: null,
     };
 
     projectTasksState.current = {
@@ -227,8 +231,8 @@ describe('TaskGroupWorkflow', () => {
       isLoading: false,
     };
 
-    taskGroupState.current = {
-      id: 'tg-1',
+    milestoneState.current = {
+      id: 'ms-1',
       title: 'Workflow',
       description: null,
       status: 'todo',
@@ -240,6 +244,8 @@ describe('TaskGroupWorkflow', () => {
             task_id: taskA.id,
             kind: 'task',
             phase: 0,
+            executor_profile_id: null,
+            base_strategy: 'topology',
             instructions: null,
             requires_approval: false,
             layout: { x: 0, y: 0 },
@@ -250,7 +256,7 @@ describe('TaskGroupWorkflow', () => {
       updated_at: '2026-02-25T00:00:00.000Z',
     };
 
-    const view = render(<TaskGroupWorkflow />);
+    const view = render(<MilestoneWorkflow />);
 
     fireEvent.click(screen.getByTestId('node-node-a'));
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
@@ -258,12 +264,12 @@ describe('TaskGroupWorkflow', () => {
     const textarea = screen.getByPlaceholderText('Optional node-specific guidance');
     fireEvent.change(textarea, { target: { value: 'Draft instructions' } });
 
-    taskGroupState.current = {
-      ...(taskGroupState.current as Record<string, unknown>),
+    milestoneState.current = {
+      ...(milestoneState.current as Record<string, unknown>),
       updated_at: '2026-02-25T00:01:00.000Z',
     };
 
-    view.rerender(<TaskGroupWorkflow />);
+    view.rerender(<MilestoneWorkflow />);
 
     await waitFor(() => {
       const el = screen.getByPlaceholderText(

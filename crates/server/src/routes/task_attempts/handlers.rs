@@ -12,7 +12,7 @@ use axum::{
     response::Json as ResponseJson,
 };
 #[cfg(test)]
-use db::models::task_group::{TaskGroupGraph, TaskGroupNode};
+use db::models::milestone::{MilestoneGraph, MilestoneNode};
 use db::{
     DbErr,
     models::{
@@ -864,10 +864,10 @@ pub async fn get_task_attempt_patch(
 
 #[cfg(test)]
 fn resolve_executor_profile_id(
-    task_group_node: &TaskGroupNode,
+    milestone_node: &MilestoneNode,
     fallback: ExecutorProfileId,
 ) -> ExecutorProfileId {
-    task_group_node
+    milestone_node
         .executor_profile_id
         .clone()
         .unwrap_or(fallback)
@@ -876,13 +876,13 @@ fn resolve_executor_profile_id(
 #[cfg(test)]
 async fn resolve_topology_base_branches(
     pool: &db::DbPool,
-    graph: &TaskGroupGraph,
+    graph: &MilestoneGraph,
     node_id: &str,
 ) -> Result<Option<HashMap<Uuid, String>>, ApiError> {
     let node_key = node_id.trim();
     if node_key.is_empty() {
         return Err(ApiError::BadRequest(
-            "Task group node id cannot be empty".to_string(),
+            "Milestone node id cannot be empty".to_string(),
         ));
     }
 
@@ -943,11 +943,11 @@ async fn resolve_topology_base_branches(
 }
 
 #[cfg(test)]
-fn blocked_predecessors(graph: &TaskGroupGraph, node_id: &str) -> Result<Vec<String>, ApiError> {
+fn blocked_predecessors(graph: &MilestoneGraph, node_id: &str) -> Result<Vec<String>, ApiError> {
     let node_key = node_id.trim();
     if node_key.is_empty() {
         return Err(ApiError::BadRequest(
-            "Task group node id cannot be empty".to_string(),
+            "Milestone node id cannot be empty".to_string(),
         ));
     }
 
@@ -964,7 +964,7 @@ fn blocked_predecessors(graph: &TaskGroupGraph, node_id: &str) -> Result<Vec<Str
 
     if !node_statuses.contains_key(node_key) {
         return Err(ApiError::BadRequest(
-            "Task group node not found in graph".to_string(),
+            "Milestone node not found in graph".to_string(),
         ));
     }
 
@@ -2337,9 +2337,9 @@ mod tests {
         repo::Repo,
         session::{CreateSession, Session},
         task::{CreateTask, Task, TaskStatus},
-        task_group::{
-            TaskGroupEdge, TaskGroupGraph, TaskGroupNode, TaskGroupNodeBaseStrategy,
-            TaskGroupNodeKind, TaskGroupNodeLayout,
+        milestone::{
+            MilestoneEdge, MilestoneGraph, MilestoneNode, MilestoneNodeBaseStrategy,
+            MilestoneNodeKind, MilestoneNodeLayout,
         },
         workspace::{CreateWorkspace, Workspace},
         workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
@@ -2377,32 +2377,32 @@ mod tests {
         test_support::TestEnvGuard,
     };
 
-    fn node(id: &str, status: TaskStatus) -> TaskGroupNode {
-        TaskGroupNode {
+    fn node(id: &str, status: TaskStatus) -> MilestoneNode {
+        MilestoneNode {
             id: id.to_string(),
             task_id: Uuid::new_v4(),
-            kind: TaskGroupNodeKind::Task,
+            kind: MilestoneNodeKind::Task,
             phase: 0,
             executor_profile_id: None,
-            base_strategy: TaskGroupNodeBaseStrategy::Topology,
+            base_strategy: MilestoneNodeBaseStrategy::Topology,
             instructions: None,
             requires_approval: None,
-            layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+            layout: MilestoneNodeLayout { x: 0.0, y: 0.0 },
             status: Some(status),
         }
     }
 
-    fn node_with_task(id: &str, task_id: Uuid, status: TaskStatus) -> TaskGroupNode {
-        TaskGroupNode {
+    fn node_with_task(id: &str, task_id: Uuid, status: TaskStatus) -> MilestoneNode {
+        MilestoneNode {
             id: id.to_string(),
             task_id,
-            kind: TaskGroupNodeKind::Task,
+            kind: MilestoneNodeKind::Task,
             phase: 0,
             executor_profile_id: None,
-            base_strategy: TaskGroupNodeBaseStrategy::Topology,
+            base_strategy: MilestoneNodeBaseStrategy::Topology,
             instructions: None,
             requires_approval: None,
-            layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+            layout: MilestoneNodeLayout { x: 0.0, y: 0.0 },
             status: Some(status),
         }
     }
@@ -2410,17 +2410,17 @@ mod tests {
     fn node_with_executor(
         id: &str,
         executor_profile_id: Option<ExecutorProfileId>,
-    ) -> TaskGroupNode {
-        TaskGroupNode {
+    ) -> MilestoneNode {
+        MilestoneNode {
             id: id.to_string(),
             task_id: Uuid::new_v4(),
-            kind: TaskGroupNodeKind::Task,
+            kind: MilestoneNodeKind::Task,
             phase: 0,
             executor_profile_id,
-            base_strategy: TaskGroupNodeBaseStrategy::Topology,
+            base_strategy: MilestoneNodeBaseStrategy::Topology,
             instructions: None,
             requires_approval: None,
-            layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+            layout: MilestoneNodeLayout { x: 0.0, y: 0.0 },
             status: Some(TaskStatus::Todo),
         }
     }
@@ -2487,9 +2487,9 @@ mod tests {
 
     #[test]
     fn blocked_predecessors_allows_ready_node() {
-        let graph = TaskGroupGraph {
+        let graph = MilestoneGraph {
             nodes: vec![node("a", TaskStatus::Done), node("b", TaskStatus::Todo)],
-            edges: vec![TaskGroupEdge {
+            edges: vec![MilestoneEdge {
                 id: "edge-a-b".to_string(),
                 from: "a".to_string(),
                 to: "b".to_string(),
@@ -2503,12 +2503,12 @@ mod tests {
 
     #[test]
     fn blocked_predecessors_reports_incomplete_nodes() {
-        let graph = TaskGroupGraph {
+        let graph = MilestoneGraph {
             nodes: vec![
                 node("a", TaskStatus::InProgress),
                 node("b", TaskStatus::Todo),
             ],
-            edges: vec![TaskGroupEdge {
+            edges: vec![MilestoneEdge {
                 id: "edge-a-b".to_string(),
                 from: "a".to_string(),
                 to: "b".to_string(),
@@ -2522,7 +2522,7 @@ mod tests {
 
     #[test]
     fn blocked_predecessors_requires_existing_node() {
-        let graph = TaskGroupGraph {
+        let graph = MilestoneGraph {
             nodes: vec![node("a", TaskStatus::Done)],
             edges: Vec::new(),
         };
@@ -2577,20 +2577,20 @@ mod tests {
         sleep(Duration::from_millis(2)).await;
         create_workspace_with_repo(&db, task_b_id, repo.id, "work-b", "base-b").await;
 
-        let graph = TaskGroupGraph {
+        let graph = MilestoneGraph {
             nodes: vec![
                 node_with_task("a", task_a_id, TaskStatus::Done),
                 node_with_task("b", task_b_id, TaskStatus::Done),
                 node_with_task("c", task_c_id, TaskStatus::Todo),
             ],
             edges: vec![
-                TaskGroupEdge {
+                MilestoneEdge {
                     id: "edge-a-c".to_string(),
                     from: "a".to_string(),
                     to: "c".to_string(),
                     data_flow: None,
                 },
-                TaskGroupEdge {
+                MilestoneEdge {
                     id: "edge-b-c".to_string(),
                     from: "b".to_string(),
                     to: "c".to_string(),
@@ -2629,12 +2629,12 @@ mod tests {
 
         create_workspace_with_repo(&db, task_a_id, repo.id, "work-a", "base-a").await;
 
-        let graph = TaskGroupGraph {
+        let graph = MilestoneGraph {
             nodes: vec![
                 node_with_task("a", task_a_id, TaskStatus::Todo),
                 node_with_task("b", task_b_id, TaskStatus::Todo),
             ],
-            edges: vec![TaskGroupEdge {
+            edges: vec![MilestoneEdge {
                 id: "edge-a-b".to_string(),
                 from: "a".to_string(),
                 to: "b".to_string(),

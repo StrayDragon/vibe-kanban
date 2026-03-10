@@ -2,22 +2,22 @@ use std::collections::HashMap;
 
 use chrono::Utc;
 use db::models::{
+    milestone::{Milestone, MilestoneEdge, MilestoneNodeKind},
     task::{TaskStatus, TaskWithAttemptStatus},
-    task_group::{TaskGroup, TaskGroupEdge, TaskGroupNodeKind},
 };
 use uuid::Uuid;
 
-pub fn milestone_dispatch_enabled(task_group: &TaskGroup) -> bool {
-    task_group.automation_mode == db::types::MilestoneAutomationMode::Auto
-        || task_group.run_next_step_requested_at.is_some()
+pub fn milestone_dispatch_enabled(milestone: &Milestone) -> bool {
+    milestone.automation_mode == db::types::MilestoneAutomationMode::Auto
+        || milestone.run_next_step_requested_at.is_some()
 }
 
 pub fn milestone_has_active_attempt(
-    task_group: &TaskGroup,
+    milestone: &Milestone,
     tasks_by_id: &HashMap<Uuid, TaskWithAttemptStatus>,
 ) -> bool {
     let now = Utc::now();
-    task_group.graph.nodes.iter().any(|node| {
+    milestone.graph.nodes.iter().any(|node| {
         tasks_by_id.get(&node.task_id).is_some_and(|task| {
             if task.has_in_progress_attempt {
                 return true;
@@ -34,12 +34,12 @@ pub fn milestone_has_active_attempt(
 }
 
 pub fn next_milestone_dispatch_candidate<'a>(
-    task_group: &TaskGroup,
+    milestone: &Milestone,
     tasks_by_id: &'a HashMap<Uuid, TaskWithAttemptStatus>,
 ) -> Option<&'a TaskWithAttemptStatus> {
     let mut status_by_node_id: HashMap<&str, TaskStatus> =
-        HashMap::with_capacity(task_group.graph.nodes.len());
-    for node in &task_group.graph.nodes {
+        HashMap::with_capacity(milestone.graph.nodes.len());
+    for node in &milestone.graph.nodes {
         let key = node.id.trim();
         if key.is_empty() {
             continue;
@@ -48,31 +48,31 @@ pub fn next_milestone_dispatch_candidate<'a>(
     }
 
     let mut candidates = Vec::new();
-    for node in &task_group.graph.nodes {
+    for node in &milestone.graph.nodes {
         let node_id = node.id.trim();
         if node_id.is_empty() {
             continue;
         }
-        if matches!(&node.kind, TaskGroupNodeKind::Checkpoint)
+        if matches!(&node.kind, MilestoneNodeKind::Checkpoint)
             || node.requires_approval.unwrap_or(false)
         {
             continue;
         }
-        if !predecessors_done(&task_group.graph.edges, &status_by_node_id, node_id) {
+        if !predecessors_done(&milestone.graph.edges, &status_by_node_id, node_id) {
             continue;
         }
 
         let Some(task) = tasks_by_id.get(&node.task_id) else {
             continue;
         };
-        if task.task_kind == db::types::TaskKind::Group {
+        if task.task_kind == db::types::TaskKind::Milestone {
             continue;
         }
-        if task.task_group_id != Some(task_group.id) {
+        if task.milestone_id != Some(milestone.id) {
             continue;
         }
         if task
-            .task_group_node_id
+            .milestone_node_id
             .as_deref()
             .map(str::trim)
             != Some(node_id)
@@ -93,7 +93,7 @@ pub fn next_milestone_dispatch_candidate<'a>(
 }
 
 fn predecessors_done(
-    edges: &[TaskGroupEdge],
+    edges: &[MilestoneEdge],
     status_by_node_id: &HashMap<&str, TaskStatus>,
     node_id: &str,
 ) -> bool {
@@ -161,4 +161,3 @@ fn retry_ready(task: &TaskWithAttemptStatus) -> bool {
         .map(|next_retry_at| next_retry_at <= Utc::now())
         .unwrap_or(true)
 }
-

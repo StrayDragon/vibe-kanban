@@ -2,12 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type {
-  CreateTaskGroup,
   ExecutionProcess,
   ExecutorProfileId,
+  CreateMilestone,
   RunNextMilestoneStepResponse,
   TaskAttemptStatusResponse,
-  TaskGroup,
+  Milestone,
   Workspace,
 } from '../shared/types';
 
@@ -67,7 +67,7 @@ async function waitForExecutionProcessId(
 
 async function waitForRunNextStepCleared(
   request: Parameters<typeof apiGet>[0],
-  taskGroupId: string,
+  milestoneId: string,
   opts?: { timeoutMs?: number }
 ): Promise<void> {
   const timeoutMs = opts?.timeoutMs ?? 60_000;
@@ -75,14 +75,14 @@ async function waitForRunNextStepCleared(
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const taskGroup = await apiGet<TaskGroup>(
+    const milestone = await apiGet<Milestone>(
       request,
-      `/api/task-groups/${taskGroupId}`
+      `/api/milestones/${milestoneId}`
     );
-    if (taskGroup.run_next_step_requested_at === null) return;
+    if (milestone.run_next_step_requested_at === null) return;
     if (Date.now() > deadline) {
       throw new Error(
-        `Timed out waiting for run-next-step request to clear for milestone ${taskGroupId}`
+        `Timed out waiting for run-next-step request to clear for milestone ${milestoneId}`
       );
     }
     await delay(250);
@@ -146,7 +146,7 @@ test.describe('milestone dispatch', () => {
     const dod = `dod-${makeName('milestone')}`;
     const nodeInstructions = `node-instructions-${makeName('node-a')}`;
 
-    const createPayload: CreateTaskGroup = {
+    const createPayload: CreateMilestone = {
       project_id: project.id,
       title: makeName('milestone'),
       description: null,
@@ -200,27 +200,26 @@ test.describe('milestone dispatch', () => {
       },
     };
 
-    const milestone = await apiPost<TaskGroup>(
+    const milestone = await apiPost<Milestone>(
       page.request,
-      '/api/task-groups',
+      '/api/milestones',
       createPayload
     );
 
-    await page.goto(`/projects/${project.id}/task-groups/${milestone.id}`);
+    await page.goto(`/projects/${project.id}/milestones/${milestone.id}`);
     await expect(page.getByRole('button', { name: 'Details' })).toBeVisible({
       timeout: 60_000,
     });
 
-    // Select primary node so milestone settings render.
-    const primaryNodeId = `task-group-${milestone.id}-primary`;
-    await page.getByTestId(`rf__node-${primaryNodeId}`).click();
     await page.getByRole('button', { name: 'Details' }).click();
 
     const runNextResponse = page.waitForResponse((response) => {
       const request = response.request();
       return (
         request.method() === 'POST' &&
-        request.url().includes(`/api/task-groups/${milestone.id}/run-next-step`)
+        request
+          .url()
+          .includes(`/api/milestones/${milestone.id}/run-next-step`)
       );
     });
     await page.getByRole('button', { name: 'Run next step' }).click();
@@ -293,7 +292,7 @@ test.describe('milestone dispatch', () => {
     const dod = `dod-${makeName('milestone')}`;
     const nodeAInstructions = `node-instructions-${makeName('node-a')}`;
 
-    const createPayload: CreateTaskGroup = {
+    const createPayload: CreateMilestone = {
       project_id: project.id,
       title: makeName('milestone'),
       description: null,
@@ -333,9 +332,9 @@ test.describe('milestone dispatch', () => {
       },
     };
 
-    const milestone = await apiPost<TaskGroup>(
+    const milestone = await apiPost<Milestone>(
       page.request,
-      '/api/task-groups',
+      '/api/milestones',
       createPayload
     );
 
@@ -374,10 +373,9 @@ test.describe('milestone dispatch', () => {
     expect(attemptB.id).not.toBe(attemptA.id);
 
     // Smoke: milestone workflow page still loads in UI.
-    await page.goto(`/projects/${project.id}/task-groups/${milestone.id}`);
+    await page.goto(`/projects/${project.id}/milestones/${milestone.id}`);
     await expect(page.getByRole('button', { name: 'Details' })).toBeVisible({
       timeout: 60_000,
     });
   });
 });
-

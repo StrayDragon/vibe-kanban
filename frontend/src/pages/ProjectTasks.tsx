@@ -65,7 +65,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import { AttemptHeaderActions } from '@/components/panels/AttemptHeaderActions';
 import { TaskPanelHeaderActions } from '@/components/panels/TaskPanelHeaderActions';
-import { getTaskGroupId, isTaskGroupSubtask } from '@/utils/taskGroup';
+import { getMilestoneId, isMilestoneSubtask } from '@/utils/milestone';
 import { toast } from '@/components/ui/toast';
 import { useOptimisticTasksStore } from '@/stores/useOptimisticTasksStore';
 
@@ -157,6 +157,12 @@ export function ProjectTasks() {
       openTaskForm({ mode: 'create', projectId });
     }
   }, [projectId]);
+
+  const handleCreateMilestone = useCallback(() => {
+    if (projectId) {
+      openTaskForm({ mode: 'create', projectId, kind: 'milestone' });
+    }
+  }, [projectId]);
   const {
     query: searchQuery,
     focusInput,
@@ -177,8 +183,8 @@ export function ProjectTasks() {
     () => (taskId ? (tasksById[taskId] ?? null) : null),
     [taskId, tasksById]
   );
-  const selectedTaskGroupId = useMemo(
-    () => (selectedTask ? getTaskGroupId(selectedTask) : null),
+  const selectedMilestoneId = useMemo(
+    () => (selectedTask ? getMilestoneId(selectedTask) : null),
     [selectedTask]
   );
 
@@ -241,7 +247,7 @@ export function ProjectTasks() {
 
   useEffect(() => {
     if (!projectId || !taskId) return;
-    if (selectedTaskGroupId) return;
+    if (selectedMilestoneId) return;
     if (!isLatest) return;
     if (isAttemptsLoading) return;
 
@@ -261,18 +267,18 @@ export function ProjectTasks() {
     latestAttemptId,
     navigate,
     navigateWithSearch,
-    selectedTaskGroupId,
+    selectedMilestoneId,
   ]);
 
   useEffect(() => {
-    if (!selectedTaskGroupId || !projectId) return;
+    if (!selectedMilestoneId || !projectId) return;
     navigateWithSearch(
-      paths.taskGroupWorkflow(projectId, selectedTaskGroupId),
+      paths.milestoneWorkflow(projectId, selectedMilestoneId),
       {
         replace: true,
       }
     );
-  }, [navigateWithSearch, projectId, selectedTaskGroupId]);
+  }, [navigateWithSearch, projectId, selectedMilestoneId]);
 
   useEffect(() => {
     if (!projectId || !taskId || isLoading) return;
@@ -338,7 +344,7 @@ export function ProjectTasks() {
   const orchestrationScopeTasks = useMemo(
     () =>
       tasks.filter(
-        (task) => !isTaskGroupSubtask(task) && matchesTaskSearch(task)
+        (task) => !isMilestoneSubtask(task) && matchesTaskSearch(task)
       ),
     [matchesTaskSearch, tasks]
   );
@@ -358,7 +364,7 @@ export function ProjectTasks() {
           columns[status] = [];
         }
         items.forEach((task) => {
-          if (isTaskGroupSubtask(task)) {
+          if (isMilestoneSubtask(task)) {
             return;
           }
           if (!matchesTaskSearch(task)) {
@@ -496,9 +502,9 @@ export function ProjectTasks() {
   const handleViewTaskDetails = useCallback(
     (task: Task, attemptIdToShow?: string) => {
       if (!projectId) return;
-      const taskGroupId = getTaskGroupId(task);
-      if (taskGroupId) {
-        navigateWithSearch(paths.taskGroupWorkflow(projectId, taskGroupId));
+      const milestoneId = getMilestoneId(task);
+      if (milestoneId) {
+        navigateWithSearch(paths.milestoneWorkflow(projectId, milestoneId));
         return;
       }
 
@@ -743,6 +749,7 @@ export function ProjectTasks() {
           onViewTaskDetails={handleViewTaskDetails}
           selectedTaskId={selectedTask?.id}
           onCreateTask={handleCreateNewTask}
+          onCreateMilestone={handleCreateMilestone}
           projectId={projectId!}
         />
       </div>

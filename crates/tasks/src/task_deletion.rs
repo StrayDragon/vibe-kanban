@@ -3,9 +3,9 @@ use std::collections::{HashMap, VecDeque};
 use db::{
     DbErr, TransactionTrait,
     models::{
+        milestone::{Milestone, MilestoneError, MilestoneGraph},
         repo::Repo,
         task::{Task, TaskKind},
-        task_group::{TaskGroup, TaskGroupError, TaskGroupGraph},
         workspace::Workspace,
     },
 };
@@ -14,12 +14,12 @@ use crate::{orchestration::TasksError, runtime::TaskRuntime};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeleteTaskMode {
-    CascadeGroup,
+    CascadeMilestone,
 }
 
-fn map_task_group_error(err: TaskGroupError) -> TasksError {
+fn map_milestone_error(err: MilestoneError) -> TasksError {
     match err {
-        TaskGroupError::Database(db_err) => TasksError::Database(db_err),
+        MilestoneError::Database(db_err) => TasksError::Database(db_err),
         _ => TasksError::BadRequest(err.to_string()),
     }
 }
@@ -31,18 +31,18 @@ pub async fn delete_task_with_cleanup<R: TaskRuntime + Sync>(
     mode: DeleteTaskMode,
     allow_archived: bool,
 ) -> Result<(), TasksError> {
-    if mode == DeleteTaskMode::CascadeGroup
-        && task.task_kind == TaskKind::Group
-        && let Some(task_group_id) = task.task_group_id
+    if mode == DeleteTaskMode::CascadeMilestone
+        && task.task_kind == TaskKind::Milestone
+        && let Some(milestone_id) = task.milestone_id
     {
-        let task_group = TaskGroup::find_by_id(db, task_group_id)
+        let milestone = Milestone::find_by_id(db, milestone_id)
             .await
-            .map_err(map_task_group_error)?;
-        if let Some(task_group) = task_group {
-            return delete_task_group_with_cleanup(
+            .map_err(map_milestone_error)?;
+        if let Some(milestone) = milestone {
+            return delete_milestone_with_cleanup(
                 runtime,
                 db,
-                task_group,
+                milestone,
                 Some(task),
                 allow_archived,
             )
@@ -53,19 +53,19 @@ pub async fn delete_task_with_cleanup<R: TaskRuntime + Sync>(
     delete_single_task_with_cleanup(runtime, db, task, allow_archived).await
 }
 
-pub async fn delete_task_group_with_cleanup<R: TaskRuntime + Sync>(
+pub async fn delete_milestone_with_cleanup<R: TaskRuntime + Sync>(
     runtime: &R,
     db: &db::DbPool,
-    task_group: TaskGroup,
+    milestone: Milestone,
     entry_task_override: Option<Task>,
     allow_archived: bool,
 ) -> Result<(), TasksError> {
-    let tasks = Task::find_by_task_group_id(db, task_group.id).await?;
+    let tasks = Task::find_by_milestone_id(db, milestone.id).await?;
     let mut entry_task = entry_task_override;
     let mut node_tasks = Vec::new();
 
     for task in tasks {
-        if task.task_kind == TaskKind::Group {
+        if task.task_kind == TaskKind::Milestone {
             if entry_task.is_none() {
                 entry_task = Some(task);
             }
@@ -86,12 +86,12 @@ pub async fn delete_task_group_with_cleanup<R: TaskRuntime + Sync>(
             .map_err(TasksError::Runtime)?
         {
             return Err(TasksError::Conflict(
-                "Task group has running execution processes. Please stop them first.".to_string(),
+                "Milestone has running execution processes. Please stop them first.".to_string(),
             ));
         }
     }
 
-    let ordered_task_ids = topo_sorted_task_ids(&task_group.graph);
+    let ordered_task_ids = topo_sorted_task_ids(&milestone.graph);
     let mut tasks_by_id: HashMap<_, _> =
         node_tasks.into_iter().map(|task| (task.id, task)).collect();
 
@@ -109,17 +109,17 @@ pub async fn delete_task_group_with_cleanup<R: TaskRuntime + Sync>(
         delete_single_task_with_cleanup(runtime, db, task, allow_archived).await?;
     }
 
-    let rows = TaskGroup::delete(db, task_group.id)
+    let rows = Milestone::delete(db, milestone.id)
         .await
-        .map_err(map_task_group_error)?;
+        .map_err(map_milestone_error)?;
     if rows == 0 {
-        return Err(TasksError::BadRequest("Task group not found".to_string()));
+        return Err(TasksError::BadRequest("Milestone not found".to_string()));
     }
 
     Ok(())
 }
 
-pub fn topo_sorted_task_ids(graph: &TaskGroupGraph) -> Vec<uuid::Uuid> {
+pub fn topo_sorted_task_ids(graph: &MilestoneGraph) -> Vec<uuid::Uuid> {
     let mut incoming: HashMap<String, usize> = HashMap::new();
     let mut outgoing: HashMap<String, Vec<String>> = HashMap::new();
     let mut node_task_ids: HashMap<String, uuid::Uuid> = HashMap::new();

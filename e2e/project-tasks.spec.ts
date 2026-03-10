@@ -20,6 +20,7 @@ test.describe('project tasks', () => {
 
     const taskTitle = makeName('task');
     await page.locator(`#${uiIds.navbarCreateTask}`).click();
+    await page.getByRole('menuitem', { name: 'Create new task' }).click();
     await page.locator(`#${uiIds.taskFormTitle}`).fill(taskTitle);
     // Disable auto-start so the task stays in "To Do" for deterministic DnD assertions.
     const autoStartSwitch = page.locator('#autostart-switch');

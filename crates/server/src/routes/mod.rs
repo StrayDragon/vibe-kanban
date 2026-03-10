@@ -14,7 +14,7 @@ pub mod scratch;
 pub mod sessions;
 pub mod tags;
 pub mod task_attempts;
-pub mod task_groups;
+pub mod milestones;
 pub mod tasks;
 pub mod translation;
 

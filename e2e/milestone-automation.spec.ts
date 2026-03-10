@@ -1,7 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { ExecutorProfileId, CreateTaskGroup, TaskGroup } from '../shared/types';
+import type {
+  ExecutorProfileId,
+  CreateMilestone,
+  Milestone,
+} from '../shared/types';
 
 import { createRepoAndProject, createTask } from './helpers/setup';
 import { apiPost } from './helpers/api';
@@ -42,7 +46,7 @@ test.describe('milestone automation', () => {
       variant: null,
     };
 
-    const createPayload: CreateTaskGroup = {
+    const createPayload: CreateMilestone = {
       project_id: project.id,
       title: makeName('milestone'),
       description: null,
@@ -96,20 +100,17 @@ test.describe('milestone automation', () => {
       },
     };
 
-    const milestone = await apiPost<TaskGroup>(
+    const milestone = await apiPost<Milestone>(
       page.request,
-      '/api/task-groups',
+      '/api/milestones',
       createPayload
     );
 
-    await page.goto(`/projects/${project.id}/task-groups/${milestone.id}`);
+    await page.goto(`/projects/${project.id}/milestones/${milestone.id}`);
     await expect(page.getByRole('button', { name: 'Details' })).toBeVisible({
       timeout: 60_000,
     });
 
-    // Explicitly select the primary node so milestone settings render.
-    const primaryNodeId = `task-group-${milestone.id}-primary`;
-    await page.getByTestId(`rf__node-${primaryNodeId}`).click();
     await page.getByRole('button', { name: 'Details' }).click();
 
     const objectiveText = makeName('objective');
@@ -119,7 +120,7 @@ test.describe('milestone automation', () => {
       const request = response.request();
       return (
         request.method() === 'PUT' &&
-        request.url().includes(`/api/task-groups/${milestone.id}`) &&
+        request.url().includes(`/api/milestones/${milestone.id}`) &&
         request.postData()?.includes('"objective"') === true
       );
     });
@@ -136,7 +137,7 @@ test.describe('milestone automation', () => {
       const request = response.request();
       return (
         request.method() === 'PUT' &&
-        request.url().includes(`/api/task-groups/${milestone.id}`) &&
+        request.url().includes(`/api/milestones/${milestone.id}`) &&
         request.postData()?.includes('"definition_of_done"') === true
       );
     });
@@ -148,7 +149,7 @@ test.describe('milestone automation', () => {
       return (
         request.method() === 'POST' &&
         request.url().includes(
-          `/api/task-groups/${milestone.id}/run-next-step`
+          `/api/milestones/${milestone.id}/run-next-step`
         )
       );
     });
@@ -172,7 +173,7 @@ test.describe('milestone automation', () => {
       const request = response.request();
       return (
         request.method() === 'PUT' &&
-        request.url().includes(`/api/task-groups/${milestone.id}`) &&
+        request.url().includes(`/api/milestones/${milestone.id}`) &&
         request.postData()?.includes('"automation_mode"') === true
       );
     });

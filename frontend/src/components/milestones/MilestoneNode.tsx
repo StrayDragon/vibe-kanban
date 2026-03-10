@@ -11,44 +11,41 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
-import type { TaskStatus, ExecutorProfileId } from 'shared/types';
-import type {
-  TaskGroupNodeBaseStrategy,
-  TaskGroupNodeKind,
-} from '@/types/task-group';
+import { MilestoneNodeBaseStrategy, MilestoneNodeKind } from 'shared/types';
+import type { ExecutorProfileId, TaskStatus } from 'shared/types';
 
-export type TaskGroupNodeInlineUpdate = {
-  kind?: TaskGroupNodeKind;
+export type MilestoneNodeInlineUpdate = {
+  kind?: MilestoneNodeKind;
   phase?: number;
 };
 
-export type TaskGroupNodeData = {
+export type MilestoneNodeData = {
   title: string;
   status?: TaskStatus;
-  kind: TaskGroupNodeKind;
+  kind: MilestoneNodeKind;
   taskId?: string;
   phase?: number;
   executorProfileId?: ExecutorProfileId | null;
-  baseStrategy?: TaskGroupNodeBaseStrategy;
+  baseStrategy?: MilestoneNodeBaseStrategy;
   requiresApproval?: boolean;
   isMaster?: boolean;
-  onUpdate?: (update: TaskGroupNodeInlineUpdate) => void;
+  onUpdate?: (update: MilestoneNodeInlineUpdate) => void;
 };
 
-export type TaskGroupFlowNode = Node<TaskGroupNodeData, 'taskGroup'>;
+export type MilestoneFlowNode = Node<MilestoneNodeData, 'milestone'>;
 
-const KIND_LABELS: Record<TaskGroupNodeKind, string> = {
-  task: 'Task',
-  checkpoint: 'Checkpoint',
-  merge: 'Merge',
+const KIND_LABELS: Record<MilestoneNodeKind, string> = {
+  [MilestoneNodeKind.task]: 'Task',
+  [MilestoneNodeKind.checkpoint]: 'Checkpoint',
+  [MilestoneNodeKind.merge]: 'Merge',
 };
 
-const BASE_STRATEGY_LABELS: Record<TaskGroupNodeBaseStrategy, string> = {
-  topology: 'Topology',
-  baseline: 'Baseline',
+const BASE_STRATEGY_LABELS: Record<MilestoneNodeBaseStrategy, string> = {
+  [MilestoneNodeBaseStrategy.topology]: 'Topology',
+  [MilestoneNodeBaseStrategy.baseline]: 'Baseline',
 };
 
-const TaskGroupNode = ({ data, selected }: NodeProps<TaskGroupFlowNode>) => {
+const MilestoneNode = ({ data, selected }: NodeProps<MilestoneFlowNode>) => {
   const statusColor = data.status ? statusBoardColors[data.status] : null;
   const isMaster = Boolean(data.isMaster);
 
@@ -110,7 +107,7 @@ const TaskGroupNode = ({ data, selected }: NodeProps<TaskGroupFlowNode>) => {
               <Select
                 value={data.kind}
                 onValueChange={(value) =>
-                  data.onUpdate?.({ kind: value as TaskGroupNodeKind })
+                  data.onUpdate?.({ kind: value as MilestoneNodeKind })
                 }
               >
                 <SelectTrigger className="h-6 text-[11px]">
@@ -165,4 +162,4 @@ const TaskGroupNode = ({ data, selected }: NodeProps<TaskGroupFlowNode>) => {
   );
 };
 
-export default memo(TaskGroupNode);
+export default memo(MilestoneNode);

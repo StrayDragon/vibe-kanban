@@ -1,7 +1,7 @@
 use app_runtime::Deployment;
 #[cfg(test)]
-use db::models::task_group::TaskGroupGraph;
-use db::models::{task::Task, task_group::TaskGroup};
+use db::models::milestone::MilestoneGraph;
+use db::models::{milestone::Milestone, task::Task};
 pub use domain::DeleteTaskMode;
 use tasks::task_deletion as domain;
 
@@ -18,17 +18,17 @@ pub async fn delete_task_with_cleanup(
         .map_err(ApiError::from)
 }
 
-pub async fn delete_task_group_with_cleanup(
+pub async fn delete_milestone_with_cleanup(
     deployment: &DeploymentImpl,
-    task_group: TaskGroup,
+    milestone: Milestone,
     entry_task_override: Option<Task>,
     allow_archived: bool,
 ) -> Result<(), ApiError> {
     let runtime = DeploymentTaskRuntime::new(deployment.container());
-    domain::delete_task_group_with_cleanup(
+    domain::delete_milestone_with_cleanup(
         &runtime,
         &deployment.db().pool,
-        task_group,
+        milestone,
         entry_task_override,
         allow_archived,
     )
@@ -37,33 +37,33 @@ pub async fn delete_task_group_with_cleanup(
 }
 
 #[cfg(test)]
-fn topo_sorted_task_ids(graph: &TaskGroupGraph) -> Vec<uuid::Uuid> {
+fn topo_sorted_task_ids(graph: &MilestoneGraph) -> Vec<uuid::Uuid> {
     domain::topo_sorted_task_ids(graph)
 }
 
 #[cfg(test)]
 mod tests {
-    use db::models::task_group::{
-        TaskGroupEdge, TaskGroupGraph, TaskGroupNode, TaskGroupNodeBaseStrategy, TaskGroupNodeKind,
-        TaskGroupNodeLayout,
+    use db::models::milestone::{
+        MilestoneEdge, MilestoneGraph, MilestoneNode, MilestoneNodeBaseStrategy, MilestoneNodeKind,
+        MilestoneNodeLayout,
     };
     use uuid::Uuid;
 
     use super::topo_sorted_task_ids;
 
-    fn node(id: &str) -> (TaskGroupNode, Uuid) {
+    fn node(id: &str) -> (MilestoneNode, Uuid) {
         let task_id = Uuid::new_v4();
         (
-            TaskGroupNode {
+            MilestoneNode {
                 id: id.to_string(),
                 task_id,
-                kind: TaskGroupNodeKind::Task,
+                kind: MilestoneNodeKind::Task,
                 phase: 0,
                 executor_profile_id: None,
-                base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                base_strategy: MilestoneNodeBaseStrategy::Topology,
                 instructions: None,
                 requires_approval: None,
-                layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+                layout: MilestoneNodeLayout { x: 0.0, y: 0.0 },
                 status: None,
             },
             task_id,
@@ -74,9 +74,9 @@ mod tests {
     fn topo_sorted_task_ids_respects_edges() {
         let (node_a, task_id_a) = node("a");
         let (node_b, task_id_b) = node("b");
-        let graph = TaskGroupGraph {
+        let graph = MilestoneGraph {
             nodes: vec![node_a, node_b],
-            edges: vec![TaskGroupEdge {
+            edges: vec![MilestoneEdge {
                 id: "edge-a-b".to_string(),
                 from: "a".to_string(),
                 to: "b".to_string(),

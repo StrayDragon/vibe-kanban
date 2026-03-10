@@ -25,6 +25,12 @@ import { Plus } from 'lucide-react';
 import type { ClientRect } from '@dnd-kit/core';
 import type { Transform } from '@dnd-kit/utilities';
 import { Button } from '../../button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../../dropdown-menu';
 export type { DragEndEvent } from '@dnd-kit/core';
 
 export type Status = {
@@ -160,6 +166,7 @@ export type KanbanHeaderProps =
       color: Status['color'];
       className?: string;
       onAddTask?: () => void;
+      onAddMilestone?: () => void;
       addTaskButtonTestId?: string;
     };
 
@@ -189,7 +196,7 @@ export const KanbanHeader = (props: KanbanHeaderProps) => {
 
         <p className="m-0 text-sm">{props.name}</p>
       </span>
-      {props.onAddTask && (
+      {props.onAddTask && !props.onAddMilestone && (
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -207,6 +214,46 @@ export const KanbanHeader = (props: KanbanHeaderProps) => {
             <TooltipContent side="top">{t('actions.addTask')}</TooltipContent>
           </Tooltip>
         </TooltipProvider>
+      )}
+      {props.onAddTask && props.onAddMilestone && (
+        <DropdownMenu>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 p-0 text-foreground/50 hover:text-foreground"
+                    aria-label={t('actions.addTask')}
+                    data-testid={props.addTaskButtonTestId}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent side="top">{t('actions.addTask')}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault();
+                props.onAddTask?.();
+              }}
+            >
+              {t('actions.createTask', 'Create task')}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault();
+                props.onAddMilestone?.();
+              }}
+            >
+              {t('actions.createMilestone', 'Create milestone')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
     </Card>
   );

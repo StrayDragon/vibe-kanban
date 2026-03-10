@@ -20,6 +20,7 @@ test('dev-mode smoke: create task and reach the started task', async ({
   await page.goto(`/projects/${project.id}/tasks`);
 
   await page.locator(`#${uiIds.navbarCreateTask}`).click();
+  await page.getByRole('menuitem', { name: 'Create new task' }).click();
   await page.locator(`#${uiIds.taskFormTitle}`).fill(taskTitle);
 
   const createButton = page.locator(`#${uiIds.taskFormSubmit}`);

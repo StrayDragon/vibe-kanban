@@ -12,7 +12,7 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 use crate::{
-    entities::{task, task_group},
+    entities::{milestone, task},
     events::{EVENT_TASK_UPDATED, TaskEventPayload},
     models::{event_outbox::EventOutbox, ids},
     types::{MilestoneAutomationMode, TaskKind, TaskStatus},
@@ -21,31 +21,31 @@ use crate::{
 const SUPPORTED_SCHEMA_VERSION: i32 = 1;
 
 #[derive(Debug, Error)]
-pub enum TaskGroupError {
+pub enum MilestoneError {
     #[error(transparent)]
     Database(#[from] DbErr),
     #[error(transparent)]
     Serde(#[from] serde_json::Error),
-    #[error("Task group not found")]
-    TaskGroupNotFound,
+    #[error("Milestone not found")]
+    MilestoneNotFound,
     #[error("Project not found")]
     ProjectNotFound,
     #[error("Task not found: {0}")]
     TaskNotFound(String),
     #[error("Task belongs to another project: {0}")]
     TaskProjectMismatch(String),
-    #[error("Task already linked to another task group: {0}")]
-    TaskGroupMismatch(String),
-    #[error("Task kind 'group' cannot be used for task group nodes: {0}")]
+    #[error("Task already linked to another milestone: {0}")]
+    MilestoneMismatch(String),
+    #[error("Task kind 'milestone' cannot be used for milestone nodes: {0}")]
     TaskKindMismatch(String),
     #[error("Unsupported schema version: {0}")]
     UnsupportedSchemaVersion(i32),
-    #[error("Invalid task group graph: {0}")]
+    #[error("Invalid milestone graph: {0}")]
     InvalidGraph(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct TaskGroup {
+pub struct Milestone {
     pub id: Uuid,
     pub project_id: Uuid,
     pub title: String,
@@ -58,14 +58,14 @@ pub struct TaskGroup {
     pub status: TaskStatus,
     pub baseline_ref: String,
     pub schema_version: i32,
-    pub graph: TaskGroupGraph,
+    pub graph: MilestoneGraph,
     pub suggested_status: TaskStatus,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct CreateTaskGroup {
+pub struct CreateMilestone {
     pub project_id: Uuid,
     pub title: String,
     pub description: Option<String>,
@@ -76,11 +76,11 @@ pub struct CreateTaskGroup {
     pub status: Option<TaskStatus>,
     pub baseline_ref: String,
     pub schema_version: i32,
-    pub graph: TaskGroupGraph,
+    pub graph: MilestoneGraph,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct UpdateTaskGroup {
+pub struct UpdateMilestone {
     pub title: Option<String>,
     pub description: Option<String>,
     pub objective: Option<String>,
@@ -90,38 +90,38 @@ pub struct UpdateTaskGroup {
     pub status: Option<TaskStatus>,
     pub baseline_ref: Option<String>,
     pub schema_version: Option<i32>,
-    pub graph: Option<TaskGroupGraph>,
+    pub graph: Option<MilestoneGraph>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct TaskGroupGraph {
-    pub nodes: Vec<TaskGroupNode>,
+pub struct MilestoneGraph {
+    pub nodes: Vec<MilestoneNode>,
     #[serde(default)]
-    pub edges: Vec<TaskGroupEdge>,
+    pub edges: Vec<MilestoneEdge>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct TaskGroupNode {
+pub struct MilestoneNode {
     pub id: String,
     pub task_id: Uuid,
     #[serde(default)]
-    pub kind: TaskGroupNodeKind,
+    pub kind: MilestoneNodeKind,
     pub phase: i32,
     #[serde(default)]
     pub executor_profile_id: Option<ExecutorProfileId>,
     #[serde(default)]
-    pub base_strategy: TaskGroupNodeBaseStrategy,
+    pub base_strategy: MilestoneNodeBaseStrategy,
     #[serde(default)]
     pub instructions: Option<String>,
     #[serde(default)]
     pub requires_approval: Option<bool>,
-    pub layout: TaskGroupNodeLayout,
+    pub layout: MilestoneNodeLayout,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<TaskStatus>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct TaskGroupNodeLayout {
+pub struct MilestoneNodeLayout {
     pub x: f64,
     pub y: f64,
 }
@@ -129,7 +129,7 @@ pub struct TaskGroupNodeLayout {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, Default)]
 #[serde(rename_all = "lowercase")]
 #[ts(use_ts_enum)]
-pub enum TaskGroupNodeKind {
+pub enum MilestoneNodeKind {
     #[default]
     Task,
     Checkpoint,
@@ -139,14 +139,14 @@ pub enum TaskGroupNodeKind {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, Default)]
 #[serde(rename_all = "lowercase")]
 #[ts(use_ts_enum)]
-pub enum TaskGroupNodeBaseStrategy {
+pub enum MilestoneNodeBaseStrategy {
     #[default]
     Topology,
     Baseline,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct TaskGroupEdge {
+pub struct MilestoneEdge {
     pub id: String,
     pub from: String,
     pub to: String,
@@ -154,7 +154,7 @@ pub struct TaskGroupEdge {
     pub data_flow: Option<String>,
 }
 
-impl TaskGroupGraph {
+impl MilestoneGraph {
     fn without_statuses(&self) -> Self {
         let mut graph = self.clone();
         for node in &mut graph.nodes {
@@ -171,31 +171,31 @@ impl TaskGroupGraph {
     }
 }
 
-fn validate_schema_version(schema_version: i32) -> Result<(), TaskGroupError> {
+fn validate_schema_version(schema_version: i32) -> Result<(), MilestoneError> {
     if schema_version != SUPPORTED_SCHEMA_VERSION {
-        return Err(TaskGroupError::UnsupportedSchemaVersion(schema_version));
+        return Err(MilestoneError::UnsupportedSchemaVersion(schema_version));
     }
     Ok(())
 }
 
-fn validate_graph(graph: &TaskGroupGraph) -> Result<(), TaskGroupError> {
+fn validate_graph(graph: &MilestoneGraph) -> Result<(), MilestoneError> {
     let mut node_ids = HashSet::new();
     let mut task_ids = HashSet::new();
     for node in &graph.nodes {
         let trimmed = node.id.trim();
         if trimmed.is_empty() {
-            return Err(TaskGroupError::InvalidGraph(
+            return Err(MilestoneError::InvalidGraph(
                 "node id cannot be empty".to_string(),
             ));
         }
         if !node_ids.insert(trimmed.to_string()) {
-            return Err(TaskGroupError::InvalidGraph(format!(
+            return Err(MilestoneError::InvalidGraph(format!(
                 "duplicate node id: {}",
                 trimmed
             )));
         }
         if !task_ids.insert(node.task_id) {
-            return Err(TaskGroupError::InvalidGraph(format!(
+            return Err(MilestoneError::InvalidGraph(format!(
                 "duplicate task id in nodes: {}",
                 node.task_id
             )));
@@ -213,18 +213,18 @@ fn validate_graph(graph: &TaskGroupGraph) -> Result<(), TaskGroupError> {
         let from = edge.from.trim();
         let to = edge.to.trim();
         if from.is_empty() || to.is_empty() {
-            return Err(TaskGroupError::InvalidGraph(
+            return Err(MilestoneError::InvalidGraph(
                 "edge endpoints cannot be empty".to_string(),
             ));
         }
         if from == to {
-            return Err(TaskGroupError::InvalidGraph(format!(
+            return Err(MilestoneError::InvalidGraph(format!(
                 "self edge is not allowed: {}",
                 from
             )));
         }
         if !node_ids.contains(from) || !node_ids.contains(to) {
-            return Err(TaskGroupError::InvalidGraph(format!(
+            return Err(MilestoneError::InvalidGraph(format!(
                 "edge references missing node: {} -> {}",
                 from, to
             )));
@@ -264,7 +264,7 @@ fn validate_graph(graph: &TaskGroupGraph) -> Result<(), TaskGroupError> {
     }
 
     if visited != node_ids.len() {
-        return Err(TaskGroupError::InvalidGraph(
+        return Err(MilestoneError::InvalidGraph(
             "graph contains a cycle".to_string(),
         ));
     }
@@ -292,15 +292,15 @@ fn aggregate_status(statuses: &[TaskStatus]) -> TaskStatus {
     TaskStatus::Todo
 }
 
-impl TaskGroup {
-    fn parse_graph(graph_json: serde_json::Value) -> Result<TaskGroupGraph, TaskGroupError> {
+impl Milestone {
+    fn parse_graph(graph_json: serde_json::Value) -> Result<MilestoneGraph, MilestoneError> {
         Ok(serde_json::from_value(graph_json)?)
     }
 
     async fn build_node_status_map<C: ConnectionTrait>(
         db: &C,
-        nodes: &[TaskGroupNode],
-    ) -> Result<HashMap<Uuid, TaskStatus>, TaskGroupError> {
+        nodes: &[MilestoneNode],
+    ) -> Result<HashMap<Uuid, TaskStatus>, MilestoneError> {
         if nodes.is_empty() {
             return Ok(HashMap::new());
         }
@@ -318,9 +318,9 @@ impl TaskGroup {
     }
 
     fn apply_node_statuses(
-        mut graph: TaskGroupGraph,
+        mut graph: MilestoneGraph,
         status_map: &HashMap<Uuid, TaskStatus>,
-    ) -> (TaskGroupGraph, Vec<TaskStatus>) {
+    ) -> (MilestoneGraph, Vec<TaskStatus>) {
         let mut statuses = Vec::with_capacity(graph.nodes.len());
         for node in &mut graph.nodes {
             let status = status_map
@@ -335,11 +335,11 @@ impl TaskGroup {
 
     async fn from_model<C: ConnectionTrait>(
         db: &C,
-        model: task_group::Model,
-    ) -> Result<Self, TaskGroupError> {
+        model: milestone::Model,
+    ) -> Result<Self, MilestoneError> {
         let project_uuid = ids::project_uuid_by_id(db, model.project_id)
             .await?
-            .ok_or(TaskGroupError::ProjectNotFound)?;
+            .ok_or(MilestoneError::ProjectNotFound)?;
         let default_executor_profile_id = match model.default_executor_profile_id {
             Some(value) => Some(serde_json::from_value(value)?),
             None => None,
@@ -372,9 +372,9 @@ impl TaskGroup {
     pub async fn find_by_id<C: ConnectionTrait>(
         db: &C,
         id: Uuid,
-    ) -> Result<Option<Self>, TaskGroupError> {
-        let record = task_group::Entity::find()
-            .filter(task_group::Column::Uuid.eq(id))
+    ) -> Result<Option<Self>, MilestoneError> {
+        let record = milestone::Entity::find()
+            .filter(milestone::Column::Uuid.eq(id))
             .one(db)
             .await?;
 
@@ -387,14 +387,14 @@ impl TaskGroup {
     pub async fn find_by_project_id<C: ConnectionTrait>(
         db: &C,
         project_id: Uuid,
-    ) -> Result<Vec<Self>, TaskGroupError> {
+    ) -> Result<Vec<Self>, MilestoneError> {
         let project_row_id = ids::project_id_by_uuid(db, project_id)
             .await?
-            .ok_or(TaskGroupError::ProjectNotFound)?;
+            .ok_or(MilestoneError::ProjectNotFound)?;
 
-        let models = task_group::Entity::find()
-            .filter(task_group::Column::ProjectId.eq(project_row_id))
-            .order_by_desc(task_group::Column::CreatedAt)
+        let models = milestone::Entity::find()
+            .filter(milestone::Column::ProjectId.eq(project_row_id))
+            .order_by_desc(milestone::Column::CreatedAt)
             .all(db)
             .await?;
 
@@ -405,9 +405,9 @@ impl TaskGroup {
         Ok(groups)
     }
 
-    pub async fn find_all<C: ConnectionTrait>(db: &C) -> Result<Vec<Self>, TaskGroupError> {
-        let models = task_group::Entity::find()
-            .order_by_desc(task_group::Column::CreatedAt)
+    pub async fn find_all<C: ConnectionTrait>(db: &C) -> Result<Vec<Self>, MilestoneError> {
+        let models = milestone::Entity::find()
+            .order_by_desc(milestone::Column::CreatedAt)
             .all(db)
             .await?;
 
@@ -420,15 +420,15 @@ impl TaskGroup {
 
     pub async fn create<C: ConnectionTrait>(
         db: &C,
-        data: &CreateTaskGroup,
-        task_group_id: Uuid,
-    ) -> Result<Self, TaskGroupError> {
+        data: &CreateMilestone,
+        milestone_id: Uuid,
+    ) -> Result<Self, MilestoneError> {
         validate_schema_version(data.schema_version)?;
         validate_graph(&data.graph)?;
 
         let project_row_id = ids::project_id_by_uuid(db, data.project_id)
             .await?
-            .ok_or(TaskGroupError::ProjectNotFound)?;
+            .ok_or(MilestoneError::ProjectNotFound)?;
 
         let graph_json = serde_json::to_value(data.graph.without_statuses())?;
         let objective = data
@@ -446,8 +446,8 @@ impl TaskGroup {
             None => None,
         };
         let now = Utc::now();
-        let active = task_group::ActiveModel {
-            uuid: Set(task_group_id),
+        let active = milestone::ActiveModel {
+            uuid: Set(milestone_id),
             project_id: Set(project_row_id),
             title: Set(data.title.clone()),
             description: Set(data.description.clone()),
@@ -476,9 +476,9 @@ impl TaskGroup {
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
             status: None,
-            task_kind: Some(TaskKind::Group),
-            task_group_id: Some(task_group_id),
-            task_group_node_id: None,
+            task_kind: Some(TaskKind::Milestone),
+            milestone_id: Some(milestone_id),
+            milestone_node_id: None,
             parent_workspace_id: None,
             origin_task_id: None,
             created_by_kind: None,
@@ -496,13 +496,13 @@ impl TaskGroup {
     pub async fn update<C: ConnectionTrait>(
         db: &C,
         id: Uuid,
-        data: &UpdateTaskGroup,
-    ) -> Result<Self, TaskGroupError> {
-        let record = task_group::Entity::find()
-            .filter(task_group::Column::Uuid.eq(id))
+        data: &UpdateMilestone,
+    ) -> Result<Self, MilestoneError> {
+        let record = milestone::Entity::find()
+            .filter(milestone::Column::Uuid.eq(id))
             .one(db)
             .await?
-            .ok_or(TaskGroupError::TaskGroupNotFound)?;
+            .ok_or(MilestoneError::MilestoneNotFound)?;
 
         let status_changed = data
             .status
@@ -574,7 +574,7 @@ impl TaskGroup {
             graph = value.clone();
         }
 
-        let mut active: task_group::ActiveModel = record.into();
+        let mut active: milestone::ActiveModel = record.into();
         active.title = Set(title);
         active.description = Set(description);
         active.objective = Set(objective);
@@ -602,15 +602,15 @@ impl TaskGroup {
     pub async fn request_run_next_step<C: ConnectionTrait>(
         db: &C,
         id: Uuid,
-    ) -> Result<DateTime<Utc>, TaskGroupError> {
-        let record = task_group::Entity::find()
-            .filter(task_group::Column::Uuid.eq(id))
+    ) -> Result<DateTime<Utc>, MilestoneError> {
+        let record = milestone::Entity::find()
+            .filter(milestone::Column::Uuid.eq(id))
             .one(db)
             .await?
-            .ok_or(TaskGroupError::TaskGroupNotFound)?;
+            .ok_or(MilestoneError::MilestoneNotFound)?;
 
         let now = Utc::now();
-        let mut active: task_group::ActiveModel = record.into();
+        let mut active: milestone::ActiveModel = record.into();
         active.run_next_step_requested_at = Set(Some(now.into()));
         active.updated_at = Set(now.into());
         active.update(db).await?;
@@ -621,15 +621,15 @@ impl TaskGroup {
     pub async fn clear_run_next_step_request<C: ConnectionTrait>(
         db: &C,
         id: Uuid,
-    ) -> Result<(), TaskGroupError> {
-        let record = task_group::Entity::find()
-            .filter(task_group::Column::Uuid.eq(id))
+    ) -> Result<(), MilestoneError> {
+        let record = milestone::Entity::find()
+            .filter(milestone::Column::Uuid.eq(id))
             .one(db)
             .await?
-            .ok_or(TaskGroupError::TaskGroupNotFound)?;
+            .ok_or(MilestoneError::MilestoneNotFound)?;
 
         let now = Utc::now();
-        let mut active: task_group::ActiveModel = record.into();
+        let mut active: milestone::ActiveModel = record.into();
         active.run_next_step_requested_at = Set(None);
         active.updated_at = Set(now.into());
         active.update(db).await?;
@@ -637,9 +637,9 @@ impl TaskGroup {
         Ok(())
     }
 
-    pub async fn delete<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<u64, TaskGroupError> {
-        let record = task_group::Entity::find()
-            .filter(task_group::Column::Uuid.eq(id))
+    pub async fn delete<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<u64, MilestoneError> {
+        let record = milestone::Entity::find()
+            .filter(milestone::Column::Uuid.eq(id))
             .one(db)
             .await?;
 
@@ -647,9 +647,9 @@ impl TaskGroup {
             return Ok(0);
         };
 
-        let group_row_id = record.id;
+        let milestone_row_id = record.id;
         let tasks = task::Entity::find()
-            .filter(task::Column::TaskGroupId.eq(group_row_id))
+            .filter(task::Column::MilestoneId.eq(milestone_row_id))
             .all(db)
             .await?;
 
@@ -657,8 +657,8 @@ impl TaskGroup {
             Self::clear_task_link(db, &task_model).await?;
         }
 
-        let result = task_group::Entity::delete_many()
-            .filter(task_group::Column::Uuid.eq(id))
+        let result = milestone::Entity::delete_many()
+            .filter(milestone::Column::Uuid.eq(id))
             .exec(db)
             .await?;
 
@@ -667,12 +667,12 @@ impl TaskGroup {
 
     pub async fn sync_entry_task_statuses_by_row_id<C: ConnectionTrait>(
         db: &C,
-        task_group_row_id: i64,
-    ) -> Result<TaskStatus, TaskGroupError> {
-        let record = task_group::Entity::find_by_id(task_group_row_id)
+        milestone_row_id: i64,
+    ) -> Result<TaskStatus, MilestoneError> {
+        let record = milestone::Entity::find_by_id(milestone_row_id)
             .one(db)
             .await?
-            .ok_or(TaskGroupError::TaskGroupNotFound)?;
+            .ok_or(MilestoneError::MilestoneNotFound)?;
 
         let graph = Self::parse_graph(record.graph_json)?;
         let status_map = Self::build_node_status_map(db, &graph.nodes).await?;
@@ -681,8 +681,8 @@ impl TaskGroup {
         let entry_status = record.status.clone();
 
         let entry_tasks = task::Entity::find()
-            .filter(task::Column::TaskGroupId.eq(task_group_row_id))
-            .filter(task::Column::TaskKind.eq(TaskKind::Group))
+            .filter(task::Column::MilestoneId.eq(milestone_row_id))
+            .filter(task::Column::TaskKind.eq(TaskKind::Milestone))
             .all(db)
             .await?;
 
@@ -701,10 +701,10 @@ impl TaskGroup {
 
     async fn sync_task_links<C: ConnectionTrait>(
         db: &C,
-        task_group_row_id: i64,
+        milestone_row_id: i64,
         project_row_id: i64,
-        graph: &TaskGroupGraph,
-    ) -> Result<(), TaskGroupError> {
+        graph: &MilestoneGraph,
+    ) -> Result<(), MilestoneError> {
         let task_ids: Vec<Uuid> = graph.nodes.iter().map(|node| node.task_id).collect();
         if !task_ids.is_empty() {
             let task_models = task::Entity::find()
@@ -718,27 +718,27 @@ impl TaskGroup {
 
             for task_id in &task_ids {
                 if !task_map.contains_key(task_id) {
-                    return Err(TaskGroupError::TaskNotFound(task_id.to_string()));
+                    return Err(MilestoneError::TaskNotFound(task_id.to_string()));
                 }
             }
 
             for node in &graph.nodes {
                 let task_model = task_map
                     .get(&node.task_id)
-                    .ok_or_else(|| TaskGroupError::TaskNotFound(node.task_id.to_string()))?;
+                    .ok_or_else(|| MilestoneError::TaskNotFound(node.task_id.to_string()))?;
 
                 if task_model.project_id != project_row_id {
-                    return Err(TaskGroupError::TaskProjectMismatch(
+                    return Err(MilestoneError::TaskProjectMismatch(
                         node.task_id.to_string(),
                     ));
                 }
-                if task_model.task_group_id.is_some()
-                    && task_model.task_group_id != Some(task_group_row_id)
+                if task_model.milestone_id.is_some()
+                    && task_model.milestone_id != Some(milestone_row_id)
                 {
-                    return Err(TaskGroupError::TaskGroupMismatch(node.task_id.to_string()));
+                    return Err(MilestoneError::MilestoneMismatch(node.task_id.to_string()));
                 }
-                if task_model.task_kind == TaskKind::Group {
-                    return Err(TaskGroupError::TaskKindMismatch(node.task_id.to_string()));
+                if task_model.task_kind == TaskKind::Milestone {
+                    return Err(MilestoneError::TaskKindMismatch(node.task_id.to_string()));
                 }
             }
 
@@ -750,10 +750,10 @@ impl TaskGroup {
             for (task_id, node_id) in &node_id_map {
                 let task_model = task_map
                     .get(task_id)
-                    .ok_or_else(|| TaskGroupError::TaskNotFound(task_id.to_string()))?;
+                    .ok_or_else(|| MilestoneError::TaskNotFound(task_id.to_string()))?;
                 let mut active: task::ActiveModel = task_model.clone().into();
-                active.task_group_id = Set(Some(task_group_row_id));
-                active.task_group_node_id = Set(Some(node_id.clone()));
+                active.milestone_id = Set(Some(milestone_row_id));
+                active.milestone_node_id = Set(Some(node_id.clone()));
                 active.updated_at = Set(Utc::now().into());
                 let updated = active.update(db).await?;
                 Self::enqueue_task_updated(db, &updated).await?;
@@ -761,8 +761,8 @@ impl TaskGroup {
         }
 
         let current_group_tasks = task::Entity::find()
-            .filter(task::Column::TaskGroupId.eq(task_group_row_id))
-            .filter(task::Column::TaskKind.ne(TaskKind::Group))
+            .filter(task::Column::MilestoneId.eq(milestone_row_id))
+            .filter(task::Column::TaskKind.ne(TaskKind::Milestone))
             .all(db)
             .await?;
 
@@ -778,10 +778,10 @@ impl TaskGroup {
     async fn clear_task_link<C: ConnectionTrait>(
         db: &C,
         task_model: &task::Model,
-    ) -> Result<(), TaskGroupError> {
+    ) -> Result<(), MilestoneError> {
         let mut active: task::ActiveModel = task_model.clone().into();
-        active.task_group_id = Set(None);
-        active.task_group_node_id = Set(None);
+        active.milestone_id = Set(None);
+        active.milestone_node_id = Set(None);
         active.updated_at = Set(Utc::now().into());
         let updated = active.update(db).await?;
         Self::enqueue_task_updated(db, &updated).await?;
@@ -791,10 +791,10 @@ impl TaskGroup {
     async fn enqueue_task_updated<C: ConnectionTrait>(
         db: &C,
         task_model: &task::Model,
-    ) -> Result<(), TaskGroupError> {
+    ) -> Result<(), MilestoneError> {
         let project_uuid = ids::project_uuid_by_id(db, task_model.project_id)
             .await?
-            .ok_or(TaskGroupError::ProjectNotFound)?;
+            .ok_or(MilestoneError::ProjectNotFound)?;
         let payload = serde_json::to_value(TaskEventPayload {
             task_id: task_model.uuid,
             project_id: project_uuid,
@@ -815,35 +815,35 @@ mod tests {
         task::{CreateTask, Task, TaskKind},
     };
 
-    fn base_graph() -> TaskGroupGraph {
-        TaskGroupGraph {
+    fn base_graph() -> MilestoneGraph {
+        MilestoneGraph {
             nodes: vec![
-                TaskGroupNode {
+                MilestoneNode {
                     id: "node-a".to_string(),
                     task_id: Uuid::new_v4(),
-                    kind: TaskGroupNodeKind::Task,
+                    kind: MilestoneNodeKind::Task,
                     phase: 0,
                     executor_profile_id: None,
-                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    base_strategy: MilestoneNodeBaseStrategy::Topology,
                     instructions: None,
                     requires_approval: None,
-                    layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+                    layout: MilestoneNodeLayout { x: 0.0, y: 0.0 },
                     status: None,
                 },
-                TaskGroupNode {
+                MilestoneNode {
                     id: "node-b".to_string(),
                     task_id: Uuid::new_v4(),
-                    kind: TaskGroupNodeKind::Task,
+                    kind: MilestoneNodeKind::Task,
                     phase: 0,
                     executor_profile_id: None,
-                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    base_strategy: MilestoneNodeBaseStrategy::Topology,
                     instructions: None,
                     requires_approval: None,
-                    layout: TaskGroupNodeLayout { x: 1.0, y: 1.0 },
+                    layout: MilestoneNodeLayout { x: 1.0, y: 1.0 },
                     status: None,
                 },
             ],
-            edges: vec![TaskGroupEdge {
+            edges: vec![MilestoneEdge {
                 id: "edge-a-b".to_string(),
                 from: "node-a".to_string(),
                 to: "node-b".to_string(),
@@ -863,7 +863,7 @@ mod tests {
         let mut graph = base_graph();
         graph.nodes[1].id = graph.nodes[0].id.clone();
         let err = validate_graph(&graph).unwrap_err();
-        assert!(matches!(err, TaskGroupError::InvalidGraph(_)));
+        assert!(matches!(err, MilestoneError::InvalidGraph(_)));
     }
 
     #[test]
@@ -872,7 +872,7 @@ mod tests {
         graph.edges[0].from = "node-a".to_string();
         graph.edges[0].to = "node-a".to_string();
         let err = validate_graph(&graph).unwrap_err();
-        assert!(matches!(err, TaskGroupError::InvalidGraph(_)));
+        assert!(matches!(err, MilestoneError::InvalidGraph(_)));
     }
 
     #[test]
@@ -880,20 +880,20 @@ mod tests {
         let mut graph = base_graph();
         graph.edges[0].to = "missing".to_string();
         let err = validate_graph(&graph).unwrap_err();
-        assert!(matches!(err, TaskGroupError::InvalidGraph(_)));
+        assert!(matches!(err, MilestoneError::InvalidGraph(_)));
     }
 
     #[test]
     fn validate_graph_rejects_cycles() {
         let mut graph = base_graph();
-        graph.edges.push(TaskGroupEdge {
+        graph.edges.push(MilestoneEdge {
             id: "edge-b-a".to_string(),
             from: "node-b".to_string(),
             to: "node-a".to_string(),
             data_flow: None,
         });
         let err = validate_graph(&graph).unwrap_err();
-        assert!(matches!(err, TaskGroupError::InvalidGraph(_)));
+        assert!(matches!(err, MilestoneError::InvalidGraph(_)));
     }
 
     #[test]
@@ -930,13 +930,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_task_group_creates_entry_task() {
+    async fn create_milestone_creates_entry_task() {
         let db = setup_db().await;
         let project_id = Uuid::new_v4();
         Project::create(
             &db,
             &CreateProject {
-                name: "Task group project".to_string(),
+                name: "Milestone project".to_string(),
                 repositories: Vec::new(),
             },
             project_id,
@@ -961,40 +961,40 @@ mod tests {
         .await
         .unwrap();
 
-        let graph = TaskGroupGraph {
+        let graph = MilestoneGraph {
             nodes: vec![
-                TaskGroupNode {
+                MilestoneNode {
                     id: "node-a".to_string(),
                     task_id: task_a_id,
-                    kind: TaskGroupNodeKind::Task,
+                    kind: MilestoneNodeKind::Task,
                     phase: 0,
                     executor_profile_id: None,
-                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    base_strategy: MilestoneNodeBaseStrategy::Topology,
                     instructions: None,
                     requires_approval: None,
-                    layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+                    layout: MilestoneNodeLayout { x: 0.0, y: 0.0 },
                     status: None,
                 },
-                TaskGroupNode {
+                MilestoneNode {
                     id: "node-b".to_string(),
                     task_id: task_b_id,
-                    kind: TaskGroupNodeKind::Task,
+                    kind: MilestoneNodeKind::Task,
                     phase: 0,
                     executor_profile_id: None,
-                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    base_strategy: MilestoneNodeBaseStrategy::Topology,
                     instructions: None,
                     requires_approval: None,
-                    layout: TaskGroupNodeLayout { x: 1.0, y: 1.0 },
+                    layout: MilestoneNodeLayout { x: 1.0, y: 1.0 },
                     status: None,
                 },
             ],
             edges: Vec::new(),
         };
 
-        let group_id = Uuid::new_v4();
-        let created = TaskGroup::create(
+        let milestone_id = Uuid::new_v4();
+        let created = Milestone::create(
             &db,
-            &CreateTaskGroup {
+            &CreateMilestone {
                 project_id,
                 title: "Workflow".to_string(),
                 description: None,
@@ -1007,28 +1007,28 @@ mod tests {
                 schema_version: SUPPORTED_SCHEMA_VERSION,
                 graph,
             },
-            group_id,
+            milestone_id,
         )
         .await
         .unwrap();
 
-        let tasks = Task::find_by_task_group_id(&db, created.id).await.unwrap();
+        let tasks = Task::find_by_milestone_id(&db, created.id).await.unwrap();
         let entry_tasks: Vec<_> = tasks
             .iter()
-            .filter(|task| task.task_kind == TaskKind::Group)
+            .filter(|task| task.task_kind == TaskKind::Milestone)
             .collect();
         assert_eq!(entry_tasks.len(), 1);
-        assert_eq!(entry_tasks[0].task_group_id, Some(created.id));
+        assert_eq!(entry_tasks[0].milestone_id, Some(created.id));
 
         let node_tasks: Vec<_> = tasks
             .iter()
-            .filter(|task| task.task_kind != TaskKind::Group)
+            .filter(|task| task.task_kind != TaskKind::Milestone)
             .collect();
         assert_eq!(node_tasks.len(), 2);
         assert!(
             node_tasks
                 .iter()
-                .all(|task| task.task_group_node_id.is_some())
+                .all(|task| task.milestone_node_id.is_some())
         );
     }
 
@@ -1064,40 +1064,40 @@ mod tests {
         .await
         .unwrap();
 
-        let graph = TaskGroupGraph {
+        let graph = MilestoneGraph {
             nodes: vec![
-                TaskGroupNode {
+                MilestoneNode {
                     id: "node-a".to_string(),
                     task_id: task_a_id,
-                    kind: TaskGroupNodeKind::Task,
+                    kind: MilestoneNodeKind::Task,
                     phase: 0,
                     executor_profile_id: None,
-                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    base_strategy: MilestoneNodeBaseStrategy::Topology,
                     instructions: Some("Do the thing".to_string()),
                     requires_approval: None,
-                    layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+                    layout: MilestoneNodeLayout { x: 0.0, y: 0.0 },
                     status: None,
                 },
-                TaskGroupNode {
+                MilestoneNode {
                     id: "node-b".to_string(),
                     task_id: task_b_id,
-                    kind: TaskGroupNodeKind::Task,
+                    kind: MilestoneNodeKind::Task,
                     phase: 0,
                     executor_profile_id: None,
-                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    base_strategy: MilestoneNodeBaseStrategy::Topology,
                     instructions: Some("   ".to_string()),
                     requires_approval: None,
-                    layout: TaskGroupNodeLayout { x: 1.0, y: 1.0 },
+                    layout: MilestoneNodeLayout { x: 1.0, y: 1.0 },
                     status: None,
                 },
             ],
             edges: Vec::new(),
         };
 
-        let group_id = Uuid::new_v4();
-        let created = TaskGroup::create(
+        let milestone_id = Uuid::new_v4();
+        let created = Milestone::create(
             &db,
-            &CreateTaskGroup {
+            &CreateMilestone {
                 project_id,
                 title: "Workflow".to_string(),
                 description: None,
@@ -1110,7 +1110,7 @@ mod tests {
                 schema_version: SUPPORTED_SCHEMA_VERSION,
                 graph,
             },
-            group_id,
+            milestone_id,
         )
         .await
         .unwrap();
@@ -1131,40 +1131,40 @@ mod tests {
             .expect("node-b");
         assert!(created_node_b.instructions.is_none());
 
-        let updated_graph = TaskGroupGraph {
+        let updated_graph = MilestoneGraph {
             nodes: vec![
-                TaskGroupNode {
+                MilestoneNode {
                     id: "node-a".to_string(),
                     task_id: task_a_id,
-                    kind: TaskGroupNodeKind::Task,
+                    kind: MilestoneNodeKind::Task,
                     phase: 0,
                     executor_profile_id: None,
-                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    base_strategy: MilestoneNodeBaseStrategy::Topology,
                     instructions: Some("Updated instructions".to_string()),
                     requires_approval: None,
-                    layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+                    layout: MilestoneNodeLayout { x: 0.0, y: 0.0 },
                     status: None,
                 },
-                TaskGroupNode {
+                MilestoneNode {
                     id: "node-b".to_string(),
                     task_id: task_b_id,
-                    kind: TaskGroupNodeKind::Task,
+                    kind: MilestoneNodeKind::Task,
                     phase: 0,
                     executor_profile_id: None,
-                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    base_strategy: MilestoneNodeBaseStrategy::Topology,
                     instructions: Some("\n\t".to_string()),
                     requires_approval: None,
-                    layout: TaskGroupNodeLayout { x: 1.0, y: 1.0 },
+                    layout: MilestoneNodeLayout { x: 1.0, y: 1.0 },
                     status: None,
                 },
             ],
             edges: Vec::new(),
         };
 
-        let updated = TaskGroup::update(
+        let updated = Milestone::update(
             &db,
-            group_id,
-            &UpdateTaskGroup {
+            milestone_id,
+            &UpdateMilestone {
                 title: None,
                 description: None,
                 objective: None,
@@ -1201,7 +1201,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn entry_task_status_reflects_group_status() {
+    async fn entry_task_status_reflects_milestone_status() {
         let db = setup_db().await;
         let project_id = Uuid::new_v4();
         Project::create(
@@ -1232,40 +1232,40 @@ mod tests {
         .await
         .unwrap();
 
-        let graph = TaskGroupGraph {
+        let graph = MilestoneGraph {
             nodes: vec![
-                TaskGroupNode {
+                MilestoneNode {
                     id: "node-a".to_string(),
                     task_id: task_a_id,
-                    kind: TaskGroupNodeKind::Task,
+                    kind: MilestoneNodeKind::Task,
                     phase: 0,
                     executor_profile_id: None,
-                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    base_strategy: MilestoneNodeBaseStrategy::Topology,
                     instructions: None,
                     requires_approval: None,
-                    layout: TaskGroupNodeLayout { x: 0.0, y: 0.0 },
+                    layout: MilestoneNodeLayout { x: 0.0, y: 0.0 },
                     status: None,
                 },
-                TaskGroupNode {
+                MilestoneNode {
                     id: "node-b".to_string(),
                     task_id: task_b_id,
-                    kind: TaskGroupNodeKind::Task,
+                    kind: MilestoneNodeKind::Task,
                     phase: 0,
                     executor_profile_id: None,
-                    base_strategy: TaskGroupNodeBaseStrategy::Topology,
+                    base_strategy: MilestoneNodeBaseStrategy::Topology,
                     instructions: None,
                     requires_approval: None,
-                    layout: TaskGroupNodeLayout { x: 1.0, y: 1.0 },
+                    layout: MilestoneNodeLayout { x: 1.0, y: 1.0 },
                     status: None,
                 },
             ],
             edges: Vec::new(),
         };
 
-        let group_id = Uuid::new_v4();
-        TaskGroup::create(
+        let milestone_id = Uuid::new_v4();
+        Milestone::create(
             &db,
-            &CreateTaskGroup {
+            &CreateMilestone {
                 project_id,
                 title: "Workflow".to_string(),
                 description: None,
@@ -1278,38 +1278,38 @@ mod tests {
                 schema_version: SUPPORTED_SCHEMA_VERSION,
                 graph,
             },
-            group_id,
+            milestone_id,
         )
         .await
         .unwrap();
 
-        let mut tasks = Task::find_by_task_group_id(&db, group_id).await.unwrap();
+        let mut tasks = Task::find_by_milestone_id(&db, milestone_id).await.unwrap();
         let entry = tasks
             .iter()
-            .find(|task| task.task_kind == TaskKind::Group)
+            .find(|task| task.task_kind == TaskKind::Milestone)
             .expect("entry task");
         assert_eq!(entry.status, TaskStatus::Todo);
 
         let node_task = tasks
             .iter()
-            .find(|task| task.task_kind != TaskKind::Group)
+            .find(|task| task.task_kind != TaskKind::Milestone)
             .expect("node task");
         Task::update_status(&db, node_task.id, TaskStatus::InProgress)
             .await
             .unwrap();
 
-        tasks = Task::find_by_task_group_id(&db, group_id).await.unwrap();
+        tasks = Task::find_by_milestone_id(&db, milestone_id).await.unwrap();
         let updated_entry = tasks
             .iter()
-            .find(|task| task.task_kind == TaskKind::Group)
+            .find(|task| task.task_kind == TaskKind::Milestone)
             .expect("updated entry task");
         assert_eq!(updated_entry.status, TaskStatus::Todo);
 
-        let updated_group = TaskGroup::find_by_id(&db, group_id)
+        let updated_milestone = Milestone::find_by_id(&db, milestone_id)
             .await
             .unwrap()
-            .expect("updated group");
-        assert_eq!(updated_group.status, TaskStatus::Todo);
-        assert_eq!(updated_group.suggested_status, TaskStatus::InProgress);
+            .expect("updated milestone");
+        assert_eq!(updated_milestone.status, TaskStatus::Todo);
+        assert_eq!(updated_milestone.suggested_status, TaskStatus::InProgress);
     }
 }

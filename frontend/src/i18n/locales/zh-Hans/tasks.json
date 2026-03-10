@@ -76,7 +76,8 @@
   },
   "actions": {
     "addTask": "添加任务",
-    "createTask": "新建任务"
+    "createTask": "新建任务",
+    "createMilestone": "创建里程碑"
   },
   "navigation": {
     "kanbans": "看板"
@@ -88,6 +89,9 @@
     "milestone": "里程碑",
     "subtask": "子任务",
     "task": "任务"
+  },
+  "milestone": {
+    "workflowMissing": "未找到工作流。"
   },
   "filters": {
     "sharedToggleAria": "切换共享任务",
@@ -318,9 +322,9 @@
     "updateStatusFailed": "更新任务状态失败"
   },
   "navigateToParent": "导航到父任务尝试",
-  "openTaskGroup": "打开里程碑",
-  "taskGroupSubtaskCount_one": "{{count}} 个子任务",
-  "taskGroupSubtaskCount_other": "{{count}} 个子任务",
+  "openMilestone": "打开里程碑",
+  "milestoneSubtaskCount_one": "{{count}} 个子任务",
+  "milestoneSubtaskCount_other": "{{count}} 个子任务",
   "toolbar": {
     "actions": "操作",
     "noAttempts": "还没有尝试",
@@ -646,7 +650,7 @@
     "editTitle": "编辑任务",
     "tabs": {
       "task": "创建任务",
-      "taskGroup": "创建里程碑"
+      "milestone": "创建里程碑"
     },
     "titlePlaceholder": "任务标题",
     "descriptionPlaceholder": "添加更多详情（可选）。输入 @ 搜索文件。",
@@ -674,7 +678,7 @@
     "updateTask": "更新任务",
     "starting": "开始中...",
     "creating": "创建中...",
-    "createTaskGroup": "创建里程碑",
+    "createMilestone": "创建里程碑",
     "create": "创建",
     "discardDialog": {
       "title": "放弃未保存的更改？",

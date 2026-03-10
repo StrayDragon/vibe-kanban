@@ -13,7 +13,7 @@ use uuid::Uuid;
 use super::{project::Project, task_dispatch_state::TaskDispatchState, workspace::Workspace};
 pub use crate::types::{TaskKind, TaskStatus};
 use crate::{
-    entities::{execution_process, session, task, task_group, workspace},
+    entities::{execution_process, milestone, session, task, workspace},
     events::{EVENT_TASK_CREATED, EVENT_TASK_DELETED, EVENT_TASK_UPDATED, TaskEventPayload},
     models::{event_outbox::EventOutbox, ids},
     types::TaskCreatedByKind,
@@ -27,8 +27,8 @@ pub struct Task {
     pub description: Option<String>,
     pub status: TaskStatus,
     pub task_kind: TaskKind,
-    pub task_group_id: Option<Uuid>,
-    pub task_group_node_id: Option<String>,
+    pub milestone_id: Option<Uuid>,
+    pub milestone_node_id: Option<String>,
     pub parent_workspace_id: Option<Uuid>,
     pub origin_task_id: Option<Uuid>,
     pub created_by_kind: TaskCreatedByKind,
@@ -76,8 +76,8 @@ pub struct CreateTask {
     pub description: Option<String>,
     pub status: Option<TaskStatus>,
     pub task_kind: Option<TaskKind>,
-    pub task_group_id: Option<Uuid>,
-    pub task_group_node_id: Option<String>,
+    pub milestone_id: Option<Uuid>,
+    pub milestone_node_id: Option<String>,
     pub parent_workspace_id: Option<Uuid>,
     pub origin_task_id: Option<Uuid>,
     pub created_by_kind: Option<TaskCreatedByKind>,
@@ -97,8 +97,8 @@ impl CreateTask {
             description,
             status: Some(TaskStatus::Todo),
             task_kind: None,
-            task_group_id: None,
-            task_group_node_id: None,
+            milestone_id: None,
+            milestone_node_id: None,
             parent_workspace_id: None,
             origin_task_id: None,
             created_by_kind: None,
@@ -120,8 +120,8 @@ impl CreateTask {
             description,
             status: Some(status),
             task_kind: None,
-            task_group_id: None,
-            task_group_node_id: None,
+            milestone_id: None,
+            milestone_node_id: None,
             parent_workspace_id: None,
             origin_task_id: None,
             created_by_kind: None,
@@ -202,10 +202,10 @@ impl Task {
                 .map(Some)?,
             None => None,
         };
-        let task_group_id = match model.task_group_id {
-            Some(id) => ids::task_group_uuid_by_id(db, id)
+        let milestone_id = match model.milestone_id {
+            Some(id) => ids::milestone_uuid_by_id(db, id)
                 .await?
-                .ok_or(DbErr::RecordNotFound("Task group not found".to_string()))
+                .ok_or(DbErr::RecordNotFound("Milestone not found".to_string()))
                 .map(Some)?,
             None => None,
         };
@@ -217,8 +217,8 @@ impl Task {
             description: model.description,
             status: model.status,
             task_kind: model.task_kind,
-            task_group_id,
-            task_group_node_id: model.task_group_node_id,
+            milestone_id,
+            milestone_node_id: model.milestone_node_id,
             parent_workspace_id,
             origin_task_id,
             created_by_kind: model.created_by_kind,
@@ -498,16 +498,16 @@ impl Task {
         Ok(tasks)
     }
 
-    pub async fn find_by_task_group_id<C: ConnectionTrait>(
+    pub async fn find_by_milestone_id<C: ConnectionTrait>(
         db: &C,
-        task_group_id: Uuid,
+        milestone_id: Uuid,
     ) -> Result<Vec<Self>, DbErr> {
-        let task_group_row_id = ids::task_group_id_by_uuid(db, task_group_id)
+        let milestone_row_id = ids::milestone_id_by_uuid(db, milestone_id)
             .await?
-            .ok_or(DbErr::RecordNotFound("Task group not found".to_string()))?;
+            .ok_or(DbErr::RecordNotFound("Milestone not found".to_string()))?;
 
         let models = task::Entity::find()
-            .filter(task::Column::TaskGroupId.eq(task_group_row_id))
+            .filter(task::Column::MilestoneId.eq(milestone_row_id))
             .order_by_desc(task::Column::CreatedAt)
             .all(db)
             .await?;
@@ -714,37 +714,37 @@ impl Task {
                 .map(Some)?,
             None => None,
         };
-        let task_group_id = match data.task_group_id {
+        let milestone_id = match data.milestone_id {
             Some(id) => {
-                let group_row_id = ids::task_group_id_by_uuid(db, id)
+                let milestone_row_id = ids::milestone_id_by_uuid(db, id)
                     .await?
-                    .ok_or(DbErr::RecordNotFound("Task group not found".to_string()))?;
-                if let Some(group) = task_group::Entity::find_by_id(group_row_id).one(db).await?
-                    && group.project_id != project_row_id
+                    .ok_or(DbErr::RecordNotFound("Milestone not found".to_string()))?;
+                if let Some(milestone) = milestone::Entity::find_by_id(milestone_row_id).one(db).await?
+                    && milestone.project_id != project_row_id
                 {
                     return Err(DbErr::Custom(
-                        "Task group belongs to a different project".to_string(),
+                        "Milestone belongs to a different project".to_string(),
                     ));
                 }
-                Some(group_row_id)
+                Some(milestone_row_id)
             }
             None => None,
         };
-        let task_group_node_id = data
-            .task_group_node_id
+        let milestone_node_id = data
+            .milestone_node_id
             .as_ref()
             .map(|id| id.trim().to_string())
             .filter(|id| !id.is_empty());
         let task_kind = data.task_kind.clone().unwrap_or_default();
-        if task_kind == TaskKind::Group {
-            if task_group_id.is_none() {
+        if task_kind == TaskKind::Milestone {
+            if milestone_id.is_none() {
                 return Err(DbErr::Custom(
-                    "Task group entry task requires task_group_id".to_string(),
+                    "Milestone entry task requires milestone_id".to_string(),
                 ));
             }
-            if task_group_node_id.is_some() {
+            if milestone_node_id.is_some() {
                 return Err(DbErr::Custom(
-                    "Task group entry task cannot set task_group_node_id".to_string(),
+                    "Milestone entry task cannot set milestone_node_id".to_string(),
                 ));
             }
         }
@@ -757,8 +757,8 @@ impl Task {
             description: Set(data.description.clone()),
             status: Set(data.status.clone().unwrap_or_default()),
             task_kind: Set(task_kind.clone()),
-            task_group_id: Set(task_group_id),
-            task_group_node_id: Set(task_group_node_id),
+            milestone_id: Set(milestone_id),
+            milestone_node_id: Set(milestone_node_id),
             parent_workspace_id: Set(parent_workspace_id),
             origin_task_id: Set(origin_task_id),
             created_by_kind: Set(data.created_by_kind.clone().unwrap_or_default()),
@@ -810,7 +810,7 @@ impl Task {
         }
 
         let status_changed = record.status != status;
-        let task_group_id = record.task_group_id;
+        let milestone_id = record.milestone_id;
         let task_kind = record.task_kind.clone();
         let parent_workspace_row_id = match parent_workspace_id {
             Some(id) => ids::workspace_id_by_uuid(db, id)
@@ -836,28 +836,28 @@ impl Task {
         EventOutbox::enqueue(db, EVENT_TASK_UPDATED, "task", id, payload).await?;
 
         if status_changed {
-            if task_kind == TaskKind::Group {
-                if let Some(task_group_id) = task_group_id {
-                    let group_record = task_group::Entity::find_by_id(task_group_id)
+            if task_kind == TaskKind::Milestone {
+                if let Some(milestone_id) = milestone_id {
+                    let milestone_record = milestone::Entity::find_by_id(milestone_id)
                         .one(db)
                         .await?
-                        .ok_or(DbErr::RecordNotFound("Task group not found".to_string()))?;
-                    if group_record.status != status {
-                        let mut group_active: task_group::ActiveModel = group_record.into();
-                        group_active.status = Set(status.clone());
-                        group_active.updated_at = Set(Utc::now().into());
-                        group_active.update(db).await?;
+                        .ok_or(DbErr::RecordNotFound("Milestone not found".to_string()))?;
+                    if milestone_record.status != status {
+                        let mut milestone_active: milestone::ActiveModel = milestone_record.into();
+                        milestone_active.status = Set(status.clone());
+                        milestone_active.updated_at = Set(Utc::now().into());
+                        milestone_active.update(db).await?;
                     }
                 }
-            } else if let Some(task_group_id) = task_group_id
-                && let Err(err) = super::task_group::TaskGroup::sync_entry_task_statuses_by_row_id(
+            } else if let Some(milestone_id) = milestone_id
+                && let Err(err) = super::milestone::Milestone::sync_entry_task_statuses_by_row_id(
                     db,
-                    task_group_id,
+                    milestone_id,
                 )
                 .await
             {
                 tracing::warn!(
-                    "Failed to sync task group entry status after task update: {}",
+                    "Failed to sync milestone entry status after task update: {}",
                     err
                 );
             }
@@ -881,7 +881,7 @@ impl Task {
         }
 
         let project_row_id = record.project_id;
-        let task_group_id = record.task_group_id;
+        let milestone_id = record.milestone_id;
         let task_kind = record.task_kind.clone();
         let status_changed = record.status != status;
         let mut active: task::ActiveModel = record.into();
@@ -899,27 +899,27 @@ impl Task {
         EventOutbox::enqueue(db, EVENT_TASK_UPDATED, "task", id, payload).await?;
 
         if status_changed {
-            if task_kind == TaskKind::Group {
-                if let Some(task_group_id) = task_group_id {
-                    let group_record = task_group::Entity::find_by_id(task_group_id)
+            if task_kind == TaskKind::Milestone {
+                if let Some(milestone_id) = milestone_id {
+                    let milestone_record = milestone::Entity::find_by_id(milestone_id)
                         .one(db)
                         .await?
-                        .ok_or(DbErr::RecordNotFound("Task group not found".to_string()))?;
-                    if group_record.status != status {
-                        let mut group_active: task_group::ActiveModel = group_record.into();
-                        group_active.status = Set(status.clone());
-                        group_active.updated_at = Set(Utc::now().into());
-                        group_active.update(db).await?;
+                        .ok_or(DbErr::RecordNotFound("Milestone not found".to_string()))?;
+                    if milestone_record.status != status {
+                        let mut milestone_active: milestone::ActiveModel = milestone_record.into();
+                        milestone_active.status = Set(status.clone());
+                        milestone_active.updated_at = Set(Utc::now().into());
+                        milestone_active.update(db).await?;
                     }
                 }
-            } else if let Some(task_group_id) = task_group_id
-                && let Err(err) = super::task_group::TaskGroup::sync_entry_task_statuses_by_row_id(
+            } else if let Some(milestone_id) = milestone_id
+                && let Err(err) = super::milestone::Milestone::sync_entry_task_statuses_by_row_id(
                     db,
-                    task_group_id,
+                    milestone_id,
                 )
                 .await
             {
-                tracing::warn!("Failed to sync task group entry status: {}", err);
+                tracing::warn!("Failed to sync milestone entry status: {}", err);
             }
         }
         Ok(())

@@ -4,12 +4,12 @@ use db::{
     DbErr, TransactionTrait,
     models::{
         image::TaskImage,
+        milestone::{
+            Milestone, MilestoneError, MilestoneGraph, MilestoneNode, MilestoneNodeBaseStrategy,
+        },
         project::{Project, ProjectError},
         task::{CreateTask, Task, TaskKind, TaskStatus, TaskWithAttemptStatus},
         task_dispatch_state::TaskDispatchState,
-        task_group::{
-            TaskGroup, TaskGroupError, TaskGroupGraph, TaskGroupNode, TaskGroupNodeBaseStrategy,
-        },
         workspace::{CreateWorkspace, Workspace, WorkspaceError},
         workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
     },
@@ -80,9 +80,9 @@ pub async fn create_task_and_start<R: TaskRuntime + Sync>(
     db: &db::DbPool,
     input: &CreateAndStartTaskInput,
 ) -> Result<TaskWithAttemptStatus, TasksError> {
-    if matches!(input.task.task_kind, Some(TaskKind::Group)) {
+    if matches!(input.task.task_kind, Some(TaskKind::Milestone)) {
         return Err(TasksError::BadRequest(
-            "Task group entry tasks cannot be started".to_string(),
+            "Milestone entry tasks cannot be started".to_string(),
         ));
     }
     if input.repos.is_empty() {
@@ -227,9 +227,9 @@ pub async fn create_task_attempt<R: TaskRuntime + Sync>(
     Ok(workspace)
 }
 
-fn map_task_group_error(err: TaskGroupError) -> TasksError {
+fn map_milestone_error(err: MilestoneError) -> TasksError {
     match err {
-        TaskGroupError::Database(db_err) => TasksError::Database(db_err),
+        MilestoneError::Database(db_err) => TasksError::Database(db_err),
         _ => TasksError::BadRequest(err.to_string()),
     }
 }
@@ -241,14 +241,14 @@ fn map_workspace_error(err: WorkspaceError) -> TasksError {
     }
 }
 
-fn find_task_group_node<'a>(
-    graph: &'a TaskGroupGraph,
+fn find_milestone_node<'a>(
+    graph: &'a MilestoneGraph,
     node_id: &str,
-) -> Result<&'a TaskGroupNode, TasksError> {
+) -> Result<&'a MilestoneNode, TasksError> {
     let node_key = node_id.trim();
     if node_key.is_empty() {
         return Err(TasksError::BadRequest(
-            "Task group node id cannot be empty".to_string(),
+            "Milestone node id cannot be empty".to_string(),
         ));
     }
 
@@ -256,18 +256,18 @@ fn find_task_group_node<'a>(
         .nodes
         .iter()
         .find(|node| node.id.trim() == node_key)
-        .ok_or_else(|| TasksError::BadRequest("Task group node not found in graph".to_string()))
+        .ok_or_else(|| TasksError::BadRequest("Milestone node not found in graph".to_string()))
 }
 
 fn resolve_executor_profile_id(
-    task_group: &TaskGroup,
-    task_group_node: &TaskGroupNode,
+    milestone: &Milestone,
+    milestone_node: &MilestoneNode,
     fallback: ExecutorProfileId,
 ) -> ExecutorProfileId {
-    if let Some(profile_id) = task_group_node.executor_profile_id.clone() {
+    if let Some(profile_id) = milestone_node.executor_profile_id.clone() {
         return profile_id;
     }
-    if let Some(profile_id) = task_group.default_executor_profile_id.clone() {
+    if let Some(profile_id) = milestone.default_executor_profile_id.clone() {
         return profile_id;
     }
     fallback
@@ -275,13 +275,13 @@ fn resolve_executor_profile_id(
 
 async fn resolve_topology_base_branches(
     pool: &db::DbPool,
-    graph: &TaskGroupGraph,
+    graph: &MilestoneGraph,
     node_id: &str,
 ) -> Result<Option<HashMap<Uuid, String>>, TasksError> {
     let node_key = node_id.trim();
     if node_key.is_empty() {
         return Err(TasksError::BadRequest(
-            "Task group node id cannot be empty".to_string(),
+            "Milestone node id cannot be empty".to_string(),
         ));
     }
 
@@ -345,11 +345,11 @@ async fn resolve_topology_base_branches(
     Ok(Some(base_branches))
 }
 
-fn blocked_predecessors(graph: &TaskGroupGraph, node_id: &str) -> Result<Vec<String>, TasksError> {
+fn blocked_predecessors(graph: &MilestoneGraph, node_id: &str) -> Result<Vec<String>, TasksError> {
     let node_key = node_id.trim();
     if node_key.is_empty() {
         return Err(TasksError::BadRequest(
-            "Task group node id cannot be empty".to_string(),
+            "Milestone node id cannot be empty".to_string(),
         ));
     }
 
@@ -366,7 +366,7 @@ fn blocked_predecessors(graph: &TaskGroupGraph, node_id: &str) -> Result<Vec<Str
 
     if !node_statuses.contains_key(node_key) {
         return Err(TasksError::BadRequest(
-            "Task group node not found in graph".to_string(),
+            "Milestone node not found in graph".to_string(),
         ));
     }
 
@@ -399,15 +399,15 @@ async fn resolve_attempt_plan(
     let mut baseline_ref: Option<String> = None;
     let mut topology_branches: Option<HashMap<Uuid, String>> = None;
 
-    if let (Some(task_group_id), Some(node_id)) =
-        (task.task_group_id, task.task_group_node_id.as_ref())
+    if let (Some(milestone_id), Some(node_id)) =
+        (task.milestone_id, task.milestone_node_id.as_ref())
     {
-        let task_group = TaskGroup::find_by_id(db, task_group_id)
+        let milestone = Milestone::find_by_id(db, milestone_id)
             .await
-            .map_err(map_task_group_error)?
-            .ok_or_else(|| TasksError::BadRequest("Task group not found".to_string()))?;
+            .map_err(map_milestone_error)?
+            .ok_or_else(|| TasksError::BadRequest("Milestone not found".to_string()))?;
 
-        let blocked = blocked_predecessors(&task_group.graph, node_id)?;
+        let blocked = blocked_predecessors(&milestone.graph, node_id)?;
         if !blocked.is_empty() {
             return Err(TasksError::Conflict(format!(
                 "Task is blocked by incomplete predecessors: {}",
@@ -415,22 +415,22 @@ async fn resolve_attempt_plan(
             )));
         }
 
-        let task_group_node = find_task_group_node(&task_group.graph, node_id)?;
+        let milestone_node = find_milestone_node(&milestone.graph, node_id)?;
         executor_profile_id =
-            resolve_executor_profile_id(&task_group, task_group_node, executor_profile_id);
+            resolve_executor_profile_id(&milestone, milestone_node, executor_profile_id);
 
-        match &task_group_node.base_strategy {
-            TaskGroupNodeBaseStrategy::Baseline => {
-                let trimmed = task_group.baseline_ref.trim();
+        match &milestone_node.base_strategy {
+            MilestoneNodeBaseStrategy::Baseline => {
+                let trimmed = milestone.baseline_ref.trim();
                 if !trimmed.is_empty() {
                     baseline_ref = Some(trimmed.to_string());
                 }
             }
-            TaskGroupNodeBaseStrategy::Topology => {
+            MilestoneNodeBaseStrategy::Topology => {
                 topology_branches =
-                    resolve_topology_base_branches(db, &task_group.graph, node_id).await?;
+                    resolve_topology_base_branches(db, &milestone.graph, node_id).await?;
                 if topology_branches.is_none() {
-                    let trimmed = task_group.baseline_ref.trim();
+                    let trimmed = milestone.baseline_ref.trim();
                     if !trimmed.is_empty() {
                         baseline_ref = Some(trimmed.to_string());
                     }

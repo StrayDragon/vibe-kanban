@@ -10,7 +10,7 @@ import {
 import { TaskCard } from './TaskCard';
 import type { TaskStatus, TaskWithAttemptStatus } from 'shared/types';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
-import { getTaskGroupId, isTaskGroupEntry } from '@/utils/taskGroup';
+import { getMilestoneId, isMilestoneEntry } from '@/utils/milestone';
 export type KanbanColumnItem = TaskWithAttemptStatus;
 
 export type KanbanColumns = Record<TaskStatus, KanbanColumnItem[]>;
@@ -30,8 +30,10 @@ interface TaskKanbanBoardProps {
   onViewTaskDetails: (task: TaskWithAttemptStatus) => void;
   selectedTaskId?: string;
   onCreateTask?: () => void;
+  onCreateMilestone?: () => void;
   projectId: string;
   readOnly?: boolean;
+  groupByMilestone?: boolean;
 }
 
 function TaskKanbanBoard({
@@ -40,17 +42,22 @@ function TaskKanbanBoard({
   onViewTaskDetails,
   selectedTaskId,
   onCreateTask,
+  onCreateMilestone,
   projectId,
   readOnly = false,
+  groupByMilestone = true,
 }: TaskKanbanBoardProps) {
   const { t } = useTranslation('tasks');
-  const taskGroupTitles = useMemo(() => {
+  const milestoneTitles = useMemo(() => {
+    if (!groupByMilestone) {
+      return new Map<string, string>();
+    }
     const map = new Map<string, string>();
 
     Object.values(columns).forEach((items) => {
       items.forEach((task) => {
-        if (!isTaskGroupEntry(task)) return;
-        const groupId = getTaskGroupId(task);
+        if (!isMilestoneEntry(task)) return;
+        const groupId = getMilestoneId(task);
         if (!groupId || map.has(groupId)) return;
         map.set(
           groupId,
@@ -60,7 +67,7 @@ function TaskKanbanBoard({
     });
 
     return map;
-  }, [columns, t]);
+  }, [columns, groupByMilestone, t]);
 
   const buildColumnGroups = useMemo(() => {
     const result: Record<TaskStatus, ColumnGroup[]> = {
@@ -76,8 +83,8 @@ function TaskKanbanBoard({
       const groups = new Map<string, Extract<ColumnGroup, { type: 'group' }>>();
 
       items.forEach((task, index) => {
-        const groupId = getTaskGroupId(task);
-        if (!groupId) {
+        const groupId = getMilestoneId(task);
+        if (!groupByMilestone || !groupId) {
           columnItems.push({ type: 'task', task, index });
           return;
         }
@@ -88,7 +95,7 @@ function TaskKanbanBoard({
             type: 'group',
             groupId,
             title:
-              taskGroupTitles.get(groupId) ??
+              milestoneTitles.get(groupId) ??
               t('taskTypes.milestone', 'Milestone'),
             tasks: [],
           };
@@ -103,7 +110,7 @@ function TaskKanbanBoard({
     });
 
     return result;
-  }, [columns, t, taskGroupTitles]);
+  }, [columns, groupByMilestone, t, milestoneTitles]);
 
   return (
     <KanbanProvider onDragEnd={onDragEnd}>
@@ -120,6 +127,7 @@ function TaskKanbanBoard({
               name={statusLabels[statusKey]}
               color={statusBoardColors[statusKey]}
               onAddTask={readOnly ? undefined : onCreateTask}
+              onAddMilestone={readOnly ? undefined : onCreateMilestone}
               addTaskButtonTestId={
                 readOnly ? undefined : `kanban-add-task-${statusKey}`
               }
@@ -142,25 +150,25 @@ function TaskKanbanBoard({
                 }
 
                 const sortedTasks = [...item.tasks].sort((a, b) => {
-                  const aIsEntry = isTaskGroupEntry(a.task);
-                  const bIsEntry = isTaskGroupEntry(b.task);
+                  const aIsEntry = isMilestoneEntry(a.task);
+                  const bIsEntry = isMilestoneEntry(b.task);
                   if (aIsEntry === bIsEntry) {
                     return a.index - b.index;
                   }
                   return aIsEntry ? -1 : 1;
                 });
                 const hasGroupEntry = sortedTasks.some(({ task }) =>
-                  isTaskGroupEntry(task)
+                  isMilestoneEntry(task)
                 );
                 const subtaskCount = sortedTasks.filter(
-                  (entry) => !isTaskGroupEntry(entry.task)
+                  (entry) => !isMilestoneEntry(entry.task)
                 ).length;
 
                 return (
                   <div key={`group-${item.groupId}`} className="flex flex-col">
                     <div className="flex flex-col">
                       {sortedTasks.map(({ task, index }) => {
-                        const isSubtask = !isTaskGroupEntry(task);
+                        const isSubtask = !isMilestoneEntry(task);
                         const groupSummary = !isSubtask
                           ? { subtaskCount }
                           : undefined;

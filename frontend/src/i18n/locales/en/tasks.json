@@ -74,12 +74,13 @@
       "noDescription": "No description."
     }
   },
-  "taskGroup": {
+  "milestone": {
     "workflowMissing": "Workflow not found."
   },
   "actions": {
     "addTask": "Add task",
-    "createTask": "Create new task"
+    "createTask": "Create new task",
+    "createMilestone": "Create milestone"
   },
   "navigation": {
     "kanbans": "Kanbans"
@@ -308,9 +309,9 @@
     "updateStatusFailed": "Failed to update task status"
   },
   "navigateToParent": "Navigate to parent task attempt",
-  "openTaskGroup": "Open milestone",
-  "taskGroupSubtaskCount_one": "{{count}} subtask",
-  "taskGroupSubtaskCount_other": "{{count}} subtasks",
+  "openMilestone": "Open milestone",
+  "milestoneSubtaskCount_one": "{{count}} subtask",
+  "milestoneSubtaskCount_other": "{{count}} subtasks",
   "toolbar": {
     "actions": "Actions",
     "noAttempts": "No attempts yet",
@@ -649,7 +650,7 @@
     "editTitle": "Edit Task",
     "tabs": {
       "task": "Create Task",
-      "taskGroup": "Create Milestone"
+      "milestone": "Create Milestone"
     },
     "titlePlaceholder": "Task title...",
     "descriptionPlaceholder": "Add more details (optional). Type @ to search files.",
@@ -670,7 +671,7 @@
     "updateTask": "Update Task",
     "starting": "Starting...",
     "creating": "Creating...",
-    "createTaskGroup": "Create Milestone",
+    "createMilestone": "Create milestone",
     "create": "Create",
     "discardDialog": {
       "title": "Discard unsaved changes?",

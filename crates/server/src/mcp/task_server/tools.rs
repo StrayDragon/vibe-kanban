@@ -4820,8 +4820,8 @@ mod tests {
         );
         assert_eq!(listed.created_by_kind, "agent_followup");
         assert_eq!(listed.task_kind, "default");
-        assert!(listed.task_group_id.is_none());
-        assert!(listed.task_group_node_id.is_none());
+        assert!(listed.milestone_id.is_none());
+        assert!(listed.milestone_node_id.is_none());
 
         let get_result = server
             .get_task(Parameters(GetTaskRequest {
@@ -4840,8 +4840,8 @@ mod tests {
             Some("agent_followup")
         );
         assert_eq!(get_payload["task"]["task_kind"].as_str(), Some("default"));
-        assert!(get_payload["task"]["task_group_id"].is_null());
-        assert!(get_payload["task"]["task_group_node_id"].is_null());
+        assert!(get_payload["task"]["milestone_id"].is_null());
+        assert!(get_payload["task"]["milestone_node_id"].is_null());
 
         let _ = std::fs::remove_dir_all(&temp_root);
     }

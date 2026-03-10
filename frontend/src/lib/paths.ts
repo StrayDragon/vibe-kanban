@@ -9,8 +9,8 @@ export const paths = {
     `/projects/${projectId}/tasks/${taskId}`,
   attempt: (projectId: string, taskId: string, attemptId: string) =>
     `/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}`,
-  taskGroupWorkflow: (projectId: string, taskGroupId: string) =>
-    `/projects/${projectId}/task-groups/${taskGroupId}`,
+  milestoneWorkflow: (projectId: string, milestoneId: string) =>
+    `/projects/${projectId}/milestones/${milestoneId}`,
   attemptFull: (projectId: string, taskId: string, attemptId: string) =>
     `/projects/${projectId}/tasks/${taskId}/attempts/${attemptId}/full`,
   overviewTask: (projectId: string, taskId: string) =>

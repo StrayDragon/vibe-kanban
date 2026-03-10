@@ -48,13 +48,13 @@ export type UpdateTag = { tag_name: string | null, content: string | null, };
 
 export type TaskStatus = "todo" | "inprogress" | "inreview" | "done" | "cancelled";
 
-export type TaskKind = "default" | "group";
+export type TaskKind = "default" | "milestone";
 
-export type Task = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
+export type Task = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, milestone_id: string | null, milestone_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
 
 export type TaskCreatedByKind = "human_ui" | "mcp" | "scheduler" | "agent_followup";
 
-export type TaskWithAttemptStatus = { has_in_progress_attempt: boolean, last_attempt_failed: boolean, executor: string, dispatch_state: TaskDispatchState | null, id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
+export type TaskWithAttemptStatus = { has_in_progress_attempt: boolean, last_attempt_failed: boolean, executor: string, dispatch_state: TaskDispatchState | null, id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, milestone_id: string | null, milestone_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
 
 export type TaskDispatchState = { task_id: string, controller: TaskDispatchController, status: TaskDispatchStatus, retry_count: number, max_retries: number, last_error: string | null, blocked_reason: string | null, next_retry_at: Date | null, claim_expires_at: Date | null, created_at: Date, updated_at: Date, };
 
@@ -70,15 +70,15 @@ export type TaskRelationships = { parent_task: Task | null, current_workspace: W
 
 export type TaskLineageSummary = { origin_task: Task | null, follow_up_tasks: Array<Task>, };
 
-export type CreateTask = { project_id: string, title: string, description: string | null, status: TaskStatus | null, task_kind: TaskKind | null, task_group_id: string | null, task_group_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind | null, image_ids: Array<string> | null, shared_task_id: string | null, };
+export type CreateTask = { project_id: string, title: string, description: string | null, status: TaskStatus | null, task_kind: TaskKind | null, milestone_id: string | null, milestone_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind | null, image_ids: Array<string> | null, shared_task_id: string | null, };
 
 export type UpdateTask = { title: string | null, description: string | null, status: TaskStatus | null, parent_workspace_id: string | null, image_ids: Array<string> | null, };
 
-export type TaskGroup = { id: string, project_id: string, title: string, description: string | null, objective: string | null, definition_of_done: string | null, default_executor_profile_id: ExecutorProfileId | null, automation_mode: MilestoneAutomationMode, run_next_step_requested_at: string | null, status: TaskStatus, baseline_ref: string, schema_version: number, graph: TaskGroupGraph, suggested_status: TaskStatus, created_at: string, updated_at: string, };
+export type Milestone = { id: string, project_id: string, title: string, description: string | null, objective: string | null, definition_of_done: string | null, default_executor_profile_id: ExecutorProfileId | null, automation_mode: MilestoneAutomationMode, run_next_step_requested_at: string | null, status: TaskStatus, baseline_ref: string, schema_version: number, graph: MilestoneGraph, suggested_status: TaskStatus, created_at: string, updated_at: string, };
 
-export type CreateTaskGroup = { project_id: string, title: string, description: string | null, objective: string | null, definition_of_done: string | null, default_executor_profile_id: ExecutorProfileId | null, automation_mode: MilestoneAutomationMode | null, status: TaskStatus | null, baseline_ref: string, schema_version: number, graph: TaskGroupGraph, };
+export type CreateMilestone = { project_id: string, title: string, description: string | null, objective: string | null, definition_of_done: string | null, default_executor_profile_id: ExecutorProfileId | null, automation_mode: MilestoneAutomationMode | null, status: TaskStatus | null, baseline_ref: string, schema_version: number, graph: MilestoneGraph, };
 
-export type UpdateTaskGroup = { title: string | null, description: string | null, objective: string | null, definition_of_done: string | null, default_executor_profile_id: ExecutorProfileId | null | null, automation_mode: MilestoneAutomationMode | null, status: TaskStatus | null, baseline_ref: string | null, schema_version: number | null, graph: TaskGroupGraph | null, };
+export type UpdateMilestone = { title: string | null, description: string | null, objective: string | null, definition_of_done: string | null, default_executor_profile_id: ExecutorProfileId | null | null, automation_mode: MilestoneAutomationMode | null, status: TaskStatus | null, baseline_ref: string | null, schema_version: number | null, graph: MilestoneGraph | null, };
 
 export type MilestoneAutomationMode = "manual" | "auto";
 
@@ -86,17 +86,17 @@ export type RunNextMilestoneStepStatus = "queued" | "queued_waiting_for_active_a
 
 export type RunNextMilestoneStepResponse = { status: RunNextMilestoneStepStatus, requested_at: string | null, candidate_task_id: string | null, message: string | null, };
 
-export type TaskGroupGraph = { nodes: Array<TaskGroupNode>, edges: Array<TaskGroupEdge>, };
+export type MilestoneGraph = { nodes: Array<MilestoneNode>, edges: Array<MilestoneEdge>, };
 
-export type TaskGroupNode = { id: string, task_id: string, kind: TaskGroupNodeKind, phase: number, executor_profile_id: ExecutorProfileId | null, base_strategy: TaskGroupNodeBaseStrategy, instructions: string | null, requires_approval: boolean | null, layout: TaskGroupNodeLayout, status?: TaskStatus | null, };
+export type MilestoneNode = { id: string, task_id: string, kind: MilestoneNodeKind, phase: number, executor_profile_id: ExecutorProfileId | null, base_strategy: MilestoneNodeBaseStrategy, instructions: string | null, requires_approval: boolean | null, layout: MilestoneNodeLayout, status?: TaskStatus | null, };
 
-export type TaskGroupNodeLayout = { x: number, y: number, };
+export type MilestoneNodeLayout = { x: number, y: number, };
 
-export enum TaskGroupNodeKind { task = "task", checkpoint = "checkpoint", merge = "merge" }
+export enum MilestoneNodeKind { task = "task", checkpoint = "checkpoint", merge = "merge" }
 
-export enum TaskGroupNodeBaseStrategy { topology = "topology", baseline = "baseline" }
+export enum MilestoneNodeBaseStrategy { topology = "topology", baseline = "baseline" }
 
-export type TaskGroupEdge = { id: string, from: string, to: string, data_flow: string | null, };
+export type MilestoneEdge = { id: string, from: string, to: string, data_flow: string | null, };
 
 export type DraftFollowUpData = { message: string, variant: string | null, };
 

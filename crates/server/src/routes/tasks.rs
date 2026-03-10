@@ -259,7 +259,7 @@ pub async fn delete_task(
     task_deletion::delete_task_with_cleanup(
         &deployment,
         task,
-        task_deletion::DeleteTaskMode::CascadeGroup,
+        task_deletion::DeleteTaskMode::CascadeMilestone,
     )
     .await?;
 

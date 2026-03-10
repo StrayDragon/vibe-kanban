@@ -29,6 +29,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Check, Play, Plus, Trash2 } from 'lucide-react';
+import type { DragEndEvent } from '@/components/ui/shadcn-io/kanban';
 import {
   NewCard,
   NewCardContent,
@@ -71,30 +72,33 @@ import { ReviewProvider } from '@/contexts/ReviewProvider';
 import { useProject } from '@/contexts/ProjectContext';
 import { useProjectTasks } from '@/hooks/projects/useProjectTasks';
 import { useTaskAttemptsWithSessions } from '@/hooks/task-attempts/useTaskAttempts';
-import { useTaskGroup } from '@/hooks/task-groups/useTaskGroup';
+import { useMilestone } from '@/hooks/milestones/useMilestone';
 import { useDebouncedCallback } from '@/hooks/utils/useDebouncedCallback';
 import TaskAttemptPanel from '@/components/panels/TaskAttemptPanel';
 import WYSIWYGEditor from '@/components/ui/wysiwyg';
 import { CreateAttemptDialog } from '@/components/dialogs/tasks/CreateAttemptDialog';
-import TaskGroupNode, {
-  type TaskGroupFlowNode,
-} from '@/components/task-groups/TaskGroupNode';
+import TaskKanbanBoard, {
+  type KanbanColumns,
+} from '@/components/tasks/TaskKanbanBoard';
+import MilestoneNodeComponent, {
+  type MilestoneFlowNode,
+} from '@/components/milestones/MilestoneNode';
 import { useUserSystem } from '@/components/ConfigProvider';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
-import { getTaskGroupId, isTaskGroupEntry } from '@/utils/taskGroup';
-import { taskGroupsApi, tasksApi } from '@/lib/api';
+import { getMilestoneId, isMilestoneEntry } from '@/utils/milestone';
+import { milestonesApi, tasksApi } from '@/lib/api';
 import { paths } from '@/lib/paths';
-import type {
-  TaskGroupGraph,
-  TaskGroupGraphEdge,
-  TaskGroupGraphNode,
-  TaskGroupNodeBaseStrategy,
-  TaskGroupNodeKind,
-} from '@/types/task-group';
-import type {
-  ExecutorProfileId,
-  MilestoneAutomationMode,
-  TaskStatus,
+import { useOptimisticTasksStore } from '@/stores/useOptimisticTasksStore';
+import {
+  MilestoneNodeBaseStrategy,
+  MilestoneNodeKind,
+  type ExecutorProfileId,
+  type MilestoneAutomationMode,
+  type MilestoneEdge,
+  type MilestoneGraph,
+  type MilestoneNode,
+  type TaskStatus,
+  type UpdateMilestone,
 } from 'shared/types';
 
 const TASK_STATUSES: TaskStatus[] = [
@@ -105,20 +109,20 @@ const TASK_STATUSES: TaskStatus[] = [
   'cancelled',
 ];
 
-const getNodeTaskId = (node: TaskGroupGraphNode): string | undefined =>
+const getNodeTaskId = (node: MilestoneNode): string | undefined =>
   node.task_id;
 
 const getNodeExecutorProfileId = (
-  node: TaskGroupGraphNode
+  node: MilestoneNode
 ): ExecutorProfileId | null =>
   node.executor_profile_id;
 
 const getNodeBaseStrategy = (
-  node: TaskGroupGraphNode
-): TaskGroupNodeBaseStrategy =>
+  node: MilestoneNode
+): MilestoneNodeBaseStrategy =>
   node.base_strategy;
 
-const getEdgeLabel = (edge: TaskGroupGraphEdge): string | undefined =>
+const getEdgeLabel = (edge: MilestoneEdge): string | undefined =>
   edge.data_flow ?? undefined;
 
 const fallbackPosition = (index: number) => ({
@@ -138,17 +142,17 @@ const executorProfileKey = (profile: ExecutorProfileId | null): string => {
   return `${profile.executor}::${profile.variant ?? ''}`;
 };
 
-const normalizeGraph = (graph?: TaskGroupGraph | null): TaskGroupGraph => ({
+const normalizeGraph = (graph?: MilestoneGraph | null): MilestoneGraph => ({
   nodes: (graph?.nodes ?? []).map((node) => ({ ...node })),
   edges: (graph?.edges ?? []).map((edge) => ({ ...edge })),
 });
 
-const graphKey = (graph: TaskGroupGraph): string => {
+const graphKey = (graph: MilestoneGraph): string => {
   const nodes = [...(graph.nodes ?? [])]
     .map((node) => ({
       id: node.id,
       taskId: getNodeTaskId(node) ?? null,
-      kind: node.kind ?? 'task',
+      kind: node.kind ?? MilestoneNodeKind.task,
       phase: typeof node.phase === 'number' ? node.phase : null,
       executorProfileId: getNodeExecutorProfileId(node),
       baseStrategy: getNodeBaseStrategy(node),
@@ -171,44 +175,45 @@ const graphKey = (graph: TaskGroupGraph): string => {
   return JSON.stringify({ nodes, edges });
 };
 
-type FlowNode = TaskGroupFlowNode;
+type FlowNode = MilestoneFlowNode;
 
 type FlowEdge = Edge;
 
 type NewNodeMode = 'existing' | 'new';
 type PanelView = 'chat' | 'details';
+type MainView = 'workflow' | 'board';
 
-export function TaskGroupWorkflow() {
+export function MilestoneWorkflow() {
   const { t } = useTranslation('tasks');
   const navigate = useNavigate();
-  const { projectId: routeProjectId, taskGroupId } = useParams<{
+  const { projectId: routeProjectId, milestoneId } = useParams<{
     projectId: string;
-    taskGroupId: string;
+    milestoneId: string;
   }>();
   const { projectId: contextProjectId, project } = useProject();
   const { profiles, config } = useUserSystem();
   const projectId = routeProjectId ?? contextProjectId;
 
   const {
-    data: taskGroup,
-    isLoading: isTaskGroupLoading,
-    refetch: refetchTaskGroup,
-  } = useTaskGroup(taskGroupId, { enabled: !!taskGroupId });
+    data: milestone,
+    isLoading: isMilestoneLoading,
+    refetch: refetchMilestone,
+  } = useMilestone(milestoneId, { enabled: !!milestoneId });
   const {
     tasks,
     tasksById,
     isLoading: isTasksLoading,
   } = useProjectTasks(projectId ?? '');
 
-  const [graphDraft, setGraphDraft] = useState<TaskGroupGraph | null>(null);
+  const [graphDraft, setGraphDraft] = useState<MilestoneGraph | null>(null);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [isPersistingGraph, setIsPersistingGraph] = useState(false);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
   const serverGraph = useMemo(() => {
-    if (!taskGroup) return null;
-    return normalizeGraph(taskGroup.graph);
-  }, [taskGroup]);
+    if (!milestone) return null;
+    return normalizeGraph(milestone.graph);
+  }, [milestone]);
 
   const serverGraphKey = useMemo(() => {
     if (!serverGraph) return null;
@@ -225,22 +230,22 @@ export function TaskGroupWorkflow() {
     return graphDraftKey !== serverGraphKey;
   }, [graphDraftKey, serverGraphKey]);
 
-  const lastTaskGroupIdRef = useRef<string | null>(null);
+  const lastGraphMilestoneIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!taskGroup) {
-      lastTaskGroupIdRef.current = null;
+    if (!milestone) {
+      lastGraphMilestoneIdRef.current = null;
       setGraphDraft(null);
       return;
     }
-    const nextGraph = normalizeGraph(taskGroup.graph);
+    const nextGraph = normalizeGraph(milestone.graph);
     const nextKey = graphKey(nextGraph);
     setGraphError(null);
 
     setGraphDraft((prev) => {
-      const isNewTaskGroup = lastTaskGroupIdRef.current !== taskGroup.id;
-      lastTaskGroupIdRef.current = taskGroup.id;
+      const isNewMilestone = lastGraphMilestoneIdRef.current !== milestone.id;
+      lastGraphMilestoneIdRef.current = milestone.id;
 
-      if (isNewTaskGroup || !prev) return nextGraph;
+      if (isNewMilestone || !prev) return nextGraph;
 
       const prevKey = graphKey(prev);
       if (prevKey !== nextKey) {
@@ -248,46 +253,46 @@ export function TaskGroupWorkflow() {
       }
       return nextGraph;
     });
-  }, [taskGroup]);
+  }, [milestone]);
 
   const graph = useMemo(
-    () => graphDraft ?? taskGroup?.graph ?? null,
-    [graphDraft, taskGroup?.graph]
+    () => graphDraft ?? milestone?.graph ?? null,
+    [graphDraft, milestone?.graph]
   );
   const graphNodes = useMemo(() => graph?.nodes ?? [], [graph]);
   const graphEdges = useMemo(() => graph?.edges ?? [], [graph]);
 
   const graphNodesById = useMemo(() => {
-    const map = new Map<string, TaskGroupGraphNode>();
+    const map = new Map<string, MilestoneNode>();
     graphNodes.forEach((node) => map.set(node.id, node));
     return map;
   }, [graphNodes]);
 
   const availableTasks = useMemo(() => {
     return tasks.filter((task) => {
-      if (task.task_kind === 'group') return false;
-      if (task.task_group_id) return false;
+      if (task.task_kind === 'milestone') return false;
+      if (task.milestone_id) return false;
       return true;
     });
   }, [tasks]);
 
   const entryTask = useMemo(() => {
-    if (!taskGroup) return null;
+    if (!milestone) return null;
     return (
       tasks.find(
         (task) =>
-          isTaskGroupEntry(task) && getTaskGroupId(task) === taskGroup.id
+          isMilestoneEntry(task) && getMilestoneId(task) === milestone.id
       ) ?? null
     );
-  }, [taskGroup, tasks]);
+  }, [milestone, tasks]);
 
   const masterNodeId = useMemo(
-    () => (taskGroup ? `task-group-${taskGroup.id}-primary` : null),
-    [taskGroup]
+    () => (milestone ? `milestone-${milestone.id}-primary` : null),
+    [milestone]
   );
 
   const nodeTypes = useMemo<NodeTypes>(
-    () => ({ taskGroup: TaskGroupNode }),
+    () => ({ milestone: MilestoneNodeComponent }),
     []
   );
 
@@ -309,6 +314,7 @@ export function TaskGroupWorkflow() {
   const [edges, setEdges] = useEdgesState<FlowEdge>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeLabel, setSelectedEdgeLabel] = useState('');
+  const [mainView, setMainView] = useState<MainView>('board');
   const [panelView, setPanelView] = useState<PanelView>('chat');
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [statusValue, setStatusValue] = useState<TaskStatus | null>(null);
@@ -326,10 +332,13 @@ export function TaskGroupWorkflow() {
   const [newNodeTaskId, setNewNodeTaskId] = useState<string | null>(null);
   const [newNodeTitle, setNewNodeTitle] = useState('');
   const [newNodeDescription, setNewNodeDescription] = useState('');
-  const [newNodeKind, setNewNodeKind] = useState<TaskGroupNodeKind>('task');
+  const [newNodeKind, setNewNodeKind] = useState<MilestoneNodeKind>(
+    MilestoneNodeKind.task
+  );
   const [newNodePhase, setNewNodePhase] = useState(0);
   const [isAddingNode, setIsAddingNode] = useState(false);
   const hasAutoSelectedRef = useRef(false);
+  const dragSeqRef = useRef<Record<string, number>>({});
 
   const nodesRef = useRef<FlowNode[]>([]);
   useEffect(() => {
@@ -338,21 +347,21 @@ export function TaskGroupWorkflow() {
 
   useEffect(() => {
     hasAutoSelectedRef.current = false;
-  }, [taskGroup?.id]);
+  }, [milestone?.id]);
 
   useEffect(() => {
-    if (!taskGroup) return;
-    setStatusValue(taskGroup.status);
-  }, [taskGroup]);
+    if (!milestone) return;
+    setStatusValue(milestone.status);
+  }, [milestone]);
 
   useEffect(() => {
-    if (!taskGroup) return;
-    setBaselineValue(taskGroup.baseline_ref ?? '');
-  }, [taskGroup]);
+    if (!milestone) return;
+    setBaselineValue(milestone.baseline_ref ?? '');
+  }, [milestone]);
 
   const lastMilestoneIdRef = useRef<string | null>(null);
   const lastServerMilestoneMetaRef = useRef<{
-    task_group_id: string;
+    milestone_id: string;
     objective: string;
     definition_of_done: string;
     default_executor_profile_key: string;
@@ -360,7 +369,7 @@ export function TaskGroupWorkflow() {
   } | null>(null);
 
   useEffect(() => {
-    if (!taskGroup) {
+    if (!milestone) {
       lastMilestoneIdRef.current = null;
       lastServerMilestoneMetaRef.current = null;
       setObjectiveValue('');
@@ -370,14 +379,14 @@ export function TaskGroupWorkflow() {
       return;
     }
 
-    const serverObjective = taskGroup.objective ?? '';
-    const serverDoD = taskGroup.definition_of_done ?? '';
-    const serverDefaultExecutor = taskGroup.default_executor_profile_id ?? null;
+    const serverObjective = milestone.objective ?? '';
+    const serverDoD = milestone.definition_of_done ?? '';
+    const serverDefaultExecutor = milestone.default_executor_profile_id ?? null;
     const serverDefaultExecutorKey = executorProfileKey(serverDefaultExecutor);
-    const serverAutomation = taskGroup.automation_mode ?? 'manual';
+    const serverAutomation = milestone.automation_mode ?? 'manual';
 
-    const isNewMilestone = lastMilestoneIdRef.current !== taskGroup.id;
-    lastMilestoneIdRef.current = taskGroup.id;
+    const isNewMilestone = lastMilestoneIdRef.current !== milestone.id;
+    lastMilestoneIdRef.current = milestone.id;
 
     if (isNewMilestone || !lastServerMilestoneMetaRef.current) {
       setObjectiveValue(serverObjective);
@@ -410,31 +419,54 @@ export function TaskGroupWorkflow() {
     }
 
     lastServerMilestoneMetaRef.current = {
-      task_group_id: taskGroup.id,
+      milestone_id: milestone.id,
       objective: serverObjective,
       definition_of_done: serverDoD,
       default_executor_profile_key: serverDefaultExecutorKey,
       automation_mode: serverAutomation,
     };
-  }, [taskGroup]);
+  }, [milestone]);
+
+  const buildMilestoneUpdate = useCallback(
+    (patch: Partial<UpdateMilestone>): UpdateMilestone => ({
+      title: null,
+      description: null,
+      objective: null,
+      definition_of_done: null,
+      // This field is Option<Option<...>> on the backend; omitting means "no update",
+      // null means "clear". TS currently requires it, so we send the current value by default.
+      default_executor_profile_id:
+        milestone?.default_executor_profile_id ?? null,
+      automation_mode: null,
+      status: null,
+      baseline_ref: null,
+      schema_version: null,
+      graph: null,
+      ...patch,
+    }),
+    [milestone?.default_executor_profile_id]
+  );
 
   const persistGraph = useCallback(
-    async (nextGraph: TaskGroupGraph) => {
-      if (!taskGroup) return;
+    async (nextGraph: MilestoneGraph) => {
+      if (!milestone) return;
       setIsPersistingGraph(true);
       setGraphError(null);
       try {
-        await taskGroupsApi.update(taskGroup.id, { graph: nextGraph });
-        await refetchTaskGroup();
+        await milestonesApi.update(
+          milestone.id,
+          buildMilestoneUpdate({ graph: nextGraph })
+        );
+        await refetchMilestone();
       } catch (error) {
         console.error('Failed to update milestone graph:', error);
         setGraphError('Failed to save workflow changes.');
-        await refetchTaskGroup();
+        await refetchMilestone();
       } finally {
         setIsPersistingGraph(false);
       }
     },
-    [refetchTaskGroup, taskGroup]
+    [refetchMilestone, milestone, buildMilestoneUpdate]
   );
 
   const {
@@ -443,14 +475,14 @@ export function TaskGroupWorkflow() {
   } = useDebouncedCallback(persistGraph, 600);
 
   const handleDiscardGraphDraft = useCallback(() => {
-    if (!taskGroup) return;
+    if (!milestone) return;
     cancelPersistGraphDebounced();
-    setGraphDraft(normalizeGraph(taskGroup.graph));
+    setGraphDraft(normalizeGraph(milestone.graph));
     setGraphError(null);
-  }, [cancelPersistGraphDebounced, taskGroup]);
+  }, [cancelPersistGraphDebounced, milestone]);
 
   const updateGraphDraft = useCallback(
-    (updater: (prev: TaskGroupGraph) => TaskGroupGraph) => {
+    (updater: (prev: MilestoneGraph) => MilestoneGraph) => {
       setGraphDraft((prev) => {
         const base = prev ?? { nodes: [], edges: [] };
         const next = updater(base);
@@ -464,7 +496,7 @@ export function TaskGroupWorkflow() {
   const updateNode = useCallback(
     (
       nodeId: string,
-      updater: (node: TaskGroupGraphNode) => TaskGroupGraphNode
+      updater: (node: MilestoneNode) => MilestoneNode
     ) => {
       updateGraphDraft((prev) => ({
         ...prev,
@@ -477,13 +509,16 @@ export function TaskGroupWorkflow() {
   );
 
   const handleInlineNodeUpdate = useCallback(
-    (nodeId: string, updates: { kind?: TaskGroupNodeKind; phase?: number }) => {
+    (
+      nodeId: string,
+      updates: { kind?: MilestoneNodeKind; phase?: number }
+    ) => {
       updateNode(nodeId, (node) => {
         const next = { ...node };
         if (updates.kind) {
           next.kind = updates.kind;
           next.requires_approval =
-            updates.kind === 'checkpoint'
+            updates.kind === MilestoneNodeKind.checkpoint
               ? true
               : (node.requires_approval ?? false);
         }
@@ -527,7 +562,7 @@ export function TaskGroupWorkflow() {
 
         return {
           id: node.id,
-          type: 'taskGroup',
+          type: 'milestone',
           position,
           data: {
             title: task?.title ?? node.id,
@@ -537,8 +572,9 @@ export function TaskGroupWorkflow() {
             phase: node.phase,
             executorProfileId: getNodeExecutorProfileId(node),
             baseStrategy: getNodeBaseStrategy(node),
-            requiresApproval: node.requires_approval ?? node.kind === 'checkpoint',
-            onUpdate: (updates: { kind?: TaskGroupNodeKind; phase?: number }) =>
+            requiresApproval:
+              node.requires_approval ?? node.kind === MilestoneNodeKind.checkpoint,
+            onUpdate: (updates: { kind?: MilestoneNodeKind; phase?: number }) =>
               handleInlineNodeUpdate(node.id, updates),
           },
         };
@@ -556,14 +592,14 @@ export function TaskGroupWorkflow() {
 
         const masterNode: FlowNode = {
           id: masterNodeId,
-          type: 'taskGroup',
+          type: 'milestone',
           position: masterPosition,
           draggable: false,
           connectable: false,
           data: {
-            title: entryTask?.title || taskGroup?.title || 'Milestone',
-            status: entryTask?.status ?? taskGroup?.status,
-            kind: 'task',
+            title: entryTask?.title || milestone?.title || 'Milestone',
+            status: entryTask?.status ?? milestone?.status,
+            kind: MilestoneNodeKind.task,
             taskId: entryTask?.id,
             isMaster: true,
           },
@@ -583,7 +619,7 @@ export function TaskGroupWorkflow() {
     masterNodeId,
     setEdges,
     setNodes,
-    taskGroup,
+    milestone,
     tasksById,
   ]);
 
@@ -621,9 +657,13 @@ export function TaskGroupWorkflow() {
       return;
     }
     if (selectedNodeId) {
-      setPanelView('chat');
+      if (masterNodeId && selectedNodeId === masterNodeId) {
+        setPanelView('details');
+      } else {
+        setPanelView('chat');
+      }
     }
-  }, [selectedEdgeId, selectedNodeId]);
+  }, [masterNodeId, selectedEdgeId, selectedNodeId]);
 
   useEffect(() => {
     if (selectedEdgeId) return;
@@ -649,6 +689,92 @@ export function TaskGroupWorkflow() {
     : selectedTaskId
       ? tasksById[selectedTaskId]
       : undefined;
+
+  const nodeIdByTaskId = useMemo(() => {
+    const map = new Map<string, string>();
+    graphNodes.forEach((node) => {
+      const taskId = getNodeTaskId(node);
+      if (taskId) {
+        map.set(taskId, node.id);
+      }
+    });
+    return map;
+  }, [graphNodes]);
+
+  const milestoneKanbanColumns = useMemo((): KanbanColumns => {
+    const columns: KanbanColumns = {
+      todo: [],
+      inprogress: [],
+      inreview: [],
+      done: [],
+      cancelled: [],
+    };
+    if (!milestone) return columns;
+
+    tasks.forEach((task) => {
+      if (task.task_kind === 'milestone') return;
+      if (!task.milestone_id || task.milestone_id !== milestone.id) return;
+      columns[task.status]?.push(task);
+    });
+
+    const getTimestamp = (item: KanbanColumns[keyof KanbanColumns][number]) =>
+      new Date(item.created_at).getTime();
+
+    TASK_STATUSES.forEach((status) => {
+      columns[status].sort((a, b) => getTimestamp(b) - getTimestamp(a));
+    });
+
+    return columns;
+  }, [milestone, tasks]);
+
+  const handleMilestoneBoardDragEnd = useCallback(
+    async (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || !active.data.current) return;
+
+      const draggedTaskId = active.id as string;
+      const newStatus = over.id as TaskStatus;
+      const task = tasksById[draggedTaskId];
+      if (!task || task.status === newStatus) return;
+
+      const seq = (dragSeqRef.current[draggedTaskId] ?? 0) + 1;
+      dragSeqRef.current[draggedTaskId] = seq;
+
+      const store = useOptimisticTasksStore.getState();
+      const snapshot = store.getSnapshot(draggedTaskId);
+      store.setOverride(draggedTaskId, { status: newStatus });
+
+      try {
+        await tasksApi.update(draggedTaskId, {
+          title: task.title,
+          description: task.description,
+          status: newStatus,
+          parent_workspace_id: task.parent_workspace_id,
+          image_ids: null,
+        });
+      } catch (err) {
+        console.error('Failed to update task status:', err);
+        if (dragSeqRef.current[draggedTaskId] !== seq) return;
+        store.restoreSnapshot(draggedTaskId, snapshot);
+        toast({
+          variant: 'destructive',
+          title: t('common:states.error', 'Error'),
+          description: t('tasks:errors.updateStatusFailed', 'Failed to update status'),
+        });
+      }
+    },
+    [t, tasksById]
+  );
+
+  const handleViewTaskDetailsFromBoard = useCallback(
+    (task: KanbanColumns[keyof KanbanColumns][number]) => {
+      const nodeId = nodeIdByTaskId.get(task.id);
+      if (!nodeId) return;
+      setSelectedNodeId(nodeId);
+      setSelectedEdgeId(null);
+    },
+    [nodeIdByTaskId]
+  );
 
   const { data: selectedAttempts = [], isLoading: isAttemptsLoading } =
     useTaskAttemptsWithSessions(selectedTask?.id, {
@@ -747,16 +873,18 @@ export function TaskGroupWorkflow() {
   }, [graphNodes, tasksById]);
 
   const isGraphNodeSelected = Boolean(selectedGraphNode);
-  const selectedKind = selectedGraphNode?.kind ?? 'task';
+  const selectedKind = selectedGraphNode?.kind ?? MilestoneNodeKind.task;
   const selectedExecutorProfile = selectedGraphNode
     ? getNodeExecutorProfileId(selectedGraphNode)
     : null;
   const selectedBaseStrategy = selectedGraphNode
     ? getNodeBaseStrategy(selectedGraphNode)
-    : 'topology';
+    : MilestoneNodeBaseStrategy.topology;
   const requiresApproval =
-    selectedGraphNode?.requires_approval ?? selectedKind === 'checkpoint';
-  const isCheckpoint = isGraphNodeSelected && selectedKind === 'checkpoint';
+    selectedGraphNode?.requires_approval ??
+    selectedKind === MilestoneNodeKind.checkpoint;
+  const isCheckpoint =
+    isGraphNodeSelected && selectedKind === MilestoneNodeKind.checkpoint;
   const isNodeReady = isGraphNodeSelected ? blockedBy.length === 0 : true;
   const isPendingApproval = Boolean(
     selectedGraphNode &&
@@ -765,8 +893,8 @@ export function TaskGroupWorkflow() {
       selectedTask?.status !== 'done'
   );
 
-  const suggestedStatus = taskGroup?.suggested_status ?? null;
-  const currentStatus = statusValue ?? taskGroup?.status ?? 'todo';
+  const suggestedStatus = milestone?.suggested_status ?? null;
+  const currentStatus = statusValue ?? milestone?.status ?? 'todo';
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<FlowNode>[]) => {
@@ -873,14 +1001,17 @@ export function TaskGroupWorkflow() {
 
   const handleStatusChange = useCallback(
     async (nextStatus: TaskStatus) => {
-      if (!taskGroup) return;
+      if (!milestone) return;
       if (nextStatus === currentStatus) return;
       const previousStatus = currentStatus;
       setStatusValue(nextStatus);
       setIsUpdatingStatus(true);
       try {
-        await taskGroupsApi.update(taskGroup.id, { status: nextStatus });
-        await refetchTaskGroup();
+        await milestonesApi.update(
+          milestone.id,
+          buildMilestoneUpdate({ status: nextStatus })
+        );
+        await refetchMilestone();
       } catch (error) {
         console.error('Failed to update milestone status:', error);
         setStatusValue(previousStatus);
@@ -888,7 +1019,7 @@ export function TaskGroupWorkflow() {
         setIsUpdatingStatus(false);
       }
     },
-    [currentStatus, refetchTaskGroup, taskGroup]
+    [currentStatus, refetchMilestone, milestone, buildMilestoneUpdate]
   );
 
   const handleApplySuggested = useCallback(async () => {
@@ -897,21 +1028,24 @@ export function TaskGroupWorkflow() {
   }, [handleStatusChange, suggestedStatus]);
 
   const handleBaselineSave = useCallback(async () => {
-    if (!taskGroup) return;
+    if (!milestone) return;
     const trimmed = baselineValue.trim();
-    const current = taskGroup.baseline_ref ?? '';
+    const current = milestone.baseline_ref ?? '';
     if (!trimmed || trimmed === current) {
       setBaselineValue(current);
       return;
     }
     try {
-      await taskGroupsApi.update(taskGroup.id, { baseline_ref: trimmed });
-      await refetchTaskGroup();
+      await milestonesApi.update(
+        milestone.id,
+        buildMilestoneUpdate({ baseline_ref: trimmed })
+      );
+      await refetchMilestone();
     } catch (error) {
       console.error('Failed to update baseline ref:', error);
       setBaselineValue(current);
     }
-  }, [baselineValue, refetchTaskGroup, taskGroup]);
+  }, [baselineValue, refetchMilestone, milestone, buildMilestoneUpdate]);
 
   const handleBaselineKeyDown = useCallback(
     (event: KeyboardEvent<HTMLInputElement>) => {
@@ -923,10 +1057,10 @@ export function TaskGroupWorkflow() {
   );
 
   const handleObjectiveSave = useCallback(async () => {
-    if (!taskGroup) return;
+    if (!milestone) return;
     const trimmed = objectiveValue.trim();
     const nextValue = trimmed.length ? trimmed : null;
-    const currentValue = taskGroup.objective ?? null;
+    const currentValue = milestone.objective ?? null;
 
     if (currentValue === nextValue) {
       setObjectiveValue(nextValue ?? '');
@@ -935,8 +1069,11 @@ export function TaskGroupWorkflow() {
 
     setIsUpdatingMilestone(true);
     try {
-      await taskGroupsApi.update(taskGroup.id, { objective: nextValue });
-      await refetchTaskGroup();
+      await milestonesApi.update(
+        milestone.id,
+        buildMilestoneUpdate({ objective: nextValue })
+      );
+      await refetchMilestone();
     } catch (error) {
       console.error('Failed to update milestone objective:', error);
       toast({
@@ -944,17 +1081,17 @@ export function TaskGroupWorkflow() {
         title: 'Failed to save objective',
         description: error instanceof Error ? error.message : undefined,
       });
-      setObjectiveValue(taskGroup.objective ?? '');
+      setObjectiveValue(milestone.objective ?? '');
     } finally {
       setIsUpdatingMilestone(false);
     }
-  }, [objectiveValue, refetchTaskGroup, taskGroup]);
+  }, [objectiveValue, refetchMilestone, milestone, buildMilestoneUpdate]);
 
   const handleDefinitionOfDoneSave = useCallback(async () => {
-    if (!taskGroup) return;
+    if (!milestone) return;
     const trimmed = definitionOfDoneValue.trim();
     const nextValue = trimmed.length ? trimmed : null;
-    const currentValue = taskGroup.definition_of_done ?? null;
+    const currentValue = milestone.definition_of_done ?? null;
 
     if (currentValue === nextValue) {
       setDefinitionOfDoneValue(nextValue ?? '');
@@ -963,10 +1100,11 @@ export function TaskGroupWorkflow() {
 
     setIsUpdatingMilestone(true);
     try {
-      await taskGroupsApi.update(taskGroup.id, {
-        definition_of_done: nextValue,
-      });
-      await refetchTaskGroup();
+      await milestonesApi.update(
+        milestone.id,
+        buildMilestoneUpdate({ definition_of_done: nextValue })
+      );
+      await refetchMilestone();
     } catch (error) {
       console.error('Failed to update milestone definition of done:', error);
       toast({
@@ -974,23 +1112,24 @@ export function TaskGroupWorkflow() {
         title: 'Failed to save definition of done',
         description: error instanceof Error ? error.message : undefined,
       });
-      setDefinitionOfDoneValue(taskGroup.definition_of_done ?? '');
+      setDefinitionOfDoneValue(milestone.definition_of_done ?? '');
     } finally {
       setIsUpdatingMilestone(false);
     }
-  }, [definitionOfDoneValue, refetchTaskGroup, taskGroup]);
+  }, [definitionOfDoneValue, refetchMilestone, milestone, buildMilestoneUpdate]);
 
   const handleDefaultExecutorProfileSave = useCallback(
     async (profile: ExecutorProfileId | null) => {
-      if (!taskGroup) return;
+      if (!milestone) return;
       const previous = defaultExecutorProfileValue;
       setDefaultExecutorProfileValue(profile);
       setIsUpdatingMilestone(true);
       try {
-        await taskGroupsApi.update(taskGroup.id, {
-          default_executor_profile_id: profile,
-        });
-        await refetchTaskGroup();
+        await milestonesApi.update(
+          milestone.id,
+          buildMilestoneUpdate({ default_executor_profile_id: profile })
+        );
+        await refetchMilestone();
       } catch (error) {
         console.error(
           'Failed to update milestone default executor profile:',
@@ -1006,20 +1145,28 @@ export function TaskGroupWorkflow() {
         setIsUpdatingMilestone(false);
       }
     },
-    [defaultExecutorProfileValue, refetchTaskGroup, taskGroup]
+    [
+      defaultExecutorProfileValue,
+      refetchMilestone,
+      milestone,
+      buildMilestoneUpdate,
+    ]
   );
 
   const handleAutomationModeToggle = useCallback(
     async (checked: boolean) => {
-      if (!taskGroup) return;
+      if (!milestone) return;
       const nextMode: MilestoneAutomationMode = checked ? 'auto' : 'manual';
       const previous = automationModeValue;
       if (previous === nextMode) return;
       setAutomationModeValue(nextMode);
       setIsUpdatingMilestone(true);
       try {
-        await taskGroupsApi.update(taskGroup.id, { automation_mode: nextMode });
-        await refetchTaskGroup();
+        await milestonesApi.update(
+          milestone.id,
+          buildMilestoneUpdate({ automation_mode: nextMode })
+        );
+        await refetchMilestone();
       } catch (error) {
         console.error('Failed to update milestone automation mode:', error);
         toast({
@@ -1032,14 +1179,14 @@ export function TaskGroupWorkflow() {
         setIsUpdatingMilestone(false);
       }
     },
-    [automationModeValue, refetchTaskGroup, taskGroup]
+    [automationModeValue, refetchMilestone, milestone, buildMilestoneUpdate]
   );
 
   const handleRunNextStep = useCallback(async () => {
-    if (!taskGroup) return;
+    if (!milestone) return;
     setIsRequestingNextStep(true);
     try {
-      const result = await taskGroupsApi.runNextStep(taskGroup.id);
+      const result = await milestonesApi.runNextStep(milestone.id);
       const candidateTitle = result.candidate_task_id
         ? (tasksById[result.candidate_task_id]?.title ??
           result.candidate_task_id)
@@ -1059,7 +1206,7 @@ export function TaskGroupWorkflow() {
         variant: result.status === 'not_eligible' ? 'destructive' : 'default',
         durationMs: result.status === 'not_eligible' ? 6500 : 4500,
       });
-      await refetchTaskGroup();
+      await refetchMilestone();
     } catch (error) {
       console.error('Failed to request next milestone step:', error);
       toast({
@@ -1070,7 +1217,7 @@ export function TaskGroupWorkflow() {
     } finally {
       setIsRequestingNextStep(false);
     }
-  }, [refetchTaskGroup, taskGroup, tasksById]);
+  }, [refetchMilestone, milestone, tasksById]);
 
   const handleEdgeLabelChange = useCallback(
     (value: string) => {
@@ -1120,7 +1267,7 @@ export function TaskGroupWorkflow() {
     setNewNodeTaskId(null);
     setNewNodeTitle('');
     setNewNodeDescription('');
-    setNewNodeKind('task');
+    setNewNodeKind(MilestoneNodeKind.task);
     setNewNodePhase(0);
   }, []);
 
@@ -1141,8 +1288,8 @@ export function TaskGroupWorkflow() {
             : null,
           status: null,
           task_kind: null,
-          task_group_id: null,
-          task_group_node_id: null,
+          milestone_id: null,
+          milestone_node_id: null,
           parent_workspace_id: null,
           origin_task_id: null,
           created_by_kind: null,
@@ -1166,9 +1313,9 @@ export function TaskGroupWorkflow() {
             kind: newNodeKind,
             phase,
             executor_profile_id: config?.executor_profile ?? null,
-            base_strategy: 'topology',
+            base_strategy: MilestoneNodeBaseStrategy.topology,
             instructions: null,
-            requires_approval: newNodeKind === 'checkpoint',
+            requires_approval: newNodeKind === MilestoneNodeKind.checkpoint,
             layout: { x: position.x, y: position.y },
           },
         ],
@@ -1211,22 +1358,22 @@ export function TaskGroupWorkflow() {
         parent_workspace_id: selectedTask.parent_workspace_id,
         image_ids: null,
       });
-      await refetchTaskGroup();
+      await refetchMilestone();
     } catch (error) {
       console.error('Failed to approve checkpoint:', error);
     }
-  }, [refetchTaskGroup, selectedTask]);
+  }, [refetchMilestone, selectedTask]);
 
-  if (isTaskGroupLoading) {
+  if (isMilestoneLoading) {
     return (
       <Loader message={t('loading', 'Loading...')} size={32} className="py-8" />
     );
   }
 
-  if (!taskGroup || !projectId) {
+  if (!milestone || !projectId) {
     return (
       <div className="p-6 text-muted-foreground">
-        {t('taskGroup.workflowMissing', 'Workflow not found.')}
+        {t('milestone.workflowMissing', 'Workflow not found.')}
       </div>
     );
   }
@@ -1254,7 +1401,8 @@ export function TaskGroupWorkflow() {
           : ''
       }`;
   const canStartAttempt =
-    Boolean(selectedTask) &&
+    selectedTask !== undefined &&
+    !isMilestoneEntry(selectedTask) &&
     !isCheckpoint &&
     (!isGraphNodeSelected || isNodeReady);
 
@@ -1278,6 +1426,24 @@ export function TaskGroupWorkflow() {
                 </Button>
               </div>
             )}
+
+            <div className="flex items-center gap-1">
+              <Button
+                size="sm"
+                variant={mainView === 'workflow' ? 'default' : 'outline'}
+                onClick={() => setMainView('workflow')}
+              >
+                Workflow
+              </Button>
+              <Button
+                size="sm"
+                variant={mainView === 'board' ? 'default' : 'outline'}
+                onClick={() => setMainView('board')}
+              >
+                Board
+              </Button>
+            </div>
+
             <div className="flex items-center gap-2">
               <Label className="text-xs text-muted-foreground">Baseline</Label>
               <Input
@@ -1360,13 +1526,13 @@ export function TaskGroupWorkflow() {
               </BreadcrumbItem>
               <BreadcrumbSeparator />
               <BreadcrumbItem>
-                <BreadcrumbPage>{taskGroup.title}</BreadcrumbPage>
+                <BreadcrumbPage>{milestone.title}</BreadcrumbPage>
               </BreadcrumbItem>
             </BreadcrumbList>
           </Breadcrumb>
-          {taskGroup.description && (
+          {milestone.description && (
             <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
-              {taskGroup.description}
+              {milestone.description}
             </div>
           )}
         </div>
@@ -1378,56 +1544,69 @@ export function TaskGroupWorkflow() {
 
       <div className="flex-1 min-h-0 p-4 flex flex-col lg:flex-row gap-4">
         <div className="flex-1 min-h-[320px] rounded-lg border bg-card overflow-hidden">
-          <ReactFlowProvider>
-            <div className="h-full w-full">
-              <ReactFlow
-                nodes={nodes}
-                edges={edges}
-                nodeTypes={nodeTypes}
-                onNodesChange={handleNodesChange}
-                onEdgesChange={handleEdgesChange}
-                onConnect={handleConnect}
-                onSelectionChange={(event) => {
-                  if (event.nodes?.length) {
-                    setSelectedNodeId(event.nodes[0].id);
-                    setSelectedEdgeId(null);
-                    return;
-                  }
-                  if (event.edges?.length) {
-                    setSelectedEdgeId(event.edges[0].id);
-                    setSelectedNodeId(null);
-                    return;
-                  }
-                  // ReactFlow can emit an empty selection change when focus shifts
-                  // (e.g. clicking UI controls). Keep the current selection unless the
-                  // user explicitly clears it via pane clicks.
-                }}
-                onPaneClick={() => {
-                  setSelectedNodeId(null);
-                  setSelectedEdgeId(null);
-                }}
-                fitView
-                minZoom={0.2}
-                maxZoom={1.4}
-                defaultEdgeOptions={defaultEdgeOptions}
-                nodesConnectable={true}
-                edgesReconnectable={false}
-                zoomOnDoubleClick={false}
-                deleteKeyCode={['Backspace', 'Delete']}
-              >
-                <Background gap={24} size={1} />
-                <Controls position="top-right" />
-                <MiniMap
-                  nodeColor={(node: FlowNode) => {
-                    const status = node.data?.status;
-                    if (!status) return 'hsl(var(--border))';
-                    return `hsl(var(${statusBoardColors[status]}))`;
+          {mainView === 'workflow' ? (
+            <ReactFlowProvider>
+              <div className="h-full w-full">
+                <ReactFlow
+                  nodes={nodes}
+                  edges={edges}
+                  nodeTypes={nodeTypes}
+                  onNodesChange={handleNodesChange}
+                  onEdgesChange={handleEdgesChange}
+                  onConnect={handleConnect}
+                  onSelectionChange={(event) => {
+                    if (event.nodes?.length) {
+                      setSelectedNodeId(event.nodes[0].id);
+                      setSelectedEdgeId(null);
+                      return;
+                    }
+                    if (event.edges?.length) {
+                      setSelectedEdgeId(event.edges[0].id);
+                      setSelectedNodeId(null);
+                      return;
+                    }
+                    // ReactFlow can emit an empty selection change when focus shifts
+                    // (e.g. clicking UI controls). Keep the current selection unless the
+                    // user explicitly clears it via pane clicks.
                   }}
-                  maskColor="hsl(var(--background) / 0.85)"
-                />
-              </ReactFlow>
+                  onPaneClick={() => {
+                    setSelectedNodeId(null);
+                    setSelectedEdgeId(null);
+                  }}
+                  fitView
+                  minZoom={0.2}
+                  maxZoom={1.4}
+                  defaultEdgeOptions={defaultEdgeOptions}
+                  nodesConnectable={true}
+                  edgesReconnectable={false}
+                  zoomOnDoubleClick={false}
+                  deleteKeyCode={['Backspace', 'Delete']}
+                >
+                  <Background gap={24} size={1} />
+                  <Controls position="top-right" />
+                  <MiniMap
+                    nodeColor={(node: FlowNode) => {
+                      const status = node.data?.status;
+                      if (!status) return 'hsl(var(--border))';
+                      return `hsl(var(${statusBoardColors[status]}))`;
+                    }}
+                    maskColor="hsl(var(--background) / 0.85)"
+                  />
+                </ReactFlow>
+              </div>
+            </ReactFlowProvider>
+          ) : (
+            <div className="h-full w-full overflow-x-auto overflow-y-auto overscroll-x-contain">
+              <TaskKanbanBoard
+                columns={milestoneKanbanColumns}
+                onDragEnd={handleMilestoneBoardDragEnd}
+                onViewTaskDetails={handleViewTaskDetailsFromBoard}
+                selectedTaskId={selectedTask?.id}
+                projectId={projectId}
+                groupByMilestone={false}
+              />
             </div>
-          </ReactFlowProvider>
+          )}
         </div>
 
         <div className="w-full lg:w-[420px] min-h-0">
@@ -1439,7 +1618,7 @@ export function TaskGroupWorkflow() {
                     size="xs"
                     variant={panelView === 'chat' ? 'default' : 'outline'}
                     onClick={() => setPanelView('chat')}
-                    disabled={Boolean(selectedEdgeId)}
+                    disabled={Boolean(selectedEdgeId) || isMasterSelected}
                   >
                     Chat
                   </Button>
@@ -1667,7 +1846,7 @@ export function TaskGroupWorkflow() {
                           <Play className="h-4 w-4 mr-1" />
                           Run next step
                         </Button>
-                        {taskGroup.run_next_step_requested_at && (
+                        {milestone.run_next_step_requested_at && (
                           <Badge variant="outline" className="text-[10px]">
                             Queued
                           </Badge>
@@ -1772,7 +1951,7 @@ export function TaskGroupWorkflow() {
                           onValueChange={(value) =>
                             updateNode(selectedGraphNode.id, (node) => ({
                               ...node,
-                              kind: value as TaskGroupNodeKind,
+                              kind: value as MilestoneNodeKind,
                               requires_approval:
                                 value === 'checkpoint'
                                   ? true
@@ -1844,7 +2023,7 @@ export function TaskGroupWorkflow() {
                         onValueChange={(value) =>
                           updateNode(selectedGraphNode.id, (node) => ({
                             ...node,
-                            base_strategy: value as TaskGroupNodeBaseStrategy,
+                            base_strategy: value as MilestoneNodeBaseStrategy,
                           }))
                         }
                       >
@@ -1857,7 +2036,8 @@ export function TaskGroupWorkflow() {
                         </SelectContent>
                       </Select>
                       <div className="text-[11px] text-muted-foreground">
-                        {selectedBaseStrategy === 'topology'
+                        {selectedBaseStrategy ===
+                        MilestoneNodeBaseStrategy.topology
                           ? 'Topology uses the most recent completed predecessor and falls back to the milestone baseline.'
                           : 'Baseline starts from the milestone baseline branch.'}
                       </div>
@@ -1999,7 +2179,7 @@ export function TaskGroupWorkflow() {
                 <Select
                   value={newNodeKind}
                   onValueChange={(value) =>
-                    setNewNodeKind(value as TaskGroupNodeKind)
+                    setNewNodeKind(value as MilestoneNodeKind)
                   }
                 >
                   <SelectTrigger className="h-9">

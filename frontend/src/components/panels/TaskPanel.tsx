@@ -97,7 +97,7 @@ const TaskPanel = ({
     );
   }
 
-  const isTaskGroupEntry = task.task_kind === 'group';
+  const isMilestoneEntry = task.task_kind === 'milestone';
   const titleContent = `# ${task.title || 'Task'}`;
   const descriptionContent = task.description || '';
 
@@ -141,20 +141,20 @@ const TaskPanel = ({
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {task.task_group_id && resolvedProjectId && (
+              {task.milestone_id && resolvedProjectId && (
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() =>
                     navigate(
-                      paths.taskGroupWorkflow(resolvedProjectId, task.task_group_id!)
+                      paths.milestoneWorkflow(resolvedProjectId, task.milestone_id!)
                     )
                   }
                 >
-                  {t('openTaskGroup', 'Open milestone')}
+                  {t('openMilestone', 'Open milestone')}
                 </Button>
               )}
-              {!isTaskGroupEntry && (
+              {!isMilestoneEntry && (
                 <Button
                   size="sm"
                   onClick={handleStartAttempt}
@@ -222,7 +222,7 @@ const TaskPanel = ({
                       count: displayedAttempts.length,
                     })}
                   </span>
-                  {!isTaskGroupEntry && (
+                  {!isMilestoneEntry && (
                     <span>
                       <Button
                         variant="icon"

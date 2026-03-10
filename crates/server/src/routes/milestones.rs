@@ -11,7 +11,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use db::{
     TransactionTrait,
-    models::task_group::{CreateTaskGroup, TaskGroup, TaskGroupError, UpdateTaskGroup},
+    models::milestone::{CreateMilestone, Milestone, MilestoneError, UpdateMilestone},
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -19,12 +19,12 @@ use utils_core::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{
-    DeploymentImpl, error::ApiError, middleware::load_task_group_middleware, routes::task_deletion,
+    DeploymentImpl, error::ApiError, middleware::load_milestone_middleware, routes::task_deletion,
     milestone_dispatch::{milestone_has_active_attempt, next_milestone_dispatch_candidate},
 };
 
 #[derive(Debug, Deserialize)]
-pub struct TaskGroupQuery {
+pub struct MilestoneQuery {
     pub project_id: Option<Uuid>,
 }
 
@@ -44,49 +44,47 @@ pub struct RunNextMilestoneStepResponse {
     pub message: Option<String>,
 }
 
-fn map_task_group_error(err: TaskGroupError) -> ApiError {
+fn map_milestone_error(err: MilestoneError) -> ApiError {
     match err {
-        TaskGroupError::Database(db_err) => ApiError::Database(db_err),
-        TaskGroupError::TaskGroupNotFound => {
-            ApiError::BadRequest("Task group not found".to_string())
-        }
-        TaskGroupError::ProjectNotFound => ApiError::BadRequest("Project not found".to_string()),
-        TaskGroupError::Serde(_) => ApiError::BadRequest(err.to_string()),
-        TaskGroupError::TaskNotFound(_)
-        | TaskGroupError::TaskProjectMismatch(_)
-        | TaskGroupError::TaskGroupMismatch(_)
-        | TaskGroupError::TaskKindMismatch(_)
-        | TaskGroupError::UnsupportedSchemaVersion(_)
-        | TaskGroupError::InvalidGraph(_) => ApiError::BadRequest(err.to_string()),
+        MilestoneError::Database(db_err) => ApiError::Database(db_err),
+        MilestoneError::MilestoneNotFound => ApiError::BadRequest("Milestone not found".to_string()),
+        MilestoneError::ProjectNotFound => ApiError::BadRequest("Project not found".to_string()),
+        MilestoneError::Serde(_) => ApiError::BadRequest(err.to_string()),
+        MilestoneError::TaskNotFound(_)
+        | MilestoneError::TaskProjectMismatch(_)
+        | MilestoneError::MilestoneMismatch(_)
+        | MilestoneError::TaskKindMismatch(_)
+        | MilestoneError::UnsupportedSchemaVersion(_)
+        | MilestoneError::InvalidGraph(_) => ApiError::BadRequest(err.to_string()),
     }
 }
 
-pub async fn get_task_groups(
+pub async fn get_milestones(
     State(deployment): State<DeploymentImpl>,
-    Query(query): Query<TaskGroupQuery>,
-) -> Result<ResponseJson<ApiResponse<Vec<TaskGroup>>>, ApiError> {
-    let groups = match query.project_id {
-        Some(project_id) => TaskGroup::find_by_project_id(&deployment.db().pool, project_id)
+    Query(query): Query<MilestoneQuery>,
+) -> Result<ResponseJson<ApiResponse<Vec<Milestone>>>, ApiError> {
+    let milestones = match query.project_id {
+        Some(project_id) => Milestone::find_by_project_id(&deployment.db().pool, project_id)
             .await
-            .map_err(map_task_group_error)?,
-        None => TaskGroup::find_all(&deployment.db().pool)
+            .map_err(map_milestone_error)?,
+        None => Milestone::find_all(&deployment.db().pool)
             .await
-            .map_err(map_task_group_error)?,
+            .map_err(map_milestone_error)?,
     };
 
-    Ok(ResponseJson(ApiResponse::success(groups)))
+    Ok(ResponseJson(ApiResponse::success(milestones)))
 }
 
-pub async fn get_task_group(
-    Extension(task_group): Extension<TaskGroup>,
-) -> Result<ResponseJson<ApiResponse<TaskGroup>>, ApiError> {
-    Ok(ResponseJson(ApiResponse::success(task_group)))
+pub async fn get_milestone(
+    Extension(milestone): Extension<Milestone>,
+) -> Result<ResponseJson<ApiResponse<Milestone>>, ApiError> {
+    Ok(ResponseJson(ApiResponse::success(milestone)))
 }
 
-pub async fn create_task_group(
+pub async fn create_milestone(
     State(deployment): State<DeploymentImpl>,
-    Json(payload): Json<CreateTaskGroup>,
-) -> Result<ResponseJson<ApiResponse<TaskGroup>>, ApiError> {
+    Json(payload): Json<CreateMilestone>,
+) -> Result<ResponseJson<ApiResponse<Milestone>>, ApiError> {
     let id = Uuid::new_v4();
     let node_instructions = payload
         .graph
@@ -99,26 +97,26 @@ pub async fn create_task_group(
         })
         .count();
     tracing::info!(
-        task_group_id = %id,
+        milestone_id = %id,
         project_id = %payload.project_id,
         node_instructions = node_instructions,
-        "Creating task group"
+        "Creating milestone"
     );
 
     let tx = deployment.db().pool.begin().await?;
-    let task_group = TaskGroup::create(&tx, &payload, id)
+    let milestone = Milestone::create(&tx, &payload, id)
         .await
-        .map_err(map_task_group_error)?;
+        .map_err(map_milestone_error)?;
     tx.commit().await?;
 
-    Ok(ResponseJson(ApiResponse::success(task_group)))
+    Ok(ResponseJson(ApiResponse::success(milestone)))
 }
 
-pub async fn update_task_group(
-    Extension(existing): Extension<TaskGroup>,
+pub async fn update_milestone(
+    Extension(existing): Extension<Milestone>,
     State(deployment): State<DeploymentImpl>,
-    Json(payload): Json<UpdateTaskGroup>,
-) -> Result<ResponseJson<ApiResponse<TaskGroup>>, ApiError> {
+    Json(payload): Json<UpdateMilestone>,
+) -> Result<ResponseJson<ApiResponse<Milestone>>, ApiError> {
     if let Some(graph) = payload.graph.as_ref() {
         let node_instructions = graph
             .nodes
@@ -130,40 +128,40 @@ pub async fn update_task_group(
             })
             .count();
         tracing::info!(
-            task_group_id = %existing.id,
+            milestone_id = %existing.id,
             node_instructions = node_instructions,
-            "Updating task group graph"
+            "Updating milestone graph"
         );
     } else {
-        tracing::info!(task_group_id = %existing.id, "Updating task group metadata");
+        tracing::info!(milestone_id = %existing.id, "Updating milestone metadata");
     }
 
     let tx = deployment.db().pool.begin().await?;
-    let task_group = TaskGroup::update(&tx, existing.id, &payload)
+    let milestone = Milestone::update(&tx, existing.id, &payload)
         .await
-        .map_err(map_task_group_error)?;
+        .map_err(map_milestone_error)?;
     tx.commit().await?;
 
-    Ok(ResponseJson(ApiResponse::success(task_group)))
+    Ok(ResponseJson(ApiResponse::success(milestone)))
 }
 
 pub async fn run_next_step(
-    Extension(task_group): Extension<TaskGroup>,
+    Extension(milestone): Extension<Milestone>,
     State(deployment): State<DeploymentImpl>,
 ) -> Result<ResponseJson<ApiResponse<RunNextMilestoneStepResponse>>, ApiError> {
     let tasks = db::models::task::Task::find_by_project_id_with_attempt_status(
         &deployment.db().pool,
-        task_group.project_id,
+        milestone.project_id,
     )
     .await?;
     let tasks_by_id: HashMap<Uuid, db::models::task::TaskWithAttemptStatus> =
         tasks.into_iter().map(|task| (task.id, task)).collect();
 
-    if milestone_has_active_attempt(&task_group, &tasks_by_id) {
+    if milestone_has_active_attempt(&milestone, &tasks_by_id) {
         let requested_at =
-            TaskGroup::request_run_next_step(&deployment.db().pool, task_group.id)
+            Milestone::request_run_next_step(&deployment.db().pool, milestone.id)
                 .await
-                .map_err(map_task_group_error)?;
+                .map_err(map_milestone_error)?;
         return Ok(ResponseJson(ApiResponse::success(
             RunNextMilestoneStepResponse {
                 status: RunNextMilestoneStepStatus::QueuedWaitingForActiveAttempt,
@@ -177,15 +175,15 @@ pub async fn run_next_step(
         )));
     }
 
-    let candidate_task_id = next_milestone_dispatch_candidate(&task_group, &tasks_by_id)
+    let candidate_task_id = next_milestone_dispatch_candidate(&milestone, &tasks_by_id)
         .map(|task| task.id);
 
     match candidate_task_id {
         Some(candidate_task_id) => {
             let requested_at =
-                TaskGroup::request_run_next_step(&deployment.db().pool, task_group.id)
+                Milestone::request_run_next_step(&deployment.db().pool, milestone.id)
                     .await
-                    .map_err(map_task_group_error)?;
+                    .map_err(map_milestone_error)?;
             Ok(ResponseJson(ApiResponse::success(
                 RunNextMilestoneStepResponse {
                     status: RunNextMilestoneStepStatus::Queued,
@@ -204,31 +202,31 @@ pub async fn run_next_step(
     }
 }
 
-pub async fn delete_task_group(
-    Extension(existing): Extension<TaskGroup>,
+pub async fn delete_milestone(
+    Extension(existing): Extension<Milestone>,
     State(deployment): State<DeploymentImpl>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
-    task_deletion::delete_task_group_with_cleanup(&deployment, existing, None, false).await?;
+    task_deletion::delete_milestone_with_cleanup(&deployment, existing, None, false).await?;
     Ok(ResponseJson(ApiResponse::success(())))
 }
 
 pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
-    let task_group_router = Router::new()
+    let milestone_router = Router::new()
         .route(
             "/",
-            get(get_task_group)
-                .put(update_task_group)
-                .delete(delete_task_group),
+            get(get_milestone)
+                .put(update_milestone)
+                .delete(delete_milestone),
         )
         .route("/run-next-step", post(run_next_step))
         .layer(from_fn_with_state(
             deployment.clone(),
-            load_task_group_middleware::<DeploymentImpl>,
+            load_milestone_middleware::<DeploymentImpl>,
         ));
 
     let inner = Router::new()
-        .route("/", get(get_task_groups).post(create_task_group))
-        .nest("/{task_group_id}", task_group_router);
+        .route("/", get(get_milestones).post(create_milestone))
+        .nest("/{milestone_id}", milestone_router);
 
-    Router::new().nest("/task-groups", inner)
+    Router::new().nest("/milestones", inner)
 }

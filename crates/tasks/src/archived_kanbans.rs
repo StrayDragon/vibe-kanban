@@ -5,9 +5,9 @@ use db::{
     models::{
         archived_kanban::{ArchivedKanban, ArchivedKanbanWithTaskCount},
         event_outbox::EventOutbox,
+        milestone::{Milestone, MilestoneError},
         project::Project,
         task::{Task, TaskKind, TaskStatus},
-        task_group::{TaskGroup, TaskGroupError},
     },
 };
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, sea_query::Expr};
@@ -74,9 +74,9 @@ fn ensure_statuses_non_empty(statuses: &[TaskStatus]) -> Result<(), TasksError> 
     Ok(())
 }
 
-fn map_task_group_error(err: TaskGroupError) -> TasksError {
+fn map_milestone_error(err: MilestoneError) -> TasksError {
     match err {
-        TaskGroupError::Database(db_err) => TasksError::Database(db_err),
+        MilestoneError::Database(db_err) => TasksError::Database(db_err),
         _ => TasksError::BadRequest(err.to_string()),
     }
 }
@@ -119,46 +119,46 @@ pub async fn archive_project_kanban<R: TaskRuntime + Sync>(
         ));
     }
 
-    // Expand any selected task group ids into full-group atomic selection.
-    let mut group_row_ids: Vec<i64> = selected.iter().filter_map(|t| t.task_group_id).collect();
-    group_row_ids.sort_unstable();
-    group_row_ids.dedup();
+    // Expand any selected milestone ids into full-milestone atomic selection.
+    let mut milestone_row_ids: Vec<i64> = selected.iter().filter_map(|t| t.milestone_id).collect();
+    milestone_row_ids.sort_unstable();
+    milestone_row_ids.dedup();
 
-    let mut expanded_group_tasks: Vec<task::Model> = Vec::new();
-    if !group_row_ids.is_empty() {
-        let group_tasks = task::Entity::find()
+    let mut expanded_milestone_tasks: Vec<task::Model> = Vec::new();
+    if !milestone_row_ids.is_empty() {
+        let milestone_tasks = task::Entity::find()
             .filter(task::Column::ProjectId.eq(project_row_id))
-            .filter(task::Column::TaskGroupId.is_in(group_row_ids.clone()))
+            .filter(task::Column::MilestoneId.is_in(milestone_row_ids.clone()))
             .all(pool)
             .await?;
 
-        // Reject archiving if any selected group is already split (some tasks already archived).
-        for group_row_id in &group_row_ids {
-            let split = group_tasks
+        // Reject archiving if any selected milestone is already split (some tasks already archived).
+        for milestone_row_id in &milestone_row_ids {
+            let split = milestone_tasks
                 .iter()
-                .any(|t| t.task_group_id == Some(*group_row_id) && t.archived_kanban_id.is_some());
+                .any(|t| t.milestone_id == Some(*milestone_row_id) && t.archived_kanban_id.is_some());
             if split {
                 return Err(TasksError::Conflict(
-                    "Task group is already archived/split. Restore the group first before archiving again.".to_string(),
+                    "Milestone is already archived/split. Restore the milestone first before archiving again.".to_string(),
                 ));
             }
         }
 
-        expanded_group_tasks = group_tasks;
+        expanded_milestone_tasks = milestone_tasks;
     }
 
-    // Build final set: non-group selected + all tasks in selected groups
+    // Build final set: non-milestone selected + all tasks in selected milestones
     let mut by_row_id: std::collections::HashMap<i64, task::Model> =
         std::collections::HashMap::new();
     for model in selected.drain(..) {
-        if model.task_group_id.is_none() {
+        if model.milestone_id.is_none() {
             by_row_id.insert(model.id, model);
         } else {
-            // group tasks will come from expanded_group_tasks
+            // milestone tasks will come from expanded_milestone_tasks
             by_row_id.insert(model.id, model);
         }
     }
-    for model in expanded_group_tasks.drain(..) {
+    for model in expanded_milestone_tasks.drain(..) {
         by_row_id.insert(model.id, model);
     }
 
@@ -300,35 +300,35 @@ pub async fn restore_archived_kanban<R: TaskRuntime + Sync>(
         });
     }
 
-    let mut group_row_ids: Vec<i64> = selected.iter().filter_map(|t| t.task_group_id).collect();
-    group_row_ids.sort_unstable();
-    group_row_ids.dedup();
+    let mut milestone_row_ids: Vec<i64> = selected.iter().filter_map(|t| t.milestone_id).collect();
+    milestone_row_ids.sort_unstable();
+    milestone_row_ids.dedup();
 
     let mut by_row_id: std::collections::HashMap<i64, task::Model> = selected
         .into_iter()
-        .filter(|t| t.task_group_id.is_none())
+        .filter(|t| t.milestone_id.is_none())
         .map(|t| (t.id, t))
         .collect();
 
-    if !group_row_ids.is_empty() {
-        let group_tasks = task::Entity::find()
-            .filter(task::Column::TaskGroupId.is_in(group_row_ids.clone()))
+    if !milestone_row_ids.is_empty() {
+        let milestone_tasks = task::Entity::find()
+            .filter(task::Column::MilestoneId.is_in(milestone_row_ids.clone()))
             .all(pool)
             .await?;
 
-        for group_row_id in &group_row_ids {
-            let split = group_tasks.iter().any(|t| {
-                t.task_group_id == Some(*group_row_id)
+        for milestone_row_id in &milestone_row_ids {
+            let split = milestone_tasks.iter().any(|t| {
+                t.milestone_id == Some(*milestone_row_id)
                     && t.archived_kanban_id != Some(archive_row_id)
             });
             if split {
                 return Err(TasksError::Conflict(
-                    "Task group is split across archives/active. Restore the group consistently before continuing.".to_string(),
+                    "Milestone is split across archives/active. Restore the milestone consistently before continuing.".to_string(),
                 ));
             }
         }
 
-        for model in group_tasks {
+        for model in milestone_tasks {
             by_row_id.insert(model.id, model);
         }
     }
@@ -400,53 +400,53 @@ pub async fn delete_archived_kanban<R: TaskRuntime + Sync>(
         }
     }
 
-    // Safety valve: reject if any task group is split outside this archive.
-    let mut group_ids: Vec<Uuid> = tasks.iter().filter_map(|t| t.task_group_id).collect();
-    group_ids.sort_unstable();
-    group_ids.dedup();
+    // Safety valve: reject if any milestone is split outside this archive.
+    let mut milestone_ids: Vec<Uuid> = tasks.iter().filter_map(|t| t.milestone_id).collect();
+    milestone_ids.sort_unstable();
+    milestone_ids.dedup();
 
-    for group_id in &group_ids {
-        let group_tasks = Task::find_by_task_group_id(pool, *group_id).await?;
-        let split = group_tasks
+    for milestone_id in &milestone_ids {
+        let milestone_tasks = Task::find_by_milestone_id(pool, *milestone_id).await?;
+        let split = milestone_tasks
             .iter()
             .any(|t| t.archived_kanban_id != Some(archive_id));
         if split {
             return Err(TasksError::Conflict(
-                "Archived kanban contains a task group that is split outside this archive. Refusing to delete to prevent data loss.".to_string(),
+                "Archived kanban contains a milestone that is split outside this archive. Refusing to delete to prevent data loss.".to_string(),
             ));
         }
     }
 
     let deleted_task_count = u64::try_from(tasks.len()).unwrap_or(u64::MAX);
 
-    // Delete groups first (once per group), then standalone tasks.
-    for group_id in &group_ids {
-        let task_group = TaskGroup::find_by_id(pool, *group_id)
+    // Delete milestones first (once per milestone), then standalone tasks.
+    for milestone_id in &milestone_ids {
+        let milestone = Milestone::find_by_id(pool, *milestone_id)
             .await
-            .map_err(map_task_group_error)?
-            .ok_or_else(|| TasksError::BadRequest("Task group not found".to_string()))?;
+            .map_err(map_milestone_error)?
+            .ok_or_else(|| TasksError::BadRequest("Milestone not found".to_string()))?;
 
         let entry_task_override = tasks
             .iter()
-            .find(|t| t.task_kind == TaskKind::Group && t.task_group_id == Some(*group_id))
+            .find(|t| t.task_kind == TaskKind::Milestone && t.milestone_id == Some(*milestone_id))
             .cloned();
 
-        task_deletion::delete_task_group_with_cleanup(
+        task_deletion::delete_milestone_with_cleanup(
             runtime,
             db,
-            task_group,
+            milestone,
             entry_task_override,
             true,
         )
         .await?;
     }
 
-    for task in tasks.into_iter().filter(|t| t.task_group_id.is_none()) {
+    for task in tasks.into_iter().filter(|t| t.milestone_id.is_none()) {
         task_deletion::delete_task_with_cleanup(
             runtime,
             db,
             task,
-            task_deletion::DeleteTaskMode::CascadeGroup,
+            task_deletion::DeleteTaskMode::CascadeMilestone,
             true,
         )
         .await?;

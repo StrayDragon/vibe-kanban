@@ -26,8 +26,8 @@ use db::{
         project_repo::{ProjectRepo, ProjectRepoWithName},
         repo::Repo,
         session::{CreateSession, Session, SessionError},
+        milestone::Milestone,
         task::{Task, TaskStatus},
-        task_group::TaskGroup,
         workspace::{Workspace, WorkspaceError},
         workspace_repo::WorkspaceRepo,
     },
@@ -1858,33 +1858,33 @@ pub trait ContainerService {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
         let mut prompt = prompt_override.unwrap_or_else(|| task.to_prompt());
-        if let Some(task_group_id) = task.task_group_id {
-            match TaskGroup::find_by_id(&self.db().pool, task_group_id).await {
-                Ok(Some(task_group)) => {
+        if let Some(milestone_id) = task.milestone_id {
+            match Milestone::find_by_id(&self.db().pool, milestone_id).await {
+                Ok(Some(milestone)) => {
                     let prompt_with_milestone = append_milestone_context_to_prompt(
                         &prompt,
-                        task_group.objective.as_deref(),
-                        task_group.definition_of_done.as_deref(),
+                        milestone.objective.as_deref(),
+                        milestone.definition_of_done.as_deref(),
                     );
                     if prompt_with_milestone != prompt {
                         tracing::info!(
                             task_id = %task.id,
-                            task_group_id = %task_group_id,
+                            milestone_id = %milestone_id,
                             "Appending milestone objective/definition-of-done to prompt"
                         );
                         prompt = prompt_with_milestone;
                     } else {
                         tracing::info!(
                             task_id = %task.id,
-                            task_group_id = %task_group_id,
+                            milestone_id = %milestone_id,
                             "No milestone objective/definition-of-done to append"
                         );
                     }
 
-                    if let Some(node_id) = task.task_group_node_id.as_deref() {
+                    if let Some(node_id) = task.milestone_node_id.as_deref() {
                         let node_key = node_id.trim();
                         if !node_key.is_empty() {
-                            let node = task_group
+                            let node = milestone
                                 .graph
                                 .nodes
                                 .iter()
@@ -1893,9 +1893,9 @@ pub trait ContainerService {
                                 Some(instructions) if !instructions.trim().is_empty() => {
                                     tracing::info!(
                                         task_id = %task.id,
-                                        task_group_id = %task_group_id,
+                                        milestone_id = %milestone_id,
                                         node_id = %node_key,
-                                        "Appending task group node instructions to prompt"
+                                        "Appending milestone node instructions to prompt"
                                     );
                                     prompt =
                                         append_node_instructions_to_prompt(&prompt, instructions);
@@ -1903,9 +1903,9 @@ pub trait ContainerService {
                                 _ => {
                                     tracing::info!(
                                         task_id = %task.id,
-                                        task_group_id = %task_group_id,
+                                        milestone_id = %milestone_id,
                                         node_id = %node_key,
-                                        "No task group node instructions to append"
+                                        "No milestone node instructions to append"
                                     );
                                 }
                             }
@@ -1915,16 +1915,16 @@ pub trait ContainerService {
                 Ok(None) => {
                     tracing::warn!(
                         task_id = %task.id,
-                        task_group_id = %task_group_id,
-                        "Task group not found while building task prompt"
+                        milestone_id = %milestone_id,
+                        "Milestone not found while building task prompt"
                     );
                 }
                 Err(err) => {
                     tracing::warn!(
                         task_id = %task.id,
-                        task_group_id = %task_group_id,
+                        milestone_id = %milestone_id,
                         error = %err,
-                        "Failed to load task group while building task prompt"
+                        "Failed to load milestone while building task prompt"
                     );
                 }
             }
