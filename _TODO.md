@@ -30,9 +30,14 @@
 
 # Remaining Work
 
-- Archive OpenSpec change: `openspec/changes/add-milestones-and-objective-orchestration`
-- If desired before archive, re-run a final quick smoke after restarting the local app
-- Push branch when ready
+- Archived on 2026-03-10 via `openspec archive -y add-milestones-and-objective-orchestration`
+
+# Next Up
+
+- Pick one active change to implement next.
+- `openspec/changes/add-turn-continuation-orchestration`
+- `openspec/changes/consolidate-project-readonly-details-into-settings`
+- `openspec/changes/mcp-auto-collaboration-follow-up`
 
 # Helpful Local Artifacts
 

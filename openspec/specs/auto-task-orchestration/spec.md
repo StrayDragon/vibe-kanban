@@ -3,35 +3,20 @@
 ## Purpose
 TBD - created by archiving change add-optional-auto-orchestration. Update Purpose after archive.
 ## Requirements
-### Requirement: Optional project-level orchestration mode
-The system SHALL keep project execution manual by default. The system SHALL allow each project to configure an execution mode and scheduler limits for automatic orchestration.
-
-#### Scenario: New projects default to manual
-- **WHEN** a project is created without automation-specific input
-- **THEN** the project's effective execution mode is `manual`
-- **AND** the scheduler SHALL NOT automatically start inherited tasks for that project
-
-#### Scenario: Project enables auto orchestration
-- **WHEN** an operator updates a project's execution mode to `auto`
-- **THEN** the project stores scheduler concurrency and retry settings
-- **AND** eligible inherited tasks in that project become candidates for scheduler dispatch
-
 ### Requirement: Automatic orchestration of eligible internal tasks
-The scheduler SHALL only auto-dispatch internal tasks that are eligible under current project/task settings and runtime state. The scheduler SHALL reuse the existing task-attempt runtime path instead of creating a separate execution pipeline.
+The scheduler SHALL only auto-dispatch tasks that are eligible under milestone orchestration rules and current runtime state. The scheduler SHALL reuse the existing task-attempt runtime path instead of creating a separate execution pipeline.
 
-#### Scenario: Eligible task is auto-dispatched
-- **WHEN** a task is auto-managed, has no in-progress attempt, is not done/cancelled, and is otherwise eligible
-- **THEN** the scheduler starts an attempt through the existing orchestration flow
-- **AND** the task exposes dispatch state showing that it was claimed or is running
-
-#### Scenario: Grouped tasks stay unscheduled
-- **WHEN** a task is a task-group entry task or belongs to a task group node
+#### Scenario: Regular tasks are never auto-dispatched
+- **WHEN** a task is not linked to a milestone/task group node
 - **THEN** the scheduler SHALL NOT auto-dispatch it
-- **AND** the task SHALL expose a machine-readable reason that grouped tasks are not yet supported for auto orchestration
 
-#### Scenario: Manual project does not dispatch inherited tasks
-- **WHEN** a task inherits automation settings from a project in `manual` mode
-- **THEN** the scheduler SHALL NOT auto-dispatch the task
+#### Scenario: Milestone-managed node task is dispatched
+- **WHEN** a task belongs to a milestone/task group node
+- **AND** the milestone has automation enabled or an enqueued “run next step” request
+- **AND** the milestone has no other node task with an in-progress attempt
+- **AND** the node's predecessor nodes are all `done`
+- **AND** the node task is not terminal
+- **THEN** the scheduler SHALL dispatch the node task through the existing orchestration flow
 
 ### Requirement: Retry and review lifecycle
 The system SHALL persist automation lifecycle state for auto-managed tasks, including retries, blocked conditions, and human-review handoff.
@@ -68,39 +53,6 @@ The system SHALL keep a repo-versioned workflow prompt for unattended auto-orche
 - **WHEN** an auto-managed task runs under orchestration
 - **THEN** the prompt instructs the agent not to ask a human for generic follow-up actions
 - **AND** the prompt limits early exit to true blockers or explicit `vk` review handoff conditions
-
-### Requirement: Task-level automation override
-Each task SHALL support an automation override with values `inherit`, `manual`, and `auto`.
-
-#### Scenario: Task inherits project mode
-- **WHEN** a task automation override is `inherit`
-- **THEN** the task follows the project's execution mode
-
-#### Scenario: Task opts out of an auto project
-- **WHEN** a task automation override is `manual` in a project whose execution mode is `auto`
-- **THEN** the scheduler SHALL NOT auto-dispatch that task
-- **AND** the task SHALL expose a reason indicating manual override
-
-#### Scenario: Task opts into a manual project
-- **WHEN** a task automation override is `auto` in a project whose execution mode is `manual`
-- **THEN** the task becomes eligible for scheduler dispatch if all other eligibility checks pass
-
-### Requirement: Visible automation diagnostics and control surfaces
-The system SHALL expose automation state and non-dispatch reasons through both interactive and programmatic control surfaces.
-
-#### Scenario: Task responses include automation diagnostics
-- **WHEN** a client reads task list or task detail data
-- **THEN** each task includes project/task automation context, dispatch state, and any applicable non-dispatch diagnostic
-
-#### Scenario: User updates automation from interactive UI
-- **WHEN** a user changes project or task automation settings from the UI
-- **THEN** the persisted automation fields are updated
-- **AND** subsequent task/project reads reflect the new automation state
-
-#### Scenario: Programmatic client updates automation state
-- **WHEN** a programmatic caller updates project or task automation settings through supported mutation surfaces
-- **THEN** the same persisted automation fields are updated
-- **AND** the scheduler uses those updated values without requiring a separate orchestration-only API
 
 ### Requirement: Human-first ownership visibility
 The system SHALL make manual, auto-managed, and waiting-for-human-review states visually distinct in human-facing task surfaces.
@@ -140,19 +92,6 @@ Agent- or MCP-created follow-up tasks SHALL remain understandable to human opera
 - **WHEN** an agent or MCP caller creates a related task and requests automation
 - **THEN** project policy SHALL determine whether that request stays manual, inherits project behavior, or may run as explicit auto-managed work
 - **AND** the effective result SHALL be inspectable by the operator
-
-### Requirement: MCP automation controls remain safe and explicit
-Programmatic callers SHALL be able to request task-level automation without silently escalating project-wide automation.
-
-#### Scenario: MCP caller requests task-level auto mode
-- **WHEN** an MCP caller creates or updates a task with `automation_mode=auto`
-- **THEN** the system SHALL accept that request subject to normal task eligibility and project policy
-- **AND** subsequent reads SHALL expose the effective automation mode and any non-dispatch reason
-
-#### Scenario: Project-wide automation is not silently escalated by MCP
-- **WHEN** a programmatic caller creates or updates a task
-- **THEN** that mutation SHALL NOT implicitly change the owning project's execution mode
-- **AND** project-wide auto enablement SHALL require an explicit, separately modeled capability if supported in the future
 
 ### Requirement: Human and agent control transfer remains explicit
 The system SHALL make control transfer between human-driven and auto-managed execution legible to both interactive and programmatic clients.
