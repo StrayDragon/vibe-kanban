@@ -255,8 +255,27 @@ async function main() {
       intervalMs: 250,
     });
 
-    frontendProc = spawnLogged('pnpm', ['run', 'frontend:dev'], {
+    frontendProc = spawnLogged(
+      'pnpm',
+      [
+        'exec',
+        'vite',
+        '--host',
+        '127.0.0.1',
+        '--port',
+        String(frontendPort),
+        '--strictPort',
+      ],
+      {
       stdio: 'inherit',
+      // Vite defaults to binding to all interfaces (and on some machines that
+      // means IPv6), which can lead to "port in use" bumps that desync from
+      // VK_E2E_BASE_URL. For E2E we always bind to 127.0.0.1 and require the
+      // selected port.
+      //
+      // We intentionally run the frontend dev script directly from the
+      // frontend package to avoid inheriting root `frontend:dev` flags.
+      cwd: path.join(repoRoot, 'frontend'),
       env: {
         ...envCommon,
         FRONTEND_PORT: String(frontendPort),
@@ -264,7 +283,8 @@ async function main() {
         BACKEND_PORT: String(backendPort),
         VITE_OPEN: 'false',
       },
-    });
+      }
+    );
 
     await waitForHttpOk(`${baseUrl}/`, {
       timeoutMs: 120_000,
