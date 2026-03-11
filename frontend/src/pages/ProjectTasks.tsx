@@ -49,6 +49,7 @@ import { useProjectTasks } from '@/hooks/projects/useProjectTasks';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useHotkeysContext } from 'react-hotkeys-hook';
 import { TasksLayout, type LayoutMode } from '@/components/layout/TasksLayout';
+import { NotFoundState } from '@/components/layout/NotFoundState';
 import { PreviewPanel } from '@/components/panels/PreviewPanel';
 import { DiffsPanel } from '@/components/panels/DiffsPanel';
 import TaskAttemptPanel from '@/components/panels/TaskAttemptPanel';
@@ -126,7 +127,7 @@ function DiffsPanelContainer({
 }
 
 export function ProjectTasks() {
-  const { t } = useTranslation(['tasks', 'common']);
+  const { t } = useTranslation(['tasks', 'common', 'projects']);
   const { taskId, attemptId } = useParams<{
     projectId: string;
     taskId?: string;
@@ -140,6 +141,7 @@ export function ProjectTasks() {
 
   const {
     projectId,
+    project,
     isLoading: projectLoading,
     error: projectError,
   } = useProject();
@@ -674,6 +676,25 @@ export function ProjectTasks() {
   );
 
   const isInitialTasksLoad = isLoading && tasks.length === 0;
+  const isProjectMissing = Boolean(
+    projectId && !projectLoading && !project && !projectError
+  );
+
+  if (isProjectMissing) {
+    return (
+      <NotFoundState
+        title={t('common:notFound.title', 'Not found')}
+        description={t(
+          'projects:projectNotFound',
+          "The project you're looking for doesn't exist or has been deleted."
+        )}
+        primaryAction={{
+          label: t('common:notFound.backToTasks', 'Back to tasks'),
+          onClick: () => navigate(paths.overview()),
+        }}
+      />
+    );
+  }
 
   if (projectError) {
     return (

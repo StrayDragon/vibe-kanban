@@ -29,13 +29,14 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Check, Play, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, Check, Play, Plus, Trash2 } from 'lucide-react';
 import type { DragEndEvent } from '@/components/ui/shadcn-io/kanban';
 import {
   NewCard,
   NewCardContent,
   NewCardHeader,
 } from '@/components/ui/new-card';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Loader } from '@/components/ui/loader';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -67,6 +68,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
+import { NotFoundState } from '@/components/layout/NotFoundState';
 import { ExecutionProcessesProvider } from '@/contexts/ExecutionProcessesContext';
 import { ClickedElementsProvider } from '@/contexts/ClickedElementsProvider';
 import { ReviewProvider } from '@/contexts/ReviewProvider';
@@ -136,6 +138,20 @@ const createId = (prefix: string) => {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`;
 };
 
+const getErrorStatus = (error: unknown): number | null => {
+  if (!error || typeof error !== 'object') return null;
+
+  const candidate = error as {
+    status?: unknown;
+    statusCode?: unknown;
+  };
+
+  if (typeof candidate.status === 'number') return candidate.status;
+  if (typeof candidate.statusCode === 'number') return candidate.statusCode;
+
+  return null;
+};
+
 const executorProfileKey = (profile: ExecutorProfileId | null): string => {
   if (!profile) return 'null';
   return `${profile.executor}::${profile.variant ?? ''}`;
@@ -183,20 +199,26 @@ type PanelView = 'chat' | 'plan' | 'details';
 type MainView = 'workflow' | 'board';
 
 export function MilestoneWorkflow() {
-  const { t } = useTranslation('tasks');
+  const { t } = useTranslation(['tasks', 'common', 'projects']);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { projectId: routeProjectId, milestoneId } = useParams<{
     projectId: string;
     milestoneId: string;
   }>();
-  const { projectId: contextProjectId, project } = useProject();
+  const {
+    projectId: contextProjectId,
+    project,
+    isLoading: isProjectLoading,
+    error: projectError,
+  } = useProject();
   const { profiles, config } = useUserSystem();
   const projectId = routeProjectId ?? contextProjectId;
 
   const {
     data: milestone,
     isLoading: isMilestoneLoading,
+    error: milestoneError,
     refetch: refetchMilestone,
   } = useMilestone(milestoneId, { enabled: !!milestoneId });
   const {
@@ -1464,19 +1486,60 @@ export function MilestoneWorkflow() {
     [queryClient, refetchMilestone, resyncTasks]
   );
 
-  if (isMilestoneLoading) {
+  const milestoneErrorStatus = getErrorStatus(milestoneError);
+  const isProjectMissing = Boolean(
+    projectId && !isProjectLoading && !project && !projectError
+  );
+  const isMilestoneMissing =
+    milestoneErrorStatus === 404 ||
+    (!isMilestoneLoading && !milestoneError && !milestone);
+
+  if (isMilestoneLoading || (projectId && isProjectLoading && !project)) {
     return (
       <Loader message={t('loading', 'Loading...')} size={32} className="py-8" />
     );
   }
 
-  if (!milestone || !projectId) {
+  if (milestoneError && milestoneErrorStatus !== 404) {
     return (
-      <div className="p-6 text-muted-foreground">
-        {t('milestone.workflowMissing', 'Workflow not found.')}
+      <div className="p-6">
+        <Alert>
+          <AlertTitle className="flex items-center gap-2">
+            <AlertTriangle size="16" />
+            {t('common:states.error', 'Error')}
+          </AlertTitle>
+          <AlertDescription>
+            {milestoneError instanceof Error
+              ? milestoneError.message
+              : t('tasks:errors.loadMilestoneFailed', 'Failed to load milestone')}
+          </AlertDescription>
+        </Alert>
       </div>
     );
   }
+
+  if (!projectId || isProjectMissing || isMilestoneMissing) {
+    return (
+      <NotFoundState
+        title={t('common:notFound.title', 'Not found')}
+        description={t(
+          'tasks:milestone.workflowMissing',
+          'Workflow not found.'
+        )}
+        primaryAction={{
+          label: t('common:notFound.backToProject', 'Back to project'),
+          onClick: () =>
+            navigate(projectId ? paths.projectTasks(projectId) : paths.overview()),
+        }}
+        secondaryAction={{
+          label: t('common:notFound.backToTasks', 'Back to tasks'),
+          onClick: () => navigate(paths.overview()),
+        }}
+      />
+    );
+  }
+
+  const currentMilestone = milestone as Milestone;
 
   const descriptionContent = selectedTask?.description || '';
   const projectName = project?.name ?? 'Project';
@@ -1644,13 +1707,13 @@ export function MilestoneWorkflow() {
               </BreadcrumbItem>
               <BreadcrumbSeparator />
               <BreadcrumbItem>
-                <BreadcrumbPage>{milestone.title}</BreadcrumbPage>
+                <BreadcrumbPage>{currentMilestone.title}</BreadcrumbPage>
               </BreadcrumbItem>
             </BreadcrumbList>
           </Breadcrumb>
-          {milestone.description && (
+          {currentMilestone.description && (
             <div className="text-xs text-muted-foreground mt-1 line-clamp-2">
-              {milestone.description}
+              {currentMilestone.description}
             </div>
           )}
         </div>
@@ -1768,7 +1831,7 @@ export function MilestoneWorkflow() {
               {panelView === 'plan' ? (
                 isMasterSelected ? (
                   <MilestonePlanPanel
-                    milestone={milestone}
+                    milestone={currentMilestone}
                     entryTask={entryTask}
                     onMilestoneUpdated={handleMilestoneUpdatedFromPlan}
                   />
@@ -1970,7 +2033,7 @@ export function MilestoneWorkflow() {
                       <Label className="text-xs">Baseline branch</Label>
                       <div className="flex flex-wrap items-center gap-2">
                         <Input
-                          value={milestone.baseline_ref ?? ''}
+                          value={currentMilestone.baseline_ref ?? ''}
                           readOnly
                           className="h-8 font-mono text-xs flex-1 min-w-[180px]"
                         />
@@ -2033,7 +2096,7 @@ export function MilestoneWorkflow() {
                           <Play className="h-4 w-4 mr-1" />
                           Run next step
                         </Button>
-                        {milestone.run_next_step_requested_at && (
+                        {currentMilestone.run_next_step_requested_at && (
                           <Badge variant="outline" className="text-[10px]">
                             Queued
                           </Badge>

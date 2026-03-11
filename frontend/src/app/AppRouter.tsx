@@ -9,6 +9,7 @@ import { ProjectTasks } from '@/pages/ProjectTasks';
 import { ProjectArchives } from '@/pages/ProjectArchives';
 import { ProjectArchiveDetail } from '@/pages/ProjectArchiveDetail';
 import { MilestoneWorkflow } from '@/pages/MilestoneWorkflow';
+import { NotFoundPage } from '@/pages/NotFoundPage';
 import { TasksOverview } from '@/pages/TasksOverview';
 import { FullAttemptLogsPage } from '@/pages/FullAttemptLogs';
 import { usePreviousPath } from '@/hooks/utils/usePreviousPath';
@@ -147,6 +148,7 @@ export function AppRouter() {
                 path="/projects/:projectId/milestones/:milestoneId"
                 element={<MilestoneWorkflow />}
               />
+              <Route path="*" element={<NotFoundPage />} />
             </Route>
           </Routes>
         </div>

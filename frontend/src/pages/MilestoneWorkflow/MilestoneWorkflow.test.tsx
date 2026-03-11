@@ -3,17 +3,35 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const {
   milestoneState,
+  milestoneErrorState,
   projectTasksState,
   milestonesUpdateMock,
+  queryClientSetDataMock,
   refetchMilestoneMock,
 } = vi.hoisted(() => ({
   milestoneState: { current: null as unknown },
+  milestoneErrorState: { current: null as unknown },
   projectTasksState: {
     current: { tasks: [], tasksById: {}, isLoading: false } as unknown,
   },
   milestonesUpdateMock: vi.fn().mockResolvedValue({}),
+  queryClientSetDataMock: vi.fn(),
   refetchMilestoneMock: vi.fn().mockResolvedValue({}),
 }));
+
+vi.mock('@tanstack/react-query', async () => {
+  const actual =
+    await vi.importActual<typeof import('@tanstack/react-query')>(
+      '@tanstack/react-query'
+    );
+
+  return {
+    ...actual,
+    useQueryClient: () => ({
+      setQueryData: queryClientSetDataMock,
+    }),
+  };
+});
 
 vi.mock('@xyflow/react', async () => {
   const React = await import('react');
@@ -96,6 +114,7 @@ vi.mock('react-i18next', () => ({
 vi.mock('@/hooks/milestones/useMilestone', () => ({
   useMilestone: () => ({
     data: milestoneState.current,
+    error: milestoneErrorState.current,
     isLoading: false,
     refetch: refetchMilestoneMock,
   }),
@@ -113,6 +132,7 @@ vi.mock('@/contexts/ProjectContext', () => ({
   useProject: () => ({
     projectId: 'project-1',
     project: { name: 'Project' },
+    isLoading: false,
   }),
 }));
 
@@ -134,6 +154,8 @@ describe('MilestoneWorkflow', () => {
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
+    milestoneErrorState.current = null;
+    queryClientSetDataMock.mockClear();
   });
 
   it('persists node instructions and clears blank instructions', async () => {
@@ -188,6 +210,7 @@ describe('MilestoneWorkflow', () => {
 
     render(<MilestoneWorkflow />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Workflow' }));
     fireEvent.click(screen.getByTestId('node-node-a'));
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
 
@@ -217,6 +240,22 @@ describe('MilestoneWorkflow', () => {
         milestonesUpdateMock.mock.calls.length - 1
       ];
     expect(lastCall?.[1]?.graph?.nodes?.[0]?.instructions).toBeNull();
+  });
+
+  it('renders a 404 state when the milestone is missing', () => {
+    milestoneState.current = null;
+    milestoneErrorState.current = { status: 404, message: 'missing' };
+    projectTasksState.current = {
+      tasks: [],
+      tasksById: {},
+      isLoading: false,
+    };
+
+    render(<MilestoneWorkflow />);
+
+    expect(screen.getByText('Not found')).toBeTruthy();
+    expect(screen.getByText('Workflow not found.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Back to project' })).toBeTruthy();
   });
 
   it('preserves local draft when refreshed server data arrives', async () => {
@@ -263,6 +302,7 @@ describe('MilestoneWorkflow', () => {
 
     const view = render(<MilestoneWorkflow />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Workflow' }));
     fireEvent.click(screen.getByTestId('node-node-a'));
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
 

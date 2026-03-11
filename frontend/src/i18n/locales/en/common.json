@@ -23,6 +23,13 @@
     "success": "Success",
     "reconnecting": "Reconnecting"
   },
+  "notFound": {
+    "code": "404",
+    "title": "Not found",
+    "description": "The page or resource you requested could not be found.",
+    "backToTasks": "Back to tasks",
+    "backToProject": "Back to project"
+  },
   "language": {
     "browserDefault": "Browser Default"
   },
