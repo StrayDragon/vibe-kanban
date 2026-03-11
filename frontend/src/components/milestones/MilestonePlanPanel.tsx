@@ -29,11 +29,13 @@ type ParseResult =
       ok: true;
       plan: MilestonePlanV1;
       extractedJson: string | null;
+      extractedFrom: 'fenced' | 'embedded' | null;
     }
   | {
       ok: false;
       error: string;
       extractedJson: string | null;
+      extractedFrom: 'fenced' | 'embedded' | null;
     };
 
 function extractFencedJson(input: string): string | null {
@@ -51,30 +53,115 @@ function extractFencedJson(input: string): string | null {
   return null;
 }
 
+function extractEmbeddedJsonObject(input: string): string | null {
+  const text = input;
+  const firstBrace = text.indexOf('{');
+  if (firstBrace === -1) return null;
+
+  for (let start = firstBrace; start < text.length; start += 1) {
+    if (text[start] !== '{') continue;
+
+    let depth = 0;
+    let inString = false;
+    let escapeNext = false;
+
+    for (let i = start; i < text.length; i += 1) {
+      const ch = text[i];
+
+      if (inString) {
+        if (escapeNext) {
+          escapeNext = false;
+          continue;
+        }
+        if (ch === '\\') {
+          escapeNext = true;
+          continue;
+        }
+        if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === '{') {
+        depth += 1;
+        continue;
+      }
+      if (ch === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          const candidate = text.slice(start, i + 1).trim();
+          return candidate.length ? candidate : null;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 function parsePlanText(raw: string): ParseResult | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
 
-  let jsonText = trimmed;
-  let extractedJson: string | null = null;
+  const candidates: Array<{
+    json: string;
+    extractedJson: string | null;
+    extractedFrom: 'fenced' | 'embedded' | null;
+  }> = [];
 
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-    extractedJson = extractFencedJson(trimmed);
-    if (extractedJson) {
-      jsonText = extractedJson;
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    candidates.push({ json: trimmed, extractedJson: null, extractedFrom: null });
+  }
+
+  const fenced = extractFencedJson(trimmed);
+  if (fenced) {
+    candidates.push({ json: fenced, extractedJson: fenced, extractedFrom: 'fenced' });
+  }
+
+  const embedded = extractEmbeddedJsonObject(trimmed);
+  if (embedded) {
+    candidates.push({
+      json: embedded,
+      extractedJson: embedded,
+      extractedFrom: 'embedded',
+    });
+  }
+
+  const seen = new Set<string>();
+  let lastError: string | null = null;
+
+  for (const candidate of candidates) {
+    if (seen.has(candidate.json)) continue;
+    seen.add(candidate.json);
+    try {
+      const parsed = JSON.parse(candidate.json) as MilestonePlanV1;
+      if (!parsed || typeof parsed !== 'object') {
+        lastError = 'Plan payload must be a JSON object.';
+        continue;
+      }
+      return {
+        ok: true,
+        plan: parsed,
+        extractedJson: candidate.extractedJson,
+        extractedFrom: candidate.extractedFrom,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      lastError = `Invalid JSON: ${msg}`;
     }
   }
 
-  try {
-    const parsed = JSON.parse(jsonText) as MilestonePlanV1;
-    if (!parsed || typeof parsed !== 'object') {
-      return { ok: false, error: 'Plan payload must be a JSON object.', extractedJson };
-    }
-    return { ok: true, plan: parsed, extractedJson };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: `Invalid JSON: ${msg}`, extractedJson };
-  }
+  return {
+    ok: false,
+    error: lastError ?? 'Invalid JSON',
+    extractedJson: null,
+    extractedFrom: null,
+  };
 }
 
 function prettyJson(value: unknown): string {
@@ -336,7 +423,14 @@ export function MilestonePlanPanel({
             </Badge>
             <span>nodes: {parsed.plan.nodes?.length ?? 0}</span>
             <span>edges: {parsed.plan.edges?.length ?? 0}</span>
-            {parsed.extractedJson && <span>extracted from fenced block</span>}
+            {parsed.extractedJson && (
+              <span>
+                extracted from{' '}
+                {parsed.extractedFrom === 'embedded'
+                  ? 'embedded JSON'
+                  : 'fenced block'}
+              </span>
+            )}
           </div>
         )}
 
