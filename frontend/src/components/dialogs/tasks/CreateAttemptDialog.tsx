@@ -32,6 +32,8 @@ import type {
   BaseCodingAgent,
   ExecutorProfileId,
   MilestoneNode,
+  TaskAttemptPromptPreset,
+  Workspace,
 } from 'shared/types';
 import { useKeySubmitTask, Scope } from '@/keyboard';
 import { useCliDependencyPreflight } from '@/hooks/config/useCliDependencyPreflight';
@@ -47,10 +49,12 @@ const getNodeBaseStrategy = (node: MilestoneNode): MilestoneNodeBaseStrategy =>
 
 export interface CreateAttemptDialogProps {
   taskId: string;
+  promptPreset?: TaskAttemptPromptPreset | null;
+  onCreated?: (attempt: Workspace) => void;
 }
 
 const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
-  ({ taskId }) => {
+  ({ taskId, promptPreset = null, onCreated }) => {
     const modal = useModal();
     const navigate = useNavigateWithSearch();
     const { projectId } = useProject();
@@ -59,6 +63,10 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
     const { createAttempt, isCreating, error } = useAttemptCreation({
       taskId,
       onSuccess: (attempt) => {
+        if (onCreated) {
+          onCreated(attempt);
+          return;
+        }
         if (projectId) {
           navigate(paths.attempt(projectId, taskId, attempt.id));
         }
@@ -224,6 +232,7 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
         await createAttempt({
           profile: effectiveProfile,
           repos,
+          promptPreset,
         });
 
         modal.hide();

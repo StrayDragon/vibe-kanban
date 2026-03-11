@@ -1008,6 +1008,24 @@ pub async fn create_task_attempt(
         key,
         hash,
         || async {
+            let prompt_override = match payload.prompt_preset.clone() {
+                Some(TaskAttemptPromptPreset::MilestonePlanning) => {
+                    let task = Task::find_by_id(&deployment.db().pool, payload.task_id)
+                        .await?
+                        .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+                    if task.task_kind != db::models::task::TaskKind::Milestone {
+                        return Err(ApiError::BadRequest(
+                            "Milestone planning preset can only be used for milestone entry tasks"
+                                .to_string(),
+                        ));
+                    }
+                    Some(
+                        crate::milestone_planning::MILESTONE_PLANNING_PROMPT_TEMPLATE.to_string(),
+                    )
+                }
+                None => None,
+            };
+
             let runtime = DeploymentTaskRuntime::new(deployment.container());
             let workspace = orchestration::create_task_attempt(
                 &runtime,
@@ -1023,7 +1041,7 @@ pub async fn create_task_attempt(
                             target_branch: repo.target_branch.clone(),
                         })
                         .collect(),
-                    prompt_override: None,
+                    prompt_override,
                 },
             )
             .await?;
@@ -1169,6 +1187,11 @@ pub async fn merge_task_attempt(
         .parent_task(pool)
         .await?
         .ok_or(ApiError::Workspace(WorkspaceError::TaskNotFound))?;
+    if task.task_kind == db::models::task::TaskKind::Milestone {
+        return Err(ApiError::BadRequest(
+            "Milestone entry tasks cannot be merged".to_string(),
+        ));
+    }
     let task_uuid_str = task.id.to_string();
     let first_uuid_section = task_uuid_str.split('-').next().unwrap_or(&task_uuid_str);
 
@@ -2710,6 +2733,7 @@ mod tests {
                 repo_id,
                 target_branch: "main".to_string(),
             }],
+            prompt_preset: None,
         };
 
         let attempt_result = create_task_attempt(

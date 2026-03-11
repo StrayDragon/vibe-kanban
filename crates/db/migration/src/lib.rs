@@ -16,6 +16,7 @@ mod m20260307020000_task_lineage_source;
 mod m20260307110000_workspace_lifecycle_hooks;
 mod m20260309000000_milestones_hard_cut;
 mod m20260310000000_rename_task_groups_to_milestones;
+mod m20260311000000_milestone_plan_applications;
 
 pub struct Migrator;
 
@@ -39,6 +40,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260307110000_workspace_lifecycle_hooks::Migration),
             Box::new(m20260309000000_milestones_hard_cut::Migration),
             Box::new(m20260310000000_rename_task_groups_to_milestones::Migration),
+            Box::new(m20260311000000_milestone_plan_applications::Migration),
         ]
     }
 }

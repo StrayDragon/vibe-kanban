@@ -6,6 +6,7 @@ pub mod http;
 pub mod mcp;
 pub mod middleware;
 pub mod milestone_dispatch;
+pub mod milestone_planning;
 pub mod routes;
 pub mod task_runtime;
 #[cfg(test)]

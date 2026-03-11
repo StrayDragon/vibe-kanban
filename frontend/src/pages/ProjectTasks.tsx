@@ -65,7 +65,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import { AttemptHeaderActions } from '@/components/panels/AttemptHeaderActions';
 import { TaskPanelHeaderActions } from '@/components/panels/TaskPanelHeaderActions';
-import { getMilestoneId, isMilestoneSubtask } from '@/utils/milestone';
+import { getMilestoneId, isMilestoneEntry, isMilestoneSubtask } from '@/utils/milestone';
 import { toast } from '@/components/ui/toast';
 import { useOptimisticTasksStore } from '@/stores/useOptimisticTasksStore';
 
@@ -112,7 +112,7 @@ function DiffsPanelContainer({
       key={attempt?.id}
       selectedAttempt={attempt}
       gitOps={
-        attempt && selectedTask
+        attempt && selectedTask && !isMilestoneEntry(selectedTask)
           ? {
               task: selectedTask,
               branchStatus: branchStatus ?? null,

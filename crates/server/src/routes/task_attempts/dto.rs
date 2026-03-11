@@ -132,11 +132,19 @@ pub struct WorkspaceWithSession {
     pub session: Option<Session>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskAttemptPromptPreset {
+    MilestonePlanning,
+}
+
 #[derive(Debug, Serialize, Deserialize, TS)]
 pub struct CreateTaskAttemptBody {
     pub task_id: Uuid,
     pub executor_profile_id: ExecutorProfileId,
     pub repos: Vec<WorkspaceRepoInput>,
+    #[serde(default)]
+    pub prompt_preset: Option<TaskAttemptPromptPreset>,
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]

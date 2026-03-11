@@ -312,7 +312,7 @@ function DiffsPanelContainer({
       key={attempt?.id}
       selectedAttempt={attempt}
       gitOps={
-        attempt && selectedTask
+        attempt && selectedTask && !isMilestoneEntry(selectedTask)
           ? {
               task: selectedTask,
               branchStatus: branchStatus ?? null,

@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 import { cn } from '@/lib/utils';
 import { ProfileVariantBadge } from '@/components/common/ProfileVariantBadge';
+import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -29,6 +30,7 @@ export type MilestoneNodeData = {
   baseStrategy?: MilestoneNodeBaseStrategy;
   requiresApproval?: boolean;
   isMaster?: boolean;
+  isPlannerCreated?: boolean;
   onUpdate?: (update: MilestoneNodeInlineUpdate) => void;
 };
 
@@ -83,6 +85,14 @@ const MilestoneNode = ({ data, selected }: NodeProps<MilestoneFlowNode>) => {
               typeof data.phase === 'number' &&
               ` · Phase ${data.phase}`}
           </div>
+          {data.isPlannerCreated && !isMaster && (
+            <Badge
+              variant="outline"
+              className="mt-1 h-5 w-fit px-2 text-[10px] uppercase tracking-[0.08em]"
+            >
+              Planned
+            </Badge>
+          )}
         </div>
         {data.status && (
           <span className="text-[10px] uppercase tracking-[0.06em] text-muted-foreground">

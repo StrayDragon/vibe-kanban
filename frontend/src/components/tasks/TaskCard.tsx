@@ -4,6 +4,7 @@ import type { TaskWithAttemptStatus } from 'shared/types';
 import { KanbanCard } from '@/components/ui/shadcn-io/kanban';
 import { ActionsDropdown } from '@/components/ui/actions-dropdown';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { useNavigateWithSearch } from '@/hooks';
 import { paths } from '@/lib/paths';
 import { attemptsApi } from '@/lib/api';
@@ -148,6 +149,15 @@ export function TaskCard({
           <span className="inline-flex w-fit rounded-full border border-muted-foreground/40 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
             {typeLabel}
           </span>
+          {task.created_by_kind === 'milestone_planner' && (
+            <Badge
+              variant="outline"
+              className="h-5 px-2 text-[10px] uppercase tracking-[0.12em]"
+              data-testid="planner-created-badge"
+            >
+              Planned
+            </Badge>
+          )}
         </div>
         {groupSummary && groupSummary.subtaskCount > 0 && (
           <div className="text-xs text-muted-foreground">

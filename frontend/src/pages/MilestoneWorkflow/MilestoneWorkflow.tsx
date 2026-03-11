@@ -26,6 +26,7 @@ import {
   useState,
   type KeyboardEvent,
 } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Check, Play, Plus, Trash2 } from 'lucide-react';
@@ -72,7 +73,7 @@ import { ReviewProvider } from '@/contexts/ReviewProvider';
 import { useProject } from '@/contexts/ProjectContext';
 import { useProjectTasks } from '@/hooks/projects/useProjectTasks';
 import { useTaskAttemptsWithSessions } from '@/hooks/task-attempts/useTaskAttempts';
-import { useMilestone } from '@/hooks/milestones/useMilestone';
+import { milestoneKeys, useMilestone } from '@/hooks/milestones/useMilestone';
 import { useDebouncedCallback } from '@/hooks/utils/useDebouncedCallback';
 import TaskAttemptPanel from '@/components/panels/TaskAttemptPanel';
 import WYSIWYGEditor from '@/components/ui/wysiwyg';
@@ -83,6 +84,7 @@ import TaskKanbanBoard, {
 import MilestoneNodeComponent, {
   type MilestoneFlowNode,
 } from '@/components/milestones/MilestoneNode';
+import { MilestonePlanPanel } from '@/components/milestones/MilestonePlanPanel';
 import { useUserSystem } from '@/components/ConfigProvider';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
 import { getMilestoneId, isMilestoneEntry } from '@/utils/milestone';
@@ -93,6 +95,7 @@ import {
   MilestoneNodeBaseStrategy,
   MilestoneNodeKind,
   type ExecutorProfileId,
+  type Milestone,
   type MilestoneAutomationMode,
   type MilestoneEdge,
   type MilestoneGraph,
@@ -176,12 +179,13 @@ type FlowNode = MilestoneFlowNode;
 type FlowEdge = Edge;
 
 type NewNodeMode = 'existing' | 'new';
-type PanelView = 'chat' | 'details';
+type PanelView = 'chat' | 'plan' | 'details';
 type MainView = 'workflow' | 'board';
 
 export function MilestoneWorkflow() {
   const { t } = useTranslation('tasks');
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { projectId: routeProjectId, milestoneId } = useParams<{
     projectId: string;
     milestoneId: string;
@@ -199,6 +203,7 @@ export function MilestoneWorkflow() {
     tasks,
     tasksById,
     isLoading: isTasksLoading,
+    resync: resyncTasks,
   } = useProjectTasks(projectId ?? '');
 
   const [graphDraft, setGraphDraft] = useState<MilestoneGraph | null>(null);
@@ -227,14 +232,18 @@ export function MilestoneWorkflow() {
   }, [graphDraftKey, serverGraphKey]);
 
   const lastGraphMilestoneIdRef = useRef<string | null>(null);
+  const lastServerGraphKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!milestone) {
       lastGraphMilestoneIdRef.current = null;
+      lastServerGraphKeyRef.current = null;
       setGraphDraft(null);
       return;
     }
     const nextGraph = normalizeGraph(milestone.graph);
     const nextKey = graphKey(nextGraph);
+    const prevServerKey = lastServerGraphKeyRef.current;
+    lastServerGraphKeyRef.current = nextKey;
     setGraphError(null);
 
     setGraphDraft((prev) => {
@@ -244,10 +253,11 @@ export function MilestoneWorkflow() {
       if (isNewMilestone || !prev) return nextGraph;
 
       const prevKey = graphKey(prev);
-      if (prevKey !== nextKey) {
-        return prev;
-      }
-      return nextGraph;
+      if (prevKey === nextKey) return nextGraph;
+
+      // Only overwrite the local draft if it still matched the previous server graph.
+      const draftMatchesServer = !prevServerKey || prevKey === prevServerKey;
+      return draftMatchesServer ? nextGraph : prev;
     });
   }, [milestone]);
 
@@ -311,6 +321,7 @@ export function MilestoneWorkflow() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeLabel, setSelectedEdgeLabel] = useState('');
   const [mainView, setMainView] = useState<MainView>('board');
+  const [plannerOnly, setPlannerOnly] = useState(false);
   const [panelView, setPanelView] = useState<PanelView>('chat');
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [statusValue, setStatusValue] = useState<TaskStatus | null>(null);
@@ -562,6 +573,7 @@ export function MilestoneWorkflow() {
             status: task?.status,
             kind: node.kind,
             taskId,
+            isPlannerCreated: task?.created_by_kind === 'milestone_planner',
             phase: node.phase,
             executorProfileId: getNodeExecutorProfileId(node),
             baseStrategy: getNodeBaseStrategy(node),
@@ -596,6 +608,7 @@ export function MilestoneWorkflow() {
             kind: MilestoneNodeKind.task,
             taskId: entryTask?.id,
             isMaster: true,
+            isPlannerCreated: entryTask?.created_by_kind === 'milestone_planner',
           },
         };
 
@@ -708,6 +721,7 @@ export function MilestoneWorkflow() {
     tasks.forEach((task) => {
       if (task.task_kind === 'milestone') return;
       if (!task.milestone_id || task.milestone_id !== milestone.id) return;
+      if (plannerOnly && task.created_by_kind !== 'milestone_planner') return;
       columns[task.status]?.push(task);
     });
 
@@ -719,7 +733,7 @@ export function MilestoneWorkflow() {
     });
 
     return columns;
-  }, [milestone, tasks]);
+  }, [milestone, plannerOnly, tasks]);
 
   const handleMilestoneBoardDragEnd = useCallback(
     async (event: DragEndEvent) => {
@@ -1440,6 +1454,16 @@ export function MilestoneWorkflow() {
     }
   }, [refetchMilestone, selectedTask]);
 
+  const handleMilestoneUpdatedFromPlan = useCallback(
+    (updated: Milestone) => {
+      setGraphDraft(null);
+      queryClient.setQueryData(milestoneKeys.byId(updated.id), updated);
+      void refetchMilestone();
+      resyncTasks();
+    },
+    [queryClient, refetchMilestone, resyncTasks]
+  );
+
   if (isMilestoneLoading) {
     return (
       <Loader message={t('loading', 'Loading...')} size={32} className="py-8" />
@@ -1461,7 +1485,9 @@ export function MilestoneWorkflow() {
       ? Boolean(newNodeTaskId)
       : newNodeTitle.trim().length > 0;
   const panelTitle =
-    panelView === 'chat'
+    panelView === 'plan'
+      ? 'Plan'
+      : panelView === 'chat'
       ? 'Chat'
       : selectedEdge
         ? 'Edge details'
@@ -1519,6 +1545,22 @@ export function MilestoneWorkflow() {
                 Board
               </Button>
             </div>
+
+            {mainView === 'board' && (
+              <div className="flex items-center gap-2">
+                <Label
+                  htmlFor="milestone-planner-only"
+                  className="text-xs text-muted-foreground"
+                >
+                  Planned only
+                </Label>
+                <Switch
+                  id="milestone-planner-only"
+                  checked={plannerOnly}
+                  onCheckedChange={setPlannerOnly}
+                />
+              </div>
+            )}
 
             <div className="flex items-center gap-2">
               <Label className="text-xs text-muted-foreground">Baseline</Label>
@@ -1690,14 +1732,26 @@ export function MilestoneWorkflow() {
             <NewCardHeader
               actions={
                 <div className="flex items-center gap-1">
-                  <Button
-                    size="xs"
-                    variant={panelView === 'chat' ? 'default' : 'outline'}
-                    onClick={() => setPanelView('chat')}
-                    disabled={Boolean(selectedEdgeId) || isMasterSelected}
-                  >
-                    Chat
-                  </Button>
+                  {!isMasterSelected && (
+                    <Button
+                      size="xs"
+                      variant={panelView === 'chat' ? 'default' : 'outline'}
+                      onClick={() => setPanelView('chat')}
+                      disabled={Boolean(selectedEdgeId)}
+                    >
+                      Chat
+                    </Button>
+                  )}
+                  {isMasterSelected && (
+                    <Button
+                      size="xs"
+                      variant={panelView === 'plan' ? 'default' : 'outline'}
+                      onClick={() => setPanelView('plan')}
+                      disabled={Boolean(selectedEdgeId)}
+                    >
+                      Plan
+                    </Button>
+                  )}
                   <Button
                     size="xs"
                     variant={panelView === 'details' ? 'default' : 'outline'}
@@ -1711,7 +1765,19 @@ export function MilestoneWorkflow() {
               <div className="text-sm font-semibold">{panelTitle}</div>
             </NewCardHeader>
             <NewCardContent className="flex-1 min-h-0">
-              {panelView === 'chat' ? (
+              {panelView === 'plan' ? (
+                isMasterSelected ? (
+                  <MilestonePlanPanel
+                    milestone={milestone}
+                    entryTask={entryTask}
+                    onMilestoneUpdated={handleMilestoneUpdatedFromPlan}
+                  />
+                ) : (
+                  <div className="p-4 text-sm text-muted-foreground">
+                    Select the primary milestone node to open planning.
+                  </div>
+                )
+              ) : panelView === 'chat' ? (
                 !selectedTask ? (
                   <div className="p-4 text-sm text-muted-foreground">
                     {isMasterSelected
@@ -1941,8 +2007,14 @@ export function MilestoneWorkflow() {
 
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <Label className="text-xs">Automation</Label>
+                        <Label
+                          htmlFor="milestone-automation-toggle"
+                          className="text-xs"
+                        >
+                          Automation
+                        </Label>
                         <Switch
+                          id="milestone-automation-toggle"
                           checked={automationModeValue === 'auto'}
                           onCheckedChange={handleAutomationModeToggle}
                           disabled={isUpdatingMilestone}

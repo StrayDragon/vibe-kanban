@@ -28,6 +28,7 @@ import { openTaskForm } from '@/lib/openTaskForm';
 import { useExecutionProcesses } from '@/hooks/execution-processes/useExecutionProcesses';
 import { useTaskAttemptsWithSessions } from '@/hooks/task-attempts/useTaskAttempts';
 import { useEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
+import { isMilestoneEntry } from '@/utils/milestone';
 
 import { useLocation, useNavigate } from 'react-router-dom';
 
@@ -63,6 +64,7 @@ export function ActionsDropdown({
 
   const hasAttemptActions = Boolean(attempt);
   const hasTaskActions = Boolean(task);
+  const isMilestoneTask = Boolean(task && isMilestoneEntry(task));
   const canShowHookSection = context !== 'card';
   const latestHookAttempt = useMemo(() => {
     if (!canShowHookSection) {
@@ -293,12 +295,14 @@ export function ActionsDropdown({
                       {t('actionsMenu.createSubtask')}
                     </DropdownMenuItem>
                   )}
-                  <DropdownMenuItem
-                    disabled={!attempt?.id || !task}
-                    onClick={handleGitActions}
-                  >
-                    {t('actionsMenu.gitActions')}
-                  </DropdownMenuItem>
+                  {!isMilestoneTask && (
+                    <DropdownMenuItem
+                      disabled={!attempt?.id || !task}
+                      onClick={handleGitActions}
+                    >
+                      {t('actionsMenu.gitActions')}
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem
                     disabled={!attempt?.id}
                     onClick={handleEditBranchName}

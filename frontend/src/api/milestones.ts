@@ -1,6 +1,9 @@
 import type {
   CreateMilestone,
   Milestone,
+  MilestonePlanApplyResponse,
+  MilestonePlanPreviewResponse,
+  MilestonePlanV1,
   PushMilestoneBaselineRequest,
   PushMilestoneBaselineResponse,
   RunNextMilestoneStepResponse,
@@ -58,5 +61,33 @@ export const milestonesApi = {
       }
     );
     return handleApiResponse<PushMilestoneBaselineResponse>(response);
+  },
+
+  previewPlan: async (
+    milestoneId: string,
+    plan: MilestonePlanV1
+  ): Promise<MilestonePlanPreviewResponse> => {
+    const response = await makeRequest(`/api/milestones/${milestoneId}/plan/preview`, {
+      method: 'POST',
+      body: JSON.stringify(plan),
+    });
+    return handleApiResponse<MilestonePlanPreviewResponse>(response);
+  },
+
+  applyPlan: async (
+    milestoneId: string,
+    plan: MilestonePlanV1,
+    options?: { idempotencyKey?: string }
+  ): Promise<MilestonePlanApplyResponse> => {
+    const headers: Record<string, string> = {};
+    if (options?.idempotencyKey) {
+      headers['Idempotency-Key'] = options.idempotencyKey;
+    }
+    const response = await makeRequest(`/api/milestones/${milestoneId}/plan/apply`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(plan),
+    });
+    return handleApiResponse<MilestonePlanApplyResponse>(response);
   },
 };

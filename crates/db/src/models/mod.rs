@@ -15,6 +15,7 @@ pub mod image;
 pub mod mcp_tool_task;
 pub mod merge;
 pub mod milestone;
+pub mod milestone_plan_application;
 pub mod project;
 pub mod project_repo;
 pub mod repo;

@@ -167,7 +167,7 @@ test.describe('milestone automation', () => {
 
     await expect(page.getByText(/queued next step/i)).toBeVisible();
 
-    const automationSwitch = page.getByRole('switch').first();
+    const automationSwitch = page.getByRole('switch', { name: 'Automation' });
     await expect(automationSwitch).toHaveAttribute('aria-checked', 'false');
     const automationResponse = page.waitForResponse((response) => {
       const request = response.request();

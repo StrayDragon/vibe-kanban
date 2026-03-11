@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::{
     entities::{milestone, task},
     events::{EVENT_TASK_UPDATED, TaskEventPayload},
-    models::{event_outbox::EventOutbox, ids},
+    models::{event_outbox::EventOutbox, ids, milestone_plan_application::MilestonePlanApplicationSummary},
     types::{MilestoneAutomationMode, TaskKind, TaskStatus},
 };
 
@@ -61,6 +61,8 @@ pub struct Milestone {
     pub schema_version: i32,
     pub graph: MilestoneGraph,
     pub suggested_status: TaskStatus,
+    #[serde(default)]
+    pub last_plan_application: Option<MilestonePlanApplicationSummary>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -337,6 +339,7 @@ impl Milestone {
     async fn from_model<C: ConnectionTrait>(
         db: &C,
         model: milestone::Model,
+        last_plan_application: Option<MilestonePlanApplicationSummary>,
     ) -> Result<Self, MilestoneError> {
         let project_uuid = ids::project_uuid_by_id(db, model.project_id)
             .await?
@@ -365,6 +368,7 @@ impl Milestone {
             schema_version: model.schema_version,
             graph: graph_with_status,
             suggested_status,
+            last_plan_application,
             created_at: model.created_at.into(),
             updated_at: model.updated_at.into(),
         })
@@ -380,7 +384,18 @@ impl Milestone {
             .await?;
 
         match record {
-            Some(model) => Ok(Some(Self::from_model(db, model).await?)),
+            Some(model) => {
+                let last_plan_application =
+                    crate::models::milestone_plan_application::find_latest_by_milestone_row_id(
+                        db,
+                        model.id,
+                        model.uuid,
+                    )
+                    .await?;
+                Ok(Some(
+                    Self::from_model(db, model, last_plan_application).await?,
+                ))
+            }
             None => Ok(None),
         }
     }
@@ -399,9 +414,14 @@ impl Milestone {
             .all(db)
             .await?;
 
+        let row_ids: Vec<i64> = models.iter().map(|model| model.id).collect();
+        let last_plan_applications = crate::models::milestone_plan_application::find_latest_by_milestone_row_ids(db, &row_ids)
+            .await?;
+
         let mut groups = Vec::with_capacity(models.len());
         for model in models {
-            groups.push(Self::from_model(db, model).await?);
+            let last_plan_application = last_plan_applications.get(&model.id).cloned();
+            groups.push(Self::from_model(db, model, last_plan_application).await?);
         }
         Ok(groups)
     }
@@ -412,9 +432,14 @@ impl Milestone {
             .all(db)
             .await?;
 
+        let row_ids: Vec<i64> = models.iter().map(|model| model.id).collect();
+        let last_plan_applications = crate::models::milestone_plan_application::find_latest_by_milestone_row_ids(db, &row_ids)
+            .await?;
+
         let mut groups = Vec::with_capacity(models.len());
         for model in models {
-            groups.push(Self::from_model(db, model).await?);
+            let last_plan_application = last_plan_applications.get(&model.id).cloned();
+            groups.push(Self::from_model(db, model, last_plan_application).await?);
         }
         Ok(groups)
     }
@@ -498,7 +523,7 @@ impl Milestone {
         Self::sync_task_links(db, model.id, project_row_id, &data.graph).await?;
         Self::sync_entry_task_statuses_by_row_id(db, model.id).await?;
 
-        Self::from_model(db, model).await
+        Self::from_model(db, model, None).await
     }
 
     pub async fn update<C: ConnectionTrait>(
@@ -607,7 +632,14 @@ impl Milestone {
             Self::sync_entry_task_statuses_by_row_id(db, updated.id).await?;
         }
 
-        Self::from_model(db, updated).await
+        let last_plan_application =
+            crate::models::milestone_plan_application::find_latest_by_milestone_row_id(
+                db,
+                updated.id,
+                updated.uuid,
+            )
+            .await?;
+        Self::from_model(db, updated, last_plan_application).await
     }
 
     pub async fn request_run_next_step<C: ConnectionTrait>(

@@ -52,7 +52,7 @@ export type TaskKind = "default" | "milestone";
 
 export type Task = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, milestone_id: string | null, milestone_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
 
-export type TaskCreatedByKind = "human_ui" | "mcp" | "scheduler" | "agent_followup";
+export type TaskCreatedByKind = "human_ui" | "mcp" | "scheduler" | "agent_followup" | "milestone_planner";
 
 export type TaskWithAttemptStatus = { has_in_progress_attempt: boolean, last_attempt_failed: boolean, executor: string, dispatch_state: TaskDispatchState | null, id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, milestone_id: string | null, milestone_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
 
@@ -74,7 +74,9 @@ export type CreateTask = { project_id: string, title: string, description: strin
 
 export type UpdateTask = { title: string | null, description: string | null, status: TaskStatus | null, parent_workspace_id: string | null, image_ids: Array<string> | null, };
 
-export type Milestone = { id: string, project_id: string, title: string, description: string | null, objective: string | null, definition_of_done: string | null, default_executor_profile_id: ExecutorProfileId | null, automation_mode: MilestoneAutomationMode, run_next_step_requested_at: string | null, status: TaskStatus, baseline_ref: string, schema_version: number, graph: MilestoneGraph, suggested_status: TaskStatus, created_at: string, updated_at: string, };
+export type Milestone = { id: string, project_id: string, title: string, description: string | null, objective: string | null, definition_of_done: string | null, default_executor_profile_id: ExecutorProfileId | null, automation_mode: MilestoneAutomationMode, run_next_step_requested_at: string | null, status: TaskStatus, baseline_ref: string, schema_version: number, graph: MilestoneGraph, suggested_status: TaskStatus, last_plan_application: MilestonePlanApplicationSummary | null, created_at: string, updated_at: string, };
+
+export type MilestonePlanApplicationSummary = { id: string, milestone_id: string, schema_version: number, applied_by_kind: TaskCreatedByKind, idempotency_key: string | null, applied_at: string, };
 
 export type CreateMilestone = { project_id: string, title: string, description: string | null, objective: string | null, definition_of_done: string | null, default_executor_profile_id: ExecutorProfileId | null, automation_mode: MilestoneAutomationMode | null, status: TaskStatus | null, baseline_ref: string | null, schema_version: number, graph: MilestoneGraph, };
 
@@ -105,6 +107,41 @@ export enum MilestoneNodeKind { task = "task", checkpoint = "checkpoint", merge 
 export enum MilestoneNodeBaseStrategy { topology = "topology", baseline = "baseline" }
 
 export type MilestoneEdge = { id: string, from: string, to: string, data_flow: string | null, };
+
+export type MilestonePlanV1 = { schema_version: number, milestone: MilestonePlanMilestonePatchV1, nodes: Array<MilestonePlanNodeV1>, edges: Array<MilestonePlanEdgeV1>, };
+
+export type MilestonePlanMilestonePatchV1 = { objective: string | null, definition_of_done: string | null, 
+/**
+ * Mirrors `UpdateMilestone.default_executor_profile_id` semantics:
+ * - None: no change
+ * - Some(Some(id)): set
+ * - Some(None): clear
+ */
+default_executor_profile_id: ExecutorProfileId | null | null, automation_mode: MilestoneAutomationMode | null, baseline_ref: string | null, };
+
+export type MilestonePlanCreateTaskV1 = { title: string, description: string | null, };
+
+export type MilestonePlanNodeV1 = { id: string, kind: MilestoneNodeKind, phase: number, executor_profile_id: ExecutorProfileId | null, base_strategy: MilestoneNodeBaseStrategy, instructions: string | null, requires_approval: boolean | null, layout: MilestoneNodeLayout | null, task_id: string | null, create_task: MilestonePlanCreateTaskV1 | null, };
+
+export type MilestonePlanEdgeV1 = { from: string, to: string, data_flow: string | null, };
+
+export type MilestonePlanMetadataField = "objective" | "definition_of_done" | "default_executor_profile" | "automation_mode" | "baseline_ref";
+
+export type MilestonePlanPreviewMetadataChange = { field: MilestonePlanMetadataField, from: string | null, to: string | null, };
+
+export type MilestonePlanPreviewTaskToCreate = { node_id: string, title: string, description: string | null, };
+
+export type MilestonePlanPreviewTaskLink = { node_id: string, task_id: string, };
+
+export type MilestonePlanEdgeKeyV1 = { from: string, to: string, data_flow: string | null, };
+
+export type MilestonePlanPreviewNodeDiff = { existing: Array<string>, planned: Array<string>, added: Array<string>, removed: Array<string>, };
+
+export type MilestonePlanPreviewEdgeDiff = { existing: Array<MilestonePlanEdgeKeyV1>, planned: Array<MilestonePlanEdgeKeyV1>, added: Array<MilestonePlanEdgeKeyV1>, removed: Array<MilestonePlanEdgeKeyV1>, };
+
+export type MilestonePlanPreviewResponse = { metadata_changes: Array<MilestonePlanPreviewMetadataChange>, tasks_to_create: Array<MilestonePlanPreviewTaskToCreate>, task_links: Array<MilestonePlanPreviewTaskLink>, node_diff: MilestonePlanPreviewNodeDiff, edge_diff: MilestonePlanPreviewEdgeDiff, };
+
+export type MilestonePlanApplyResponse = { milestone: Milestone, created_tasks: Array<Task>, applied_at: string, };
 
 export type DraftFollowUpData = { message: string, variant: string | null, };
 
@@ -262,7 +299,9 @@ export type LogHistoryPage = { entries: Array<IndexedLogEntry>, next_cursor: big
 
 export type LogStreamEvent = { "type": "append", entry_index: bigint, entry: PatchType, } | { "type": "replace", entry_index: bigint, entry: PatchType, } | { "type": "finished" };
 
-export type CreateTaskAttemptBody = { task_id: string, executor_profile_id: ExecutorProfileId, repos: Array<WorkspaceRepoInput>, };
+export type CreateTaskAttemptBody = { task_id: string, executor_profile_id: ExecutorProfileId, repos: Array<WorkspaceRepoInput>, prompt_preset: TaskAttemptPromptPreset | null, };
+
+export type TaskAttemptPromptPreset = "milestone_planning";
 
 export type WorkspaceRepoInput = { repo_id: string, target_branch: string, };
 

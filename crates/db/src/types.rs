@@ -86,6 +86,8 @@ pub enum TaskCreatedByKind {
     Scheduler,
     #[sea_orm(string_value = "agent_followup")]
     AgentFollowup,
+    #[sea_orm(string_value = "milestone_planner")]
+    MilestonePlanner,
 }
 
 #[derive(

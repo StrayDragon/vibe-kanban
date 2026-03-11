@@ -17,6 +17,8 @@ function sourceLabel(kind: TaskWithAttemptStatus['created_by_kind']) {
   switch (kind) {
     case 'agent_followup':
       return 'Agent Follow-up';
+    case 'milestone_planner':
+      return 'Milestone Planner';
     case 'mcp':
       return 'MCP';
     case 'scheduler':
