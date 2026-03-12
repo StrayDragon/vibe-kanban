@@ -365,7 +365,9 @@ export function MilestonePlanPanel({
     <div className="h-full min-h-0 flex flex-col gap-3">
       <div className="rounded-lg border bg-background/60 p-3 space-y-3">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-sm font-semibold">Plan</div>
+          <div className="text-sm font-semibold">
+            {t('milestone.planner.planInputTitle', 'Plan input')}
+          </div>
           <div className="flex items-center gap-2">
             <Button
               size="xs"
@@ -407,9 +409,10 @@ export function MilestonePlanPanel({
           value={planText}
           onChange={(e) => setPlanText(e.target.value)}
           rows={10}
-          placeholder={
+          placeholder={t(
+            'milestone.planner.planInputPlaceholder',
             'Paste a MilestonePlanV1 JSON payload, or paste agent output containing a fenced plan block.'
-          }
+          )}
           className="text-xs font-mono"
         />
 
@@ -528,7 +531,9 @@ export function MilestonePlanPanel({
 
       <div className="flex-1 min-h-0 rounded-lg border bg-background/60 overflow-hidden">
         <div className="p-3 border-b flex items-center justify-between gap-2">
-          <div className="text-sm font-semibold">Guide</div>
+          <div className="text-sm font-semibold">
+            {t('milestone.planner.guideTitle', 'Guide')}
+          </div>
           <Button
             size="xs"
             variant="outline"

@@ -91,7 +91,24 @@
     "task": "任务"
   },
   "milestone": {
-    "workflowMissing": "未找到工作流。"
+    "workflowMissing": "未找到工作流。",
+    "details": {
+      "objective": {
+        "label": "目标",
+        "placeholder": "成功的标准是什么？",
+        "help": "用于 Guide 规划，并作为里程碑元数据保存。"
+      },
+      "definitionOfDone": {
+        "label": "完成标准",
+        "placeholder": "验收标准与完成检查清单",
+        "help": "用于判断是否完成，也会用于规划与审阅。"
+      }
+    },
+    "planner": {
+      "planInputTitle": "计划输入",
+      "planInputPlaceholder": "粘贴 MilestonePlanV1 JSON，或粘贴包含 fenced plan block 的 agent 输出。",
+      "guideTitle": "Guide"
+    }
   },
   "filters": {
     "sharedToggleAria": "切换共享任务",

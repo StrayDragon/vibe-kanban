@@ -75,7 +75,24 @@
     }
   },
   "milestone": {
-    "workflowMissing": "Workflow not found."
+    "workflowMissing": "Workflow not found.",
+    "details": {
+      "objective": {
+        "label": "Objective",
+        "placeholder": "What does success look like?",
+        "help": "Used by guide attempts and stored as milestone metadata."
+      },
+      "definitionOfDone": {
+        "label": "Definition of done",
+        "placeholder": "Acceptance criteria and completion checklist",
+        "help": "Acceptance criteria for completion. Used in planning and review."
+      }
+    },
+    "planner": {
+      "planInputTitle": "Plan input",
+      "planInputPlaceholder": "Paste a MilestonePlanV1 JSON payload, or paste agent output containing a fenced plan block.",
+      "guideTitle": "Guide"
+    }
   },
   "actions": {
     "addTask": "Add task",

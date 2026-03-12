@@ -2209,31 +2209,56 @@ export function MilestoneWorkflow() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label className="text-xs">Objective</Label>
+                      <Label className="text-xs">
+                        {t('milestone.details.objective.label', 'Objective')}
+                      </Label>
                       <Textarea
                         value={objectiveValue}
                         onChange={(event) =>
                           setObjectiveValue(event.target.value)
                         }
                         onBlur={handleObjectiveSave}
-                        placeholder="What does success look like?"
+                        placeholder={t(
+                          'milestone.details.objective.placeholder',
+                          'What does success look like?'
+                        )}
                         className="min-h-[80px]"
                         disabled={isUpdatingMilestone}
                       />
+                      <div className="text-[11px] text-muted-foreground">
+                        {t(
+                          'milestone.details.objective.help',
+                          'Used by guide attempts and stored as milestone metadata.'
+                        )}
+                      </div>
                     </div>
 
                     <div className="space-y-2">
-                      <Label className="text-xs">Definition of done</Label>
+                      <Label className="text-xs">
+                        {t(
+                          'milestone.details.definitionOfDone.label',
+                          'Definition of done'
+                        )}
+                      </Label>
                       <Textarea
                         value={definitionOfDoneValue}
                         onChange={(event) =>
                           setDefinitionOfDoneValue(event.target.value)
                         }
                         onBlur={handleDefinitionOfDoneSave}
-                        placeholder="Acceptance criteria and completion checklist"
+                        placeholder={t(
+                          'milestone.details.definitionOfDone.placeholder',
+                          'Acceptance criteria and completion checklist'
+                        )}
                         className="min-h-[90px]"
                         disabled={isUpdatingMilestone}
                       />
+                      <div className="text-[11px] text-muted-foreground">
+                        {t(
+                          'milestone.details.definitionOfDone.help',
+                          'Acceptance criteria for completion. Used in planning and review.'
+                        )}
+                      </div>
                     </div>
                   </div>
                 ) : (
