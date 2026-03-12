@@ -2,9 +2,7 @@
 
 ## Purpose
 为外部编排器与人类接管场景提供 project/task/attempt 级别的增量活动拉取能力，并在 attempt 观测中支持低频调用与低延迟体验。
-
 ## Requirements
-
 ### Requirement: Project activity can be tailed incrementally
 The system SHALL expose an MCP tool to tail project activity events. The tool SHALL support incremental polling via `after_event_id` and older paging via `cursor`.
 
@@ -47,6 +45,17 @@ Invalid `wait_ms` usage (e.g. missing `after_log_index`) SHALL return a structur
 #### Scenario: Attempt feed long-polls for new logs
 - **WHEN** a client calls `tail_attempt_feed` with `after_log_index=K` and `wait_ms=T` and there are no new logs yet
 - **THEN** the server blocks for up to T milliseconds and returns as soon as a new log entry or a pending approval appears
+
+### Requirement: Activity feeds expose orchestration transition events
+The system SHALL publish structured orchestration transition events through existing activity/feed surfaces.
+
+#### Scenario: Review-ready transition is published
+- **WHEN** an auto-managed task enters a review-required state
+- **THEN** the activity/feed surfaces include a structured transition event describing that state change
+
+#### Scenario: Human take-over transition is published
+- **WHEN** a human pauses or takes over an auto-managed task
+- **THEN** the activity/feed surfaces include a structured transition event with the persisted transfer reason
 
 ## Compression Notes
 - Former `Reject mixed pagination modes` scenario is covered by `mcp-task-tools` → `Consistent pagination semantics` and `api-error-model` (`code=mixed_pagination`).

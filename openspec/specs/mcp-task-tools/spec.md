@@ -2,9 +2,7 @@
 
 ## Purpose
 将 Vibe Kanban 的 MCP 接口作为外部编排器（OpenClaw 类）的 control plane，并围绕 project/task/attempt + approvals + feed 提供稳定、可恢复、可高频调用的工具集。
-
 ## Requirements
-
 ### Requirement: MCP task tool set
 The system SHALL expose a coherent MCP tool set for task, attempt, approvals, and activity operations with consistent naming and schemas.
 
@@ -98,3 +96,17 @@ The system SHALL expose tools to claim, read, and release attempt control. A cla
 #### Scenario: Tools include annotations
 - **WHEN** 客户端请求 MCP tool 列表
 - **THEN** `annotations` 字段存在且与工具行为一致（只读/破坏性/幂等提示不互相矛盾）
+
+### Requirement: MCP task tools expose a focused review handoff reader
+The MCP task tool set SHALL include a focused read surface for review-ready auto-managed outcomes.
+
+#### Scenario: Dedicated review handoff tool is discoverable
+- **WHEN** an MCP client lists available tools
+- **THEN** the tool list includes a read-only handoff tool for review-ready auto-managed tasks
+- **AND** the tool publishes an output schema for machine parsing
+
+#### Scenario: Handoff tool accepts task or attempt context
+- **WHEN** a client provides either a task identifier or an attempt identifier for a review-ready outcome
+- **THEN** the handoff tool resolves the latest relevant review state
+- **AND** the response identifies which task and attempt the handoff payload describes
+
