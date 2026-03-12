@@ -1,4 +1,4 @@
-use db::models::task::TaskUpdateParams;
+use db::models::{task::TaskUpdateParams, task_orchestration_state::TaskOrchestrationState};
 use rmcp::{tool, tool_router};
 
 use super::*;
@@ -588,6 +588,386 @@ Avoid: Expecting attempt/session info here (use list_tasks/list_task_attempts)."
     }
 
     #[tool(
+        description = r#"Use when: Fetch a concise review handoff payload for an auto-managed task.
+Required: at least one of {task_id, attempt_id}
+Optional: task_id, attempt_id
+Next: update_task, claim_attempt_control, send_follow_up, respond_approval, tail_task_activity
+Avoid: Scraping raw logs; use tail_attempt_feed only when you need full execution details."#,
+        output_schema = tool_output_schema::<GetReviewHandoffResponse>(),
+        annotations(read_only_hint = true)
+    )]
+    async fn get_review_handoff(
+        &self,
+        Parameters(GetReviewHandoffRequest {
+            task_id,
+            attempt_id,
+        }): Parameters<GetReviewHandoffRequest>,
+    ) -> Result<CallToolResult, ErrorData> {
+        if task_id.is_none() && attempt_id.is_none() {
+            return Self::err_with(
+                "Missing target identifier (task_id OR attempt_id is required).",
+                None,
+                Some(
+                    "Provide task_id from list_tasks, or attempt_id from list_task_attempts."
+                        .to_string(),
+                ),
+                Some("missing_required"),
+                Some(false),
+            );
+        }
+
+        let pool = &self.deployment.db().pool;
+
+        let (resolved_task_id, resolved_attempt_id, workspace) = match attempt_id {
+            Some(attempt_id) => {
+                let workspace = Workspace::find_by_id(pool, attempt_id)
+                    .await
+                    .map_err(|e| {
+                        ErrorData::internal_error(
+                            "Failed to load workspace",
+                            Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
+                        )
+                    })?
+                    .ok_or_else(|| {
+                        ErrorData::invalid_params(
+                            "Attempt not found",
+                            Some(json!({ "attempt_id": attempt_id })),
+                        )
+                    })?;
+
+                if let Some(task_id) = task_id
+                    && workspace.task_id != task_id
+                {
+                    return Self::err_with(
+                        "attempt_id does not belong to task_id.",
+                        Some(json!({
+                            "task_id": task_id,
+                            "attempt_id": attempt_id,
+                            "attempt_task_id": workspace.task_id,
+                        })),
+                        Some(
+                            "Provide a matching task_id/attempt_id pair, or omit task_id."
+                                .to_string(),
+                        ),
+                        Some("invalid_argument"),
+                        Some(false),
+                    );
+                }
+
+                (workspace.task_id, Some(workspace.id), workspace)
+            }
+            None => {
+                let task_id = task_id.expect("checked at least one id is present");
+                let latest_attempt = Task::latest_attempt_workspace_id(pool, task_id)
+                    .await
+                    .map_err(|e| {
+                        ErrorData::internal_error(
+                            "Failed to resolve latest attempt",
+                            Some(json!({ "error": e.to_string(), "task_id": task_id })),
+                        )
+                    })?;
+
+                if let Some(attempt_id) = latest_attempt {
+                    let workspace = Workspace::find_by_id(pool, attempt_id)
+                        .await
+                        .map_err(|e| {
+                            ErrorData::internal_error(
+                                "Failed to load workspace",
+                                Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
+                            )
+                        })?
+                        .ok_or_else(|| {
+                            ErrorData::invalid_params(
+                                "Attempt not found",
+                                Some(json!({ "attempt_id": attempt_id })),
+                            )
+                        })?;
+                    (task_id, Some(attempt_id), workspace)
+                } else {
+                    let task = Task::find_by_id_with_attempt_status(pool, task_id)
+                        .await
+                        .map_err(|e| {
+                            ErrorData::internal_error(
+                                "Failed to load task",
+                                Some(json!({ "error": e.to_string(), "task_id": task_id })),
+                            )
+                        })?
+                        .ok_or_else(|| {
+                            ErrorData::invalid_params(
+                                "Task not found",
+                                Some(json!({ "task_id": task_id })),
+                            )
+                        })?;
+
+                    return Self::success(&GetReviewHandoffResponse {
+                        status: McpReviewHandoffStatus::Unavailable,
+                        code: Some("no_attempt".to_string()),
+                        message: Some(
+                            "No attempt exists for this task yet; handoff is unavailable."
+                                .to_string(),
+                        ),
+                        task_id: Some(task_id.to_string()),
+                        attempt_id: None,
+                        payload: Some(McpReviewHandoffPayload {
+                            task: McpTask::from_task_with_status(task),
+                            latest_summary: McpHandoffText {
+                                available: false,
+                                value: None,
+                                reason: Some("no_attempt".to_string()),
+                            },
+                            diff_summary: McpReviewHandoffDiffSummary {
+                                available: false,
+                                summary: None,
+                                blocked: None,
+                                blocked_reason: None,
+                                reason: Some("no_attempt".to_string()),
+                            },
+                            validation: McpReviewHandoffValidationSummary {
+                                available: false,
+                                latest_hook_phase: None,
+                                latest_hook_status: None,
+                                latest_hook_ran_at: None,
+                                latest_hook_error_summary: None,
+                            },
+                            pending_approvals: Vec::new(),
+                            next_actions: Vec::new(),
+                        }),
+                    });
+                }
+            }
+        };
+
+        let task = Task::find_by_id_with_attempt_status(pool, resolved_task_id)
+            .await
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to load task",
+                    Some(json!({ "error": e.to_string(), "task_id": resolved_task_id })),
+                )
+            })?
+            .ok_or_else(|| {
+                ErrorData::invalid_params(
+                    "Task not found",
+                    Some(json!({ "task_id": resolved_task_id })),
+                )
+            })?;
+
+        let is_auto_managed = task.orchestration.is_some();
+        if !is_auto_managed {
+            return Self::success(&GetReviewHandoffResponse {
+                status: McpReviewHandoffStatus::NotApplicable,
+                code: Some("not_auto_managed".to_string()),
+                message: Some(
+                    "Task is not auto-managed; review handoff is not applicable.".to_string(),
+                ),
+                task_id: Some(resolved_task_id.to_string()),
+                attempt_id: resolved_attempt_id.map(|id| id.to_string()),
+                payload: None,
+            });
+        }
+
+        let review_ready = task.status == TaskStatus::InReview
+            && !task.has_in_progress_attempt
+            && !task.last_attempt_failed;
+        if !review_ready {
+            return Self::success(&GetReviewHandoffResponse {
+                status: McpReviewHandoffStatus::Unavailable,
+                code: Some("not_review_ready".to_string()),
+                message: Some("Task is not in a review-ready auto-managed state.".to_string()),
+                task_id: Some(resolved_task_id.to_string()),
+                attempt_id: resolved_attempt_id.map(|id| id.to_string()),
+                payload: None,
+            });
+        }
+
+        let mut pending_approvals = Vec::new();
+        if let Some(attempt_id) = resolved_attempt_id {
+            let (pending, _) = self
+                .deployment
+                .approvals()
+                .list_approvals_by_attempt(pool, attempt_id, Some("pending"), 200, None)
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        "Failed to list approvals",
+                        Some(json!({ "error": e.to_string(), "attempt_id": attempt_id })),
+                    )
+                })?;
+            pending_approvals = pending.into_iter().map(Self::approval_to_summary).collect();
+        }
+
+        let session = if let Some(attempt_id) = resolved_attempt_id {
+            Session::find_latest_by_workspace_id(pool, attempt_id)
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
+
+        let latest_summary = if let Some(session) = session.as_ref() {
+            match CodingAgentTurn::tail_by_session_id(pool, session.id, 1, None).await {
+                Ok(page) => match page.entries.last().and_then(|turn| turn.summary.clone()) {
+                    Some(summary) if !summary.trim().is_empty() => McpHandoffText {
+                        available: true,
+                        value: Some(summary),
+                        reason: None,
+                    },
+                    _ => McpHandoffText {
+                        available: false,
+                        value: None,
+                        reason: Some("no_summary_yet".to_string()),
+                    },
+                },
+                Err(err) => McpHandoffText {
+                    available: false,
+                    value: None,
+                    reason: Some(format!("failed_to_load_summary: {err}")),
+                },
+            }
+        } else {
+            McpHandoffText {
+                available: false,
+                value: None,
+                reason: Some("no_session".to_string()),
+            }
+        };
+
+        let (diff_summary, validation) = {
+            let latest_hook = workspace.latest_hook_run.clone();
+            let validation = McpReviewHandoffValidationSummary {
+                available: true,
+                latest_hook_phase: latest_hook.as_ref().map(|hook| hook.phase.to_string()),
+                latest_hook_status: latest_hook.as_ref().map(|hook| hook.status.to_string()),
+                latest_hook_ran_at: latest_hook.as_ref().map(|hook| hook.ran_at.to_rfc3339()),
+                latest_hook_error_summary: latest_hook.and_then(|hook| hook.error_summary),
+            };
+
+            let diff_summary = match resolved_attempt_id {
+                Some(_attempt_id) => {
+                    let query = crate::routes::task_attempts::AttemptChangesQuery { force: false };
+                    match crate::routes::task_attempts::get_task_attempt_changes(
+                        axum::Extension(workspace.clone()),
+                        axum::extract::State(self.deployment.clone()),
+                        axum::extract::Query(query),
+                    )
+                    .await
+                    {
+                        Ok(ResponseJson(response)) => {
+                            let message = response.message().map(str::to_string);
+                            let changes = response.into_data();
+                            match changes {
+                                Some(changes) => {
+                                    let blocked_reason = match changes.blocked_reason {
+                                        Some(
+                                            crate::routes::task_attempts::AttemptChangesBlockedReason::SummaryFailed,
+                                        ) => Some(McpAttemptChangesBlockedReason::SummaryFailed),
+                                        Some(
+                                            crate::routes::task_attempts::AttemptChangesBlockedReason::ThresholdExceeded,
+                                        ) => Some(McpAttemptChangesBlockedReason::ThresholdExceeded),
+                                        None => None,
+                                    };
+                                    McpReviewHandoffDiffSummary {
+                                        available: true,
+                                        summary: Some(McpAttemptChangesSummary {
+                                            file_count: changes.summary.file_count,
+                                            added: changes.summary.added,
+                                            deleted: changes.summary.deleted,
+                                            total_bytes: changes.summary.total_bytes,
+                                        }),
+                                        blocked: Some(changes.blocked),
+                                        blocked_reason,
+                                        reason: None,
+                                    }
+                                }
+                                None => McpReviewHandoffDiffSummary {
+                                    available: false,
+                                    summary: None,
+                                    blocked: None,
+                                    blocked_reason: None,
+                                    reason: Some(
+                                        message.unwrap_or_else(|| "missing_data".to_string()),
+                                    ),
+                                },
+                            }
+                        }
+                        Err(err) => McpReviewHandoffDiffSummary {
+                            available: false,
+                            summary: None,
+                            blocked: None,
+                            blocked_reason: None,
+                            reason: Some(err.to_string()),
+                        },
+                    }
+                }
+                None => McpReviewHandoffDiffSummary {
+                    available: false,
+                    summary: None,
+                    blocked: None,
+                    blocked_reason: None,
+                    reason: Some("no_attempt".to_string()),
+                },
+            };
+
+            (diff_summary, validation)
+        };
+
+        let mut next_actions = vec![
+            McpReviewHandoffNextAction {
+                code: McpReviewHandoffNextActionCode::Approve,
+                label: "Approve".to_string(),
+                hint: Some("Update task status to done if the outcome is acceptable.".to_string()),
+            },
+            McpReviewHandoffNextAction {
+                code: McpReviewHandoffNextActionCode::Rework,
+                label: "Request rework".to_string(),
+                hint: Some(
+                    "Claim attempt control and send a follow-up prompt to address issues."
+                        .to_string(),
+                ),
+            },
+            McpReviewHandoffNextAction {
+                code: McpReviewHandoffNextActionCode::TakeOver,
+                label: "Take over".to_string(),
+                hint: Some(
+                    "Force-claim attempt control to operate as the human operator.".to_string(),
+                ),
+            },
+        ];
+
+        if task
+            .orchestration
+            .as_ref()
+            .and_then(|diag| diag.last_control_transfer.as_ref())
+            .is_some_and(|transfer| {
+                transfer.reason_code == db::types::TaskControlTransferReasonCode::HumanTakeover
+            })
+        {
+            next_actions.push(McpReviewHandoffNextAction {
+                code: McpReviewHandoffNextActionCode::ResumeAuto,
+                label: "Resume automation".to_string(),
+                hint: Some("Resume auto-managed execution after human takeover.".to_string()),
+            });
+        }
+
+        Self::success(&GetReviewHandoffResponse {
+            status: McpReviewHandoffStatus::Ok,
+            code: None,
+            message: None,
+            task_id: Some(resolved_task_id.to_string()),
+            attempt_id: resolved_attempt_id.map(|id| id.to_string()),
+            payload: Some(McpReviewHandoffPayload {
+                task: McpTask::from_task_with_status(task),
+                latest_summary,
+                diff_summary,
+                validation,
+                pending_approvals,
+                next_actions,
+            }),
+        })
+    }
+
+    #[tool(
         description = r#"Use when: Create a new task/ticket in a project.
 Required: project_id, title
 Optional: description, origin_task_id, created_by_kind, request_id
@@ -958,8 +1338,8 @@ Avoid: Assuming a task always has an attempt."#,
 
     #[tool(
         description = r#"Use when: Create a new attempt/workspace for a task and start the executor.
-Required: task_id, executor, repos
-Optional: variant, request_id, prompt
+Required: task_id, repos
+Optional: executor, variant, request_id, prompt
 Next: tail_attempt_feed, send_follow_up, claim_attempt_control
 Avoid: Empty repos; guessing executor (use list_executors)."#,
         output_schema = tool_output_schema::<StartAttemptResponse>(),
@@ -1026,35 +1406,16 @@ Avoid: Empty repos; guessing executor (use list_executors)."#,
             );
         }
 
-        let executor_trimmed = executor.trim();
-        if executor_trimmed.is_empty() {
-            return Self::err_with(
-                "Executor must not be empty.",
-                None,
-                Some("Provide a supported executor (e.g., CLAUDE_CODE).".to_string()),
-                Some("missing_required"),
-                None,
-            );
-        }
-
-        let normalized_executor = executor_trimmed.replace('-', "_").to_ascii_uppercase();
-        let base_executor = match BaseCodingAgent::from_str(&normalized_executor) {
-            Ok(exec) => exec,
-            Err(_) => {
-                return Self::err_with(
-                    format!("Unknown executor '{executor_trimmed}'."),
-                    Some(json!({ "value": executor_trimmed })),
-                    Some(
-                        "Call list_executors to see valid executor names and variants.".to_string(),
-                    ),
-                    Some("invalid_argument"),
-                    None,
-                );
+        let executor = executor.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
             }
-        };
-
-        let variant = variant.and_then(|v| {
-            let trimmed = v.trim();
+        });
+        let variant = variant.and_then(|value| {
+            let trimmed = value.trim();
             if trimmed.is_empty() {
                 None
             } else {
@@ -1062,10 +1423,192 @@ Avoid: Empty repos; guessing executor (use list_executors)."#,
             }
         });
 
-        let executor_profile_id = ExecutorProfileId {
-            executor: base_executor,
-            variant,
+        let override_requested = executor.is_some() || variant.is_some();
+        let default_executor_profile_id = {
+            let config = self.deployment.config().read().await;
+            config.executor_profile.clone()
         };
+
+        let base_executor = if let Some(executor_trimmed) = executor.as_deref() {
+            let normalized_executor = executor_trimmed.replace('-', "_").to_ascii_uppercase();
+            match BaseCodingAgent::from_str(&normalized_executor) {
+                Ok(exec) => exec,
+                Err(_) => {
+                    return Self::err_with(
+                        format!("Unknown executor '{executor_trimmed}'."),
+                        Some(json!({ "value": executor_trimmed })),
+                        Some(
+                            "Call list_executors to see valid executor names and variants."
+                                .to_string(),
+                        ),
+                        Some("invalid_argument"),
+                        None,
+                    );
+                }
+            }
+        } else {
+            default_executor_profile_id.executor
+        };
+
+        let executor_profile_id = if override_requested {
+            ExecutorProfileId {
+                executor: base_executor,
+                variant: variant.clone(),
+            }
+        } else {
+            default_executor_profile_id
+        };
+
+        if override_requested
+            && task.is_auto_managed(pool).await.map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to resolve task automation scope",
+                    Some(json!({
+                        "error": e.to_string(),
+                        "task_id": task_id,
+                        "project_id": task.project_id,
+                    })),
+                )
+            })?
+        {
+            let project = Project::find_by_id(pool, task.project_id)
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        "Failed to load project",
+                        Some(json!({
+                            "error": e.to_string(),
+                            "project_id": task.project_id,
+                            "task_id": task_id,
+                        })),
+                    )
+                })?
+                .ok_or_else(|| {
+                    ErrorData::internal_error(
+                        "Task references missing project",
+                        Some(json!({ "project_id": task.project_id, "task_id": task_id })),
+                    )
+                })?;
+
+            let allowed = match project.mcp_auto_executor_policy_mode {
+                db::types::ProjectMcpExecutorPolicyMode::InheritAll => true,
+                db::types::ProjectMcpExecutorPolicyMode::AllowList => {
+                    let requested_variant = executor_profile_id
+                        .variant
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty());
+
+                    project
+                        .mcp_auto_executor_policy_allow_list
+                        .iter()
+                        .any(|entry| {
+                            let exec_raw = entry.executor.trim();
+                            if exec_raw.is_empty() {
+                                return false;
+                            }
+                            let normalized = exec_raw.replace('-', "_").to_ascii_uppercase();
+                            let Ok(entry_exec) = BaseCodingAgent::from_str(&normalized) else {
+                                return false;
+                            };
+                            if entry_exec != executor_profile_id.executor {
+                                return false;
+                            }
+
+                            let entry_variant = entry
+                                .variant
+                                .as_deref()
+                                .map(str::trim)
+                                .filter(|v| !v.is_empty());
+
+                            entry_variant == requested_variant
+                        })
+                }
+            };
+
+            if !allowed {
+                let detail = format!(
+                    "executor={} variant={}",
+                    executor_profile_id.executor,
+                    executor_profile_id
+                        .variant
+                        .as_deref()
+                        .unwrap_or("<default>")
+                );
+
+                TaskOrchestrationState::record_control_transfer(
+                    pool,
+                    task_id,
+                    db::types::TaskControlTransferReasonCode::PolicyRejectedProfile,
+                    Some(detail.clone()),
+                )
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        "Failed to persist policy rejection diagnostic",
+                        Some(json!({
+                            "error": e.to_string(),
+                            "task_id": task_id,
+                            "project_id": task.project_id,
+                        })),
+                    )
+                })?;
+
+                match serde_json::to_value(db::events::TaskOrchestrationTransitionEventPayload {
+                    task_id,
+                    project_id: task.project_id,
+                    reason_code: db::types::TaskControlTransferReasonCode::PolicyRejectedProfile,
+                    detail: Some(detail.clone()),
+                }) {
+                    Ok(payload) => {
+                        if let Err(err) = EventOutbox::enqueue(
+                            pool,
+                            db::events::EVENT_TASK_ORCHESTRATION_TRANSITION,
+                            "task",
+                            task_id,
+                            payload,
+                        )
+                        .await
+                        {
+                            tracing::warn!(
+                                task_id = %task_id,
+                                project_id = %task.project_id,
+                                error = %err,
+                                "failed to enqueue orchestration transition event"
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            task_id = %task_id,
+                            project_id = %task.project_id,
+                            error = %err,
+                            "failed to serialize orchestration transition payload"
+                        );
+                    }
+                }
+
+                return Self::err_with(
+                    "Requested executor profile rejected by project policy.",
+                    Some(json!({
+                        "tool": "start_attempt",
+                        "task_id": task_id,
+                        "project_id": task.project_id,
+                        "requested_executor": executor_profile_id.executor.to_string(),
+                        "requested_variant": executor_profile_id.variant,
+                        "policy_mode": project.mcp_auto_executor_policy_mode.to_string(),
+                        "allow_list_len": project.mcp_auto_executor_policy_allow_list.len(),
+                        "diagnostic_detail": detail,
+                    })),
+                    Some(
+                        "Remove the override (executor/variant), or ask a project operator to allow-list this profile."
+                            .to_string(),
+                    ),
+                    Some(MCP_CODE_PROFILE_POLICY_REJECTED),
+                    Some(false),
+                );
+            }
+        }
 
         #[derive(Serialize)]
         struct RepoSpecForHash {
@@ -1101,7 +1644,7 @@ Avoid: Empty repos; guessing executor (use list_executors)."#,
         #[derive(Serialize)]
         struct StartAttemptIdempotencyPayload<'a> {
             task_id: Uuid,
-            executor: &'a str,
+            executor: &'a Option<String>,
             variant: &'a Option<String>,
             repos: &'a [RepoSpecForHash],
             prompt: &'a Option<String>,
@@ -1109,7 +1652,7 @@ Avoid: Empty repos; guessing executor (use list_executors)."#,
 
         let payload_hash = Self::request_hash(&StartAttemptIdempotencyPayload {
             task_id,
-            executor: executor_trimmed,
+            executor: &executor,
             variant: &executor_profile_id.variant,
             repos: &repo_specs_for_hash,
             prompt: &prompt,
@@ -1590,6 +2133,245 @@ Avoid: Providing both attempt_id and session_id; missing prompt."#,
             .await
         {
             return Ok(err);
+        }
+
+        let variant = variant.and_then(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+
+        if variant.is_some() {
+            let session = Session::find_by_id(pool, session_id)
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        "Failed to load session",
+                        Some(json!({ "error": e.to_string(), "session_id": session_id })),
+                    )
+                })?
+                .ok_or_else(|| {
+                    ErrorData::invalid_params(
+                        "Session not found",
+                        Some(json!({ "session_id": session_id })),
+                    )
+                })?;
+
+            let workspace = Workspace::find_by_id(pool, session.workspace_id)
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        "Failed to load workspace",
+                        Some(json!({
+                            "error": e.to_string(),
+                            "workspace_id": session.workspace_id,
+                            "session_id": session_id,
+                        })),
+                    )
+                })?
+                .ok_or_else(|| {
+                    ErrorData::internal_error(
+                        "Session references missing workspace",
+                        Some(json!({
+                            "workspace_id": session.workspace_id,
+                            "session_id": session_id,
+                        })),
+                    )
+                })?;
+
+            let task = Task::find_by_id(pool, workspace.task_id)
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        "Failed to load task",
+                        Some(json!({ "error": e.to_string(), "task_id": workspace.task_id })),
+                    )
+                })?
+                .ok_or_else(|| {
+                    ErrorData::internal_error(
+                        "Workspace references missing task",
+                        Some(json!({
+                            "task_id": workspace.task_id,
+                            "attempt_id": workspace.id,
+                        })),
+                    )
+                })?;
+
+            if task.is_auto_managed(pool).await.map_err(|e| {
+                ErrorData::internal_error(
+                    "Failed to resolve task automation scope",
+                    Some(json!({
+                        "error": e.to_string(),
+                        "task_id": task.id,
+                        "project_id": task.project_id,
+                    })),
+                )
+            })? {
+                let project = Project::find_by_id(pool, task.project_id)
+                    .await
+                    .map_err(|e| {
+                        ErrorData::internal_error(
+                            "Failed to load project",
+                            Some(json!({
+                                "error": e.to_string(),
+                                "project_id": task.project_id,
+                                "task_id": task.id,
+                            })),
+                        )
+                    })?
+                    .ok_or_else(|| {
+                        ErrorData::internal_error(
+                            "Task references missing project",
+                            Some(json!({ "project_id": task.project_id, "task_id": task.id })),
+                        )
+                    })?;
+
+                let initial_executor_profile_id =
+                    ExecutionProcess::latest_executor_profile_for_session(pool, session.id)
+                        .await
+                        .map_err(|e| {
+                            ErrorData::internal_error(
+                                "Failed to resolve executor profile for session",
+                                Some(json!({
+                                    "code": "invalid_state",
+                                    "error": e.to_string(),
+                                    "session_id": session.id,
+                                })),
+                            )
+                        })?;
+
+                let executor_profile_id = ExecutorProfileId {
+                    executor: initial_executor_profile_id.executor,
+                    variant: variant.clone(),
+                };
+
+                let allowed = match project.mcp_auto_executor_policy_mode {
+                    db::types::ProjectMcpExecutorPolicyMode::InheritAll => true,
+                    db::types::ProjectMcpExecutorPolicyMode::AllowList => {
+                        let requested_variant = executor_profile_id
+                            .variant
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|v| !v.is_empty());
+
+                        project
+                            .mcp_auto_executor_policy_allow_list
+                            .iter()
+                            .any(|entry| {
+                                let exec_raw = entry.executor.trim();
+                                if exec_raw.is_empty() {
+                                    return false;
+                                }
+                                let normalized = exec_raw.replace('-', "_").to_ascii_uppercase();
+                                let Ok(entry_exec) = BaseCodingAgent::from_str(&normalized) else {
+                                    return false;
+                                };
+                                if entry_exec != executor_profile_id.executor {
+                                    return false;
+                                }
+
+                                let entry_variant = entry
+                                    .variant
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|v| !v.is_empty());
+
+                                entry_variant == requested_variant
+                            })
+                    }
+                };
+
+                if !allowed {
+                    let detail = format!(
+                        "executor={} variant={}",
+                        executor_profile_id.executor,
+                        executor_profile_id
+                            .variant
+                            .as_deref()
+                            .unwrap_or("<default>")
+                    );
+
+                    TaskOrchestrationState::record_control_transfer(
+                        pool,
+                        task.id,
+                        db::types::TaskControlTransferReasonCode::PolicyRejectedProfile,
+                        Some(detail.clone()),
+                    )
+                    .await
+                    .map_err(|e| {
+                        ErrorData::internal_error(
+                            "Failed to persist policy rejection diagnostic",
+                            Some(json!({
+                                "error": e.to_string(),
+                                "task_id": task.id,
+                                "project_id": task.project_id,
+                            })),
+                        )
+                    })?;
+
+                    match serde_json::to_value(
+                        db::events::TaskOrchestrationTransitionEventPayload {
+                            task_id: task.id,
+                            project_id: task.project_id,
+                            reason_code:
+                                db::types::TaskControlTransferReasonCode::PolicyRejectedProfile,
+                            detail: Some(detail.clone()),
+                        },
+                    ) {
+                        Ok(payload) => {
+                            if let Err(err) = EventOutbox::enqueue(
+                                pool,
+                                db::events::EVENT_TASK_ORCHESTRATION_TRANSITION,
+                                "task",
+                                task.id,
+                                payload,
+                            )
+                            .await
+                            {
+                                tracing::warn!(
+                                    task_id = %task.id,
+                                    project_id = %task.project_id,
+                                    error = %err,
+                                    "failed to enqueue orchestration transition event"
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                task_id = %task.id,
+                                project_id = %task.project_id,
+                                error = %err,
+                                "failed to serialize orchestration transition payload"
+                            );
+                        }
+                    }
+
+                    return Self::err_with(
+                        "Requested executor profile rejected by project policy.",
+                        Some(json!({
+                            "tool": "send_follow_up",
+                            "task_id": task.id,
+                            "attempt_id": workspace.id,
+                            "session_id": session.id,
+                            "project_id": task.project_id,
+                            "requested_executor": executor_profile_id.executor.to_string(),
+                            "requested_variant": executor_profile_id.variant,
+                            "policy_mode": project.mcp_auto_executor_policy_mode.to_string(),
+                            "allow_list_len": project.mcp_auto_executor_policy_allow_list.len(),
+                            "diagnostic_detail": detail,
+                        })),
+                        Some(
+                            "Remove the variant override, or ask a project operator to allow-list this profile."
+                                .to_string(),
+                        ),
+                        Some(MCP_CODE_PROFILE_POLICY_REJECTED),
+                        Some(false),
+                    );
+                }
+            }
         }
 
         #[derive(Serialize)]
@@ -3233,13 +4015,17 @@ mod tests {
     use app_runtime::Deployment;
     use config::DiffPreviewGuardPreset;
     use db::models::{
-        execution_process::CreateExecutionProcess, repo::Repo, session::CreateSession,
+        execution_process::CreateExecutionProcess,
+        milestone::{CreateMilestone, MilestoneGraph, MilestoneNode, MilestoneNodeLayout},
+        repo::Repo,
+        session::CreateSession,
     };
     use executors_protocol::actions::{ExecutorActionType, script::ScriptContext};
     use rmcp::{
         ServiceExt,
         handler::{client::ClientHandler, server::tool::IntoCallToolResult},
     };
+    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
     use super::*;
     use crate::test_support::TestEnvGuard;
@@ -3297,6 +4083,7 @@ mod tests {
         assert!(router.map.contains_key("tail_attempt_feed"));
         assert!(router.map.contains_key("respond_approval"));
         assert!(router.map.contains_key("claim_attempt_control"));
+        assert!(router.map.contains_key("get_review_handoff"));
     }
 
     #[test]
@@ -3335,6 +4122,7 @@ mod tests {
             "get_attempt_control",
             "get_attempt_file",
             "get_attempt_patch",
+            "get_review_handoff",
             "get_task",
             "list_archived_kanbans",
             "list_approvals",
@@ -3615,6 +4403,385 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_tasks_orchestration_diagnostics_are_scoped_to_auto_managed_tasks() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = deployment.db().pool.clone();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &pool,
+            &db::models::project::CreateProject {
+                name: "Scoped diagnostics project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let human_task_id = Uuid::new_v4();
+        Task::create(
+            &pool,
+            &CreateTask::from_title_description(project_id, "Human task".to_string(), None),
+            human_task_id,
+        )
+        .await
+        .unwrap();
+
+        let node_task_id = Uuid::new_v4();
+        Task::create(
+            &pool,
+            &CreateTask::from_title_description(project_id, "Node task".to_string(), None),
+            node_task_id,
+        )
+        .await
+        .unwrap();
+
+        let milestone_id = Uuid::new_v4();
+        let _ = db::models::milestone::Milestone::create(
+            &pool,
+            &CreateMilestone {
+                project_id,
+                title: "Auto milestone".to_string(),
+                description: None,
+                objective: None,
+                definition_of_done: None,
+                default_executor_profile_id: None,
+                automation_mode: Some(db::types::MilestoneAutomationMode::Auto),
+                status: Some(TaskStatus::Todo),
+                baseline_ref: None,
+                schema_version: 1,
+                graph: MilestoneGraph {
+                    nodes: vec![MilestoneNode {
+                        id: "a".to_string(),
+                        task_id: node_task_id,
+                        kind: db::models::milestone::MilestoneNodeKind::Task,
+                        phase: 0,
+                        executor_profile_id: None,
+                        base_strategy: db::models::milestone::MilestoneNodeBaseStrategy::Topology,
+                        instructions: None,
+                        requires_approval: None,
+                        layout: MilestoneNodeLayout { x: 0.0, y: 0.0 },
+                        status: None,
+                    }],
+                    edges: Vec::new(),
+                },
+            },
+            milestone_id,
+        )
+        .await
+        .unwrap();
+
+        let server = TaskServer::new(deployment.clone());
+        let result = server
+            .list_tasks(Parameters(ListTasksRequest {
+                project_id,
+                status: None,
+                limit: Some(50),
+            }))
+            .await
+            .into_call_tool_result()
+            .unwrap();
+
+        let payload = result.structured_content.expect("structured content");
+        let response: ListTasksResponse = serde_json::from_value(payload).expect("list tasks");
+
+        let human_task = response
+            .tasks
+            .iter()
+            .find(|task| task.id == human_task_id.to_string())
+            .expect("human task");
+        assert!(
+            human_task.orchestration.is_none(),
+            "Expected orchestration=null for non-managed task"
+        );
+
+        let node_task = response
+            .tasks
+            .iter()
+            .find(|task| task.id == node_task_id.to_string())
+            .expect("node task");
+        assert!(
+            node_task.orchestration.is_some(),
+            "Expected orchestration present for auto-managed task"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_review_handoff_not_applicable_for_human_managed_task() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = deployment.db().pool.clone();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &pool,
+            &db::models::project::CreateProject {
+                name: "Review handoff project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &pool,
+            &CreateTask::from_title_description(project_id, "Human task".to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let attempt_id = Uuid::new_v4();
+        let _workspace = Workspace::create(
+            &pool,
+            &db::models::workspace::CreateWorkspace {
+                branch: "vk-test".to_string(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let server = TaskServer::new(deployment.clone());
+        let result = server
+            .get_review_handoff(Parameters(GetReviewHandoffRequest {
+                task_id: None,
+                attempt_id: Some(attempt_id),
+            }))
+            .await
+            .into_call_tool_result()
+            .unwrap();
+
+        assert_ne!(result.is_error, Some(true));
+        let payload = result.structured_content.expect("structured content");
+        let response: GetReviewHandoffResponse =
+            serde_json::from_value(payload).expect("review handoff response");
+        assert_eq!(response.status, McpReviewHandoffStatus::NotApplicable);
+        assert_eq!(response.code.as_deref(), Some("not_auto_managed"));
+        assert!(response.payload.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_review_handoff_unavailable_when_task_not_review_ready() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = deployment.db().pool.clone();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &pool,
+            &db::models::project::CreateProject {
+                name: "Review handoff auto project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let node_task_id = Uuid::new_v4();
+        Task::create(
+            &pool,
+            &CreateTask::from_title_description(project_id, "Node task".to_string(), None),
+            node_task_id,
+        )
+        .await
+        .unwrap();
+
+        let milestone_id = Uuid::new_v4();
+        let _ = db::models::milestone::Milestone::create(
+            &pool,
+            &CreateMilestone {
+                project_id,
+                title: "Auto milestone".to_string(),
+                description: None,
+                objective: None,
+                definition_of_done: None,
+                default_executor_profile_id: None,
+                automation_mode: Some(db::types::MilestoneAutomationMode::Auto),
+                status: Some(TaskStatus::Todo),
+                baseline_ref: None,
+                schema_version: 1,
+                graph: MilestoneGraph {
+                    nodes: vec![MilestoneNode {
+                        id: "a".to_string(),
+                        task_id: node_task_id,
+                        kind: db::models::milestone::MilestoneNodeKind::Task,
+                        phase: 0,
+                        executor_profile_id: None,
+                        base_strategy: db::models::milestone::MilestoneNodeBaseStrategy::Topology,
+                        instructions: None,
+                        requires_approval: None,
+                        layout: MilestoneNodeLayout { x: 0.0, y: 0.0 },
+                        status: None,
+                    }],
+                    edges: Vec::new(),
+                },
+            },
+            milestone_id,
+        )
+        .await
+        .unwrap();
+
+        let attempt_id = Uuid::new_v4();
+        let _workspace = Workspace::create(
+            &pool,
+            &db::models::workspace::CreateWorkspace {
+                branch: "vk-test".to_string(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            node_task_id,
+        )
+        .await
+        .unwrap();
+
+        let server = TaskServer::new(deployment.clone());
+        let result = server
+            .get_review_handoff(Parameters(GetReviewHandoffRequest {
+                task_id: None,
+                attempt_id: Some(attempt_id),
+            }))
+            .await
+            .into_call_tool_result()
+            .unwrap();
+
+        assert_ne!(result.is_error, Some(true));
+        let payload = result.structured_content.expect("structured content");
+        let response: GetReviewHandoffResponse =
+            serde_json::from_value(payload).expect("review handoff response");
+        assert_eq!(response.status, McpReviewHandoffStatus::Unavailable);
+        assert_eq!(response.code.as_deref(), Some("not_review_ready"));
+        assert!(response.payload.is_none());
+    }
+
+    #[tokio::test]
+    async fn get_review_handoff_ok_includes_next_actions_for_review_ready_auto_managed_task() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = deployment.db().pool.clone();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &pool,
+            &db::models::project::CreateProject {
+                name: "Review handoff ready project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let node_task_id = Uuid::new_v4();
+        Task::create(
+            &pool,
+            &CreateTask::from_title_description(project_id, "Node task".to_string(), None),
+            node_task_id,
+        )
+        .await
+        .unwrap();
+
+        let milestone_id = Uuid::new_v4();
+        let _ = db::models::milestone::Milestone::create(
+            &pool,
+            &CreateMilestone {
+                project_id,
+                title: "Auto milestone".to_string(),
+                description: None,
+                objective: None,
+                definition_of_done: None,
+                default_executor_profile_id: None,
+                automation_mode: Some(db::types::MilestoneAutomationMode::Auto),
+                status: Some(TaskStatus::Todo),
+                baseline_ref: None,
+                schema_version: 1,
+                graph: MilestoneGraph {
+                    nodes: vec![MilestoneNode {
+                        id: "a".to_string(),
+                        task_id: node_task_id,
+                        kind: db::models::milestone::MilestoneNodeKind::Task,
+                        phase: 0,
+                        executor_profile_id: None,
+                        base_strategy: db::models::milestone::MilestoneNodeBaseStrategy::Topology,
+                        instructions: None,
+                        requires_approval: None,
+                        layout: MilestoneNodeLayout { x: 0.0, y: 0.0 },
+                        status: None,
+                    }],
+                    edges: Vec::new(),
+                },
+            },
+            milestone_id,
+        )
+        .await
+        .unwrap();
+
+        Task::update_status(&pool, node_task_id, TaskStatus::InReview)
+            .await
+            .unwrap();
+
+        let attempt_id = Uuid::new_v4();
+        let _workspace = Workspace::create(
+            &pool,
+            &db::models::workspace::CreateWorkspace {
+                branch: "vk-test".to_string(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            node_task_id,
+        )
+        .await
+        .unwrap();
+
+        let server = TaskServer::new(deployment.clone());
+        let result = server
+            .get_review_handoff(Parameters(GetReviewHandoffRequest {
+                task_id: None,
+                attempt_id: Some(attempt_id),
+            }))
+            .await
+            .into_call_tool_result()
+            .unwrap();
+
+        assert_ne!(result.is_error, Some(true));
+        let payload = result.structured_content.expect("structured content");
+        let response: GetReviewHandoffResponse =
+            serde_json::from_value(payload).expect("review handoff response");
+
+        assert_eq!(response.status, McpReviewHandoffStatus::Ok);
+        let payload = response.payload.expect("handoff payload");
+        assert_eq!(payload.task.id, node_task_id.to_string());
+
+        let next_action_codes: HashSet<McpReviewHandoffNextActionCode> = payload
+            .next_actions
+            .iter()
+            .map(|action| action.code)
+            .collect();
+        assert!(next_action_codes.contains(&McpReviewHandoffNextActionCode::Approve));
+        assert!(next_action_codes.contains(&McpReviewHandoffNextActionCode::Rework));
+        assert!(next_action_codes.contains(&McpReviewHandoffNextActionCode::TakeOver));
+    }
+
+    #[tokio::test]
     async fn start_attempt_rejects_archived_tasks_with_structured_error() {
         let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&temp_root).unwrap();
@@ -3665,7 +4832,7 @@ mod tests {
         let result = server
             .start_attempt(Parameters(StartAttemptRequest {
                 task_id,
-                executor: "CLAUDE_CODE".to_string(),
+                executor: Some("CLAUDE_CODE".to_string()),
                 variant: None,
                 repos: Vec::new(),
                 request_id: None,
@@ -3680,6 +4847,353 @@ mod tests {
         assert_eq!(
             structured.get("code").and_then(|v| v.as_str()),
             Some(MCP_CODE_BLOCKED_GUARDRAILS)
+        );
+    }
+
+    #[tokio::test]
+    async fn start_attempt_policy_rejection_persists_diagnostic_for_auto_managed_tasks() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = deployment.db().pool.clone();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &pool,
+            &db::models::project::CreateProject {
+                name: "Policy project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        // Create a node task and then link it into an auto milestone so it becomes auto-managed.
+        let node_task_id = Uuid::new_v4();
+        Task::create(
+            &pool,
+            &CreateTask::from_title_description(project_id, "Node task".to_string(), None),
+            node_task_id,
+        )
+        .await
+        .unwrap();
+
+        let milestone_id = Uuid::new_v4();
+        let _ = db::models::milestone::Milestone::create(
+            &pool,
+            &CreateMilestone {
+                project_id,
+                title: "Auto milestone".to_string(),
+                description: None,
+                objective: None,
+                definition_of_done: None,
+                default_executor_profile_id: None,
+                automation_mode: Some(db::types::MilestoneAutomationMode::Auto),
+                status: Some(TaskStatus::Todo),
+                baseline_ref: None,
+                schema_version: 1,
+                graph: MilestoneGraph {
+                    nodes: vec![MilestoneNode {
+                        id: "a".to_string(),
+                        task_id: node_task_id,
+                        kind: db::models::milestone::MilestoneNodeKind::Task,
+                        phase: 0,
+                        executor_profile_id: None,
+                        base_strategy: db::models::milestone::MilestoneNodeBaseStrategy::Topology,
+                        instructions: None,
+                        requires_approval: None,
+                        layout: MilestoneNodeLayout { x: 0.0, y: 0.0 },
+                        status: None,
+                    }],
+                    edges: Vec::new(),
+                },
+            },
+            milestone_id,
+        )
+        .await
+        .unwrap();
+
+        // Set project policy to allow-list with an empty list so any explicit override is rejected.
+        let record = db::entities::project::Entity::find()
+            .filter(db::entities::project::Column::Uuid.eq(project_id))
+            .one(&pool)
+            .await
+            .unwrap()
+            .expect("project record");
+        let mut active: db::entities::project::ActiveModel = record.into();
+        active.mcp_auto_executor_policy_mode =
+            Set(db::types::ProjectMcpExecutorPolicyMode::AllowList);
+        active.mcp_auto_executor_policy_allow_list_json = Set(Some(serde_json::json!([])));
+        let _ = active.update(&pool).await.unwrap();
+
+        let server = TaskServer::new(deployment.clone());
+        let result = server
+            .start_attempt(Parameters(StartAttemptRequest {
+                task_id: node_task_id,
+                executor: Some("CLAUDE_CODE".to_string()),
+                variant: None,
+                repos: vec![WorkspaceRepoInput {
+                    repo_id: Uuid::new_v4(),
+                    target_branch: "main".to_string(),
+                }],
+                request_id: None,
+                prompt: None,
+            }))
+            .await
+            .into_call_tool_result()
+            .unwrap();
+
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured content");
+        assert_eq!(
+            structured.get("code").and_then(|v| v.as_str()),
+            Some(MCP_CODE_PROFILE_POLICY_REJECTED)
+        );
+
+        let state = db::models::task_orchestration_state::TaskOrchestrationState::find_by_task_id(
+            &pool,
+            node_task_id,
+        )
+        .await
+        .unwrap()
+        .expect("orchestration state");
+        assert_eq!(
+            state.last_control_transfer_reason_code,
+            Some(db::types::TaskControlTransferReasonCode::PolicyRejectedProfile)
+        );
+
+        let activity_result = server
+            .tail_task_activity(Parameters(TailTaskActivityRequest {
+                task_id: node_task_id,
+                limit: Some(200),
+                cursor: None,
+                after_event_id: Some(0),
+            }))
+            .await
+            .into_call_tool_result()
+            .unwrap();
+        let activity_payload = activity_result.structured_content.expect("structured content");
+        let activity: TailActivityResponse =
+            serde_json::from_value(activity_payload).expect("tail activity response");
+        let transition_event = activity
+            .events
+            .iter()
+            .find(|event| event.event_type == db::events::EVENT_TASK_ORCHESTRATION_TRANSITION)
+            .expect("missing orchestration transition event in tail_task_activity");
+        let transition_payload: db::events::TaskOrchestrationTransitionEventPayload =
+            serde_json::from_value(transition_event.payload.clone())
+                .expect("transition payload schema");
+        assert_eq!(
+            transition_payload.reason_code,
+            db::types::TaskControlTransferReasonCode::PolicyRejectedProfile
+        );
+        assert_eq!(transition_payload.task_id, node_task_id);
+        assert_eq!(transition_payload.project_id, project_id);
+        assert!(
+            transition_payload
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("executor=")),
+            "Expected detail to include executor profile hint"
+        );
+
+        let project_activity_result = server
+            .tail_project_activity(Parameters(TailProjectActivityRequest {
+                project_id,
+                limit: Some(200),
+                cursor: None,
+                after_event_id: Some(0),
+            }))
+            .await
+            .into_call_tool_result()
+            .unwrap();
+        let project_activity_payload =
+            project_activity_result.structured_content.expect("structured content");
+        let project_activity: TailActivityResponse =
+            serde_json::from_value(project_activity_payload).expect("tail project activity");
+        assert!(
+            project_activity.events.iter().any(|event| {
+                event.event_type == db::events::EVENT_TASK_ORCHESTRATION_TRANSITION
+            }),
+            "Expected tail_project_activity to include orchestration transition events"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_follow_up_policy_rejection_persists_diagnostic_for_auto_managed_tasks() {
+        let temp_root = std::env::temp_dir().join(format!("vk-mcp-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = deployment.db().pool.clone();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &pool,
+            &db::models::project::CreateProject {
+                name: "Policy follow-up project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let node_task_id = Uuid::new_v4();
+        Task::create(
+            &pool,
+            &CreateTask::from_title_description(project_id, "Node task".to_string(), None),
+            node_task_id,
+        )
+        .await
+        .unwrap();
+
+        let milestone_id = Uuid::new_v4();
+        let _ = db::models::milestone::Milestone::create(
+            &pool,
+            &CreateMilestone {
+                project_id,
+                title: "Auto milestone".to_string(),
+                description: None,
+                objective: None,
+                definition_of_done: None,
+                default_executor_profile_id: None,
+                automation_mode: Some(db::types::MilestoneAutomationMode::Auto),
+                status: Some(TaskStatus::Todo),
+                baseline_ref: None,
+                schema_version: 1,
+                graph: MilestoneGraph {
+                    nodes: vec![MilestoneNode {
+                        id: "a".to_string(),
+                        task_id: node_task_id,
+                        kind: db::models::milestone::MilestoneNodeKind::Task,
+                        phase: 0,
+                        executor_profile_id: None,
+                        base_strategy: db::models::milestone::MilestoneNodeBaseStrategy::Topology,
+                        instructions: None,
+                        requires_approval: None,
+                        layout: MilestoneNodeLayout { x: 0.0, y: 0.0 },
+                        status: None,
+                    }],
+                    edges: Vec::new(),
+                },
+            },
+            milestone_id,
+        )
+        .await
+        .unwrap();
+
+        let record = db::entities::project::Entity::find()
+            .filter(db::entities::project::Column::Uuid.eq(project_id))
+            .one(&pool)
+            .await
+            .unwrap()
+            .expect("project record");
+        let mut active: db::entities::project::ActiveModel = record.into();
+        active.mcp_auto_executor_policy_mode =
+            Set(db::types::ProjectMcpExecutorPolicyMode::AllowList);
+        active.mcp_auto_executor_policy_allow_list_json = Set(Some(serde_json::json!([])));
+        let _ = active.update(&pool).await.unwrap();
+
+        let attempt_id = Uuid::new_v4();
+        let workspace = Workspace::create(
+            &pool,
+            &db::models::workspace::CreateWorkspace {
+                branch: "vk-test".to_string(),
+                agent_working_dir: None,
+            },
+            attempt_id,
+            node_task_id,
+        )
+        .await
+        .unwrap();
+
+        let session_id = Uuid::new_v4();
+        let session = Session::create(
+            &pool,
+            &CreateSession {
+                executor: Some("CLAUDE_CODE".to_string()),
+            },
+            session_id,
+            workspace.id,
+        )
+        .await
+        .unwrap();
+
+        let exec_action = ExecutorAction::new(
+            ExecutorActionType::CodingAgentInitialRequest(CodingAgentInitialRequest {
+                prompt: "hi".to_string(),
+                executor_profile_id: ExecutorProfileId::new(BaseCodingAgent::ClaudeCode),
+                working_dir: None,
+                image_paths: None,
+            }),
+            None,
+        );
+        let _process = ExecutionProcess::create(
+            &pool,
+            &CreateExecutionProcess {
+                session_id: session.id,
+                run_reason: ExecutionProcessRunReason::CodingAgent,
+                executor_action: exec_action,
+            },
+            Uuid::new_v4(),
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let lease_ttl = chrono::Duration::seconds(60 * 60);
+        let lease = match attempt_control_lease_model::claim(
+            &pool,
+            attempt_id,
+            "mcp:test".to_string(),
+            lease_ttl,
+            false,
+        )
+        .await
+        .unwrap()
+        {
+            attempt_control_lease_model::ClaimOutcome::Claimed { lease, .. } => lease,
+            attempt_control_lease_model::ClaimOutcome::Conflict { .. } => {
+                panic!("unexpected lease conflict")
+            }
+        };
+
+        let server = TaskServer::new(deployment.clone());
+        let result = server
+            .send_follow_up(Parameters(SendFollowUpRequest {
+                attempt_id: Some(attempt_id),
+                session_id: None,
+                control_token: Some(lease.control_token),
+                prompt: "rework".to_string(),
+                variant: Some("xhigh".to_string()),
+                request_id: None,
+            }))
+            .await
+            .into_call_tool_result()
+            .unwrap();
+
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured content");
+        assert_eq!(
+            structured.get("code").and_then(|v| v.as_str()),
+            Some(MCP_CODE_PROFILE_POLICY_REJECTED)
+        );
+
+        let state = db::models::task_orchestration_state::TaskOrchestrationState::find_by_task_id(
+            &pool,
+            node_task_id,
+        )
+        .await
+        .unwrap()
+        .expect("orchestration state");
+        assert_eq!(
+            state.last_control_transfer_reason_code,
+            Some(db::types::TaskControlTransferReasonCode::PolicyRejectedProfile)
         );
     }
 

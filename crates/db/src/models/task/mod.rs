@@ -221,6 +221,37 @@ impl Task {
         DbErr::Custom("Task is archived. Restore it before modifying.".to_string())
     }
 
+    /// Auto-managed tasks are milestone node tasks inside auto milestones.
+    pub async fn is_auto_managed<C: ConnectionTrait>(&self, db: &C) -> Result<bool, DbErr> {
+        let milestone_id = match self.milestone_id {
+            Some(id) => id,
+            None => return Ok(false),
+        };
+
+        if self.task_kind == TaskKind::Milestone {
+            return Ok(false);
+        }
+        if self
+            .milestone_node_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .is_none()
+        {
+            return Ok(false);
+        }
+
+        let milestone_record = milestone::Entity::find()
+            .filter(milestone::Column::Uuid.eq(milestone_id))
+            .one(db)
+            .await?;
+        let Some(milestone_record) = milestone_record else {
+            return Ok(false);
+        };
+
+        Ok(milestone_record.automation_mode == crate::types::MilestoneAutomationMode::Auto)
+    }
+
     async fn resolve_task_orchestration_diagnostics<C: ConnectionTrait>(
         db: &C,
         task_row_id: i64,

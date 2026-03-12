@@ -736,6 +736,15 @@
       "needsReview": "Needs Review",
       "blocked": "Blocked"
     },
+    "controlTransfer": {
+      "label": "Automation",
+      "reasons": {
+        "awaiting_human_review": "Awaiting human review",
+        "policy_rejected_profile": "Policy rejected executor profile",
+        "human_takeover": "Human takeover",
+        "human_resume": "Automation resumed"
+      }
+    },
     "reviewInbox": {
       "title": "Review inbox",
       "subtitle_one": "{{count}} task waiting for a human decision.",

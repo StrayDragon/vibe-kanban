@@ -50,8 +50,8 @@ const TaskPanel = ({
   const { data: parentAttempt, isLoading: isParentLoading } =
     useTaskAttemptWithSession(task?.parent_workspace_id || undefined);
 
-  const formatTimeAgo = (iso: string) => {
-    const d = new Date(iso);
+  const formatTimeAgo = (value: string | Date) => {
+    const d = value instanceof Date ? value : new Date(value);
     const diffMs = Date.now() - d.getTime();
     const absSec = Math.round(Math.abs(diffMs) / 1000);
 
@@ -98,6 +98,7 @@ const TaskPanel = ({
   }
 
   const isMilestoneEntry = task.task_kind === 'milestone';
+  const lastControlTransfer = task.orchestration?.last_control_transfer;
   const titleContent = `# ${task.title || 'Task'}`;
   const descriptionContent = task.description || '';
 
@@ -127,17 +128,37 @@ const TaskPanel = ({
       <div className="p-6 flex flex-col h-full max-h-[calc(100vh-8rem)]">
         <div className="space-y-4 overflow-y-auto flex-shrink min-h-0">
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline">{task.status}</Badge>
-              {task.dispatch_state?.status === 'awaiting_human_review' && (
-                <Badge variant="secondary">
-                  {t('taskPanel.needsReview', 'Needs review')}
-                </Badge>
-              )}
-              {task.last_attempt_failed && (
-                <Badge variant="destructive">
-                  {t('taskPanel.lastAttemptFailed', 'Last attempt failed')}
-                </Badge>
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline">{task.status}</Badge>
+                {task.dispatch_state?.status === 'awaiting_human_review' && (
+                  <Badge variant="secondary">
+                    {t('taskPanel.needsReview', 'Needs review')}
+                  </Badge>
+                )}
+                {task.last_attempt_failed && (
+                  <Badge variant="destructive">
+                    {t('taskPanel.lastAttemptFailed', 'Last attempt failed')}
+                  </Badge>
+                )}
+              </div>
+              {lastControlTransfer && (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground/80">
+                    {t('orchestration.controlTransfer.label')}
+                  </span>
+                  <span>
+                    {t(
+                      `orchestration.controlTransfer.reasons.${lastControlTransfer.reason_code}`
+                    )}
+                  </span>
+                  <span>{formatTimeAgo(lastControlTransfer.at)}</span>
+                  {lastControlTransfer.detail && (
+                    <span className="line-clamp-1 max-w-[48ch]">
+                      {lastControlTransfer.detail}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">

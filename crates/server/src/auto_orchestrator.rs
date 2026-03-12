@@ -3,12 +3,17 @@ use std::{collections::HashMap, path::Path, time::Duration};
 use anyhow::{Context, Result};
 use app_runtime::Deployment;
 use chrono::{Duration as ChronoDuration, Utc};
-use db::models::{
-    milestone::Milestone,
-    project::Project,
-    task::{TaskStatus, TaskWithAttemptStatus},
-    task_dispatch_state::{TaskDispatchState, UpsertTaskDispatchState},
-    workspace_repo::CreateWorkspaceRepo,
+use db::{
+    events::{EVENT_TASK_ORCHESTRATION_TRANSITION, TaskOrchestrationTransitionEventPayload},
+    models::{
+        event_outbox::EventOutbox,
+        milestone::Milestone,
+        project::Project,
+        task::{TaskStatus, TaskWithAttemptStatus},
+        task_dispatch_state::{TaskDispatchState, UpsertTaskDispatchState},
+        task_orchestration_state::TaskOrchestrationState,
+        workspace_repo::CreateWorkspaceRepo,
+    },
 };
 use repos::git::GitService;
 use tasks::orchestration::{self, CreateTaskAttemptInput};
@@ -271,6 +276,50 @@ async fn reconcile_task_state(
                 },
             )
             .await?;
+
+            if task.is_auto_managed(&deployment.db().pool).await? {
+                let transfer = TaskOrchestrationState::record_control_transfer(
+                    &deployment.db().pool,
+                    task.id,
+                    db::types::TaskControlTransferReasonCode::AwaitingHumanReview,
+                    None,
+                )
+                .await?;
+
+                match serde_json::to_value(TaskOrchestrationTransitionEventPayload {
+                    task_id: task.id,
+                    project_id: project.id,
+                    reason_code: db::types::TaskControlTransferReasonCode::AwaitingHumanReview,
+                    detail: transfer.last_control_transfer_detail.clone(),
+                }) {
+                    Ok(payload) => {
+                        if let Err(err) = EventOutbox::enqueue(
+                            &deployment.db().pool,
+                            EVENT_TASK_ORCHESTRATION_TRANSITION,
+                            "task",
+                            task.id,
+                            payload,
+                        )
+                        .await
+                        {
+                            warn!(
+                                task_id = %task.id,
+                                project_id = %project.id,
+                                error = %err,
+                                "failed to enqueue orchestration transition event"
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        warn!(
+                            task_id = %task.id,
+                            project_id = %project.id,
+                            error = %err,
+                            "failed to serialize orchestration transition payload"
+                        );
+                    }
+                }
+            }
         }
         return Ok(());
     }

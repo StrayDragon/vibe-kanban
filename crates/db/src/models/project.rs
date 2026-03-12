@@ -42,6 +42,9 @@ pub struct Project {
     pub scheduler_max_concurrent: i32,
     pub scheduler_max_retries: i32,
     pub default_continuation_turns: i32,
+    pub mcp_auto_executor_policy_mode: crate::types::ProjectMcpExecutorPolicyMode,
+    pub mcp_auto_executor_policy_allow_list:
+        Vec<crate::types::ProjectExecutorProfileAllowListEntry>,
     pub after_prepare_hook: Option<WorkspaceLifecycleHookConfig>,
     pub before_cleanup_hook: Option<WorkspaceLifecycleHookConfig>,
     pub remote_project_id: Option<Uuid>,
@@ -184,6 +187,17 @@ fn apply_hook_update(
 
 impl Project {
     fn from_model(model: project::Model) -> Self {
+        let mcp_auto_executor_policy_allow_list = model
+            .mcp_auto_executor_policy_allow_list_json
+            .as_ref()
+            .and_then(|value| {
+                serde_json::from_value::<Vec<crate::types::ProjectExecutorProfileAllowListEntry>>(
+                    value.clone(),
+                )
+                .ok()
+            })
+            .unwrap_or_default();
+
         Self {
             id: model.uuid,
             name: model.name,
@@ -194,6 +208,8 @@ impl Project {
             scheduler_max_concurrent: model.scheduler_max_concurrent,
             scheduler_max_retries: model.scheduler_max_retries,
             default_continuation_turns: model.default_continuation_turns,
+            mcp_auto_executor_policy_mode: model.mcp_auto_executor_policy_mode,
+            mcp_auto_executor_policy_allow_list,
             after_prepare_hook: build_hook_config(
                 model.after_prepare_hook_command,
                 model.after_prepare_hook_working_dir,
@@ -323,6 +339,10 @@ impl Project {
             before_cleanup_hook_command: Set(None),
             before_cleanup_hook_working_dir: Set(None),
             before_cleanup_hook_failure_policy: Set(None),
+            mcp_auto_executor_policy_mode: Set(
+                crate::types::ProjectMcpExecutorPolicyMode::InheritAll,
+            ),
+            mcp_auto_executor_policy_allow_list_json: Set(None),
             remote_project_id: Set(None),
             created_at: Set(now.into()),
             updated_at: Set(now.into()),
@@ -495,6 +515,8 @@ mod tests {
             scheduler_max_concurrent: 1,
             scheduler_max_retries: 3,
             default_continuation_turns: 0,
+            mcp_auto_executor_policy_mode: crate::types::ProjectMcpExecutorPolicyMode::InheritAll,
+            mcp_auto_executor_policy_allow_list: Vec::new(),
             after_prepare_hook: None,
             before_cleanup_hook: None,
             remote_project_id: None,

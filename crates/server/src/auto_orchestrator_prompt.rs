@@ -55,7 +55,7 @@ mod tests {
     use chrono::Utc;
     use db::{
         models::{project::Project, task::Task},
-        types::{TaskCreatedByKind, TaskKind, TaskStatus},
+        types::{ProjectMcpExecutorPolicyMode, TaskCreatedByKind, TaskKind, TaskStatus},
     };
     use uuid::Uuid;
 
@@ -72,6 +72,8 @@ mod tests {
             scheduler_max_concurrent: 2,
             scheduler_max_retries: 3,
             default_continuation_turns: 0,
+            mcp_auto_executor_policy_mode: ProjectMcpExecutorPolicyMode::InheritAll,
+            mcp_auto_executor_policy_allow_list: Vec::new(),
             after_prepare_hook: None,
             before_cleanup_hook: None,
             remote_project_id: None,

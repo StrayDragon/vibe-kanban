@@ -4,6 +4,7 @@ use uuid::Uuid;
 pub const EVENT_TASK_CREATED: &str = "task.created";
 pub const EVENT_TASK_UPDATED: &str = "task.updated";
 pub const EVENT_TASK_DELETED: &str = "task.deleted";
+pub const EVENT_TASK_ORCHESTRATION_TRANSITION: &str = "task.orchestration_transition";
 
 pub const EVENT_PROJECT_CREATED: &str = "project.created";
 pub const EVENT_PROJECT_UPDATED: &str = "project.updated";
@@ -25,6 +26,14 @@ pub const EVENT_SCRATCH_DELETED: &str = "scratch.deleted";
 pub struct TaskEventPayload {
     pub task_id: Uuid,
     pub project_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskOrchestrationTransitionEventPayload {
+    pub task_id: Uuid,
+    pub project_id: Uuid,
+    pub reason_code: crate::types::TaskControlTransferReasonCode,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

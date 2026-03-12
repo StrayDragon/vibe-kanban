@@ -13,6 +13,8 @@ fn generate_types_content() -> String {
     let decls: Vec<String> = vec![
         db::models::project::Project::decl(),
         db::models::project::WorkspaceLifecycleHookConfig::decl(),
+        db::types::ProjectMcpExecutorPolicyMode::decl(),
+        db::types::ProjectExecutorProfileAllowListEntry::decl(),
         db::types::WorkspaceLifecycleHookFailurePolicy::decl(),
         db::types::WorkspaceLifecycleHookRunMode::decl(),
         db::types::WorkspaceLifecycleHookPhase::decl(),

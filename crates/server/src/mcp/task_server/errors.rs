@@ -12,6 +12,7 @@ pub(super) const MCP_CODE_WAIT_MS_REQUIRES_AFTER_LOG_INDEX: &str =
 pub(super) const MCP_CODE_ATTEMPT_CLAIM_REQUIRED: &str = "attempt_claim_required";
 pub(super) const MCP_CODE_ATTEMPT_CLAIM_CONFLICT: &str = "attempt_claim_conflict";
 pub(super) const MCP_CODE_INVALID_CONTROL_TOKEN: &str = "invalid_control_token";
+pub(super) const MCP_CODE_PROFILE_POLICY_REJECTED: &str = "profile_policy_rejected";
 
 #[derive(Debug)]
 pub(super) enum ToolOrRpcError {

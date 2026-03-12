@@ -75,6 +75,21 @@ export function TaskReviewInbox({
             {tasks.map((task) => {
               const projectName = projectNames?.[task.project_id];
               const statusColor = statusBoardColors[task.status];
+              const lastControlTransfer = task.orchestration?.last_control_transfer;
+              const controlTransferLabel = lastControlTransfer
+                ? t(
+                    `orchestration.controlTransfer.reasons.${lastControlTransfer.reason_code}`
+                  )
+                : null;
+              const controlTransferText = controlTransferLabel
+                ? [
+                    t('orchestration.controlTransfer.label'),
+                    controlTransferLabel,
+                    lastControlTransfer?.detail,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
+                : null;
 
               return (
                 <DropdownMenuItem
@@ -90,6 +105,11 @@ export function TaskReviewInbox({
                       {projectName && (
                         <div className="mt-1 text-[11px] text-muted-foreground line-clamp-1">
                           {projectName}
+                        </div>
+                      )}
+                      {controlTransferText && (
+                        <div className="mt-1 text-[11px] text-muted-foreground line-clamp-1">
+                          {controlTransferText}
                         </div>
                       )}
                     </div>

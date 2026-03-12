@@ -192,6 +192,10 @@ pub struct TaskSummary {
     pub has_in_progress_attempt: bool,
     #[schemars(description = "Whether the last execution attempt failed")]
     pub last_attempt_failed: bool,
+    #[schemars(
+        description = "Orchestration diagnostics scoped to auto-managed tasks. Null for non-managed tasks."
+    )]
+    pub orchestration: Option<McpTaskOrchestrationDiagnostics>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -211,6 +215,7 @@ impl TaskSummary {
             task,
             has_in_progress_attempt,
             last_attempt_failed,
+            orchestration,
             ..
         } = task;
         Self {
@@ -230,6 +235,7 @@ impl TaskSummary {
             latest_session_executor: summary.latest_session_executor,
             has_in_progress_attempt,
             last_attempt_failed,
+            orchestration: McpTask::orchestration_from_task(orchestration),
         }
     }
 }
@@ -329,6 +335,27 @@ pub struct GetTaskRequest {
     pub task_id: Uuid,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpTaskControlTransferReasonCode {
+    HumanTakeover,
+    HumanResume,
+    AwaitingHumanReview,
+    PolicyRejectedProfile,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct McpTaskControlTransferDiagnostics {
+    pub reason_code: McpTaskControlTransferReasonCode,
+    pub detail: Option<String>,
+    pub at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct McpTaskOrchestrationDiagnostics {
+    pub last_control_transfer: Option<McpTaskControlTransferDiagnostics>,
+}
+
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct McpTask {
     pub id: String,
@@ -343,11 +370,51 @@ pub struct McpTask {
     pub origin_task_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    #[schemars(
+        description = "Orchestration diagnostics scoped to auto-managed tasks. Null for non-managed tasks."
+    )]
+    pub orchestration: Option<McpTaskOrchestrationDiagnostics>,
 }
 
 impl McpTask {
+    fn orchestration_from_task(
+        orchestration: Option<db::models::task::TaskOrchestrationDiagnostics>,
+    ) -> Option<McpTaskOrchestrationDiagnostics> {
+        let orchestration = orchestration?;
+        let last_control_transfer = orchestration.last_control_transfer.map(|transfer| {
+            let reason_code = match transfer.reason_code {
+                db::types::TaskControlTransferReasonCode::HumanTakeover => {
+                    McpTaskControlTransferReasonCode::HumanTakeover
+                }
+                db::types::TaskControlTransferReasonCode::HumanResume => {
+                    McpTaskControlTransferReasonCode::HumanResume
+                }
+                db::types::TaskControlTransferReasonCode::AwaitingHumanReview => {
+                    McpTaskControlTransferReasonCode::AwaitingHumanReview
+                }
+                db::types::TaskControlTransferReasonCode::PolicyRejectedProfile => {
+                    McpTaskControlTransferReasonCode::PolicyRejectedProfile
+                }
+            };
+
+            McpTaskControlTransferDiagnostics {
+                reason_code,
+                detail: transfer.detail,
+                at: transfer.at.to_rfc3339(),
+            }
+        });
+
+        Some(McpTaskOrchestrationDiagnostics {
+            last_control_transfer,
+        })
+    }
+
     pub(super) fn from_task_with_status(task: TaskWithAttemptStatus) -> Self {
-        let TaskWithAttemptStatus { task, .. } = task;
+        let TaskWithAttemptStatus {
+            task,
+            orchestration,
+            ..
+        } = task;
         Self {
             id: task.id.to_string(),
             project_id: task.project_id.to_string(),
@@ -361,6 +428,7 @@ impl McpTask {
             origin_task_id: task.origin_task_id.map(|id| id.to_string()),
             created_at: task.created_at.to_rfc3339(),
             updated_at: task.updated_at.to_rfc3339(),
+            orchestration: Self::orchestration_from_task(orchestration),
         }
     }
 }
@@ -369,6 +437,90 @@ impl McpTask {
 pub struct GetTaskResponse {
     #[schemars(description = "Task details")]
     pub task: McpTask,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GetReviewHandoffRequest {
+    #[schemars(
+        description = "Task id (UUID string). Provide task_id OR attempt_id (or both if consistent)."
+    )]
+    pub task_id: Option<Uuid>,
+    #[schemars(
+        description = "Attempt/workspace id (UUID string). Provide task_id OR attempt_id (or both if consistent)."
+    )]
+    pub attempt_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpReviewHandoffStatus {
+    Ok,
+    NotApplicable,
+    Unavailable,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, std::hash::Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum McpReviewHandoffNextActionCode {
+    Approve,
+    Rework,
+    TakeOver,
+    ResumeAuto,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct McpReviewHandoffNextAction {
+    pub code: McpReviewHandoffNextActionCode,
+    pub label: String,
+    pub hint: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct McpHandoffText {
+    pub available: bool,
+    pub value: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct McpReviewHandoffDiffSummary {
+    pub available: bool,
+    pub summary: Option<McpAttemptChangesSummary>,
+    pub blocked: Option<bool>,
+    pub blocked_reason: Option<McpAttemptChangesBlockedReason>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct McpReviewHandoffValidationSummary {
+    pub available: bool,
+    pub latest_hook_phase: Option<String>,
+    pub latest_hook_status: Option<String>,
+    pub latest_hook_ran_at: Option<String>,
+    pub latest_hook_error_summary: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct McpReviewHandoffPayload {
+    pub task: McpTask,
+    pub latest_summary: McpHandoffText,
+    pub diff_summary: McpReviewHandoffDiffSummary,
+    pub validation: McpReviewHandoffValidationSummary,
+    pub pending_approvals: Vec<McpApprovalSummary>,
+    pub next_actions: Vec<McpReviewHandoffNextAction>,
+}
+
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GetReviewHandoffResponse {
+    pub status: McpReviewHandoffStatus,
+    pub code: Option<String>,
+    pub message: Option<String>,
+    pub task_id: Option<String>,
+    pub attempt_id: Option<String>,
+    pub payload: Option<McpReviewHandoffPayload>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -422,8 +574,10 @@ pub struct WorkspaceRepoInput {
 pub struct StartAttemptRequest {
     #[schemars(description = "The task id to start an attempt for (UUID string)")]
     pub task_id: Uuid,
-    #[schemars(description = "Executor name (e.g., CLAUDE_CODE)")]
-    pub executor: String,
+    #[schemars(
+        description = "Optional executor override name (e.g., CLAUDE_CODE). When omitted, the server default executor profile is used."
+    )]
+    pub executor: Option<String>,
     #[schemars(description = "Optional executor variant")]
     pub variant: Option<String>,
     #[schemars(description = "Workspace repos (repo_id + target_branch)")]

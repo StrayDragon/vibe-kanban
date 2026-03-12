@@ -13,9 +13,11 @@ use db::{
     events::{
         EVENT_EXECUTION_PROCESS_CREATED, EVENT_EXECUTION_PROCESS_DELETED,
         EVENT_EXECUTION_PROCESS_UPDATED, EVENT_PROJECT_CREATED, EVENT_PROJECT_DELETED,
-        EVENT_PROJECT_UPDATED, EVENT_TASK_CREATED, EVENT_TASK_DELETED, EVENT_TASK_UPDATED,
-        EVENT_WORKSPACE_CREATED, EVENT_WORKSPACE_DELETED, EVENT_WORKSPACE_UPDATED,
-        ExecutionProcessEventPayload, ProjectEventPayload, TaskEventPayload, WorkspaceEventPayload,
+        EVENT_PROJECT_UPDATED, EVENT_TASK_CREATED, EVENT_TASK_DELETED,
+        EVENT_TASK_ORCHESTRATION_TRANSITION, EVENT_TASK_UPDATED, EVENT_WORKSPACE_CREATED,
+        EVENT_WORKSPACE_DELETED, EVENT_WORKSPACE_UPDATED, ExecutionProcessEventPayload,
+        ProjectEventPayload, TaskEventPayload, TaskOrchestrationTransitionEventPayload,
+        WorkspaceEventPayload,
     },
     models::{
         approval as approval_model,
@@ -1080,6 +1082,11 @@ impl TaskServer {
                     .ok()
                     .map(|p| p.project_id)
             }
+            EVENT_TASK_ORCHESTRATION_TRANSITION => serde_json::from_value::<
+                TaskOrchestrationTransitionEventPayload,
+            >(entry.payload.clone())
+            .ok()
+            .map(|p| p.project_id),
             EVENT_WORKSPACE_CREATED | EVENT_WORKSPACE_UPDATED | EVENT_WORKSPACE_DELETED => {
                 let payload: WorkspaceEventPayload =
                     serde_json::from_value(entry.payload.clone()).ok()?;
@@ -1122,6 +1129,11 @@ impl TaskServer {
                     .ok()
                     .map(|p| p.task_id)
             }
+            EVENT_TASK_ORCHESTRATION_TRANSITION => serde_json::from_value::<
+                TaskOrchestrationTransitionEventPayload,
+            >(entry.payload.clone())
+            .ok()
+            .map(|p| p.task_id),
             EVENT_WORKSPACE_CREATED | EVENT_WORKSPACE_UPDATED | EVENT_WORKSPACE_DELETED => {
                 serde_json::from_value::<WorkspaceEventPayload>(entry.payload.clone())
                     .ok()

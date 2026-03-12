@@ -342,6 +342,37 @@ pub enum TaskControlTransferReasonCode {
     Default,
 )]
 #[sea_orm(rs_type = "String", db_type = "Text")]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum ProjectMcpExecutorPolicyMode {
+    #[default]
+    #[sea_orm(string_value = "inherit_all")]
+    InheritAll,
+    #[sea_orm(string_value = "allow_list")]
+    AllowList,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct ProjectExecutorProfileAllowListEntry {
+    pub executor: String,
+    pub variant: Option<String>,
+}
+
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    EnumIter,
+    DeriveActiveEnum,
+    Serialize,
+    Deserialize,
+    TS,
+    EnumString,
+    Display,
+    Default,
+)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum TaskKind {

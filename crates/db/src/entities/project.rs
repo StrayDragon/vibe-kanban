@@ -1,6 +1,9 @@
-use sea_orm::entity::prelude::*;
+use sea_orm::{JsonValue, entity::prelude::*};
 
-use crate::types::{WorkspaceLifecycleHookFailurePolicy, WorkspaceLifecycleHookRunMode};
+use crate::types::{
+    ProjectMcpExecutorPolicyMode, WorkspaceLifecycleHookFailurePolicy,
+    WorkspaceLifecycleHookRunMode,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "projects")]
@@ -23,6 +26,8 @@ pub struct Model {
     pub before_cleanup_hook_command: Option<String>,
     pub before_cleanup_hook_working_dir: Option<String>,
     pub before_cleanup_hook_failure_policy: Option<WorkspaceLifecycleHookFailurePolicy>,
+    pub mcp_auto_executor_policy_mode: ProjectMcpExecutorPolicyMode,
+    pub mcp_auto_executor_policy_allow_list_json: Option<JsonValue>,
     pub remote_project_id: Option<Uuid>,
     pub created_at: DateTimeUtc,
     pub updated_at: DateTimeUtc,

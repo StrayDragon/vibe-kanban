@@ -743,6 +743,15 @@
       "needsReview": "待审阅",
       "blocked": "阻塞"
     },
+    "controlTransfer": {
+      "label": "自动托管",
+      "reasons": {
+        "awaiting_human_review": "等待人工审阅",
+        "policy_rejected_profile": "策略拒绝了执行配置",
+        "human_takeover": "人工接管",
+        "human_resume": "恢复自动托管"
+      }
+    },
     "reviewInbox": {
       "title": "审阅收件箱",
       "subtitle_one": "{{count}} 个任务等待人工决策。",

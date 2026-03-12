@@ -18,6 +18,7 @@ mod m20260309000000_milestones_hard_cut;
 mod m20260310000000_rename_task_groups_to_milestones;
 mod m20260311000000_milestone_plan_applications;
 mod m20260312000000_task_turn_continuation;
+mod m20260312000001_project_mcp_executor_policy;
 
 pub struct Migrator;
 
@@ -43,6 +44,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260310000000_rename_task_groups_to_milestones::Migration),
             Box::new(m20260311000000_milestone_plan_applications::Migration),
             Box::new(m20260312000000_task_turn_continuation::Migration),
+            Box::new(m20260312000001_project_mcp_executor_policy::Migration),
         ]
     }
 }
