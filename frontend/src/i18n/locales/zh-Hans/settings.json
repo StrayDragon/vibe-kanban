@@ -394,6 +394,12 @@
       "general": {
         "title": "常规设置",
         "description": "配置基本项目信息。",
+        "metadata": {
+          "title": "项目元数据",
+          "projectId": "项目 ID",
+          "createdAt": "创建时间",
+          "updatedAt": "最后更新"
+        },
         "name": {
           "label": "项目名称",
           "placeholder": "输入项目名称",
@@ -532,6 +538,11 @@
           "disabled": "未启用",
           "workspaceRoot": "工作区根目录",
           "loadingLatest": "正在加载最近一次 Hook 结果...",
+          "loadLatest": "加载最近一次 Hook 结果",
+          "hideLatest": "隐藏",
+          "loadLatestHint": "点击上方按钮以加载最近一次 Hook 结果。",
+          "errorLoadingLatest": "加载最近一次 Hook 结果失败。",
+          "retryLatest": "重试",
           "latestTask": "最近一次运行来自任务：{{task}}",
           "untitledTask": "未命名任务",
           "noRuns": "暂未记录到 Hook 运行结果。",

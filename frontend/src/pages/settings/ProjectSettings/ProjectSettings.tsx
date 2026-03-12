@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { isEqual } from 'lodash';
 import {
   Card,
@@ -30,17 +30,21 @@ import { useScriptPlaceholders } from '@/hooks/config/useScriptPlaceholders';
 import { CopyFilesField } from '@/components/projects/CopyFilesField';
 import { AutoExpandingTextarea } from '@/components/ui/auto-expanding-textarea';
 import { RepoPickerDialog } from '@/components/dialogs/shared/RepoPickerDialog';
-import { projectsApi } from '@/lib/api';
+import { attemptsApi, projectsApi, tasksApi } from '@/lib/api';
 import { repoBranchKeys } from '@/hooks/task-attempts/useRepoBranches';
+import { WorkspaceHookMenuSummary } from '@/components/tasks/WorkspaceHookMenuSummary';
+import { getWorkspaceHookOutcome } from '@/utils/workspaceHooks';
 import type {
   Project,
   ProjectRepo,
   Repo,
   UpdateProject,
+  TaskWithAttemptStatus,
   WorkspaceLifecycleHookConfig,
   WorkspaceLifecycleHookFailurePolicy,
   WorkspaceLifecycleHookRunMode,
 } from 'shared/types';
+import type { WorkspaceWithSession } from '@/types/attempt';
 
 interface AfterPrepareHookFormState {
   enabled: boolean;
@@ -217,6 +221,7 @@ export function ProjectSettings() {
     searchParams.get('projectId') || ''
   );
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [showLatestHookOutcome, setShowLatestHookOutcome] = useState(false);
 
   // Form state
   const [draft, setDraft] = useState<ProjectFormState | null>(null);
@@ -247,6 +252,75 @@ export function ProjectSettings() {
 
   // Get OS-appropriate script placeholders
   const placeholders = useScriptPlaceholders();
+
+  const hasConfiguredLifecycleHooks = Boolean(
+    draft?.after_prepare_hook.enabled || draft?.before_cleanup_hook.enabled
+  );
+
+  useEffect(() => {
+    setShowLatestHookOutcome(false);
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (!hasConfiguredLifecycleHooks) {
+      setShowLatestHookOutcome(false);
+    }
+  }, [hasConfiguredLifecycleHooks]);
+
+  const latestLifecycleHookResult = useQuery<{
+    attempt: WorkspaceWithSession;
+    task: TaskWithAttemptStatus;
+  } | null>({
+    queryKey: ['projectLatestLifecycleHook', selectedProjectId],
+    enabled:
+      showLatestHookOutcome && hasConfiguredLifecycleHooks && !!selectedProjectId,
+    staleTime: 5_000,
+    queryFn: async () => {
+      const tasks = await tasksApi.getAll({ projectId: selectedProjectId });
+      const lifecycleHookCandidateTasks = [...tasks]
+        .sort(
+          (left, right) =>
+            new Date(right.updated_at).getTime() -
+            new Date(left.updated_at).getTime()
+        )
+        .slice(0, 8);
+
+      if (lifecycleHookCandidateTasks.length === 0) {
+        return null;
+      }
+
+      const results = await Promise.allSettled(
+        lifecycleHookCandidateTasks.map(async (task) => ({
+          task,
+          attempts: await attemptsApi.getAllWithSessions(task.id),
+        }))
+      );
+
+      const candidates = results.flatMap((result) => {
+        if (result.status !== 'fulfilled') {
+          return [];
+        }
+
+        return result.value.attempts
+          .filter((attempt) => getWorkspaceHookOutcome(attempt))
+          .map((attempt) => ({
+            attempt,
+            task: result.value.task,
+          }));
+      });
+
+      candidates.sort((left, right) => {
+        const leftRun = getWorkspaceHookOutcome(left.attempt);
+        const rightRun = getWorkspaceHookOutcome(right.attempt);
+        return (
+          new Date(rightRun?.ran_at ?? 0).getTime() -
+          new Date(leftRun?.ran_at ?? 0).getTime()
+        );
+      });
+
+      return candidates[0] ?? null;
+    },
+  });
 
   // Check for unsaved changes (project name)
   const hasUnsavedProjectChanges = useMemo(() => {
@@ -792,6 +866,38 @@ export function ProjectSettings() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="rounded-lg border border-border/60 bg-muted/10 p-4">
+                <div className="text-xs font-medium text-muted-foreground">
+                  {t('settings.projects.general.metadata.title')}
+                </div>
+                <div className="mt-3 grid gap-4 md:grid-cols-3">
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">
+                      {t('settings.projects.general.metadata.projectId')}
+                    </div>
+                    <div className="break-all font-mono text-sm">
+                      {selectedProject.id}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">
+                      {t('settings.projects.general.metadata.createdAt')}
+                    </div>
+                    <div className="text-sm">
+                      {new Date(selectedProject.created_at).toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">
+                      {t('settings.projects.general.metadata.updatedAt')}
+                    </div>
+                    <div className="text-sm">
+                      {new Date(selectedProject.updated_at).toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="project-name">
                   {t('settings.projects.general.name.label')}
@@ -1217,6 +1323,112 @@ export function ProjectSettings() {
                       </div>
                     ) : null}
                   </div>
+                </div>
+
+                <div className="border-t border-border/60 pt-4 space-y-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 space-y-1">
+                      <h4 className="text-sm font-medium text-muted-foreground">
+                        {t('settings.projects.lifecycleHooks.summary.title')}
+                      </h4>
+                      <p className="text-sm text-muted-foreground">
+                        {t(
+                          'settings.projects.lifecycleHooks.summary.description'
+                        )}
+                      </p>
+                    </div>
+
+                    {hasConfiguredLifecycleHooks ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setShowLatestHookOutcome((prev) => !prev)
+                        }
+                      >
+                        {showLatestHookOutcome
+                          ? t(
+                              'settings.projects.lifecycleHooks.summary.hideLatest'
+                            )
+                          : t(
+                              'settings.projects.lifecycleHooks.summary.loadLatest'
+                            )}
+                      </Button>
+                    ) : null}
+                  </div>
+
+                  {hasConfiguredLifecycleHooks ? (
+                    showLatestHookOutcome ? (
+                      <div className="rounded-lg border border-border/60 bg-muted/10 p-4">
+                        {latestLifecycleHookResult.isLoading ||
+                        latestLifecycleHookResult.isFetching ? (
+                          <p className="text-sm text-muted-foreground">
+                            {t(
+                              'settings.projects.lifecycleHooks.summary.loadingLatest'
+                            )}
+                          </p>
+                        ) : latestLifecycleHookResult.isError ? (
+                          <div className="space-y-3">
+                            <p className="text-sm text-destructive">
+                              {t(
+                                'settings.projects.lifecycleHooks.summary.errorLoadingLatest'
+                              )}
+                            </p>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                void latestLifecycleHookResult.refetch()
+                              }
+                            >
+                              {t(
+                                'settings.projects.lifecycleHooks.summary.retryLatest'
+                              )}
+                            </Button>
+                          </div>
+                        ) : latestLifecycleHookResult.data ? (
+                          <div className="space-y-2">
+                            <p className="text-xs text-muted-foreground">
+                              {t(
+                                'settings.projects.lifecycleHooks.summary.latestTask',
+                                {
+                                  task:
+                                    latestLifecycleHookResult.data.task
+                                      .title ||
+                                    t(
+                                      'settings.projects.lifecycleHooks.summary.untitledTask'
+                                    ),
+                                }
+                              )}
+                            </p>
+                            <WorkspaceHookMenuSummary
+                              workspace={latestLifecycleHookResult.data.attempt}
+                            />
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">
+                            {t(
+                              'settings.projects.lifecycleHooks.summary.noRuns'
+                            )}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border-dashed border-border/60 bg-muted/5 p-4 text-sm text-muted-foreground">
+                        {t(
+                          'settings.projects.lifecycleHooks.summary.loadLatestHint'
+                        )}
+                      </div>
+                    )
+                  ) : (
+                    <div className="rounded-lg border-dashed border-border/60 bg-muted/5 p-4 text-sm text-muted-foreground">
+                      {t(
+                        'settings.projects.lifecycleHooks.summary.noneConfigured'
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
