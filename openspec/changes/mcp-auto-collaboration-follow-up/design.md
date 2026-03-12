@@ -7,6 +7,14 @@ This change therefore adds a thin collaboration layer on top of the shipped auto
 - MCP clients gain concise machine-readable surfaces for those same states
 - task and attempt records remain the source of truth
 
+## Definition: "Auto-managed" scope
+
+This change is intentionally narrow. In VK, "auto-managed" refers only to:
+- milestone node tasks inside milestones with `automation_mode=auto`
+- where the task is a normal task node (not the milestone entry task) and has a non-empty `milestone_node_id`
+
+All other tasks are considered human-managed for the purposes of collaboration diagnostics and MUST NOT accidentally inherit automation-only semantics.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -39,13 +47,20 @@ These reasons must be readable from task detail, task list data, and MCP respons
 
 **Implementation recommendation (grounded in VK).**
 
-Do not overload scheduler dispatch state. Introduce a dedicated `task_orchestration_states` record keyed by `task_id` to store:
+Do not overload scheduler dispatch state. Reuse the existing `task_orchestration_states` record keyed by `task_id` (shared with turn continuation) to store:
 - `last_control_transfer_reason_code`
 - `last_control_transfer_at`
 - `last_control_transfer_detail` (optional short string)
-- `last_policy_rejection_*` (optional, structured)
 
-This table can be shared with `add-turn-continuation-orchestration` so “continuation diagnostics” and “MCP collaboration diagnostics” live in one maintainable place.
+**Write points (must be explicit).**
+
+To make these reasons reliable (and not "best effort" log scraping), implementation SHOULD record them at well-defined transitions, at minimum:
+- when an auto-managed task becomes review-ready (`awaiting_human_review`)
+- when a human (or an MCP operator acting as a human proxy) explicitly takes over a managed task (`human_takeover`)
+- when automation is explicitly resumed after takeover (`human_resume`)
+- when an MCP-requested executor/profile override is rejected by policy (`policy_rejected_profile`)
+
+If VK does not yet have explicit take-over/resume actions for managed tasks, the first implementation SHOULD still cover `awaiting_human_review` and `policy_rejected_profile`, and add take-over/resume once the corresponding control surfaces exist.
 
 ### 3. Add project-level executor/profile policy for auto-managed work
 
@@ -59,6 +74,7 @@ Recommended shape:
 **Scope recommendation.**
 
 - Enforce this policy only at MCP entry points (`start_attempt`, `send_follow_up`) when an MCP caller explicitly requests an executor/profile override.
+- Apply the policy only for *auto-managed* tasks (auto milestone node tasks). For non-managed tasks, preserve current behavior.
 - Do not apply the policy retroactively to human UI flows in v1. Keep defaults conservative so existing manual workflows do not start failing unexpectedly.
 
 **Storage recommendation (grounded in VK).**
@@ -101,16 +117,28 @@ Do not add a separate event bus. Reuse the existing activity/outbox path for tra
 
 This keeps MCP and HTTP consumers aligned on one event vocabulary.
 
+**Noise control recommendation.**
+
+Prefer publishing only high-level, user-meaningful transitions (review-ready, takeover/resume, policy rejection) rather than every internal write, so MCP clients can poll cheaply without filtering huge event volumes.
+
 ### 7. Keep human UI changes mirror-only
 
 Human-facing changes should stay limited to showing the same transfer/policy reasons in existing task detail and review surfaces. This proposal does not introduce a second managed-task inbox, a separate agent dashboard, or divergent review actions.
 
 ## Migration Plan
 
-- Add any new orchestration enums/fields in Rust DTOs and regenerate TypeScript types.
-- Add project policy persistence + migration with conservative defaults (`inherit_all`).
-- Keep all new API and MCP fields additive/optional so older clients degrade gracefully.
-- Do not backfill derived handoff payloads; compute them from existing records at read time first.
+- Phase 1 (handoff + reasons):
+  - Add a focused MCP handoff reader derived from existing task/attempt state.
+  - Ensure `awaiting_human_review` (and any existing managed-task review transitions) record a persisted control-transfer reason.
+  - Keep all new API/MCP fields additive/optional so older clients degrade gracefully.
+- Phase 2 (policy):
+  - Add project policy persistence + migration with conservative defaults (`inherit_all`).
+  - Enforce only when MCP explicitly requests executor/profile overrides for auto-managed tasks.
+  - Persist policy rejection diagnostics so clients can read "why" without log scraping.
+- Phase 3 (feed events):
+  - Publish a small set of orchestration transition events through existing feed surfaces.
+
+Do not backfill derived handoff payloads; compute them from existing records at read time first.
 
 ## Risks / Trade-offs
 

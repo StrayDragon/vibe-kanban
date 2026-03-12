@@ -55,6 +55,15 @@ The summary should reuse the compact hook-summary presentation rather than the l
 
 Implementation note: keep this frontend-scoped by reusing the existing `ProjectDetail` approach for now (scan a small set of recently updated tasks, fetch attempts, select the most recent workspace hook outcome). This keeps backend untouched while achieving parity.
 
+**Performance note (recommended): make the "latest hook outcome" query on-demand.**
+
+The existing approach can be expensive (multiple `attemptsApi.getAllWithSessions` calls). To keep `Settings > Projects` responsive:
+- the hook outcome summary SHOULD be behind an expander or an explicit "Load latest hook run" action
+- the query SHOULD be disabled until the user expands/requests the summary
+- the UI MUST still provide clean empty/loading/error states
+
+This avoids surprising background network load when an operator opens settings just to edit configuration.
+
 ### 4. Remove the standalone detail-only page after parity is reached
 
 Once settings provides the needed readonly metadata and hook summary, the following should be removed or retired:
@@ -80,6 +89,7 @@ Project settings already has selected-project state and lifecycle-hook config st
 - A naive port of the old detail content can make settings visually dense.
 - Removing the old detail page too early could hide metadata if settings parity is incomplete.
 - If lifecycle-hook latest-run data still requires extra task/attempt reads, the settings page may need careful loading states to avoid jank.
+- If the hook outcome query is executed automatically on initial render, it can create unnecessary network load; keep it user-initiated unless/until a lightweight backend endpoint exists.
 
 ## Verification
 

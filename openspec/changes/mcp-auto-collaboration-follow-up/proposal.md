@@ -1,6 +1,8 @@
 ## Why
 
-The archived optional auto-orchestration change established safe automation, review handoff, and human take-over primitives for VK. What is still missing is a machine-readable collaboration layer for MCP callers. Today an external agent has to stitch together task detail, attempt summaries, diff summaries, approval state, and activity tails on its own, which makes automation clients fragile, poll-heavy, and too dependent on raw logs.
+VK now has bounded automation primitives (milestone auto-managed work, review handoff, and turn continuation diagnostics), but MCP callers still lack a stable, machine-readable collaboration layer. Today an external agent has to stitch together task detail, attempt summaries, diff summaries, approval state, and activity tails on its own, which makes automation clients fragile, poll-heavy, and too dependent on raw logs.
+
+This change is explicitly scoped to VK's current definition of "auto-managed": milestone node tasks inside milestones with `automation_mode=auto`. Other tasks remain human-managed and should not accidentally inherit automation-only semantics.
 
 ## What Changes
 
@@ -29,13 +31,13 @@ The archived optional auto-orchestration change established safe automation, rev
 
 ## Reviewer Guide
 
-- This proposal depends on the archived `add-optional-auto-orchestration` foundation.
-- It can ship independently from `add-workspace-lifecycle-hooks` and `add-turn-continuation-orchestration`.
-- The acceptance bar is simple: an MCP caller can understand the state of a review-ready managed task without scraping raw logs.
+- This proposal builds on the shipped milestone orchestration model and the existing task orchestration diagnostics state.
+- It should NOT widen the definition of "auto-managed" beyond auto milestones: reviewers should check that non-managed tasks do not start emitting misleading orchestration fields.
+- The acceptance bar is simple: an MCP caller can understand the state of a review-ready auto-managed task without scraping raw logs.
 
 ## Goals
 
-- Let MCP callers approve, rework, or take over auto-managed tasks through stable, focused read contracts.
+- Let MCP callers approve, rework, or take over *auto-managed* tasks (auto milestone node tasks) through stable, focused read contracts.
 - Keep executor escalation explicit and policy-bound at the project level.
 - Reuse VK's existing pull-style task/feed model instead of creating a bespoke orchestration transport.
 

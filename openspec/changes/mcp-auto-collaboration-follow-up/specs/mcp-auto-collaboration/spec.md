@@ -1,3 +1,7 @@
+## Definitions
+
+- **Auto-managed task**: a milestone node task inside a milestone with `automation_mode=auto`, where the task has a non-empty `milestone_node_id` and is not the milestone entry task itself.
+
 ## ADDED Requirements
 
 ### Requirement: MCP review handoff payload
