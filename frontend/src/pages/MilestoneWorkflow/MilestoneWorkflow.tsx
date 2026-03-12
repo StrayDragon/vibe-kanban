@@ -73,6 +73,7 @@ import { ExecutionProcessesProvider } from '@/contexts/ExecutionProcessesContext
 import { ClickedElementsProvider } from '@/contexts/ClickedElementsProvider';
 import { ReviewProvider } from '@/contexts/ReviewProvider';
 import { useProject } from '@/contexts/ProjectContext';
+import { useSearch } from '@/contexts/SearchContext';
 import { useProjectTasks } from '@/hooks/projects/useProjectTasks';
 import { useTaskAttemptsWithSessions } from '@/hooks/task-attempts/useTaskAttempts';
 import { milestoneKeys, useMilestone } from '@/hooks/milestones/useMilestone';
@@ -91,6 +92,7 @@ import { useUserSystem } from '@/components/ConfigProvider';
 import { statusBoardColors, statusLabels } from '@/utils/statusLabels';
 import { getMilestoneId, isMilestoneEntry } from '@/utils/milestone';
 import { milestonesApi, tasksApi } from '@/lib/api';
+import { formatTimeAgo } from '@/lib/formatTimeAgo';
 import { paths } from '@/lib/paths';
 import { useOptimisticTasksStore } from '@/stores/useOptimisticTasksStore';
 import {
@@ -102,6 +104,7 @@ import {
   type MilestoneEdge,
   type MilestoneGraph,
   type MilestoneNode,
+  type TaskWithAttemptStatus,
   type TaskStatus,
   type UpdateMilestone,
 } from 'shared/types';
@@ -202,6 +205,7 @@ export function MilestoneWorkflow() {
   const { t } = useTranslation(['tasks', 'common', 'projects']);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { setReviewInbox, clearReviewInbox } = useSearch();
   const { projectId: routeProjectId, milestoneId } = useParams<{
     projectId: string;
     milestoneId: string;
@@ -729,6 +733,42 @@ export function MilestoneWorkflow() {
     });
     return map;
   }, [graphNodes]);
+
+  const reviewInboxTasks = useMemo(() => {
+    if (!milestone) return [];
+    if (milestone.automation_mode !== 'auto') return [];
+
+    return tasks.filter(
+      (task) =>
+        task.task_kind !== 'milestone' &&
+        task.milestone_id === milestone.id &&
+        task.orchestration !== null &&
+        (task.status === 'inreview' ||
+          task.dispatch_state?.status === 'awaiting_human_review')
+    );
+  }, [milestone, tasks]);
+
+  const handleSelectInboxTask = useCallback(
+    (task: TaskWithAttemptStatus) => {
+      const nodeId = nodeIdByTaskId.get(task.id);
+      if (!nodeId) return;
+      setSelectedNodeId(nodeId);
+      setSelectedEdgeId(null);
+      setMainView('workflow');
+    },
+    [nodeIdByTaskId]
+  );
+
+  useEffect(() => {
+    setReviewInbox({
+      tasks: reviewInboxTasks,
+      onSelectTask: handleSelectInboxTask,
+    });
+
+    return () => {
+      clearReviewInbox();
+    };
+  }, [clearReviewInbox, handleSelectInboxTask, reviewInboxTasks, setReviewInbox]);
 
   const milestoneKanbanColumns = useMemo((): KanbanColumns => {
     const columns: KanbanColumns = {
@@ -1867,6 +1907,33 @@ export function MilestoneWorkflow() {
                           {statusLabels[selectedTask.status]}
                         </Badge>
                       </div>
+
+                      {selectedTask.orchestration?.last_control_transfer && (
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                          <span className="font-medium text-foreground/80">
+                            {t('tasks:orchestration.controlTransfer.label')}
+                          </span>
+                          <span>
+                            {t(
+                              `tasks:orchestration.controlTransfer.reasons.${selectedTask.orchestration.last_control_transfer.reason_code}`
+                            )}
+                          </span>
+                          <span>
+                            {formatTimeAgo(
+                              selectedTask.orchestration.last_control_transfer.at
+                            )}
+                          </span>
+                          {selectedTask.orchestration.last_control_transfer
+                            .detail && (
+                            <span className="line-clamp-1 max-w-[48ch]">
+                              {
+                                selectedTask.orchestration.last_control_transfer
+                                  .detail
+                              }
+                            </span>
+                          )}
+                        </div>
+                      )}
 
                       {isGraphNodeSelected && (
                         <>
