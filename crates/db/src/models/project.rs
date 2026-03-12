@@ -41,6 +41,7 @@ pub struct Project {
     pub git_no_verify_override: Option<bool>,
     pub scheduler_max_concurrent: i32,
     pub scheduler_max_retries: i32,
+    pub default_continuation_turns: i32,
     pub after_prepare_hook: Option<WorkspaceLifecycleHookConfig>,
     pub before_cleanup_hook: Option<WorkspaceLifecycleHookConfig>,
     pub remote_project_id: Option<Uuid>,
@@ -74,6 +75,7 @@ pub struct UpdateProject {
     pub git_no_verify_override: Option<Option<bool>>,
     pub scheduler_max_concurrent: Option<i32>,
     pub scheduler_max_retries: Option<i32>,
+    pub default_continuation_turns: Option<i32>,
     #[serde(
         default,
         deserialize_with = "deserialize_optional_hook_config_as_double_option"
@@ -191,6 +193,7 @@ impl Project {
             git_no_verify_override: model.git_no_verify_override,
             scheduler_max_concurrent: model.scheduler_max_concurrent,
             scheduler_max_retries: model.scheduler_max_retries,
+            default_continuation_turns: model.default_continuation_turns,
             after_prepare_hook: build_hook_config(
                 model.after_prepare_hook_command,
                 model.after_prepare_hook_working_dir,
@@ -312,6 +315,7 @@ impl Project {
             git_no_verify_override: Set(None),
             scheduler_max_concurrent: Set(1),
             scheduler_max_retries: Set(3),
+            default_continuation_turns: Set(0),
             after_prepare_hook_command: Set(None),
             after_prepare_hook_working_dir: Set(None),
             after_prepare_hook_failure_policy: Set(None),
@@ -364,6 +368,9 @@ impl Project {
         }
         if let Some(scheduler_max_retries) = payload.scheduler_max_retries {
             active.scheduler_max_retries = Set(std::cmp::max(scheduler_max_retries, 0));
+        }
+        if let Some(default_continuation_turns) = payload.default_continuation_turns {
+            active.default_continuation_turns = Set(std::cmp::max(default_continuation_turns, 0));
         }
         if let Some(hook) = payload.after_prepare_hook.clone() {
             apply_hook_update(&mut active, hook, true);
@@ -487,6 +494,7 @@ mod tests {
             git_no_verify_override: Some(false),
             scheduler_max_concurrent: 1,
             scheduler_max_retries: 3,
+            default_continuation_turns: 0,
             after_prepare_hook: None,
             before_cleanup_hook: None,
             remote_project_id: None,

@@ -7,7 +7,11 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
-use crate::{entities::milestone_plan_application, entities::milestone, models::ids, types::TaskCreatedByKind};
+use crate::{
+    entities::{milestone, milestone_plan_application},
+    models::ids,
+    types::TaskCreatedByKind,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct MilestonePlanApplicationSummary {
@@ -59,7 +63,10 @@ pub async fn create<C: ConnectionTrait>(
     };
 
     let model = active.insert(db).await?;
-    Ok(MilestonePlanApplicationSummary::from_model(model, milestone_id))
+    Ok(MilestonePlanApplicationSummary::from_model(
+        model,
+        milestone_id,
+    ))
 }
 
 pub async fn find_latest_by_milestone_id<C: ConnectionTrait>(

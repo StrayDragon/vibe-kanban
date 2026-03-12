@@ -13,10 +13,15 @@ use uuid::Uuid;
 use super::{project::Project, task_dispatch_state::TaskDispatchState, workspace::Workspace};
 pub use crate::types::{TaskKind, TaskStatus};
 use crate::{
-    entities::{execution_process, milestone, session, task, workspace},
+    entities::{
+        execution_process, milestone, project, session, task, task_orchestration_state, workspace,
+    },
     events::{EVENT_TASK_CREATED, EVENT_TASK_DELETED, EVENT_TASK_UPDATED, TaskEventPayload},
     models::{event_outbox::EventOutbox, ids},
-    types::TaskCreatedByKind,
+    types::{
+        TaskContinuationStopReasonCode, TaskControlTransferReasonCode, TaskCreatedByKind,
+        VkNextAction,
+    },
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -32,6 +37,8 @@ pub struct Task {
     pub parent_workspace_id: Option<Uuid>,
     pub origin_task_id: Option<Uuid>,
     pub created_by_kind: TaskCreatedByKind,
+    /// NULL = inherit project default continuation budget.
+    pub continuation_turns_override: Option<i32>,
     pub shared_task_id: Option<Uuid>,
     pub archived_kanban_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
@@ -47,6 +54,7 @@ pub struct TaskWithAttemptStatus {
     pub last_attempt_failed: bool,
     pub executor: String,
     pub dispatch_state: Option<TaskDispatchState>,
+    pub orchestration: Option<TaskOrchestrationDiagnostics>,
 }
 
 impl std::ops::Deref for TaskWithAttemptStatus {
@@ -67,6 +75,47 @@ pub struct TaskRelationships {
     pub parent_task: Option<Task>,
     pub current_workspace: Workspace,
     pub children: Vec<Task>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskContinuationBudgetSource {
+    ProjectDefault,
+    TaskOverride,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct TaskContinuationStopReason {
+    pub code: TaskContinuationStopReasonCode,
+    pub detail: Option<String>,
+    #[ts(type = "Date")]
+    pub at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct TaskContinuationDiagnostics {
+    pub turns_used: i32,
+    pub turn_budget: i32,
+    pub turns_remaining: i32,
+    pub budget_source: TaskContinuationBudgetSource,
+    pub last_vk_next_action: Option<VkNextAction>,
+    #[ts(type = "Date | null")]
+    pub last_vk_next_at: Option<DateTime<Utc>>,
+    pub stop_reason: Option<TaskContinuationStopReason>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct TaskControlTransferDiagnostics {
+    pub reason_code: TaskControlTransferReasonCode,
+    pub detail: Option<String>,
+    #[ts(type = "Date")]
+    pub at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct TaskOrchestrationDiagnostics {
+    pub continuation: TaskContinuationDiagnostics,
+    pub last_control_transfer: Option<TaskControlTransferDiagnostics>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -144,6 +193,8 @@ pub struct UpdateTask {
     pub status: Option<TaskStatus>,
     pub parent_workspace_id: Option<Uuid>,
     pub image_ids: Option<Vec<Uuid>>,
+    #[serde(deserialize_with = "deserialize_optional_i32_as_double_option")]
+    pub continuation_turns_override: Option<Option<i32>>,
 }
 
 #[derive(Debug, Clone)]
@@ -153,11 +204,125 @@ pub struct TaskUpdateParams {
     pub description: Option<String>,
     pub status: TaskStatus,
     pub parent_workspace_id: Option<Uuid>,
+    pub continuation_turns_override: Option<Option<i32>>,
+}
+
+fn deserialize_optional_i32_as_double_option<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<i32>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(Option::<i32>::deserialize(deserializer)?))
 }
 
 impl Task {
     fn archived_task_write_error() -> DbErr {
         DbErr::Custom("Task is archived. Restore it before modifying.".to_string())
+    }
+
+    async fn resolve_task_orchestration_diagnostics<C: ConnectionTrait>(
+        db: &C,
+        task_row_id: i64,
+        task: &Task,
+    ) -> Result<Option<TaskOrchestrationDiagnostics>, DbErr> {
+        let milestone_id = match task.milestone_id {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+
+        // Only milestone node tasks in auto milestones are considered "auto-managed".
+        if task.task_kind == TaskKind::Milestone {
+            return Ok(None);
+        }
+        if task
+            .milestone_node_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .is_none()
+        {
+            return Ok(None);
+        }
+
+        let milestone_record = milestone::Entity::find()
+            .filter(milestone::Column::Uuid.eq(milestone_id))
+            .one(db)
+            .await?;
+        let Some(milestone_record) = milestone_record else {
+            return Ok(None);
+        };
+        if milestone_record.automation_mode != crate::types::MilestoneAutomationMode::Auto {
+            return Ok(None);
+        }
+
+        let project_record = project::Entity::find()
+            .filter(project::Column::Uuid.eq(task.project_id))
+            .one(db)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+
+        let effective_budget = std::cmp::max(
+            task.continuation_turns_override
+                .unwrap_or(project_record.default_continuation_turns),
+            0,
+        );
+        let budget_source = if task.continuation_turns_override.is_some() {
+            TaskContinuationBudgetSource::TaskOverride
+        } else {
+            TaskContinuationBudgetSource::ProjectDefault
+        };
+
+        let state = task_orchestration_state::Entity::find()
+            .filter(task_orchestration_state::Column::TaskId.eq(task_row_id))
+            .one(db)
+            .await?;
+
+        let turns_used = std::cmp::max(
+            state
+                .as_ref()
+                .map(|state| state.continuation_turns_used)
+                .unwrap_or(0),
+            0,
+        );
+        let turns_remaining = std::cmp::max(effective_budget - turns_used, 0);
+
+        let stop_reason = state.as_ref().and_then(|state| {
+            let code = state.last_continuation_stop_reason_code.clone()?;
+            let at = state.last_continuation_stop_at.map(Into::into)?;
+            Some(TaskContinuationStopReason {
+                code,
+                detail: state.last_continuation_stop_reason_detail.clone(),
+                at,
+            })
+        });
+
+        let last_control_transfer = state.as_ref().and_then(|state| {
+            let reason_code = state.last_control_transfer_reason_code.clone()?;
+            let at = state.last_control_transfer_at.map(Into::into)?;
+            Some(TaskControlTransferDiagnostics {
+                reason_code,
+                detail: state.last_control_transfer_detail.clone(),
+                at,
+            })
+        });
+
+        Ok(Some(TaskOrchestrationDiagnostics {
+            continuation: TaskContinuationDiagnostics {
+                turns_used,
+                turn_budget: effective_budget,
+                turns_remaining,
+                budget_source,
+                last_vk_next_action: state
+                    .as_ref()
+                    .and_then(|state| state.last_vk_next_action.clone()),
+                last_vk_next_at: state
+                    .as_ref()
+                    .and_then(|state| state.last_vk_next_at.map(Into::into)),
+                stop_reason,
+            },
+            last_control_transfer,
+        }))
     }
 
     pub fn to_prompt(&self) -> String {
@@ -222,6 +387,7 @@ impl Task {
             parent_workspace_id,
             origin_task_id,
             created_by_kind: model.created_by_kind,
+            continuation_turns_override: model.continuation_turns_override,
             shared_task_id,
             archived_kanban_id,
             created_at: model.created_at.into(),
@@ -351,12 +517,15 @@ impl Task {
             Self::attempt_status(db, row_id).await?;
         let dispatch_state = TaskDispatchState::find_by_task_id(db, task.id).await?;
 
+        let orchestration = Self::resolve_task_orchestration_diagnostics(db, row_id, &task).await?;
+
         let task_with_status = TaskWithAttemptStatus {
             task,
             has_in_progress_attempt,
             last_attempt_failed,
             executor,
             dispatch_state,
+            orchestration,
         };
         Ok(task_with_status)
     }
@@ -764,6 +933,7 @@ impl Task {
             parent_workspace_id: Set(parent_workspace_id),
             origin_task_id: Set(origin_task_id),
             created_by_kind: Set(data.created_by_kind.clone().unwrap_or_default()),
+            continuation_turns_override: Set(None),
             shared_task_id: Set(shared_task_id),
             archived_kanban_id: Set(None),
             created_at: Set(now.into()),
@@ -792,6 +962,7 @@ impl Task {
             description,
             status,
             parent_workspace_id,
+            continuation_turns_override,
         } = params;
         let project_row_id = ids::project_id_by_uuid(db, project_id)
             .await?
@@ -827,6 +998,9 @@ impl Task {
         active.description = Set(description);
         active.status = Set(status.clone());
         active.parent_workspace_id = Set(parent_workspace_row_id);
+        if let Some(value) = continuation_turns_override {
+            active.continuation_turns_override = Set(value.map(|turns| std::cmp::max(turns, 0)));
+        }
         active.updated_at = Set(Utc::now().into());
 
         let updated = active.update(db).await?;

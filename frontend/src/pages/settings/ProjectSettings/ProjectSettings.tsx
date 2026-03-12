@@ -595,6 +595,7 @@ export function ProjectSettings() {
           0,
           Number.parseInt(draft.scheduler_max_retries, 10) || 0
         ),
+        default_continuation_turns: selectedProject.default_continuation_turns,
         after_prepare_hook: afterPrepareFormStateToHookConfig(
           draft.after_prepare_hook
         ),

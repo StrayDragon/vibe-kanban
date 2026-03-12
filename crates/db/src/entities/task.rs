@@ -18,6 +18,7 @@ pub struct Model {
     pub parent_workspace_id: Option<i64>,
     pub origin_task_id: Option<i64>,
     pub created_by_kind: TaskCreatedByKind,
+    pub continuation_turns_override: Option<i32>,
     pub shared_task_id: Option<i64>,
     pub archived_kanban_id: Option<i64>,
     pub created_at: DateTimeUtc,

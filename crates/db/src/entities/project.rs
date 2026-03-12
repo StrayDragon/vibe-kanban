@@ -15,6 +15,7 @@ pub struct Model {
     pub git_no_verify_override: Option<bool>,
     pub scheduler_max_concurrent: i32,
     pub scheduler_max_retries: i32,
+    pub default_continuation_turns: i32,
     pub after_prepare_hook_command: Option<String>,
     pub after_prepare_hook_working_dir: Option<String>,
     pub after_prepare_hook_failure_policy: Option<WorkspaceLifecycleHookFailurePolicy>,

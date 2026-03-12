@@ -580,6 +580,7 @@ pub trait ContainerService {
                                 git_no_verify_override: None,
                                 scheduler_max_concurrent: None,
                                 scheduler_max_retries: None,
+                                default_continuation_turns: None,
                                 after_prepare_hook: None,
                                 before_cleanup_hook: None,
                             },

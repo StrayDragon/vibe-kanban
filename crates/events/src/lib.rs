@@ -37,6 +37,17 @@ pub use types::EventError;
 
 const OUTBOX_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const OUTBOX_BATCH_LIMIT: u64 = 100;
+const DISABLE_BACKGROUND_TASKS_ENV: &str = "VIBE_DISABLE_BACKGROUND_TASKS";
+
+fn background_tasks_disabled() -> bool {
+    match std::env::var(DISABLE_BACKGROUND_TASKS_ENV) {
+        Ok(value) => matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes"
+        ),
+        Err(_) => false,
+    }
+}
 
 #[derive(Clone)]
 pub struct EventService {
@@ -66,7 +77,9 @@ impl EventService {
             entry_count,
             shutdown_token,
         };
-        service.spawn_outbox_worker();
+        if !background_tasks_disabled() {
+            service.spawn_outbox_worker();
+        }
         service
     }
 

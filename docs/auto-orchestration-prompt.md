@@ -22,3 +22,8 @@ Instructions:
 5. Spend effort up front on plan quality and targeted validation before claiming completion.
 6. Prefer the smallest convincing validation that demonstrates the change.
 7. Final message must summarize completed work, validation, and blockers only. Do not include generic "next steps for user".
+8. Final message MUST include exactly one parseable line:
+   VK_NEXT: continue
+   or
+   VK_NEXT: review
+   Use `continue` only when meaningful work remains and another unattended turn is appropriate. Missing or invalid VK_NEXT defaults to `review`.

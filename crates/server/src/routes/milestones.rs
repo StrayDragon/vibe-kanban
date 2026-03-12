@@ -29,14 +29,15 @@ use uuid::Uuid;
 use crate::{
     DeploymentImpl,
     error::ApiError,
-    milestone_planning::{
-        MILESTONE_PLAN_SCHEMA_VERSION_V1, MilestonePlanApplyResponse, MilestonePlanEdgeKeyV1,
-        MilestonePlanMetadataField, MilestonePlanPreviewEdgeDiff, MilestonePlanPreviewMetadataChange,
-        MilestonePlanPreviewNodeDiff, MilestonePlanPreviewResponse, MilestonePlanPreviewTaskLink,
-        MilestonePlanPreviewTaskToCreate, MilestonePlanV1,
-    },
     middleware::load_milestone_middleware,
     milestone_dispatch::{milestone_has_active_attempt, next_milestone_dispatch_candidate},
+    milestone_planning::{
+        MILESTONE_PLAN_SCHEMA_VERSION_V1, MilestonePlanApplyResponse, MilestonePlanEdgeKeyV1,
+        MilestonePlanMetadataField, MilestonePlanPreviewEdgeDiff,
+        MilestonePlanPreviewMetadataChange, MilestonePlanPreviewNodeDiff,
+        MilestonePlanPreviewResponse, MilestonePlanPreviewTaskLink,
+        MilestonePlanPreviewTaskToCreate, MilestonePlanV1,
+    },
     routes::task_deletion,
 };
 
@@ -448,8 +449,7 @@ fn validate_plan_dag(
 ) -> Result<(), ApiError> {
     use std::collections::{HashMap, VecDeque};
 
-    let mut incoming: HashMap<String, usize> =
-        node_ids.iter().map(|id| (id.clone(), 0)).collect();
+    let mut incoming: HashMap<String, usize> = node_ids.iter().map(|id| (id.clone(), 0)).collect();
     let mut outgoing: HashMap<String, Vec<String>> =
         node_ids.iter().map(|id| (id.clone(), Vec::new())).collect();
 
@@ -494,11 +494,13 @@ fn validate_plan_dag(
 
     while let Some(node) = queue.pop_front() {
         visited += 1;
-        let Some(nexts) = outgoing.get(&node) else { continue };
+        let Some(nexts) = outgoing.get(&node) else {
+            continue;
+        };
         for next in nexts {
-            let entry = incoming.get_mut(next).ok_or_else(|| {
-                ApiError::BadRequest("edge points to unknown node".to_string())
-            })?;
+            let entry = incoming
+                .get_mut(next)
+                .ok_or_else(|| ApiError::BadRequest("edge points to unknown node".to_string()))?;
             *entry = entry.saturating_sub(1);
             if *entry == 0 {
                 queue.push_back(next.clone());
@@ -536,9 +538,7 @@ async fn validate_plan_for_milestone(
     for node in &plan.nodes {
         let node_id = node.id.trim();
         if node_id.is_empty() {
-            return Err(ApiError::BadRequest(
-                "node id cannot be empty".to_string(),
-            ));
+            return Err(ApiError::BadRequest("node id cannot be empty".to_string()));
         }
         if !node_ids.insert(node_id.to_string()) {
             return Err(ApiError::BadRequest(format!(
@@ -800,14 +800,11 @@ fn compute_preview_response(
         .collect();
     planned_nodes.sort();
 
-    let existing_set: std::collections::HashSet<String> =
-        existing_nodes.iter().cloned().collect();
-    let planned_set: std::collections::HashSet<String> =
-        planned_nodes.iter().cloned().collect();
+    let existing_set: std::collections::HashSet<String> = existing_nodes.iter().cloned().collect();
+    let planned_set: std::collections::HashSet<String> = planned_nodes.iter().cloned().collect();
 
     let mut added_nodes: Vec<String> = planned_set.difference(&existing_set).cloned().collect();
-    let mut removed_nodes: Vec<String> =
-        existing_set.difference(&planned_set).cloned().collect();
+    let mut removed_nodes: Vec<String> = existing_set.difference(&planned_set).cloned().collect();
     added_nodes.sort();
     removed_nodes.sort();
 
@@ -851,7 +848,11 @@ fn compute_preview_response(
         .map(|(from, to, df)| MilestonePlanEdgeKeyV1 {
             from: from.clone(),
             to: to.clone(),
-            data_flow: if df.is_empty() { None } else { Some(df.clone()) },
+            data_flow: if df.is_empty() {
+                None
+            } else {
+                Some(df.clone())
+            },
         })
         .collect();
     added_edges.sort_by_key(edge_tuple);
@@ -861,7 +862,11 @@ fn compute_preview_response(
         .map(|(from, to, df)| MilestonePlanEdgeKeyV1 {
             from: from.clone(),
             to: to.clone(),
-            data_flow: if df.is_empty() { None } else { Some(df.clone()) },
+            data_flow: if df.is_empty() {
+                None
+            } else {
+                Some(df.clone())
+            },
         })
         .collect();
     removed_edges.sort_by_key(edge_tuple);
@@ -959,7 +964,8 @@ pub async fn apply_milestone_plan(
 
                 // Stable fallback layout: group by phase, then node id.
                 let mut nodes_for_layout = normalized_plan.nodes.clone();
-                nodes_for_layout.sort_by(|a, b| (a.phase, a.id.as_str()).cmp(&(b.phase, b.id.as_str())));
+                nodes_for_layout
+                    .sort_by(|a, b| (a.phase, a.id.as_str()).cmp(&(b.phase, b.id.as_str())));
 
                 let mut fallback_layout_by_node: std::collections::HashMap<
                     String,
@@ -988,11 +994,11 @@ pub async fn apply_milestone_plan(
                 for node in &normalized_plan.nodes {
                     let task_id = match (node.task_id, node.create_task.as_ref()) {
                         (Some(existing), None) => existing,
-                        (None, Some(_)) => *created_task_ids_by_node
-                            .get(&node.id)
-                            .ok_or_else(|| {
+                        (None, Some(_)) => {
+                            *created_task_ids_by_node.get(&node.id).ok_or_else(|| {
                                 ApiError::Internal("Missing created task id".to_string())
-                            })?,
+                            })?
+                        }
                         _ => {
                             return Err(ApiError::BadRequest(format!(
                                 "node {} must specify exactly one of task_id or create_task",
@@ -1002,10 +1008,9 @@ pub async fn apply_milestone_plan(
                     };
 
                     let layout = node.layout.clone().unwrap_or_else(|| {
-                        fallback_layout_by_node
-                            .get(&node.id)
-                            .cloned()
-                            .unwrap_or(db::models::milestone::MilestoneNodeLayout { x: 0.0, y: 0.0 })
+                        fallback_layout_by_node.get(&node.id).cloned().unwrap_or(
+                            db::models::milestone::MilestoneNodeLayout { x: 0.0, y: 0.0 },
+                        )
                     });
 
                     resolved_nodes.push(db::models::milestone::MilestoneNode {
@@ -1213,13 +1218,9 @@ mod tests {
             edges: Vec::new(),
         };
 
-        let err = preview_milestone_plan(
-            Extension(milestone),
-            State(deployment),
-            Json(plan),
-        )
-        .await
-        .expect_err("expected bad request");
+        let err = preview_milestone_plan(Extension(milestone), State(deployment), Json(plan))
+            .await
+            .expect_err("expected bad request");
 
         assert!(matches!(err, crate::error::ApiError::BadRequest(_)));
     }
@@ -1300,23 +1301,14 @@ mod tests {
         let data2 = response2.0.into_data().expect("apply response");
 
         assert_eq!(
-            data1
-                .created_tasks
-                .iter()
-                .map(|t| t.id)
-                .collect::<Vec<_>>(),
-            data2
-                .created_tasks
-                .iter()
-                .map(|t| t.id)
-                .collect::<Vec<_>>()
+            data1.created_tasks.iter().map(|t| t.id).collect::<Vec<_>>(),
+            data2.created_tasks.iter().map(|t| t.id).collect::<Vec<_>>()
         );
 
         // Entry task + 2 node tasks.
-        let tasks =
-            Task::find_by_project_id_with_attempt_status(&deployment.db().pool, project_id)
-                .await
-                .unwrap();
+        let tasks = Task::find_by_project_id_with_attempt_status(&deployment.db().pool, project_id)
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 3);
 
         assert!(
@@ -1324,7 +1316,8 @@ mod tests {
             "expected provenance to be surfaced in milestone reads"
         );
         assert!(
-            data1.created_tasks
+            data1
+                .created_tasks
                 .iter()
                 .all(|t| t.created_by_kind == db::types::TaskCreatedByKind::MilestonePlanner)
         );
@@ -1398,10 +1391,9 @@ mod tests {
         assert!(matches!(err, crate::error::ApiError::BadRequest(_)));
 
         // Only the entry task should exist.
-        let tasks =
-            Task::find_by_project_id_with_attempt_status(&deployment.db().pool, project_id)
-                .await
-                .unwrap();
+        let tasks = Task::find_by_project_id_with_attempt_status(&deployment.db().pool, project_id)
+            .await
+            .unwrap();
         assert_eq!(tasks.len(), 1);
     }
 }

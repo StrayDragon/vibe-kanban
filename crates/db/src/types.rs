@@ -252,6 +252,93 @@ pub enum TaskDispatchStatus {
     TS,
     EnumString,
     Display,
+)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+#[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
+pub enum VkNextAction {
+    #[sea_orm(string_value = "continue")]
+    Continue,
+    #[sea_orm(string_value = "review")]
+    Review,
+}
+
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    EnumIter,
+    DeriveActiveEnum,
+    Serialize,
+    Deserialize,
+    TS,
+    EnumString,
+    Display,
+)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum TaskContinuationStopReasonCode {
+    #[sea_orm(string_value = "disabled")]
+    Disabled,
+    #[sea_orm(string_value = "budget_exhausted")]
+    BudgetExhausted,
+    #[sea_orm(string_value = "approval_pending")]
+    ApprovalPending,
+    #[sea_orm(string_value = "vk_next_review")]
+    VkNextReview,
+    #[sea_orm(string_value = "vk_next_missing")]
+    VkNextMissing,
+    #[sea_orm(string_value = "vk_next_invalid")]
+    VkNextInvalid,
+    #[sea_orm(string_value = "human_queued_follow_up")]
+    HumanQueuedFollowUp,
+    #[sea_orm(string_value = "task_not_actionable")]
+    TaskNotActionable,
+    #[sea_orm(string_value = "start_failed")]
+    StartFailed,
+}
+
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    EnumIter,
+    DeriveActiveEnum,
+    Serialize,
+    Deserialize,
+    TS,
+    EnumString,
+    Display,
+)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum TaskControlTransferReasonCode {
+    #[sea_orm(string_value = "human_takeover")]
+    HumanTakeover,
+    #[sea_orm(string_value = "human_resume")]
+    HumanResume,
+    #[sea_orm(string_value = "awaiting_human_review")]
+    AwaitingHumanReview,
+    #[sea_orm(string_value = "policy_rejected_profile")]
+    PolicyRejectedProfile,
+}
+
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    EnumIter,
+    DeriveActiveEnum,
+    Serialize,
+    Deserialize,
+    TS,
+    EnumString,
+    Display,
     Default,
 )]
 #[sea_orm(rs_type = "String", db_type = "Text")]

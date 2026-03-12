@@ -781,6 +781,7 @@ export function MilestoneWorkflow() {
           status: newStatus,
           parent_workspace_id: task.parent_workspace_id,
           image_ids: null,
+          continuation_turns_override: task.continuation_turns_override,
         });
       } catch (err) {
         console.error('Failed to update task status:', err);
@@ -1469,6 +1470,7 @@ export function MilestoneWorkflow() {
         status: 'done',
         parent_workspace_id: selectedTask.parent_workspace_id,
         image_ids: null,
+        continuation_turns_override: selectedTask.continuation_turns_override,
       });
       await refetchMilestone();
     } catch (error) {

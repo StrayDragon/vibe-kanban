@@ -9,7 +9,6 @@ use db::{
         },
         project::{Project, ProjectError},
         task::{CreateTask, Task, TaskKind, TaskStatus, TaskWithAttemptStatus},
-        task_dispatch_state::TaskDispatchState,
         workspace::{CreateWorkspace, Workspace, WorkspaceError},
         workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
     },
@@ -139,19 +138,9 @@ pub async fn create_task_and_start<R: TaskRuntime + Sync>(
         return Err(TasksError::Runtime(err));
     }
 
-    let task = Task::find_by_id(db, task.id)
+    Task::find_by_id_with_attempt_status(db, task.id)
         .await?
-        .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
-    let task_id = task.id;
-
-    let task_with_status = TaskWithAttemptStatus {
-        task,
-        has_in_progress_attempt: true,
-        last_attempt_failed: false,
-        executor: input.executor_profile_id.executor.to_string(),
-        dispatch_state: TaskDispatchState::find_by_task_id(db, task_id).await?,
-    };
-    Ok(task_with_status)
+        .ok_or_else(|| TasksError::Database(DbErr::RecordNotFound("Task not found".to_string())))
 }
 
 pub async fn create_task_attempt<R: TaskRuntime + Sync>(

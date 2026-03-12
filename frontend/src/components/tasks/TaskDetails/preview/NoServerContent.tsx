@@ -90,6 +90,7 @@ export function NoServerContent({
           git_no_verify_override: project.git_no_verify_override ?? null,
           scheduler_max_concurrent: project.scheduler_max_concurrent,
           scheduler_max_retries: project.scheduler_max_retries,
+          default_continuation_turns: project.default_continuation_turns,
           after_prepare_hook: project.after_prepare_hook,
           before_cleanup_hook: project.before_cleanup_hook,
         },

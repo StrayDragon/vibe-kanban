@@ -825,6 +825,7 @@ Avoid: Calling this just to set status=inprogress (start_attempt already does th
                 description: description.or(existing.description),
                 status: status.unwrap_or(existing.status),
                 parent_workspace_id,
+                continuation_turns_override: None,
             },
         )
         .await

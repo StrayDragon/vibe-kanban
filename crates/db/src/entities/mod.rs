@@ -26,6 +26,7 @@ pub mod task;
 pub mod task_attempt_activity;
 pub mod task_dispatch_state;
 pub mod task_image;
+pub mod task_orchestration_state;
 pub mod workspace;
 pub mod workspace_repo;
 
@@ -57,5 +58,6 @@ pub use task::Entity as Task;
 pub use task_attempt_activity::Entity as TaskAttemptActivity;
 pub use task_dispatch_state::Entity as TaskDispatchState;
 pub use task_image::Entity as TaskImage;
+pub use task_orchestration_state::Entity as TaskOrchestrationState;
 pub use workspace::Entity as Workspace;
 pub use workspace_repo::Entity as WorkspaceRepo;

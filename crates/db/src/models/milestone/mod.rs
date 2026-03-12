@@ -15,7 +15,9 @@ use uuid::Uuid;
 use crate::{
     entities::{milestone, task},
     events::{EVENT_TASK_UPDATED, TaskEventPayload},
-    models::{event_outbox::EventOutbox, ids, milestone_plan_application::MilestonePlanApplicationSummary},
+    models::{
+        event_outbox::EventOutbox, ids, milestone_plan_application::MilestonePlanApplicationSummary,
+    },
     types::{MilestoneAutomationMode, TaskKind, TaskStatus},
 };
 
@@ -387,9 +389,7 @@ impl Milestone {
             Some(model) => {
                 let last_plan_application =
                     crate::models::milestone_plan_application::find_latest_by_milestone_row_id(
-                        db,
-                        model.id,
-                        model.uuid,
+                        db, model.id, model.uuid,
                     )
                     .await?;
                 Ok(Some(
@@ -415,7 +415,10 @@ impl Milestone {
             .await?;
 
         let row_ids: Vec<i64> = models.iter().map(|model| model.id).collect();
-        let last_plan_applications = crate::models::milestone_plan_application::find_latest_by_milestone_row_ids(db, &row_ids)
+        let last_plan_applications =
+            crate::models::milestone_plan_application::find_latest_by_milestone_row_ids(
+                db, &row_ids,
+            )
             .await?;
 
         let mut groups = Vec::with_capacity(models.len());
@@ -433,7 +436,10 @@ impl Milestone {
             .await?;
 
         let row_ids: Vec<i64> = models.iter().map(|model| model.id).collect();
-        let last_plan_applications = crate::models::milestone_plan_application::find_latest_by_milestone_row_ids(db, &row_ids)
+        let last_plan_applications =
+            crate::models::milestone_plan_application::find_latest_by_milestone_row_ids(
+                db, &row_ids,
+            )
             .await?;
 
         let mut groups = Vec::with_capacity(models.len());

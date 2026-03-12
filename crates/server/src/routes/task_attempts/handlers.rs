@@ -1019,9 +1019,7 @@ pub async fn create_task_attempt(
                                 .to_string(),
                         ));
                     }
-                    Some(
-                        crate::milestone_planning::MILESTONE_PLANNING_PROMPT_TEMPLATE.to_string(),
-                    )
+                    Some(crate::milestone_planning::MILESTONE_PLANNING_PROMPT_TEMPLATE.to_string())
                 }
                 None => None,
             };

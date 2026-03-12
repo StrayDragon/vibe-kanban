@@ -237,6 +237,7 @@ pub async fn update_task(
             description,
             status,
             parent_workspace_id,
+            continuation_turns_override: payload.continuation_turns_override,
         },
     )
     .await?;

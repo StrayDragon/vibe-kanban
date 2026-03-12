@@ -47,6 +47,18 @@ use utils_assets::config_path;
 use utils_core::notifications::SharedNotifier;
 use uuid::Uuid;
 
+const DISABLE_BACKGROUND_TASKS_ENV: &str = "VIBE_DISABLE_BACKGROUND_TASKS";
+
+fn background_tasks_disabled() -> bool {
+    match std::env::var(DISABLE_BACKGROUND_TASKS_ENV) {
+        Ok(value) => matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes"
+        ),
+        Err(_) => false,
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum DeploymentError {
     #[error(transparent)]
@@ -359,7 +371,9 @@ impl AppRuntime {
             Arc::new(NotificationService::new(config.clone()));
         let db = DBService::new().await?;
         let image = ImageService::new(db.clone().pool)?;
-        Self::spawn_orphaned_image_cleanup(image.clone());
+        if !background_tasks_disabled() {
+            Self::spawn_orphaned_image_cleanup(image.clone());
+        }
 
         let events = EventService::new(
             db.clone(),

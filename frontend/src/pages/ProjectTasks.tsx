@@ -660,6 +660,7 @@ export function ProjectTasks() {
           status: newStatus,
           parent_workspace_id: task.parent_workspace_id,
           image_ids: null,
+          continuation_turns_override: task.continuation_turns_override,
         });
       } catch (err) {
         console.error('Failed to update task status:', err);

@@ -20,11 +20,13 @@ use db::{
         },
         execution_process_logs::ExecutionProcessLogs,
         execution_process_repo_state::ExecutionProcessRepoState,
+        milestone::Milestone,
         project::{Project, WorkspaceLifecycleHookConfig},
         project_repo::ProjectRepo,
         repo::Repo,
         scratch::{DraftFollowUpData, Scratch, ScratchType},
         task::{Task, TaskStatus},
+        task_orchestration_state::TaskOrchestrationState,
         workspace::{Workspace, WorkspaceError},
         workspace_repo::WorkspaceRepo,
     },
@@ -64,7 +66,13 @@ use repos::{
     workspace_manager::{RepoWorkspaceInput, WorkspaceManager},
 };
 use serde_json::json;
-use tasks::approvals::{Approvals, executor_approvals::ExecutorApprovalBridge};
+use tasks::{
+    approvals::{Approvals, executor_approvals::ExecutorApprovalBridge},
+    turn_continuation::{
+        VkNextParseResult, build_turn_continuation_prompt, parse_vk_next_action_detailed,
+        strip_vk_next_lines,
+    },
+};
 use tokio::{sync::RwLock, task::JoinHandle};
 use tokio_util::{io::ReaderStream, sync::CancellationToken};
 use utils_core::{
@@ -1138,7 +1146,7 @@ impl LocalContainerService {
                     let mut finalized = false;
 
                     // Update executor session summary if available
-                    if let Err(e) = container.update_executor_session_summary(&exec_id).await {
+                    if let Err(e) = container.update_executor_session_summary(&ctx).await {
                         tracing::warn!("Failed to update executor session summary: {}", e);
                     }
 
@@ -1189,10 +1197,66 @@ impl LocalContainerService {
                                 ctx.workspace.id
                             );
 
-                            // Manually finalize task since we're bypassing normal execution flow
+                            // We're bypassing the cleanup step, so we must treat this as the
+                            // finalization boundary: consume queued follow-ups or start a bounded
+                            // continuation turn before handing off to review.
                             if !finalized {
-                                container.finalize_task(&ctx).await;
-                                finalized = true;
+                                if let Some(queued_msg) =
+                                    container.queued_message_service.take_queued(ctx.session.id)
+                                {
+                                    // Delete the scratch since we're consuming the queued message
+                                    if let Err(e) = Scratch::delete(
+                                        &db.pool,
+                                        ctx.session.id,
+                                        &ScratchType::DraftFollowUp,
+                                    )
+                                    .await
+                                    {
+                                        tracing::warn!(
+                                            "Failed to delete scratch after consuming queued message: {}",
+                                            e
+                                        );
+                                    }
+
+                                    match container
+                                        .start_queued_follow_up(&ctx, &queued_msg.data)
+                                        .await
+                                    {
+                                        Ok(_) => {
+                                            // Treat this as the finalization boundary: do not
+                                            // also finalize/continue again in should_finalize.
+                                            finalized = true;
+                                        }
+                                        Err(e) => {
+                                            tracing::error!(
+                                                "Failed to start queued follow-up: {}",
+                                                e
+                                            );
+                                            container.finalize_task(&ctx).await;
+                                            finalized = true;
+                                        }
+                                    }
+                                } else {
+                                    match container.maybe_start_turn_continuation(&ctx).await {
+                                        Ok(true) => {
+                                            // Treat this as the finalization boundary: do not
+                                            // also finalize/continue again in should_finalize.
+                                            finalized = true;
+                                        }
+                                        Ok(false) => {
+                                            container.finalize_task(&ctx).await;
+                                            finalized = true;
+                                        }
+                                        Err(err) => {
+                                            tracing::warn!(
+                                                error = %err,
+                                                "Turn continuation failed; finalizing task"
+                                            );
+                                            container.finalize_task(&ctx).await;
+                                            finalized = true;
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1257,7 +1321,23 @@ impl LocalContainerService {
                                 }
                             }
                         } else if !finalized {
-                            container.finalize_task(&ctx).await;
+                            if should_execute_queued {
+                                match container.maybe_start_turn_continuation(&ctx).await {
+                                    Ok(true) => {}
+                                    Ok(false) => {
+                                        container.finalize_task(&ctx).await;
+                                    }
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            error = %err,
+                                            "Turn continuation failed; finalizing task"
+                                        );
+                                        container.finalize_task(&ctx).await;
+                                    }
+                                }
+                            } else {
+                                container.finalize_task(&ctx).await;
+                            }
                         }
                     }
                 }
@@ -1375,7 +1455,10 @@ impl LocalContainerService {
     }
 
     /// Extract the last assistant message from the MsgStore history
-    fn extract_last_assistant_message(&self, exec_id: &Uuid) -> Option<String> {
+    fn extract_last_assistant_message_info(
+        &self,
+        exec_id: &Uuid,
+    ) -> Option<(String, VkNextParseResult)> {
         // Get the MsgStore for this execution
         let msg_stores = self.msg_stores.try_read().ok()?;
         let msg_store = msg_stores.get(exec_id)?;
@@ -1391,12 +1474,7 @@ impl LocalContainerService {
                 {
                     let content = entry.content.trim();
                     if !content.is_empty() {
-                        const MAX_SUMMARY_LENGTH: usize = 4096;
-                        if content.len() > MAX_SUMMARY_LENGTH {
-                            let truncated = truncate_to_char_boundary(content, MAX_SUMMARY_LENGTH);
-                            return Some(format!("{truncated}..."));
-                        }
-                        return Some(content.to_string());
+                        return Some(summarize_assistant_message(content));
                     }
                 }
             }
@@ -1406,18 +1484,38 @@ impl LocalContainerService {
     }
 
     /// Update the coding agent turn summary with the final assistant message
-    async fn update_executor_session_summary(&self, exec_id: &Uuid) -> Result<(), anyhow::Error> {
+    async fn update_executor_session_summary(
+        &self,
+        ctx: &ExecutionContext,
+    ) -> Result<(), anyhow::Error> {
+        let exec_id = ctx.execution_process.id;
         // Check if there's a coding agent turn for this execution process
-        let turn = CodingAgentTurn::find_by_execution_process_id(&self.db.pool, *exec_id).await?;
+        let turn = CodingAgentTurn::find_by_execution_process_id(&self.db.pool, exec_id).await?;
 
         if let Some(turn) = turn {
-            // Only update if summary is not already set
-            if turn.summary.is_none() {
-                if let Some(summary) = self.extract_last_assistant_message(exec_id) {
-                    CodingAgentTurn::update_summary(&self.db.pool, *exec_id, &summary).await?;
-                } else {
-                    tracing::debug!("No assistant message found for execution {}", exec_id);
+            if let Some((summary, vk_next)) = self.extract_last_assistant_message_info(&exec_id) {
+                // Only update if summary is not already set.
+                // Even when summary exists, we still want VK_NEXT for continuation.
+                if turn.summary.is_none() {
+                    CodingAgentTurn::update_summary(&self.db.pool, exec_id, &summary).await?;
                 }
+
+                let (vk_next_action, vk_next_invalid_raw) = match vk_next {
+                    VkNextParseResult::Parsed(action) => (Some(action), None),
+                    VkNextParseResult::Missing => (None, None),
+                    VkNextParseResult::Invalid { raw } => (None, Some(raw)),
+                };
+
+                let _ = TaskOrchestrationState::upsert_vk_next_action(
+                    &self.db.pool,
+                    ctx.task.id,
+                    ctx.workspace.id,
+                    vk_next_action,
+                    vk_next_invalid_raw,
+                )
+                .await;
+            } else {
+                tracing::debug!("No assistant message found for execution {}", exec_id);
             }
         }
 
@@ -1592,6 +1690,298 @@ impl LocalContainerService {
             &ExecutionProcessRunReason::CodingAgent,
         )
         .await
+    }
+
+    async fn start_turn_continuation_follow_up(
+        &self,
+        ctx: &ExecutionContext,
+        prompt: String,
+    ) -> Result<ExecutionProcess, ContainerError> {
+        // Reuse the latest executor profile (including variant) from this session.
+        let executor_profile_id =
+            ExecutionProcess::latest_executor_profile_for_session(&self.db.pool, ctx.session.id)
+                .await
+                .map_err(|e| {
+                    ContainerError::Other(anyhow!("Failed to get executor profile: {e}"))
+                })?;
+
+        // Get latest agent session ID for session continuity (from coding agent turns).
+        let latest_agent_session_id = ExecutionProcess::find_latest_coding_agent_turn_session_id(
+            &self.db.pool,
+            ctx.session.id,
+        )
+        .await?;
+
+        let project_repos =
+            ProjectRepo::find_by_project_id_with_names(&self.db.pool, ctx.project.id).await?;
+        let cleanup_action = self.cleanup_actions_for_repos(&project_repos);
+
+        let working_dir = ctx
+            .workspace
+            .agent_working_dir
+            .as_ref()
+            .filter(|dir| !dir.is_empty())
+            .cloned();
+        let image_paths = match self
+            .image_service
+            .image_path_map_for_task(ctx.task.id)
+            .await
+        {
+            Ok(map) if !map.is_empty() => Some(map),
+            Ok(_) => None,
+            Err(err) => {
+                tracing::warn!("Failed to resolve task image paths: {}", err);
+                None
+            }
+        };
+
+        let action_type = if let Some(agent_session_id) = latest_agent_session_id {
+            ExecutorActionType::CodingAgentFollowUpRequest(CodingAgentFollowUpRequest {
+                prompt,
+                session_id: agent_session_id,
+                executor_profile_id: executor_profile_id.clone(),
+                working_dir: working_dir.clone(),
+                image_paths: image_paths.clone(),
+            })
+        } else {
+            ExecutorActionType::CodingAgentInitialRequest(CodingAgentInitialRequest {
+                prompt,
+                executor_profile_id: executor_profile_id.clone(),
+                working_dir,
+                image_paths,
+            })
+        };
+
+        let action = ExecutorAction::new(action_type, cleanup_action.map(Box::new));
+
+        self.start_execution(
+            &ctx.workspace,
+            &ctx.session,
+            &action,
+            &ExecutionProcessRunReason::CodingAgent,
+        )
+        .await
+    }
+
+    async fn maybe_start_turn_continuation(
+        &self,
+        ctx: &ExecutionContext,
+    ) -> Result<bool, ContainerError> {
+        // Auto-only: only milestone node tasks inside an auto milestone.
+        let Some(milestone_id) = ctx.task.milestone_id else {
+            return Ok(false);
+        };
+        if ctx.task.task_kind == db::types::TaskKind::Milestone {
+            return Ok(false);
+        }
+        if ctx
+            .task
+            .milestone_node_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .is_none()
+        {
+            return Ok(false);
+        }
+
+        let milestone = match Milestone::find_by_id(&self.db.pool, milestone_id).await {
+            Ok(Some(milestone)) => milestone,
+            Ok(None) => return Ok(false),
+            Err(err) => return Err(ContainerError::Other(anyhow!("{err}"))),
+        };
+        if milestone.automation_mode != db::types::MilestoneAutomationMode::Auto {
+            return Ok(false);
+        }
+
+        // Continuation is only valid while the task is still actionable.
+        if !matches!(
+            ctx.task.status,
+            db::types::TaskStatus::Todo | db::types::TaskStatus::InProgress
+        ) {
+            let _ = TaskOrchestrationState::record_continuation_stop_reason(
+                &self.db.pool,
+                ctx.task.id,
+                ctx.workspace.id,
+                db::types::TaskContinuationStopReasonCode::TaskNotActionable,
+                Some(format!("task_status={}", ctx.task.status)),
+            )
+            .await;
+            return Ok(false);
+        }
+
+        let effective_budget = ctx
+            .task
+            .continuation_turns_override
+            .unwrap_or(ctx.project.default_continuation_turns)
+            .max(0);
+        if effective_budget <= 0 {
+            let _ = TaskOrchestrationState::record_continuation_stop_reason(
+                &self.db.pool,
+                ctx.task.id,
+                ctx.workspace.id,
+                db::types::TaskContinuationStopReasonCode::Disabled,
+                None,
+            )
+            .await;
+            return Ok(false);
+        }
+
+        // Approvals gate continuation.
+        if let Ok((pending, _)) = db::models::approval::list_by_attempt(
+            &self.db.pool,
+            ctx.workspace.id,
+            Some("pending"),
+            1,
+            None,
+        )
+        .await
+            && !pending.is_empty()
+        {
+            let _ = TaskOrchestrationState::record_continuation_stop_reason(
+                &self.db.pool,
+                ctx.task.id,
+                ctx.workspace.id,
+                db::types::TaskContinuationStopReasonCode::ApprovalPending,
+                None,
+            )
+            .await;
+            return Ok(false);
+        }
+
+        let state = TaskOrchestrationState::find_by_task_id(&self.db.pool, ctx.task.id).await?;
+        let (turns_used, vk_next_action, vk_next_invalid_raw) = match state {
+            Some(state) if state.attempt_id == Some(ctx.workspace.id) => (
+                state.continuation_turns_used.max(0),
+                state.last_vk_next_action,
+                state.last_vk_next_invalid_raw,
+            ),
+            _ => (0, None, None),
+        };
+
+        if turns_used >= effective_budget {
+            let _ = TaskOrchestrationState::record_continuation_stop_reason(
+                &self.db.pool,
+                ctx.task.id,
+                ctx.workspace.id,
+                db::types::TaskContinuationStopReasonCode::BudgetExhausted,
+                None,
+            )
+            .await;
+            return Ok(false);
+        }
+
+        let should_continue = matches!(vk_next_action, Some(db::types::VkNextAction::Continue))
+            && vk_next_invalid_raw.is_none();
+        if !should_continue {
+            let (code, detail) = if let Some(raw) = vk_next_invalid_raw {
+                (
+                    db::types::TaskContinuationStopReasonCode::VkNextInvalid,
+                    Some(format!("raw={raw}")),
+                )
+            } else {
+                match vk_next_action {
+                    Some(db::types::VkNextAction::Review) => (
+                        db::types::TaskContinuationStopReasonCode::VkNextReview,
+                        None,
+                    ),
+                    Some(db::types::VkNextAction::Continue) => unreachable!("handled above"),
+                    None => (
+                        db::types::TaskContinuationStopReasonCode::VkNextMissing,
+                        None,
+                    ),
+                }
+            };
+            let _ = TaskOrchestrationState::record_continuation_stop_reason(
+                &self.db.pool,
+                ctx.task.id,
+                ctx.workspace.id,
+                code,
+                detail,
+            )
+            .await;
+            return Ok(false);
+        }
+
+        // Get the latest turn summary for context. This is best-effort; continuation works without it.
+        let latest_coding_process = ExecutionProcess::find_latest_by_session_and_run_reason(
+            &self.db.pool,
+            ctx.session.id,
+            &ExecutionProcessRunReason::CodingAgent,
+        )
+        .await?;
+
+        let last_turn_summary = if let Some(process) = latest_coding_process {
+            CodingAgentTurn::find_by_execution_process_id(&self.db.pool, process.id)
+                .await
+                .ok()
+                .and_then(|turn| turn.and_then(|turn| turn.summary))
+        } else {
+            None
+        };
+
+        let remaining_after_this = (effective_budget - (turns_used + 1)).max(0);
+        let prompt =
+            build_turn_continuation_prompt(last_turn_summary.as_deref(), remaining_after_this);
+
+        // Reserve budget before starting the next execution to avoid races with very fast executors
+        // where the follow-up could complete before we persist the updated turn counter.
+        TaskOrchestrationState::increment_continuation_turns_used(
+            &self.db.pool,
+            ctx.task.id,
+            ctx.workspace.id,
+        )
+        .await?;
+
+        match self.start_turn_continuation_follow_up(ctx, prompt).await {
+            Ok(_) => Ok(true),
+            Err(err) => {
+                let _ =
+                    TaskOrchestrationState::decrement_continuation_turns_used_if_attempt_matches(
+                        &self.db.pool,
+                        ctx.task.id,
+                        ctx.workspace.id,
+                    )
+                    .await;
+                let _ = TaskOrchestrationState::record_continuation_stop_reason(
+                    &self.db.pool,
+                    ctx.task.id,
+                    ctx.workspace.id,
+                    db::types::TaskContinuationStopReasonCode::StartFailed,
+                    Some(err.to_string()),
+                )
+                .await;
+                Ok(false)
+            }
+        }
+    }
+}
+
+fn summarize_assistant_message(content: &str) -> (String, VkNextParseResult) {
+    let vk_next = parse_vk_next_action_detailed(content);
+    let stripped = strip_vk_next_lines(content);
+    const MAX_SUMMARY_LENGTH: usize = 4096;
+    if stripped.len() > MAX_SUMMARY_LENGTH {
+        let truncated = truncate_to_char_boundary(&stripped, MAX_SUMMARY_LENGTH);
+        (format!("{truncated}..."), vk_next)
+    } else {
+        (stripped, vk_next)
+    }
+}
+
+#[cfg(test)]
+mod turn_continuation_tests {
+    use super::*;
+
+    #[test]
+    fn summarize_assistant_message_strips_vk_next_and_returns_parse_result() {
+        let (summary, vk_next) =
+            summarize_assistant_message("Did work\nVK_NEXT: continue\nMore details");
+        assert_eq!(summary, "Did work\nMore details");
+        assert_eq!(
+            vk_next,
+            VkNextParseResult::Parsed(db::types::VkNextAction::Continue)
+        );
     }
 }
 

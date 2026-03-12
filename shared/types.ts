@@ -4,7 +4,7 @@
 
 // If you are an AI, and you absolutely have to edit this file, please confirm with the user first.
 
-export type Project = { id: string, name: string, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null, scheduler_max_concurrent: number, scheduler_max_retries: number, after_prepare_hook: WorkspaceLifecycleHookConfig | null, before_cleanup_hook: WorkspaceLifecycleHookConfig | null, remote_project_id: string | null, created_at: Date, updated_at: Date, };
+export type Project = { id: string, name: string, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null, scheduler_max_concurrent: number, scheduler_max_retries: number, default_continuation_turns: number, after_prepare_hook: WorkspaceLifecycleHookConfig | null, before_cleanup_hook: WorkspaceLifecycleHookConfig | null, remote_project_id: string | null, created_at: Date, updated_at: Date, };
 
 export type WorkspaceLifecycleHookConfig = { command: string, working_dir: string | null, failure_policy: WorkspaceLifecycleHookFailurePolicy, run_mode: WorkspaceLifecycleHookRunMode | null, };
 
@@ -18,7 +18,7 @@ export type WorkspaceLifecycleHookStatus = "succeeded" | "failed";
 
 export type CreateProject = { name: string, repositories: Array<CreateProjectRepo>, };
 
-export type UpdateProject = { name: string | null, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null | null, scheduler_max_concurrent: number | null, scheduler_max_retries: number | null, after_prepare_hook: WorkspaceLifecycleHookConfig | null | null, before_cleanup_hook: WorkspaceLifecycleHookConfig | null | null, };
+export type UpdateProject = { name: string | null, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null | null, scheduler_max_concurrent: number | null, scheduler_max_retries: number | null, default_continuation_turns: number | null, after_prepare_hook: WorkspaceLifecycleHookConfig | null | null, before_cleanup_hook: WorkspaceLifecycleHookConfig | null | null, };
 
 export type SearchResult = { path: string, is_file: boolean, match_type: SearchMatchType, };
 
@@ -50,11 +50,35 @@ export type TaskStatus = "todo" | "inprogress" | "inreview" | "done" | "cancelle
 
 export type TaskKind = "default" | "milestone";
 
-export type Task = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, milestone_id: string | null, milestone_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
+export type Task = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, milestone_id: string | null, milestone_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind, 
+/**
+ * NULL = inherit project default continuation budget.
+ */
+continuation_turns_override: number | null, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
 
 export type TaskCreatedByKind = "human_ui" | "mcp" | "scheduler" | "agent_followup" | "milestone_planner";
 
-export type TaskWithAttemptStatus = { has_in_progress_attempt: boolean, last_attempt_failed: boolean, executor: string, dispatch_state: TaskDispatchState | null, id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, milestone_id: string | null, milestone_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
+export type VkNextAction = "continue" | "review";
+
+export type TaskContinuationStopReasonCode = "disabled" | "budget_exhausted" | "approval_pending" | "vk_next_review" | "vk_next_missing" | "vk_next_invalid" | "human_queued_follow_up" | "task_not_actionable" | "start_failed";
+
+export type TaskControlTransferReasonCode = "human_takeover" | "human_resume" | "awaiting_human_review" | "policy_rejected_profile";
+
+export type TaskContinuationBudgetSource = "project_default" | "task_override";
+
+export type TaskContinuationStopReason = { code: TaskContinuationStopReasonCode, detail: string | null, at: Date, };
+
+export type TaskContinuationDiagnostics = { turns_used: number, turn_budget: number, turns_remaining: number, budget_source: TaskContinuationBudgetSource, last_vk_next_action: VkNextAction | null, last_vk_next_at: Date | null, stop_reason: TaskContinuationStopReason | null, };
+
+export type TaskControlTransferDiagnostics = { reason_code: TaskControlTransferReasonCode, detail: string | null, at: Date, };
+
+export type TaskOrchestrationDiagnostics = { continuation: TaskContinuationDiagnostics, last_control_transfer: TaskControlTransferDiagnostics | null, };
+
+export type TaskWithAttemptStatus = { has_in_progress_attempt: boolean, last_attempt_failed: boolean, executor: string, dispatch_state: TaskDispatchState | null, orchestration: TaskOrchestrationDiagnostics | null, id: string, project_id: string, title: string, description: string | null, status: TaskStatus, task_kind: TaskKind, milestone_id: string | null, milestone_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind, 
+/**
+ * NULL = inherit project default continuation budget.
+ */
+continuation_turns_override: number | null, shared_task_id: string | null, archived_kanban_id: string | null, created_at: string, updated_at: string, };
 
 export type TaskDispatchState = { task_id: string, controller: TaskDispatchController, status: TaskDispatchStatus, retry_count: number, max_retries: number, last_error: string | null, blocked_reason: string | null, next_retry_at: Date | null, claim_expires_at: Date | null, created_at: Date, updated_at: Date, };
 
@@ -72,7 +96,7 @@ export type TaskLineageSummary = { origin_task: Task | null, follow_up_tasks: Ar
 
 export type CreateTask = { project_id: string, title: string, description: string | null, status: TaskStatus | null, task_kind: TaskKind | null, milestone_id: string | null, milestone_node_id: string | null, parent_workspace_id: string | null, origin_task_id: string | null, created_by_kind: TaskCreatedByKind | null, image_ids: Array<string> | null, shared_task_id: string | null, };
 
-export type UpdateTask = { title: string | null, description: string | null, status: TaskStatus | null, parent_workspace_id: string | null, image_ids: Array<string> | null, };
+export type UpdateTask = { title: string | null, description: string | null, status: TaskStatus | null, parent_workspace_id: string | null, image_ids: Array<string> | null, continuation_turns_override: number | null | null, };
 
 export type Milestone = { id: string, project_id: string, title: string, description: string | null, objective: string | null, definition_of_done: string | null, default_executor_profile_id: ExecutorProfileId | null, automation_mode: MilestoneAutomationMode, run_next_step_requested_at: string | null, status: TaskStatus, baseline_ref: string, schema_version: number, graph: MilestoneGraph, suggested_status: TaskStatus, last_plan_application: MilestonePlanApplicationSummary | null, created_at: string, updated_at: string, };
 
