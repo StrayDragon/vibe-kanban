@@ -26,7 +26,6 @@ tasks. Vibe Kanban streamlines this process, enabling you to:
 ## Docs
 
 - MCP: `docs/mcp.md`
-- Auto orchestration: `docs/auto-orchestration.md`
 - Environment variables: `docs/env.gen.md`
 - Fake agent scenarios: `docs/fake-agent.md`
 
