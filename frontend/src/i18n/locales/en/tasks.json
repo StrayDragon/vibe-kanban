@@ -88,9 +88,61 @@
         "help": "Acceptance criteria for completion. Used in planning and review."
       }
     },
+    "panels": {
+      "chat": "Chat",
+      "planner": "Planner",
+      "details": "Details",
+      "edgeDetails": "Edge details",
+      "milestone": "Milestone",
+      "nodeDetails": "Node details"
+    },
     "planner": {
-      "planInputTitle": "Plan input",
-      "planInputPlaceholder": "Paste a MilestonePlanV1 JSON payload, or paste agent output containing a fenced plan block.",
+      "title": "Planner",
+      "flowHelp": "Generate a plan with the Guide, refresh to detect it, then Preview and Apply.",
+      "detect": {
+        "title": "Detect the latest plan block from the guide output",
+        "cta": "Refresh plan",
+        "loading": "Detecting…",
+        "noGuideAttempt": "No guide attempt session found. Start a guide attempt first.",
+        "loadedTitle": "Plan loaded",
+        "loadedBody": "Detected the latest plan from the guide output.",
+        "notFound": "No milestone plan block detected in the latest guide output.",
+        "failed": "Failed to detect a milestone plan."
+      },
+      "preview": {
+        "cta": "Preview",
+        "loading": "Previewing…"
+      },
+      "apply": {
+        "cta": "Apply",
+        "loading": "Applying…"
+      },
+      "status": {
+        "noGuideTitle": "No guide output yet",
+        "noGuideBody": "Start a guide attempt below to generate a plan payload.",
+        "foundTitle": "Plan detected",
+        "foundBody": "A plan payload was detected from the latest guide output.",
+        "invalidTitle": "Invalid plan payload",
+        "invalidBody": "The latest plan payload could not be parsed.",
+        "unsupportedTitle": "Unsupported plan schema",
+        "unsupportedBody": "The latest plan payload uses an unsupported schema.",
+        "notFoundTitle": "No plan detected",
+        "notFoundBody": "Ask the guide to emit a fenced `milestone-plan-v1` block, then refresh.",
+        "readyTitle": "Waiting for a plan",
+        "readyBody": "Run the guide and refresh to detect the latest plan payload."
+      },
+      "advanced": {
+        "title": "Advanced / Debug",
+        "show": "Show",
+        "hide": "Hide",
+        "help": "View/copy or import a raw plan payload for troubleshooting.",
+        "copy": "Copy payload",
+        "copiedTitle": "Copied",
+        "copiedBody": "Raw payload copied to clipboard.",
+        "autoWireTitle": "Generate a simple linear topology when edges are empty",
+        "autoWire": "Auto-wire",
+        "rawPlaceholder": "Paste a MilestonePlanV1 JSON payload, or paste agent output containing a fenced plan block."
+      },
       "guideTitle": "Guide"
     }
   },

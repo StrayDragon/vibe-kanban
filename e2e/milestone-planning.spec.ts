@@ -101,10 +101,17 @@ test.describe('milestone planning', () => {
 
     await page.goto(`/projects/${project.id}/milestones/${milestone.id}`);
 
-    await expect(page.getByRole('button', { name: 'Plan' })).toBeVisible({
+    await expect(page.getByRole('button', { name: 'Planner' })).toBeVisible({
       timeout: 60_000,
     });
-    await page.getByRole('button', { name: 'Plan' }).click();
+    await page.getByRole('button', { name: 'Planner' }).click();
+
+    // The raw JSON textarea should not be visible by default; it lives behind Advanced/Debug.
+    await expect(
+      page.getByPlaceholder(/Paste a MilestonePlanV1 JSON payload/i)
+    ).toHaveCount(0);
+
+    await page.locator('summary', { hasText: 'Advanced / Debug' }).click();
 
     const textarea = page.getByPlaceholder(/Paste a MilestonePlanV1 JSON payload/i);
     await textarea.fill(

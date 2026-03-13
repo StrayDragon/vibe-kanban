@@ -36,6 +36,7 @@ use uuid::Uuid;
 
 use crate::{
     DeploymentImpl, error::ApiError, middleware::load_session_middleware,
+    milestone_planning::{MilestonePlanDetectionResult, MilestonePlanDetectionStatus, detect_milestone_plan_v1_in_text},
     routes::task_attempts::util::restore_worktrees_to_process,
 };
 
@@ -121,6 +122,45 @@ pub async fn get_session_messages(
         entries,
         next_cursor: turns.next_cursor,
         has_more: turns.has_more,
+    })))
+}
+
+pub async fn get_latest_milestone_plan(
+    Extension(session): Extension<Session>,
+    State(deployment): State<DeploymentImpl>,
+) -> Result<ResponseJson<ApiResponse<MilestonePlanDetectionResult>>, ApiError> {
+    let pool = &deployment.db().pool;
+    let turns =
+        CodingAgentTurn::tail_by_session_id(pool, session.id, MAX_SESSION_MESSAGES_PAGE_SIZE, None)
+            .await?;
+
+    for entry in turns.entries.iter().rev() {
+        if let Some(summary) = entry.summary.as_deref() {
+            let mut result = detect_milestone_plan_v1_in_text(summary);
+            if !matches!(result.status, MilestonePlanDetectionStatus::NotFound) {
+                result.source_turn_id = Some(entry.turn_id);
+                result.source_entry_index = Some(entry.entry_index);
+                return Ok(ResponseJson(ApiResponse::success(result)));
+            }
+        }
+
+        if let Some(prompt) = entry.prompt.as_deref() {
+            let mut result = detect_milestone_plan_v1_in_text(prompt);
+            if !matches!(result.status, MilestonePlanDetectionStatus::NotFound) {
+                result.source_turn_id = Some(entry.turn_id);
+                result.source_entry_index = Some(entry.entry_index);
+                return Ok(ResponseJson(ApiResponse::success(result)));
+            }
+        }
+    }
+
+    Ok(ResponseJson(ApiResponse::success(MilestonePlanDetectionResult {
+        status: MilestonePlanDetectionStatus::NotFound,
+        plan: None,
+        extracted_from: None,
+        source_turn_id: None,
+        source_entry_index: None,
+        error: None,
     })))
 }
 
@@ -323,6 +363,7 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
     let session_id_router = Router::new()
         .route("/", get(get_session))
         .route("/messages", get(get_session_messages))
+        .route("/milestone-plan/latest", get(get_latest_milestone_plan))
         .route("/follow-up", post(follow_up))
         .layer(from_fn_with_state(
             deployment.clone(),

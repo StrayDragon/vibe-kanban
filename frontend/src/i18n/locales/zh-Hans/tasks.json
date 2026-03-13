@@ -104,9 +104,61 @@
         "help": "用于判断是否完成，也会用于规划与审阅。"
       }
     },
+    "panels": {
+      "chat": "聊天",
+      "planner": "规划",
+      "details": "详情",
+      "edgeDetails": "连线详情",
+      "milestone": "里程碑",
+      "nodeDetails": "节点详情"
+    },
     "planner": {
-      "planInputTitle": "计划输入",
-      "planInputPlaceholder": "粘贴 MilestonePlanV1 JSON，或粘贴包含 fenced plan block 的 agent 输出。",
+      "title": "规划",
+      "flowHelp": "用 Guide 生成计划，刷新检测，然后预览并应用。",
+      "detect": {
+        "title": "从 Guide 输出中检测最新的计划块",
+        "cta": "刷新计划",
+        "loading": "检测中…",
+        "noGuideAttempt": "未找到 Guide attempt session。请先启动一个 Guide attempt。",
+        "loadedTitle": "已加载计划",
+        "loadedBody": "已从 Guide 输出中检测到最新计划。",
+        "notFound": "在最新的 Guide 输出中未检测到 milestone plan 块。",
+        "failed": "检测 milestone plan 失败。"
+      },
+      "preview": {
+        "cta": "预览",
+        "loading": "预览中…"
+      },
+      "apply": {
+        "cta": "应用",
+        "loading": "应用中…"
+      },
+      "status": {
+        "noGuideTitle": "还没有 Guide 输出",
+        "noGuideBody": "请在下方启动一个 Guide attempt 以生成计划 payload。",
+        "foundTitle": "已检测到计划",
+        "foundBody": "已从最新的 Guide 输出中检测到计划 payload。",
+        "invalidTitle": "计划 payload 无效",
+        "invalidBody": "最新的计划 payload 无法解析。",
+        "unsupportedTitle": "不支持的计划 schema",
+        "unsupportedBody": "最新的计划 payload 使用了不支持的 schema。",
+        "notFoundTitle": "未检测到计划",
+        "notFoundBody": "请让 Guide 输出 fenced 的 `milestone-plan-v1` 块，然后刷新。",
+        "readyTitle": "等待计划生成",
+        "readyBody": "运行 Guide，并刷新以检测最新的计划 payload。"
+      },
+      "advanced": {
+        "title": "高级 / 调试",
+        "show": "展开",
+        "hide": "收起",
+        "help": "用于排障：查看/复制或导入 raw plan payload。",
+        "copy": "复制 payload",
+        "copiedTitle": "已复制",
+        "copiedBody": "raw payload 已复制到剪贴板。",
+        "autoWireTitle": "当 edges 为空时生成一个简单的线性拓扑",
+        "autoWire": "自动连线",
+        "rawPlaceholder": "粘贴 MilestonePlanV1 JSON，或粘贴包含 fenced plan block 的 agent 输出。"
+      },
       "guideTitle": "Guide"
     }
   },

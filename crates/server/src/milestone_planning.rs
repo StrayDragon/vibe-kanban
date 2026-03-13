@@ -4,7 +4,10 @@ use db::{
     types::MilestoneAutomationMode,
 };
 use executors_protocol::ExecutorProfileId;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+use std::collections::HashSet;
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -200,3 +203,313 @@ Additional constraints:
 - Keep the plan practical: 3-8 nodes total.
 
 After the fenced plan block, you may optionally add up to 5 lines of explanation."#;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MilestonePlanExtractionKind {
+    Fenced,
+    Embedded,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MilestonePlanDetectionStatus {
+    Found,
+    NotFound,
+    Invalid,
+    Unsupported,
+}
+
+/// Structured result for detecting the latest milestone planning payload from a guide output.
+///
+/// This is intentionally narrow and read-only so clients can present actionable guidance:
+/// - not_found: ask the guide to emit the fenced plan block
+/// - invalid: ask the guide to re-emit valid JSON
+/// - unsupported: ask the guide to emit schema_version=1
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct MilestonePlanDetectionResult {
+    pub status: MilestonePlanDetectionStatus,
+    pub plan: Option<MilestonePlanV1>,
+    pub extracted_from: Option<MilestonePlanExtractionKind>,
+    pub source_turn_id: Option<Uuid>,
+    #[ts(type = "number | null")]
+    pub source_entry_index: Option<i64>,
+    pub error: Option<String>,
+}
+
+fn looks_like_milestone_plan_json(candidate: &str) -> bool {
+    // Keep this lightweight and conservative to avoid flagging arbitrary JSON as "invalid plan".
+    let s = candidate;
+    s.contains("\"schema_version\"") && s.contains("\"nodes\"")
+}
+
+fn extract_last_fenced_json(input: &str) -> Option<String> {
+    // Prefer the canonical fence info string. Keep a small compatibility surface for older outputs.
+    // NOTE: We intentionally do not match generic ```json fences to reduce false positives.
+    let patterns = [
+        format!(r"(?is)```{}\s*([\s\S]*?)```", regex::escape(MILESTONE_PLAN_FENCE_INFO_V1)),
+        r"(?is)```milestone-plan\s*([\s\S]*?)```".to_string(),
+    ];
+
+    for pattern in patterns {
+        let re = Regex::new(&pattern).ok()?;
+        let mut last: Option<String> = None;
+        for caps in re.captures_iter(input) {
+            if let Some(m) = caps.get(1) {
+                let candidate = m.as_str().trim();
+                if !candidate.is_empty() {
+                    last = Some(candidate.to_string());
+                }
+            }
+        }
+        if last.is_some() {
+            return last;
+        }
+    }
+
+    None
+}
+
+fn extract_embedded_json_object(input: &str) -> Option<String> {
+    let first_brace = input.find('{')?;
+    let text = &input[first_brace..];
+
+    let mut brace_positions: Vec<usize> = Vec::new();
+    for (idx, ch) in text.char_indices() {
+        if ch == '{' {
+            brace_positions.push(first_brace + idx);
+        }
+    }
+
+    for start in brace_positions {
+        let mut depth = 0i32;
+        let mut in_string = false;
+        let mut escape_next = false;
+
+        for (idx, ch) in input[start..].char_indices() {
+            let abs = start + idx;
+
+            if in_string {
+                if escape_next {
+                    escape_next = false;
+                    continue;
+                }
+                match ch {
+                    '\\' => {
+                        escape_next = true;
+                    }
+                    '"' => {
+                        in_string = false;
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+
+            match ch {
+                '"' => {
+                    in_string = true;
+                }
+                '{' => {
+                    depth += 1;
+                }
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let candidate = input[start..=abs].trim();
+                        return if candidate.is_empty() {
+                            None
+                        } else {
+                            Some(candidate.to_string())
+                        };
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    None
+}
+
+pub fn detect_milestone_plan_v1_in_text(input: &str) -> MilestonePlanDetectionResult {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return MilestonePlanDetectionResult {
+            status: MilestonePlanDetectionStatus::NotFound,
+            plan: None,
+            extracted_from: None,
+            source_turn_id: None,
+            source_entry_index: None,
+            error: None,
+        };
+    }
+
+    let mut candidates: Vec<(String, Option<MilestonePlanExtractionKind>)> = Vec::new();
+
+    if (trimmed.starts_with('{') || trimmed.starts_with('['))
+        && looks_like_milestone_plan_json(trimmed)
+    {
+        candidates.push((trimmed.to_string(), None));
+    }
+
+    if let Some(fenced) = extract_last_fenced_json(trimmed) {
+        candidates.push((fenced, Some(MilestonePlanExtractionKind::Fenced)));
+    }
+
+    if let Some(embedded) = extract_embedded_json_object(trimmed)
+        && looks_like_milestone_plan_json(&embedded)
+    {
+        candidates.push((embedded, Some(MilestonePlanExtractionKind::Embedded)));
+    }
+
+    if candidates.is_empty() {
+        return MilestonePlanDetectionResult {
+            status: MilestonePlanDetectionStatus::NotFound,
+            plan: None,
+            extracted_from: None,
+            source_turn_id: None,
+            source_entry_index: None,
+            error: None,
+        };
+    }
+
+    let mut seen = HashSet::<String>::new();
+    let mut last_error: Option<String> = None;
+    let mut last_unsupported: Option<(Option<MilestonePlanExtractionKind>, i32)> = None;
+
+    for (json, extracted_from) in candidates {
+        if !seen.insert(json.clone()) {
+            continue;
+        }
+
+        let parsed_value: JsonValue = match serde_json::from_str(&json) {
+            Ok(v) => v,
+            Err(err) => {
+                last_error = Some(format!("Invalid JSON: {}", err));
+                continue;
+            }
+        };
+
+        let plan: MilestonePlanV1 = match serde_json::from_value(parsed_value) {
+            Ok(p) => p,
+            Err(err) => {
+                last_error = Some(err.to_string());
+                continue;
+            }
+        };
+
+        if plan.schema_version != MILESTONE_PLAN_SCHEMA_VERSION_V1 {
+            last_unsupported = Some((extracted_from, plan.schema_version));
+            continue;
+        }
+
+        return MilestonePlanDetectionResult {
+            status: MilestonePlanDetectionStatus::Found,
+            plan: Some(plan),
+            extracted_from,
+            source_turn_id: None,
+            source_entry_index: None,
+            error: None,
+        };
+    }
+
+    if let Some((extracted_from, schema_version)) = last_unsupported {
+        return MilestonePlanDetectionResult {
+            status: MilestonePlanDetectionStatus::Unsupported,
+            plan: None,
+            extracted_from,
+            source_turn_id: None,
+            source_entry_index: None,
+            error: Some(format!(
+                "Unsupported schema_version {} (expected {})",
+                schema_version, MILESTONE_PLAN_SCHEMA_VERSION_V1
+            )),
+        };
+    }
+
+    MilestonePlanDetectionResult {
+        status: MilestonePlanDetectionStatus::Invalid,
+        plan: None,
+        extracted_from: None,
+        source_turn_id: None,
+        source_entry_index: None,
+        error: Some(last_error.unwrap_or_else(|| "Invalid plan payload".to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        detect_milestone_plan_v1_in_text, MilestonePlanDetectionStatus,
+        MilestonePlanExtractionKind, MILESTONE_PLAN_SCHEMA_VERSION_V1,
+    };
+
+    fn minimal_plan_json(schema_version: i32) -> String {
+        format!(
+            r#"{{
+  "schema_version": {schema_version},
+  "milestone": {{}},
+  "nodes": [],
+  "edges": []
+}}"#
+        )
+    }
+
+    #[test]
+    fn detects_fenced_plan() {
+        let plan_json = minimal_plan_json(MILESTONE_PLAN_SCHEMA_VERSION_V1);
+        let input = format!(
+            "Here is a plan:\n\n```milestone-plan-v1\n{}\n```\n",
+            plan_json
+        );
+        let result = detect_milestone_plan_v1_in_text(&input);
+        assert!(matches!(result.status, MilestonePlanDetectionStatus::Found));
+        assert_eq!(result.extracted_from, Some(MilestonePlanExtractionKind::Fenced));
+        assert_eq!(
+            result.plan.as_ref().map(|p| p.schema_version),
+            Some(MILESTONE_PLAN_SCHEMA_VERSION_V1)
+        );
+    }
+
+    #[test]
+    fn detects_embedded_plan() {
+        let plan_json = minimal_plan_json(MILESTONE_PLAN_SCHEMA_VERSION_V1);
+        let input = format!("prefix text\n{}\ntrailing text", plan_json);
+        let result = detect_milestone_plan_v1_in_text(&input);
+        assert!(matches!(result.status, MilestonePlanDetectionStatus::Found));
+        assert_eq!(result.extracted_from, Some(MilestonePlanExtractionKind::Embedded));
+    }
+
+    #[test]
+    fn returns_not_found_when_no_candidate_exists() {
+        let result = detect_milestone_plan_v1_in_text("hello world");
+        assert!(matches!(result.status, MilestonePlanDetectionStatus::NotFound));
+    }
+
+    #[test]
+    fn returns_invalid_for_fenced_invalid_json() {
+        let input = "```milestone-plan-v1\n{ this is not json }\n```";
+        let result = detect_milestone_plan_v1_in_text(input);
+        assert!(matches!(result.status, MilestonePlanDetectionStatus::Invalid));
+        assert!(result.error.unwrap_or_default().to_lowercase().contains("invalid"));
+    }
+
+    #[test]
+    fn returns_unsupported_for_schema_mismatch() {
+        let plan_json = minimal_plan_json(999);
+        let input = format!("```milestone-plan-v1\n{}\n```", plan_json);
+        let result = detect_milestone_plan_v1_in_text(&input);
+        assert!(matches!(
+            result.status,
+            MilestonePlanDetectionStatus::Unsupported
+        ));
+    }
+
+    #[test]
+    fn braces_that_do_not_resemble_a_plan_are_not_treated_as_invalid() {
+        let input = "this is not json but has braces {like this}";
+        let result = detect_milestone_plan_v1_in_text(input);
+        assert!(matches!(result.status, MilestonePlanDetectionStatus::NotFound));
+    }
+}

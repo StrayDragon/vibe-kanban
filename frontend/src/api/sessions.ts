@@ -1,6 +1,7 @@
 import type {
   CreateFollowUpAttempt,
   ExecutionProcess,
+  MilestonePlanDetectionResult,
   Session,
 } from 'shared/types';
 
@@ -46,6 +47,15 @@ export const sessionsApi = {
       `/api/sessions/${sessionId}/messages${suffix}`
     );
     return handleApiResponse<SessionMessagesPage>(response);
+  },
+
+  detectLatestMilestonePlan: async (
+    sessionId: string
+  ): Promise<MilestonePlanDetectionResult> => {
+    const response = await makeRequest(
+      `/api/sessions/${sessionId}/milestone-plan/latest`
+    );
+    return handleApiResponse<MilestonePlanDetectionResult>(response);
   },
 
   create: async (data: {

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { ConfirmDialog } from '@/components/dialogs';
@@ -19,6 +20,7 @@ import type { WorkspaceWithSession } from '@/types/attempt';
 import type {
   Milestone,
   MilestonePlanApplyResponse,
+  MilestonePlanDetectionResult,
   MilestonePlanPreviewResponse,
   MilestonePlanV1,
   TaskWithAttemptStatus,
@@ -202,11 +204,14 @@ export function MilestonePlanPanel({
   const [planText, setPlanText] = useState('');
   const parsed = useMemo(() => parsePlanText(planText), [planText]);
 
+  const [planDetection, setPlanDetection] =
+    useState<MilestonePlanDetectionResult | null>(null);
   const [preview, setPreview] = useState<MilestonePlanPreviewResponse | null>(
     null
   );
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isDetecting, setIsDetecting] = useState(false);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
 
   const [isApplying, setIsApplying] = useState(false);
   const [applyKey, setApplyKey] = useState<string | null>(null);
@@ -320,72 +325,106 @@ export function MilestonePlanPanel({
     })[0];
   }, [guideAttempts]);
 
-  const handleLoadFromGuide = useCallback(async () => {
-    const sessionId = latestGuideAttempt?.session?.id;
-    if (!sessionId) return;
-
-    setIsDetecting(true);
-    try {
-      const page = await sessionsApi.getMessages(sessionId, { limit: 200 });
-      const entries = page.entries ?? [];
-
-      for (let i = entries.length - 1; i >= 0; i -= 1) {
-        const entry = entries[i];
-        const candidate = entry?.summary ?? entry?.prompt ?? '';
-        const parsedCandidate = parsePlanText(candidate);
-        if (parsedCandidate && parsedCandidate.ok) {
-          setPlanText(prettyJson(parsedCandidate.plan));
+  const handleDetectPlan = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const sessionId = latestGuideAttempt?.session?.id;
+      if (!sessionId) {
+        if (!opts?.silent) {
           toast({
-            title: 'Plan loaded',
-            description: `Detected a plan from guide turn ${entry.turn_id}.`,
+            variant: 'destructive',
+            title: t('common:states.error', 'Error'),
+            description: t(
+              'milestone.planner.detect.noGuideAttempt',
+              'No guide attempt session found. Start a guide attempt first.'
+            ),
           });
-          return;
         }
+        return;
       }
 
-      toast({
-        variant: 'destructive',
-        title: t('common:states.error', 'Error'),
-        description:
-          'No milestone plan block detected in the latest guide output.',
-      });
-    } catch (err) {
-      console.error('Failed to load plan from guide output:', err);
-      toast({
-        variant: 'destructive',
-        title: t('common:states.error', 'Error'),
-        description: err instanceof Error ? err.message : 'Failed to load plan',
-      });
-    } finally {
-      setIsDetecting(false);
+      setIsDetecting(true);
+      try {
+        const result = await sessionsApi.detectLatestMilestonePlan(sessionId);
+        setPlanDetection(result);
+
+        if (result.status === 'found' && result.plan) {
+          setPlanText(prettyJson(result.plan));
+          if (!opts?.silent) {
+            toast({
+              title: t('milestone.planner.detect.loadedTitle', 'Plan loaded'),
+              description: t(
+                'milestone.planner.detect.loadedBody',
+                'Detected the latest plan from the guide output.'
+              ),
+            });
+          }
+          return;
+        }
+
+        if (!opts?.silent) {
+          toast({
+            variant: 'destructive',
+            title: t('common:states.error', 'Error'),
+            description:
+              result.status === 'not_found'
+                ? t(
+                    'milestone.planner.detect.notFound',
+                    'No milestone plan block detected in the latest guide output.'
+                  )
+                : result.error ??
+                  t(
+                    'milestone.planner.detect.failed',
+                    'Failed to detect a milestone plan.'
+                  ),
+          });
+        }
+      } catch (err) {
+        console.error('Failed to detect plan from guide output:', err);
+        if (!opts?.silent) {
+          toast({
+            variant: 'destructive',
+            title: t('common:states.error', 'Error'),
+            description:
+              err instanceof Error ? err.message : 'Failed to detect plan',
+          });
+        }
+      } finally {
+        setIsDetecting(false);
+      }
+    },
+    [latestGuideAttempt?.session?.id, t]
+  );
+
+  useEffect(() => {
+    const sessionId = latestGuideAttempt?.session?.id;
+    if (!sessionId) {
+      setPlanDetection(null);
+      return;
     }
-  }, [latestGuideAttempt?.session?.id, t]);
+    void handleDetectPlan({ silent: true });
+  }, [handleDetectPlan, latestGuideAttempt?.session?.id]);
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-3">
       <div className="rounded-lg border bg-background/60 p-3 space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm font-semibold">
-            {t('milestone.planner.planInputTitle', 'Plan input')}
+            {t('milestone.planner.title', 'Planner')}
           </div>
           <div className="flex items-center gap-2">
             <Button
               size="xs"
               variant="outline"
-              onClick={handleLoadFromGuide}
+              onClick={() => handleDetectPlan()}
               disabled={!latestGuideAttempt?.session?.id || isDetecting}
-              title="Extract the latest plan block from the guide attempt output"
+              title={t(
+                'milestone.planner.detect.title',
+                'Detect the latest plan block from the guide output'
+              )}
             >
-              {isDetecting ? 'Loading…' : 'Load from guide'}
-            </Button>
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={handleAutoWire}
-              disabled={!canPreview || isPreviewing || isApplying}
-              title="Generate a simple linear topology when edges are empty"
-            >
-              Auto-wire
+              {isDetecting
+                ? t('milestone.planner.detect.loading', 'Detecting…')
+                : t('milestone.planner.detect.cta', 'Refresh plan')}
             </Button>
             <Button
               size="xs"
@@ -393,32 +432,114 @@ export function MilestonePlanPanel({
               onClick={handlePreview}
               disabled={!canPreview || isPreviewing || isApplying}
             >
-              {isPreviewing ? 'Previewing…' : 'Preview'}
+              {isPreviewing
+                ? t('milestone.planner.preview.loading', 'Previewing…')
+                : t('milestone.planner.preview.cta', 'Preview')}
             </Button>
             <Button
               size="xs"
               onClick={handleApply}
               disabled={!canApply || isApplying}
             >
-              {isApplying ? 'Applying…' : 'Apply'}
+              {isApplying
+                ? t('milestone.planner.apply.loading', 'Applying…')
+                : t('milestone.planner.apply.cta', 'Apply')}
             </Button>
           </div>
         </div>
 
-        <Textarea
-          value={planText}
-          onChange={(e) => setPlanText(e.target.value)}
-          rows={10}
-          placeholder={t(
-            'milestone.planner.planInputPlaceholder',
-            'Paste a MilestonePlanV1 JSON payload, or paste agent output containing a fenced plan block.'
+        <div className="text-xs text-muted-foreground">
+          {t(
+            'milestone.planner.flowHelp',
+            'Generate a plan with the Guide, refresh to detect it, then Preview and Apply.'
           )}
-          className="text-xs font-mono"
-        />
+        </div>
 
-        {parsed && !parsed.ok && (
-          <div className="text-xs text-destructive">{parsed.error}</div>
+        {!latestGuideAttempt?.session?.id ? (
+          <Alert>
+            <AlertTitle>
+              {t('milestone.planner.status.noGuideTitle', 'No guide output yet')}
+            </AlertTitle>
+            <AlertDescription>
+              {t(
+                'milestone.planner.status.noGuideBody',
+                'Start a guide attempt below to generate a plan payload.'
+              )}
+            </AlertDescription>
+          </Alert>
+        ) : planDetection?.status === 'found' ? (
+          <Alert variant="success">
+            <AlertTitle>
+              {t('milestone.planner.status.foundTitle', 'Plan detected')}
+            </AlertTitle>
+            <AlertDescription>
+              {t(
+                'milestone.planner.status.foundBody',
+                'A plan payload was detected from the latest guide output.'
+              )}
+            </AlertDescription>
+          </Alert>
+        ) : planDetection?.status === 'invalid' ? (
+          <Alert variant="destructive">
+            <AlertTitle>
+              {t('milestone.planner.status.invalidTitle', 'Invalid plan payload')}
+            </AlertTitle>
+            <AlertDescription>
+              {planDetection.error ??
+                t(
+                  'milestone.planner.status.invalidBody',
+                  'The latest plan payload could not be parsed.'
+                )}
+            </AlertDescription>
+          </Alert>
+        ) : planDetection?.status === 'unsupported' ? (
+          <Alert variant="destructive">
+            <AlertTitle>
+              {t(
+                'milestone.planner.status.unsupportedTitle',
+                'Unsupported plan schema'
+              )}
+            </AlertTitle>
+            <AlertDescription>
+              {planDetection.error ??
+                t(
+                  'milestone.planner.status.unsupportedBody',
+                  'The latest plan payload uses an unsupported schema.'
+                )}
+            </AlertDescription>
+          </Alert>
+        ) : planDetection?.status === 'not_found' ? (
+          <Alert>
+            <AlertTitle>
+              {t(
+                'milestone.planner.status.notFoundTitle',
+                'No plan detected'
+              )}
+            </AlertTitle>
+            <AlertDescription>
+              {t(
+                'milestone.planner.status.notFoundBody',
+                'Ask the guide to emit a fenced `milestone-plan-v1` block, then refresh.'
+              )}
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <Alert>
+            <AlertTitle>
+              {t(
+                'milestone.planner.status.readyTitle',
+                'Waiting for a plan'
+              )}
+            </AlertTitle>
+            <AlertDescription>
+              {t(
+                'milestone.planner.status.readyBody',
+                'Run the guide and refresh to detect the latest plan payload.'
+              )}
+            </AlertDescription>
+          </Alert>
         )}
+
         {parsed && parsed.ok && (
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <Badge variant="outline" className="text-[11px]">
@@ -426,16 +547,109 @@ export function MilestonePlanPanel({
             </Badge>
             <span>nodes: {parsed.plan.nodes?.length ?? 0}</span>
             <span>edges: {parsed.plan.edges?.length ?? 0}</span>
-            {parsed.extractedJson && (
-              <span>
-                extracted from{' '}
-                {parsed.extractedFrom === 'embedded'
-                  ? 'embedded JSON'
-                  : 'fenced block'}
-              </span>
+            {planDetection?.status === 'found' && planDetection.extracted_from && (
+              <span>detected: {planDetection.extracted_from}</span>
             )}
           </div>
         )}
+
+        <details
+          className="group rounded-md border bg-muted/20"
+          open={isAdvancedOpen}
+          onToggle={(e) => setIsAdvancedOpen(e.currentTarget.open)}
+        >
+          <summary className="list-none cursor-pointer px-3 py-2 text-xs font-medium flex items-center justify-between">
+            <span>
+              {t('milestone.planner.advanced.title', 'Advanced / Debug')}
+            </span>
+            <span className="text-muted-foreground">
+              {isAdvancedOpen
+                ? t('milestone.planner.advanced.hide', 'Hide')
+                : t('milestone.planner.advanced.show', 'Show')}
+            </span>
+          </summary>
+
+          {isAdvancedOpen && (
+            <div className="px-3 pb-3 space-y-2 border-t">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs text-muted-foreground">
+                  {t(
+                    'milestone.planner.advanced.help',
+                    'View/copy or import a raw plan payload for troubleshooting.'
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(planText);
+                        toast({
+                          title: t(
+                            'milestone.planner.advanced.copiedTitle',
+                            'Copied'
+                          ),
+                          description: t(
+                            'milestone.planner.advanced.copiedBody',
+                            'Raw payload copied to clipboard.'
+                          ),
+                        });
+                      } catch (err) {
+                        toast({
+                          variant: 'destructive',
+                          title: t('common:states.error', 'Error'),
+                          description:
+                            err instanceof Error
+                              ? err.message
+                              : 'Failed to copy payload',
+                        });
+                      }
+                    }}
+                    disabled={!planText.trim()}
+                  >
+                    {t('milestone.planner.advanced.copy', 'Copy payload')}
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={handleAutoWire}
+                    disabled={!canPreview || isPreviewing || isApplying}
+                    title={t(
+                      'milestone.planner.advanced.autoWireTitle',
+                      'Generate a simple linear topology when edges are empty'
+                    )}
+                  >
+                    {t('milestone.planner.advanced.autoWire', 'Auto-wire')}
+                  </Button>
+                </div>
+              </div>
+
+              <Textarea
+                value={planText}
+                onChange={(e) => setPlanText(e.target.value)}
+                rows={10}
+                placeholder={t(
+                  'milestone.planner.advanced.rawPlaceholder',
+                  'Paste a MilestonePlanV1 JSON payload, or paste agent output containing a fenced plan block.'
+                )}
+                className="text-xs font-mono"
+              />
+
+              {parsed && !parsed.ok && (
+                <div className="text-xs text-destructive">{parsed.error}</div>
+              )}
+              {parsed && parsed.ok && parsed.extractedJson && (
+                <div className="text-xs text-muted-foreground">
+                  extracted from{' '}
+                  {parsed.extractedFrom === 'embedded'
+                    ? 'embedded JSON'
+                    : 'fenced block'}
+                </div>
+              )}
+            </div>
+          )}
+        </details>
 
         {preview && (
           <div className="pt-2 border-t space-y-2 text-xs">

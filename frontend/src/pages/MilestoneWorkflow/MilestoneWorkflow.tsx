@@ -1591,14 +1591,14 @@ export function MilestoneWorkflow() {
       : newNodeTitle.trim().length > 0;
   const panelTitle =
     panelView === 'plan'
-      ? 'Plan'
+      ? t('tasks:milestone.panels.planner', 'Planner')
       : panelView === 'chat'
-      ? 'Chat'
+      ? t('tasks:milestone.panels.chat', 'Chat')
       : selectedEdge
-        ? 'Edge details'
+        ? t('tasks:milestone.panels.edgeDetails', 'Edge details')
         : isMasterSelected
-          ? 'Milestone'
-          : 'Node details';
+          ? t('tasks:milestone.panels.milestone', 'Milestone')
+          : t('tasks:milestone.panels.nodeDetails', 'Node details');
   const selectedNodeLabel = selectedTask?.title || 'Task';
   const selectedNodeMeta = isMasterSelected
     ? 'Primary'
@@ -1844,7 +1844,7 @@ export function MilestoneWorkflow() {
                       onClick={() => setPanelView('chat')}
                       disabled={Boolean(selectedEdgeId)}
                     >
-                      Chat
+                      {t('tasks:milestone.panels.chat', 'Chat')}
                     </Button>
                   )}
                   {isMasterSelected && (
@@ -1854,7 +1854,7 @@ export function MilestoneWorkflow() {
                       onClick={() => setPanelView('plan')}
                       disabled={Boolean(selectedEdgeId)}
                     >
-                      Plan
+                      {t('tasks:milestone.panels.planner', 'Planner')}
                     </Button>
                   )}
                   <Button
@@ -1862,7 +1862,7 @@ export function MilestoneWorkflow() {
                     variant={panelView === 'details' ? 'default' : 'outline'}
                     onClick={() => setPanelView('details')}
                   >
-                    Details
+                    {t('tasks:milestone.panels.details', 'Details')}
                   </Button>
                 </div>
               }

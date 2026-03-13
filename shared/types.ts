@@ -171,6 +171,12 @@ export type MilestonePlanPreviewResponse = { metadata_changes: Array<MilestonePl
 
 export type MilestonePlanApplyResponse = { milestone: Milestone, created_tasks: Array<Task>, applied_at: string, };
 
+export type MilestonePlanExtractionKind = "fenced" | "embedded";
+
+export type MilestonePlanDetectionStatus = "found" | "not_found" | "invalid" | "unsupported";
+
+export type MilestonePlanDetectionResult = { status: MilestonePlanDetectionStatus, plan: MilestonePlanV1 | null, extracted_from: MilestonePlanExtractionKind | null, source_turn_id: string | null, source_entry_index: number | null, error: string | null, };
+
 export type DraftFollowUpData = { message: string, variant: string | null, };
 
 export type ScratchPayload = { "type": "DRAFT_TASK", "data": string } | { "type": "DRAFT_FOLLOW_UP", "data": DraftFollowUpData };
