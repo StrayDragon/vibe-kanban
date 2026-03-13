@@ -1,5 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { attemptsApi } from '@/lib/api';
+import { createWorkspaceWithSession, type WorkspaceWithSession } from '@/types/attempt';
+import { taskAttemptKeys } from '@/hooks/task-attempts/useTaskAttempts';
 import type {
   ExecutorProfileId,
   TaskAttemptPromptPreset,
@@ -34,9 +36,21 @@ export function useAttemptCreation({
       }),
     onSuccess: (newAttempt: Workspace) => {
       queryClient.setQueryData(
-        ['taskAttempts', taskId],
+        taskAttemptKeys.byTask(taskId),
         (old: Workspace[] = []) => [newAttempt, ...old]
       );
+      queryClient.setQueryData(
+        taskAttemptKeys.byTaskWithSessions(taskId),
+        (old: WorkspaceWithSession[] = []) => [
+          createWorkspaceWithSession(newAttempt, undefined),
+          ...old,
+        ]
+      );
+      // Ensure the "with sessions" query eventually picks up the created session (and any server-side
+      // normalization) even when SSE disables polling.
+      queryClient.invalidateQueries({
+        queryKey: taskAttemptKeys.byTaskWithSessions(taskId),
+      });
       onSuccess?.(newAttempt);
     },
   });
