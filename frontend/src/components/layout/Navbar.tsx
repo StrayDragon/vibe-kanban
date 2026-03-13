@@ -18,7 +18,6 @@ import {
   List,
   Settings,
   Archive,
-  BookOpen,
   MessageCircleQuestion,
   Menu,
   Plus,
@@ -42,11 +41,6 @@ import { uiIds } from '@/lib/uiIds';
 import type { Project } from 'shared/types';
 
 const EXTERNAL_LINKS = [
-  {
-    labelKey: 'navigation.docs',
-    icon: BookOpen,
-    href: 'https://vibekanban.com/docs',
-  },
   {
     labelKey: 'navigation.support',
     icon: MessageCircleQuestion,

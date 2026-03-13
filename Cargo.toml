@@ -30,7 +30,6 @@ members = [
     "crates/utils-assets",
     "crates/utils-git",
     "crates/utils-jwt",
-    "crates/review"
 ]
 
 [workspace.dependencies]

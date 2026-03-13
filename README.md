@@ -1,33 +1,14 @@
-> **Upstream project:** https://github.com/BloopAI/vibe-kanban
-
 <p align="center">
-  <a href="https://github.com/StrayDragon/vibe-kanban">
-    <picture>
-      <source srcset="frontend/public/vibe-kanban-logo-dark.svg" media="(prefers-color-scheme: dark)">
-      <source srcset="frontend/public/vibe-kanban-logo.svg" media="(prefers-color-scheme: light)">
-      <img src="frontend/public/vibe-kanban-logo.svg" alt="Vibe Kanban Logo">
-    </picture>
-  </a>
+  <picture>
+    <source srcset="frontend/public/vibe-kanban-logo-dark.svg" media="(prefers-color-scheme: dark)">
+    <source srcset="frontend/public/vibe-kanban-logo.svg" media="(prefers-color-scheme: light)">
+    <img src="frontend/public/vibe-kanban-logo.svg" alt="Vibe Kanban Logo">
+  </picture>
 </p>
 
 <p align="center">Get 10X more out of Claude Code, Gemini CLI, Codex, Amp and other coding agents...</p>
 
 ![](frontend/public/vibe-kanban-screenshot-overview.png)
-
-## Fork Status
-
-This repository started as a fork of the upstream project. Over time it has
-diverged significantly, and keeping a steady PR workflow upstream became
-impractical. This fork has left the upstream fork network and is maintained
-independently.
-
-We are grateful to upstream and fully respect the Apache-2.0 license and
-attribution requirements.
-
-This fork is not affiliated with or endorsed by the upstream maintainers.
-
-Upstream: https://github.com/BloopAI/vibe-kanban  
-This fork: https://github.com/StrayDragon/vibe-kanban
 
 ## Overview
 
@@ -44,7 +25,10 @@ tasks. Vibe Kanban streamlines this process, enabling you to:
 
 ## Docs
 
-- Operations: `docs/operations.md`
+- MCP: `docs/mcp.md`
+- Auto orchestration: `docs/auto-orchestration.md`
+- Environment variables: `docs/env.gen.md`
+- Fake agent scenarios: `docs/fake-agent.md`
 
 ## License
 

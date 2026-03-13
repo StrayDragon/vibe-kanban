@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
 use db::{
     models::milestone::{MilestoneNodeBaseStrategy, MilestoneNodeKind, MilestoneNodeLayout},
@@ -7,7 +9,6 @@ use executors_protocol::ExecutorProfileId;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use std::collections::HashSet;
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -247,7 +248,10 @@ fn extract_last_fenced_json(input: &str) -> Option<String> {
     // Prefer the canonical fence info string. Keep a small compatibility surface for older outputs.
     // NOTE: We intentionally do not match generic ```json fences to reduce false positives.
     let patterns = [
-        format!(r"(?is)```{}\s*([\s\S]*?)```", regex::escape(MILESTONE_PLAN_FENCE_INFO_V1)),
+        format!(
+            r"(?is)```{}\s*([\s\S]*?)```",
+            regex::escape(MILESTONE_PLAN_FENCE_INFO_V1)
+        ),
         r"(?is)```milestone-plan\s*([\s\S]*?)```".to_string(),
     ];
 
@@ -441,8 +445,8 @@ pub fn detect_milestone_plan_v1_in_text(input: &str) -> MilestonePlanDetectionRe
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_milestone_plan_v1_in_text, MilestonePlanDetectionStatus,
-        MilestonePlanExtractionKind, MILESTONE_PLAN_SCHEMA_VERSION_V1,
+        MILESTONE_PLAN_SCHEMA_VERSION_V1, MilestonePlanDetectionStatus,
+        MilestonePlanExtractionKind, detect_milestone_plan_v1_in_text,
     };
 
     fn minimal_plan_json(schema_version: i32) -> String {
@@ -465,7 +469,10 @@ mod tests {
         );
         let result = detect_milestone_plan_v1_in_text(&input);
         assert!(matches!(result.status, MilestonePlanDetectionStatus::Found));
-        assert_eq!(result.extracted_from, Some(MilestonePlanExtractionKind::Fenced));
+        assert_eq!(
+            result.extracted_from,
+            Some(MilestonePlanExtractionKind::Fenced)
+        );
         assert_eq!(
             result.plan.as_ref().map(|p| p.schema_version),
             Some(MILESTONE_PLAN_SCHEMA_VERSION_V1)
@@ -478,21 +485,36 @@ mod tests {
         let input = format!("prefix text\n{}\ntrailing text", plan_json);
         let result = detect_milestone_plan_v1_in_text(&input);
         assert!(matches!(result.status, MilestonePlanDetectionStatus::Found));
-        assert_eq!(result.extracted_from, Some(MilestonePlanExtractionKind::Embedded));
+        assert_eq!(
+            result.extracted_from,
+            Some(MilestonePlanExtractionKind::Embedded)
+        );
     }
 
     #[test]
     fn returns_not_found_when_no_candidate_exists() {
         let result = detect_milestone_plan_v1_in_text("hello world");
-        assert!(matches!(result.status, MilestonePlanDetectionStatus::NotFound));
+        assert!(matches!(
+            result.status,
+            MilestonePlanDetectionStatus::NotFound
+        ));
     }
 
     #[test]
     fn returns_invalid_for_fenced_invalid_json() {
         let input = "```milestone-plan-v1\n{ this is not json }\n```";
         let result = detect_milestone_plan_v1_in_text(input);
-        assert!(matches!(result.status, MilestonePlanDetectionStatus::Invalid));
-        assert!(result.error.unwrap_or_default().to_lowercase().contains("invalid"));
+        assert!(matches!(
+            result.status,
+            MilestonePlanDetectionStatus::Invalid
+        ));
+        assert!(
+            result
+                .error
+                .unwrap_or_default()
+                .to_lowercase()
+                .contains("invalid")
+        );
     }
 
     #[test]
@@ -510,6 +532,9 @@ mod tests {
     fn braces_that_do_not_resemble_a_plan_are_not_treated_as_invalid() {
         let input = "this is not json but has braces {like this}";
         let result = detect_milestone_plan_v1_in_text(input);
-        assert!(matches!(result.status, MilestonePlanDetectionStatus::NotFound));
+        assert!(matches!(
+            result.status,
+            MilestonePlanDetectionStatus::NotFound
+        ));
     }
 }

@@ -527,7 +527,7 @@
   Maintainer: @Hirse
   Updated: 2021-05-15
 
-  Outdated base version: https://github.com/primer/github-syntax-light
+  Outdated base version: primer/github-syntax-light
   Current colors taken from GitHub's CSS
 */
 .diff-tailwindcss-wrapper .diff-line-syntax-raw .hljs {
@@ -665,7 +665,7 @@
   Maintainer: @Hirse
   Updated: 2021-05-15
 
-  Outdated base version: https://github.com/primer/github-syntax-dark
+  Outdated base version: primer/github-syntax-dark
   Current colors taken from GitHub's CSS
 */
 .diff-tailwindcss-wrapper[data-theme='dark'] .diff-line-syntax-raw .hljs {

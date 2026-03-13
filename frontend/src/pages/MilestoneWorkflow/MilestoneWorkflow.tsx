@@ -634,7 +634,8 @@ export function MilestoneWorkflow() {
             kind: MilestoneNodeKind.task,
             taskId: entryTask?.id,
             isMaster: true,
-            isPlannerCreated: entryTask?.created_by_kind === 'milestone_planner',
+            isPlannerCreated:
+              entryTask?.created_by_kind === 'milestone_planner',
           },
         };
 
@@ -768,7 +769,12 @@ export function MilestoneWorkflow() {
     return () => {
       clearReviewInbox();
     };
-  }, [clearReviewInbox, handleSelectInboxTask, reviewInboxTasks, setReviewInbox]);
+  }, [
+    clearReviewInbox,
+    handleSelectInboxTask,
+    reviewInboxTasks,
+    setReviewInbox,
+  ]);
 
   const milestoneKanbanColumns = useMemo((): KanbanColumns => {
     const columns: KanbanColumns = {
@@ -1553,7 +1559,10 @@ export function MilestoneWorkflow() {
           <AlertDescription>
             {milestoneError instanceof Error
               ? milestoneError.message
-              : t('tasks:errors.loadMilestoneFailed', 'Failed to load milestone')}
+              : t(
+                  'tasks:errors.loadMilestoneFailed',
+                  'Failed to load milestone'
+                )}
           </AlertDescription>
         </Alert>
       </div>
@@ -1571,7 +1580,9 @@ export function MilestoneWorkflow() {
         primaryAction={{
           label: t('common:notFound.backToProject', 'Back to project'),
           onClick: () =>
-            navigate(projectId ? paths.projectTasks(projectId) : paths.overview()),
+            navigate(
+              projectId ? paths.projectTasks(projectId) : paths.overview()
+            ),
         }}
         secondaryAction={{
           label: t('common:notFound.backToTasks', 'Back to tasks'),
@@ -1593,12 +1604,12 @@ export function MilestoneWorkflow() {
     panelView === 'plan'
       ? t('tasks:milestone.panels.planner', 'Planner')
       : panelView === 'chat'
-      ? t('tasks:milestone.panels.chat', 'Chat')
-      : selectedEdge
-        ? t('tasks:milestone.panels.edgeDetails', 'Edge details')
-        : isMasterSelected
-          ? t('tasks:milestone.panels.milestone', 'Milestone')
-          : t('tasks:milestone.panels.nodeDetails', 'Node details');
+        ? t('tasks:milestone.panels.chat', 'Chat')
+        : selectedEdge
+          ? t('tasks:milestone.panels.edgeDetails', 'Edge details')
+          : isMasterSelected
+            ? t('tasks:milestone.panels.milestone', 'Milestone')
+            : t('tasks:milestone.panels.nodeDetails', 'Node details');
   const selectedNodeLabel = selectedTask?.title || 'Task';
   const selectedNodeMeta = isMasterSelected
     ? 'Primary'
@@ -1920,7 +1931,8 @@ export function MilestoneWorkflow() {
                           </span>
                           <span>
                             {formatTimeAgo(
-                              selectedTask.orchestration.last_control_transfer.at
+                              selectedTask.orchestration.last_control_transfer
+                                .at
                             )}
                           </span>
                           {selectedTask.orchestration.last_control_transfer

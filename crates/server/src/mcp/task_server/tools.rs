@@ -4975,7 +4975,9 @@ mod tests {
             .await
             .into_call_tool_result()
             .unwrap();
-        let activity_payload = activity_result.structured_content.expect("structured content");
+        let activity_payload = activity_result
+            .structured_content
+            .expect("structured content");
         let activity: TailActivityResponse =
             serde_json::from_value(activity_payload).expect("tail activity response");
         let transition_event = activity
@@ -5010,8 +5012,9 @@ mod tests {
             .await
             .into_call_tool_result()
             .unwrap();
-        let project_activity_payload =
-            project_activity_result.structured_content.expect("structured content");
+        let project_activity_payload = project_activity_result
+            .structured_content
+            .expect("structured content");
         let project_activity: TailActivityResponse =
             serde_json::from_value(project_activity_payload).expect("tail project activity");
         assert!(

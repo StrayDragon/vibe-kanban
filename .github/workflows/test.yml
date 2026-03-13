@@ -30,6 +30,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Guard external links
+        run: node scripts/check-external-links.js
+
+      - name: Guard docs links
+        run: node scripts/check-doc-links.js
+
       - name: Lint frontend
         run: cd frontend && npm run lint
 

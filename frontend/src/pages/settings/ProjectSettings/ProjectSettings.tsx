@@ -273,7 +273,9 @@ export function ProjectSettings() {
   } | null>({
     queryKey: ['projectLatestLifecycleHook', selectedProjectId],
     enabled:
-      showLatestHookOutcome && hasConfiguredLifecycleHooks && !!selectedProjectId,
+      showLatestHookOutcome &&
+      hasConfiguredLifecycleHooks &&
+      !!selectedProjectId,
     staleTime: 5_000,
     queryFn: async () => {
       const tasks = await tasksApi.getAll({ projectId: selectedProjectId });
@@ -1395,8 +1397,7 @@ export function ProjectSettings() {
                                 'settings.projects.lifecycleHooks.summary.latestTask',
                                 {
                                   task:
-                                    latestLifecycleHookResult.data.task
-                                      .title ||
+                                    latestLifecycleHookResult.data.task.title ||
                                     t(
                                       'settings.projects.lifecycleHooks.summary.untitledTask'
                                     ),

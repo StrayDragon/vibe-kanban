@@ -7,7 +7,7 @@ The repo includes an image-focused scenario at:
 - `assets/fake-agent/image-scenario.jsonl`
 
 ## Configure a FakeAgent profile
-1. Open your asset directory (`VIBE_ASSET_DIR`, see `docs/operations.md`).
+1. Open your asset directory (`VIBE_ASSET_DIR`).
 2. Edit `profiles.json` and add/update a FakeAgent profile with a scenario path (prefer absolute paths):
 
 ```json

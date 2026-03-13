@@ -296,15 +296,10 @@ export function NoServerContent({
                   : 'Install companion automatically'}
               </Button>
               <div>
-                <a
-                  href="https://github.com/BloopAI/vibe-kanban-web-companion"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-sm text-blue-600 dark:text-blue-400 hover:underline"
-                >
+                <div className="inline-flex items-center gap-1 text-sm text-muted-foreground">
                   <ExternalLink className="h-3 w-3" />
                   {t('preview.noServer.companionLink')}
-                </a>
+                </div>
               </div>
             </div>
           </div>

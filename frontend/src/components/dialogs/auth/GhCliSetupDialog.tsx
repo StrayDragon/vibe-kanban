@@ -71,14 +71,7 @@ export const GhCliHelpInstructions = ({
       <div className="space-y-2 text-sm">
         <p>
           {t('settings:integrations.github.cliSetup.help.homebrew.description')}{' '}
-          <a
-            href="https://brew.sh/"
-            target="_blank"
-            rel="noreferrer"
-            className="underline"
-          >
-            {t('settings:integrations.github.cliSetup.help.homebrew.brewSh')}
-          </a>{' '}
+          {t('settings:integrations.github.cliSetup.help.homebrew.brewSh')}{' '}
           {t(
             'settings:integrations.github.cliSetup.help.homebrew.manualInstall'
           )}
@@ -103,14 +96,7 @@ export const GhCliHelpInstructions = ({
     <div className="space-y-2 text-sm">
       <p>
         {t('settings:integrations.github.cliSetup.help.manual.description')}{' '}
-        <a
-          href="https://cli.github.com/"
-          target="_blank"
-          rel="noreferrer"
-          className="underline"
-        >
-          {t('settings:integrations.github.cliSetup.help.manual.officialDocs')}
-        </a>{' '}
+        {t('settings:integrations.github.cliSetup.help.manual.officialDocs')}{' '}
         {t('settings:integrations.github.cliSetup.help.manual.andAuthenticate')}
       </p>
       <pre className="rounded bg-muted px-2 py-1 text-xs">

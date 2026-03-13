@@ -67,10 +67,13 @@ export const milestonesApi = {
     milestoneId: string,
     plan: MilestonePlanV1
   ): Promise<MilestonePlanPreviewResponse> => {
-    const response = await makeRequest(`/api/milestones/${milestoneId}/plan/preview`, {
-      method: 'POST',
-      body: JSON.stringify(plan),
-    });
+    const response = await makeRequest(
+      `/api/milestones/${milestoneId}/plan/preview`,
+      {
+        method: 'POST',
+        body: JSON.stringify(plan),
+      }
+    );
     return handleApiResponse<MilestonePlanPreviewResponse>(response);
   },
 
@@ -83,11 +86,14 @@ export const milestonesApi = {
     if (options?.idempotencyKey) {
       headers['Idempotency-Key'] = options.idempotencyKey;
     }
-    const response = await makeRequest(`/api/milestones/${milestoneId}/plan/apply`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(plan),
-    });
+    const response = await makeRequest(
+      `/api/milestones/${milestoneId}/plan/apply`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(plan),
+      }
+    );
     return handleApiResponse<MilestonePlanApplyResponse>(response);
   },
 };

@@ -52,7 +52,7 @@ use rmcp::{
     model::{
         CallToolRequestParams, CallToolResult, CancelTaskParams, CancelTaskResult, Content,
         CreateTaskResult, EnumSchema, GetTaskInfoParams, GetTaskPayloadResult, GetTaskResult,
-        GetTaskResultParams, Icon, Implementation, InitializeRequestParams, PaginatedRequestParams,
+        GetTaskResultParams, Implementation, InitializeRequestParams, PaginatedRequestParams,
         ProtocolVersion, ServerCapabilities, ServerInfo, Task as McpProtocolTask,
         TaskStatus as McpProtocolTaskStatus, TasksCapability,
     },
@@ -1524,12 +1524,8 @@ impl ServerHandler for TaskServer {
                     "Local-first Kanban MCP control plane for multi-agent orchestration."
                         .to_string(),
                 ),
-                icons: Some(vec![Icon {
-                    src: "https://raw.githubusercontent.com/StrayDragon/vibe-kanban/main/frontend/public/vibe-kanban-logo.svg".to_string(),
-                    mime_type: Some("image/svg+xml".to_string()),
-                    sizes: Some(vec!["any".to_string()]),
-                }]),
-                website_url: Some("https://www.vibekanban.com".to_string()),
+                icons: None,
+                website_url: Some("https://github.com/BloopAI/vibe-kanban".to_string()),
             },
             instructions: Some(instruction),
         }

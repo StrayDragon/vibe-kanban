@@ -331,17 +331,20 @@ impl AppRuntime {
             raw_config.executor_profile = recommended_executor;
         }
 
-        Self::update_release_notes_flags(&mut raw_config, utils_core::version::APP_VERSION);
+        Self::update_app_version_state(&mut raw_config, utils_core::version::APP_VERSION);
         save_config_to_file(&raw_config, &config_path()).await?;
 
         Ok(Arc::new(RwLock::new(raw_config)))
     }
 
-    fn update_release_notes_flags(config: &mut Config, current_version: &str) {
+    fn update_app_version_state(config: &mut Config, current_version: &str) {
+        // This fork does not ship an external release notes flow. Ensure the
+        // legacy flag is cleared so the frontend never attempts to load hosted
+        // content.
+        config.show_release_notes = false;
+
         let stored_version = config.last_app_version.as_deref();
         if stored_version != Some(current_version) {
-            // Show release notes only for upgrades, not first install.
-            config.show_release_notes = stored_version.is_some();
             config.last_app_version = Some(current_version.to_string());
         }
     }
@@ -489,30 +492,30 @@ mod tests {
     use super::AppRuntime;
 
     #[test]
-    fn update_release_notes_flags_sets_upgrade_state() {
+    fn update_app_version_state_clears_release_notes_flag() {
         let mut config = Config {
             last_app_version: Some("0.0.100".to_string()),
-            show_release_notes: false,
+            show_release_notes: true,
             ..Config::default()
         };
 
-        AppRuntime::update_release_notes_flags(&mut config, "0.0.101");
+        AppRuntime::update_app_version_state(&mut config, "0.0.101");
 
         assert_eq!(config.last_app_version.as_deref(), Some("0.0.101"));
-        assert!(config.show_release_notes);
+        assert!(!config.show_release_notes);
     }
 
     #[test]
-    fn update_release_notes_flags_does_not_flip_on_same_version() {
+    fn update_app_version_state_does_not_flip_on_same_version() {
         let mut config = Config {
             last_app_version: Some("0.0.101".to_string()),
             show_release_notes: true,
             ..Config::default()
         };
 
-        AppRuntime::update_release_notes_flags(&mut config, "0.0.101");
+        AppRuntime::update_app_version_state(&mut config, "0.0.101");
 
         assert_eq!(config.last_app_version.as_deref(), Some("0.0.101"));
-        assert!(config.show_release_notes);
+        assert!(!config.show_release_notes);
     }
 }

@@ -117,12 +117,20 @@ function parsePlanText(raw: string): ParseResult | null {
   }> = [];
 
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    candidates.push({ json: trimmed, extractedJson: null, extractedFrom: null });
+    candidates.push({
+      json: trimmed,
+      extractedJson: null,
+      extractedFrom: null,
+    });
   }
 
   const fenced = extractFencedJson(trimmed);
   if (fenced) {
-    candidates.push({ json: fenced, extractedJson: fenced, extractedFrom: 'fenced' });
+    candidates.push({
+      json: fenced,
+      extractedJson: fenced,
+      extractedFrom: 'fenced',
+    });
   }
 
   const embedded = extractEmbeddedJsonObject(trimmed);
@@ -249,7 +257,8 @@ export function MilestonePlanPanel({
       toast({
         variant: 'destructive',
         title: t('common:states.error', 'Error'),
-        description: err instanceof Error ? err.message : 'Failed to preview plan',
+        description:
+          err instanceof Error ? err.message : 'Failed to preview plan',
       });
     } finally {
       setIsPreviewing(false);
@@ -290,7 +299,8 @@ export function MilestonePlanPanel({
       toast({
         variant: 'destructive',
         title: t('common:states.error', 'Error'),
-        description: err instanceof Error ? err.message : 'Failed to apply plan',
+        description:
+          err instanceof Error ? err.message : 'Failed to apply plan',
       });
     } finally {
       setIsApplying(false);
@@ -371,11 +381,11 @@ export function MilestonePlanPanel({
                     'milestone.planner.detect.notFound',
                     'No milestone plan block detected in the latest guide output.'
                   )
-                : result.error ??
+                : (result.error ??
                   t(
                     'milestone.planner.detect.failed',
                     'Failed to detect a milestone plan.'
-                  ),
+                  )),
           });
         }
       } catch (err) {
@@ -458,7 +468,10 @@ export function MilestonePlanPanel({
         {!latestGuideAttempt?.session?.id ? (
           <Alert>
             <AlertTitle>
-              {t('milestone.planner.status.noGuideTitle', 'No guide output yet')}
+              {t(
+                'milestone.planner.status.noGuideTitle',
+                'No guide output yet'
+              )}
             </AlertTitle>
             <AlertDescription>
               {t(
@@ -482,7 +495,10 @@ export function MilestonePlanPanel({
         ) : planDetection?.status === 'invalid' ? (
           <Alert variant="destructive">
             <AlertTitle>
-              {t('milestone.planner.status.invalidTitle', 'Invalid plan payload')}
+              {t(
+                'milestone.planner.status.invalidTitle',
+                'Invalid plan payload'
+              )}
             </AlertTitle>
             <AlertDescription>
               {planDetection.error ??
@@ -511,10 +527,7 @@ export function MilestonePlanPanel({
         ) : planDetection?.status === 'not_found' ? (
           <Alert>
             <AlertTitle>
-              {t(
-                'milestone.planner.status.notFoundTitle',
-                'No plan detected'
-              )}
+              {t('milestone.planner.status.notFoundTitle', 'No plan detected')}
             </AlertTitle>
             <AlertDescription>
               {t(
@@ -526,10 +539,7 @@ export function MilestonePlanPanel({
         ) : (
           <Alert>
             <AlertTitle>
-              {t(
-                'milestone.planner.status.readyTitle',
-                'Waiting for a plan'
-              )}
+              {t('milestone.planner.status.readyTitle', 'Waiting for a plan')}
             </AlertTitle>
             <AlertDescription>
               {t(
@@ -547,9 +557,10 @@ export function MilestonePlanPanel({
             </Badge>
             <span>nodes: {parsed.plan.nodes?.length ?? 0}</span>
             <span>edges: {parsed.plan.edges?.length ?? 0}</span>
-            {planDetection?.status === 'found' && planDetection.extracted_from && (
-              <span>detected: {planDetection.extracted_from}</span>
-            )}
+            {planDetection?.status === 'found' &&
+              planDetection.extracted_from && (
+                <span>detected: {planDetection.extracted_from}</span>
+              )}
           </div>
         )}
 
@@ -659,8 +670,8 @@ export function MilestonePlanPanel({
                 <div className="space-y-1">
                   {preview.metadata_changes.map((c) => (
                     <div key={`${c.field}:${c.from ?? ''}:${c.to ?? ''}`}>
-                      <span className="font-mono">{c.field}</span>: {c.from ?? '∅'} →{' '}
-                      {c.to ?? '∅'}
+                      <span className="font-mono">{c.field}</span>:{' '}
+                      {c.from ?? '∅'} → {c.to ?? '∅'}
                     </div>
                   ))}
                 </div>
@@ -690,7 +701,8 @@ export function MilestonePlanPanel({
                 <div className="space-y-1">
                   {preview.task_links.map((link) => (
                     <div key={link.node_id}>
-                      <span className="font-mono">{link.node_id}</span>: {link.task_id}
+                      <span className="font-mono">{link.node_id}</span>:{' '}
+                      {link.task_id}
                     </div>
                   ))}
                 </div>
@@ -699,10 +711,12 @@ export function MilestonePlanPanel({
 
             <div className="flex flex-wrap gap-2">
               <Badge variant="outline" className="text-[11px]">
-                nodes: +{preview.node_diff.added.length} −{preview.node_diff.removed.length}
+                nodes: +{preview.node_diff.added.length} −
+                {preview.node_diff.removed.length}
               </Badge>
               <Badge variant="outline" className="text-[11px]">
-                edges: +{preview.edge_diff.added.length} −{preview.edge_diff.removed.length}
+                edges: +{preview.edge_diff.added.length} −
+                {preview.edge_diff.removed.length}
               </Badge>
             </div>
 

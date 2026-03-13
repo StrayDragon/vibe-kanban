@@ -20,10 +20,9 @@ const {
 }));
 
 vi.mock('@tanstack/react-query', async () => {
-  const actual =
-    await vi.importActual<typeof import('@tanstack/react-query')>(
-      '@tanstack/react-query'
-    );
+  const actual = await vi.importActual<typeof import('@tanstack/react-query')>(
+    '@tanstack/react-query'
+  );
 
   return {
     ...actual,
@@ -133,6 +132,20 @@ vi.mock('@/contexts/ProjectContext', () => ({
     projectId: 'project-1',
     project: { name: 'Project' },
     isLoading: false,
+  }),
+}));
+
+vi.mock('@/contexts/SearchContext', () => ({
+  useSearch: () => ({
+    query: '',
+    setQuery: vi.fn(),
+    active: false,
+    clear: vi.fn(),
+    focusInput: vi.fn(),
+    registerInputRef: vi.fn(),
+    reviewInbox: null,
+    setReviewInbox: vi.fn(),
+    clearReviewInbox: vi.fn(),
   }),
 }));
 
@@ -255,7 +268,9 @@ describe('MilestoneWorkflow', () => {
 
     expect(screen.getByText('Not found')).toBeTruthy();
     expect(screen.getByText('Workflow not found.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Back to project' })).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Back to project' })
+    ).toBeTruthy();
   });
 
   it('preserves local draft when refreshed server data arrives', async () => {

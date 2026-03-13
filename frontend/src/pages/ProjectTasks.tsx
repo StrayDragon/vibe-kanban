@@ -66,7 +66,11 @@ import {
 } from '@/components/ui/breadcrumb';
 import { AttemptHeaderActions } from '@/components/panels/AttemptHeaderActions';
 import { TaskPanelHeaderActions } from '@/components/panels/TaskPanelHeaderActions';
-import { getMilestoneId, isMilestoneEntry, isMilestoneSubtask } from '@/utils/milestone';
+import {
+  getMilestoneId,
+  isMilestoneEntry,
+  isMilestoneSubtask,
+} from '@/utils/milestone';
 import { toast } from '@/components/ui/toast';
 import { useOptimisticTasksStore } from '@/stores/useOptimisticTasksStore';
 

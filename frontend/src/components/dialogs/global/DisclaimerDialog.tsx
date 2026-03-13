@@ -38,17 +38,6 @@ const DisclaimerDialogImpl = NiceModal.create<NoProps>(() => {
               and ensure you have backups of important work. This software is
               experimental - use it responsibly.
             </p>
-            <p>
-              Learn more at{' '}
-              <a
-                href="https://www.vibekanban.com/docs/getting-started#safety-notice"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-600 dark:text-blue-400 underline hover:no-underline"
-              >
-                https://www.vibekanban.com/docs/getting-started#safety-notice
-              </a>
-            </p>
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

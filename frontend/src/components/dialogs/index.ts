@@ -4,7 +4,6 @@ export {
   OnboardingDialog,
   type OnboardingResult,
 } from './global/OnboardingDialog';
-export { ReleaseNotesDialog } from './global/ReleaseNotesDialog';
 
 // Project-related dialogs
 export {

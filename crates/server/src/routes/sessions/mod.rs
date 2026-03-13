@@ -35,8 +35,13 @@ use utils_core::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{
-    DeploymentImpl, error::ApiError, middleware::load_session_middleware,
-    milestone_planning::{MilestonePlanDetectionResult, MilestonePlanDetectionStatus, detect_milestone_plan_v1_in_text},
+    DeploymentImpl,
+    error::ApiError,
+    middleware::load_session_middleware,
+    milestone_planning::{
+        MilestonePlanDetectionResult, MilestonePlanDetectionStatus,
+        detect_milestone_plan_v1_in_text,
+    },
     routes::task_attempts::util::restore_worktrees_to_process,
 };
 
@@ -154,14 +159,16 @@ pub async fn get_latest_milestone_plan(
         }
     }
 
-    Ok(ResponseJson(ApiResponse::success(MilestonePlanDetectionResult {
-        status: MilestonePlanDetectionStatus::NotFound,
-        plan: None,
-        extracted_from: None,
-        source_turn_id: None,
-        source_entry_index: None,
-        error: None,
-    })))
+    Ok(ResponseJson(ApiResponse::success(
+        MilestonePlanDetectionResult {
+            status: MilestonePlanDetectionStatus::NotFound,
+            plan: None,
+            extracted_from: None,
+            source_turn_id: None,
+            source_entry_index: None,
+            error: None,
+        },
+    )))
 }
 
 pub async fn create_session(

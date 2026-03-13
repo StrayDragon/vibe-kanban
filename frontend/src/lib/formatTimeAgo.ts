@@ -6,8 +6,7 @@ export function formatTimeAgo(value: string | Date): string {
   const absSec = Math.round(Math.abs(diffMs) / 1000);
 
   const rtf =
-    typeof Intl !== 'undefined' &&
-    typeof Intl.RelativeTimeFormat === 'function'
+    typeof Intl !== 'undefined' && typeof Intl.RelativeTimeFormat === 'function'
       ? new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
       : null;
 
@@ -28,4 +27,3 @@ export function formatTimeAgo(value: string | Date): string {
   const years = Math.round(months / 12);
   return to(years, 'year');
 }
-

@@ -75,7 +75,8 @@ export function TaskReviewInbox({
             {tasks.map((task) => {
               const projectName = projectNames?.[task.project_id];
               const statusColor = statusBoardColors[task.status];
-              const lastControlTransfer = task.orchestration?.last_control_transfer;
+              const lastControlTransfer =
+                task.orchestration?.last_control_transfer;
               const controlTransferLabel = lastControlTransfer
                 ? t(
                     `orchestration.controlTransfer.reasons.${lastControlTransfer.reason_code}`

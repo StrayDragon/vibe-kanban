@@ -49,7 +49,8 @@ export function SearchProvider({ children }: SearchProviderProps) {
     location.pathname
   );
   const isOverviewTasksRoute = /^\/tasks/.test(location.pathname);
-  const isTasksRoute = isProjectTasksRoute || isOverviewTasksRoute || isMilestoneRoute;
+  const isTasksRoute =
+    isProjectTasksRoute || isOverviewTasksRoute || isMilestoneRoute;
 
   useEffect(() => {
     if (!isTasksRoute && (query !== '' || reviewInbox !== null)) {
