@@ -93,6 +93,32 @@ Baseline and upgrade candidates were captured via `pnpm -C frontend outdated --f
 - **Styling:** `tailwindcss` `3.4.17` → `4.2.1`
 - **React ecosystem:** `react`/`react-dom` `18.3.1` → `19.2.4`; `react-router-dom` `6.30.3` → `7.13.1`
 
+## Spike Results (2026-03-14)
+
+### 3.1 Tailwind 4 spike (go/no-go)
+
+**Result:** **NO-GO** (defer to a dedicated follow-up change).
+
+**What we tried (local spike branch):**
+
+- Upgraded `tailwindcss` to `4.2.1`.
+- Updated PostCSS integration per Tailwind 4 error message:
+  - Installed `@tailwindcss/postcss`.
+  - Updated `frontend/postcss.config.js` to use `@tailwindcss/postcss` (Tailwind 4 no longer supports `tailwindcss` as a PostCSS plugin).
+- Updated global CSS entry:
+  - `frontend/src/styles/index.css` must move from `@tailwind base/components/utilities` to the Tailwind 4 `@import "tailwindcss";` style.
+  - To keep using a JS config, `@config "<path>"` is required (example: `@config "../../tailwind.config.js";`).
+
+**Blocking issue encountered:**
+
+- `pnpm -C frontend run build` did not succeed due to Tailwind 4 `@apply` resolution errors (e.g. reporting standard utilities like `leading-relaxed` as unknown in our global stylesheet pipeline).
+
+**Why NO-GO:**
+
+- The required migration touches core build + styling entrypoints (PostCSS config + global stylesheet directives).
+- Even before any UI drift evaluation, we cannot pass the build gate yet.
+- Tailwind 4 is likely to cause measurable UI drift (new defaults + changed pipeline), and would benefit from a dedicated upgrade with a visual checklist and focused effort.
+
 ## Open Questions
 
 - Do we want to standardize on a single “supported Node version” beyond `>=18` for more reproducible builds?
