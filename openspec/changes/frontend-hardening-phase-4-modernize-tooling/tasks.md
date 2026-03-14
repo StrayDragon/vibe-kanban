@@ -13,7 +13,7 @@
 ## 3. High-Risk Lane Spikes (Go/No-Go)
 
 - [x] 3.1 Tailwind major spike: attempt upgrade in isolation, document required config changes and UI drift risk, and decide go/no-go based on e2e + manual smoke.
-- [ ] 3.2 React ecosystem major spike (React 19 / Router 7): document compatibility matrix for key deps and decide go/no-go based on verified build + e2e.
+- [x] 3.2 React ecosystem major spike (React 19 / Router 7): document compatibility matrix for key deps and decide go/no-go based on verified build + e2e.
 
 ## 4. Finalization
 

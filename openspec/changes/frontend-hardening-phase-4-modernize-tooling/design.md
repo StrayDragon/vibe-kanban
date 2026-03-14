@@ -119,6 +119,29 @@ Baseline and upgrade candidates were captured via `pnpm -C frontend outdated --f
 - Even before any UI drift evaluation, we cannot pass the build gate yet.
 - Tailwind 4 is likely to cause measurable UI drift (new defaults + changed pipeline), and would benefit from a dedicated upgrade with a visual checklist and focused effort.
 
+### 3.2 React 19 / Router 7 spike (go/no-go)
+
+**Result:** **NO-GO** (defer to a dedicated follow-up change).
+
+**What we tried (local spike branch):**
+
+- Upgraded:
+  - `react` / `react-dom` → `19.2.4`
+  - `react-router-dom` → `7.13.1`
+  - `@types/react` / `@types/react-dom` → `19.x`
+
+**Compatibility findings (high-signal blockers):**
+
+- Peer deps: `@testing-library/react@14.3.1` declares peers for React 18, so React 19 requires upgrading Testing Library (and likely aligned type packages).
+- Typecheck gate: `pnpm -C frontend run check` failed with React 19 types, including:
+  - `JSX` namespace usage in code (needs migration to `React.JSX` types under React 19 typings).
+  - stricter `RefObject<T>` expectations (nullability-related errors in a few components).
+
+**Why NO-GO:**
+
+- We cannot pass the baseline verification gates (typecheck/build) on the spike without non-trivial code migrations and additional coordinated dependency upgrades.
+- Router 7 is an ecosystem major; adopting it alongside React 19 increases churn and makes bisect/rollback harder.
+
 ## Open Questions
 
 - Do we want to standardize on a single “supported Node version” beyond `>=18` for more reproducible builds?
