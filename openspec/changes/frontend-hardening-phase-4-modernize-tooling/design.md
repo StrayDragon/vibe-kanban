@@ -142,6 +142,35 @@ Baseline and upgrade candidates were captured via `pnpm -C frontend outdated --f
 - We cannot pass the baseline verification gates (typecheck/build) on the spike without non-trivial code migrations and additional coordinated dependency upgrades.
 - Router 7 is an ecosystem major; adopting it alongside React 19 increases churn and makes bisect/rollback harder.
 
+## Final Toolchain (Landed)
+
+### Versions (manifest-level)
+
+These are the versions/ranges landed in `frontend/package.json` for the safe-lane upgrades:
+
+- **Build:** `vite@^8.0.0`, `@vitejs/plugin-react@^6.0.1`
+- **Test:** `vitest@^4.1.0`, `jsdom@^28.1.0`
+- **Lint:** `eslint@^9.39.4`, `@typescript-eslint/*@^8.57.0`, `eslint-plugin-react-hooks@^7.0.1`, `eslint-plugin-check-file@^3.3.1`
+- **State:** `zustand@^5.0.11`
+
+**Notes / deviations from the planned targets:**
+
+- ESLint 10 was attempted but not landed in this phase due to ecosystem/peer support and configuration discovery churn; ESLint 9 + flat config keeps the safe-lane migration bounded.
+
+### Repeatable upgrade + verification procedure
+
+1) Capture baseline candidates (for this repo’s workflow):
+   - `pnpm -C frontend outdated --format json`
+2) Upgrade in small batches (1–3 related packages at a time).
+3) After each batch, run the gates:
+   - `pnpm -C frontend run check`
+   - `pnpm -C frontend run lint`
+   - `pnpm -C frontend run build`
+   - `pnpm -C frontend run test` (when test tooling or runtime libs change)
+   - `pnpm run e2e:just-run` (production-ish “just run” path)
+4) Security baseline (at least once at the end):
+   - `pnpm -C frontend audit --prod` (expect 0 HIGH / 0 MODERATE)
+
 ## Open Questions
 
 - Do we want to standardize on a single “supported Node version” beyond `>=18` for more reproducible builds?

@@ -17,5 +17,5 @@
 
 ## 4. Finalization
 
-- [ ] 4.1 Ensure security baseline is preserved: `pnpm -C frontend audit --prod` has 0 HIGH/MODERATE.
-- [ ] 4.2 Document the upgraded toolchain versions and the repeatable upgrade/verification procedure.
+- [x] 4.1 Ensure security baseline is preserved: `pnpm -C frontend audit --prod` has 0 HIGH/MODERATE.
+- [x] 4.2 Document the upgraded toolchain versions and the repeatable upgrade/verification procedure.
