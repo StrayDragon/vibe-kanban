@@ -1,4 +1,10 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 mod notification;
 use anyhow::Error as AnyhowError;
@@ -25,8 +31,8 @@ use execution::{
     queued_message::QueuedMessageService,
 };
 use executors::{executors::ExecutorError, profile::ExecutorConfigs};
-use futures::{StreamExt, TryStreamExt};
-use logs_axum::LogMsgAxumExt;
+use futures::StreamExt;
+use logs_axum::SequencedLogMsgAxumExt;
 use logs_store::MsgStore;
 pub use notification::NotificationService;
 use repos::{
@@ -177,10 +183,53 @@ pub trait Deployment: Clone + Send + Sync + 'static {
     async fn stream_events(
         &self,
     ) -> futures::stream::BoxStream<'static, Result<Event, std::io::Error>> {
-        self.events()
+        let (history, receiver, _meta) = self
+            .events()
             .msg_store()
-            .history_plus_stream()
-            .map_ok(|message| message.to_sse_event())
+            .subscribe_sequenced_from(None);
+
+        let initial_last_seq = history.last().map(|m| m.seq).unwrap_or(0);
+        let last_seq = Arc::new(AtomicU64::new(initial_last_seq));
+
+        let hist = futures::stream::iter(history.into_iter().map(Ok::<_, std::io::Error>));
+        let live = futures::stream::unfold((receiver, last_seq), |(mut receiver, last_seq)| async move {
+            loop {
+                match receiver.recv().await {
+                    Ok(msg) => {
+                        if msg.seq <= last_seq.load(Ordering::Relaxed) {
+                            continue;
+                        }
+                        last_seq.store(msg.seq, Ordering::Relaxed);
+                        return Some((Ok::<_, std::io::Error>(msg), (receiver, last_seq)));
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(
+                            skipped = skipped,
+                            "events SSE receiver lagged; dropping missed messages"
+                        );
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        return None;
+                    }
+                }
+            }
+        });
+
+        let sequenced_stream = hist.chain(live);
+
+        sequenced_stream
+            .flat_map(|result| match result {
+                Ok(msg) => {
+                    let mut events: Vec<Result<Event, std::io::Error>> = Vec::with_capacity(2);
+                    events.push(Ok(msg.to_sse_event()));
+                    if let Some(invalidate) = msg.to_invalidate_sse_event() {
+                        events.push(Ok(invalidate));
+                    }
+                    futures::stream::iter(events)
+                }
+                Err(err) => futures::stream::iter(vec![Err(err)]),
+            })
             .boxed()
     }
 }

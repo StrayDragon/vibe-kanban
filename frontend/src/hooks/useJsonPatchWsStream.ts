@@ -3,8 +3,12 @@ import { applyPatch } from 'rfc6902';
 import type { Operation } from 'rfc6902';
 import { createWebSocket } from '@/lib/api';
 
-type WsJsonPatchMsg = { JsonPatch: Operation[] };
-type WsFinishedMsg = { finished: boolean };
+type WsBaseMsg = { seq?: number };
+type WsJsonPatchMsg = WsBaseMsg & {
+  JsonPatch: Operation[];
+  invalidate?: unknown;
+};
+type WsFinishedMsg = WsBaseMsg & { finished: boolean };
 type WsMsg = WsJsonPatchMsg | WsFinishedMsg;
 
 interface UseJsonPatchStreamOptions<T> {
@@ -61,6 +65,7 @@ export const useJsonPatchWsStream = <T extends object>(
   const connectRef = useRef<(kind: 'initial' | 'retry' | 'resync') => void>();
   const closeForResyncRef = useRef<boolean>(false);
   const closeOnOpenForResyncRef = useRef<boolean>(false);
+  const lastSeqRef = useRef<number | null>(null);
 
   const injectInitialEntry = options?.injectInitialEntry;
   const deduplicatePatches = options?.deduplicatePatches;
@@ -121,6 +126,7 @@ export const useJsonPatchWsStream = <T extends object>(
       finishedRef.current = false;
       closeForResyncRef.current = false;
       closeOnOpenForResyncRef.current = false;
+      lastSeqRef.current = null;
       setData(undefined);
       setIsConnected(false);
       setIsResyncing(false);
@@ -143,6 +149,18 @@ export const useJsonPatchWsStream = <T extends object>(
       if (!enabled || !endpoint) return;
       if (wsRef.current) return;
 
+      const buildEndpoint = (): string => {
+        if (kind !== 'retry') return endpoint;
+        if (typeof lastSeqRef.current !== 'number') return endpoint;
+        try {
+          const url = new URL(endpoint, window.location.origin);
+          url.searchParams.set('after_seq', String(lastSeqRef.current));
+          return url.pathname + url.search + url.hash;
+        } catch {
+          return endpoint;
+        }
+      };
+
       // Reset finished flag for new connection
       finishedRef.current = false;
       hadErrorRef.current = false;
@@ -151,7 +169,7 @@ export const useJsonPatchWsStream = <T extends object>(
         setIsResyncing(true);
       }
 
-      const ws = createWebSocket(endpoint);
+      const ws = createWebSocket(buildEndpoint());
 
       ws.onopen = () => {
         if (closeOnOpenForResyncRef.current) {
@@ -173,6 +191,18 @@ export const useJsonPatchWsStream = <T extends object>(
       ws.onmessage = (event) => {
         try {
           const msg: WsMsg = JSON.parse(event.data);
+          const seq = typeof msg.seq === 'number' ? msg.seq : null;
+
+          if (
+            typeof seq === 'number' &&
+            typeof lastSeqRef.current === 'number' &&
+            seq < lastSeqRef.current
+          ) {
+            // Seq going backwards is not expected; force a full resync.
+            closeForResyncRef.current = true;
+            ws.close(4000, 'resync:seq_backwards');
+            return;
+          }
 
           // Handle JsonPatch messages (same as SSE json_patch event)
           if ('JsonPatch' in msg) {
@@ -190,6 +220,9 @@ export const useJsonPatchWsStream = <T extends object>(
             // Apply patch (mutates the clone in place)
             applyPatch(next, filtered);
 
+            if (typeof seq === 'number') {
+              lastSeqRef.current = seq;
+            }
             dataRef.current = next;
             setData(next);
           }
@@ -197,6 +230,9 @@ export const useJsonPatchWsStream = <T extends object>(
           // Handle finished messages ({finished: true})
           // Treat finished as terminal - do NOT reconnect
           if ('finished' in msg) {
+            if (typeof seq === 'number') {
+              lastSeqRef.current = seq;
+            }
             finishedRef.current = true;
             ws.close(1000, 'finished');
           }
@@ -204,7 +240,8 @@ export const useJsonPatchWsStream = <T extends object>(
           console.error('Failed to process WebSocket message:', err);
           setError('Failed to process stream update');
           // Force a resync on parse/patch errors.
-          ws.close(1011, 'stream error');
+          closeForResyncRef.current = true;
+          ws.close(4000, 'resync:stream_error');
         }
       };
 
@@ -261,6 +298,7 @@ export const useJsonPatchWsStream = <T extends object>(
       finishedRef.current = false;
       closeForResyncRef.current = false;
       closeOnOpenForResyncRef.current = false;
+      lastSeqRef.current = null;
       dataRef.current = undefined;
       setData(undefined);
       setIsResyncing(false);

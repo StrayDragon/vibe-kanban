@@ -9,7 +9,11 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import type { Operation } from 'rfc6902';
 import { createEventSource } from '@/lib/api';
-import { invalidateQueriesFromJsonPatch } from '@/contexts/eventStreamInvalidation';
+import {
+  invalidateQueriesFromHints,
+  invalidateQueriesFromJsonPatch,
+  type InvalidationHints,
+} from '@/contexts/eventStreamInvalidation';
 
 type EventStreamContextType = {
   isConnected: boolean;
@@ -24,6 +28,7 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     const source = createEventSource('/api/events');
+    const hintedEventIds = new Set<string>();
 
     source.onopen = () => {
       setIsConnected(true);
@@ -36,6 +41,12 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
     };
 
     const handleJsonPatch = (event: MessageEvent<string>) => {
+      if (event.lastEventId && hintedEventIds.has(event.lastEventId)) {
+        // Prefer backend hints when available for the same sequenced update.
+        hintedEventIds.delete(event.lastEventId);
+        return;
+      }
+
       let patch: Operation[];
       try {
         patch = JSON.parse(event.data) as Operation[];
@@ -48,10 +59,34 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
       invalidateQueriesFromJsonPatch(queryClient, patch);
     };
 
+    const handleInvalidate = (event: MessageEvent<string>) => {
+      if (event.lastEventId) {
+        hintedEventIds.add(event.lastEventId);
+        // Prevent unbounded growth; keep only recent ids.
+        if (hintedEventIds.size > 256) {
+          const first = hintedEventIds.values().next().value;
+          if (first) hintedEventIds.delete(first);
+        }
+      }
+
+      let hints: InvalidationHints;
+      try {
+        hints = JSON.parse(event.data) as InvalidationHints;
+      } catch (err) {
+        console.warn('Failed to parse SSE invalidate event', err);
+        setError('Failed to parse event stream update');
+        return;
+      }
+
+      invalidateQueriesFromHints(queryClient, hints);
+    };
+
     source.addEventListener('json_patch', handleJsonPatch);
+    source.addEventListener('invalidate', handleInvalidate);
 
     return () => {
       source.removeEventListener('json_patch', handleJsonPatch);
+      source.removeEventListener('invalidate', handleInvalidate);
       source.close();
     };
   }, [queryClient]);

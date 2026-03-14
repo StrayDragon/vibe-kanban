@@ -19,7 +19,7 @@ use db::models::{
 use execution::container::ContainerService;
 use executors::logs::utils::patch::PatchType;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
-use logs_axum::LogMsgAxumExt;
+use logs_axum::SequencedLogMsgAxumExt;
 use logs_store::LogEntryEvent;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -39,6 +39,7 @@ pub struct ExecutionProcessQuery {
     /// If true, include soft-deleted (dropped) processes in results/stream
     #[serde(default)]
     pub show_soft_deleted: Option<bool>,
+    pub after_seq: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -352,6 +353,7 @@ pub async fn stream_execution_processes_ws(
             deployment,
             query.workspace_id,
             query.show_soft_deleted.unwrap_or(false),
+            query.after_seq,
         )
         .await
         {
@@ -365,12 +367,13 @@ async fn handle_execution_processes_ws(
     deployment: DeploymentImpl,
     workspace_id: uuid::Uuid,
     show_soft_deleted: bool,
+    after_seq: Option<u64>,
 ) -> anyhow::Result<()> {
     let shutdown = deployment.shutdown_token();
     // Get the raw stream and convert LogMsg to WebSocket messages
     let mut stream = deployment
         .events()
-        .stream_execution_processes_for_workspace_raw(workspace_id, show_soft_deleted)
+        .stream_execution_processes_for_workspace_raw(workspace_id, show_soft_deleted, after_seq)
         .await?
         .map_ok(|msg| msg.to_ws_message_unchecked());
 

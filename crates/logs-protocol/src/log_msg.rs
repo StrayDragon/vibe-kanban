@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub const EV_STDOUT: &str = "stdout";
 pub const EV_STDERR: &str = "stderr";
 pub const EV_JSON_PATCH: &str = "json_patch";
+pub const EV_INVALIDATE: &str = "invalidate";
 pub const EV_SESSION_ID: &str = "session_id";
 pub const EV_FINISHED: &str = "finished";
 

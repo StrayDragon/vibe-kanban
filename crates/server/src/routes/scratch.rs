@@ -4,7 +4,7 @@ use app_runtime::Deployment;
 use axum::{
     Json, Router,
     extract::{
-        Path, State,
+        Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::{IntoResponse, Json as ResponseJson},
@@ -12,7 +12,7 @@ use axum::{
 };
 use db::models::scratch::{CreateScratch, Scratch, ScratchType, UpdateScratch};
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
-use logs_axum::LogMsgAxumExt;
+use logs_axum::SequencedLogMsgAxumExt;
 use serde::Deserialize;
 use utils_core::response::ApiResponse;
 use uuid::Uuid;
@@ -109,12 +109,18 @@ pub async fn stream_scratch_ws(
     ws: WebSocketUpgrade,
     State(deployment): State<DeploymentImpl>,
     Path(ScratchPath { scratch_type, id }): Path<ScratchPath>,
+    Query(query): Query<ScratchStreamQuery>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_scratch_ws(socket, deployment, id, scratch_type).await {
+        if let Err(e) = handle_scratch_ws(socket, deployment, id, scratch_type, query.after_seq).await {
             tracing::warn!("scratch WS closed: {}", e);
         }
     })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ScratchStreamQuery {
+    pub after_seq: Option<u64>,
 }
 
 async fn handle_scratch_ws(
@@ -122,11 +128,12 @@ async fn handle_scratch_ws(
     deployment: DeploymentImpl,
     id: Uuid,
     scratch_type: ScratchType,
+    after_seq: Option<u64>,
 ) -> anyhow::Result<()> {
     let shutdown = deployment.shutdown_token();
     let mut stream = deployment
         .events()
-        .stream_scratch_raw(id, &scratch_type)
+        .stream_scratch_raw(id, &scratch_type, after_seq)
         .await?
         .map_ok(|msg| msg.to_ws_message_unchecked());
 

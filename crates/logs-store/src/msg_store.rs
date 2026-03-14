@@ -58,8 +58,22 @@ fn normalize_limit(value: usize, name: &str) -> usize {
 
 #[derive(Clone)]
 struct StoredMsg {
+    seq: u64,
     msg: LogMsg,
     bytes: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct SequencedLogMsg {
+    pub seq: u64,
+    pub msg: LogMsg,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SequencedHistoryMetadata {
+    pub min_seq: Option<u64>,
+    pub max_seq: Option<u64>,
+    pub evicted: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -88,6 +102,9 @@ struct StoredEntry {
 }
 
 struct Inner {
+    next_seq: u64,
+    max_seq: Option<u64>,
+    history_evicted: bool,
     history: VecDeque<StoredMsg>,
     total_bytes: usize,
     raw_entries: VecDeque<StoredEntry>,
@@ -104,6 +121,7 @@ struct Inner {
 pub struct MsgStore {
     inner: RwLock<Inner>,
     sender: broadcast::Sender<LogMsg>,
+    sequenced_sender: broadcast::Sender<SequencedLogMsg>,
     raw_sender: broadcast::Sender<LogEntryEvent>,
     normalized_sender: broadcast::Sender<LogEntryEvent>,
 }
@@ -117,10 +135,14 @@ impl Default for MsgStore {
 impl MsgStore {
     pub fn new() -> Self {
         let (sender, _) = broadcast::channel(10000);
+        let (sequenced_sender, _) = broadcast::channel(10000);
         let (raw_sender, _) = broadcast::channel(10000);
         let (normalized_sender, _) = broadcast::channel(10000);
         Self {
             inner: RwLock::new(Inner {
+                next_seq: 1,
+                max_seq: None,
+                history_evicted: false,
                 history: VecDeque::with_capacity(32),
                 total_bytes: 0,
                 raw_entries: VecDeque::with_capacity(64),
@@ -134,35 +156,40 @@ impl MsgStore {
                 finished: false,
             }),
             sender,
+            sequenced_sender,
             raw_sender,
             normalized_sender,
         }
     }
 
     pub fn push(&self, msg: LogMsg) {
-        let _ = self.sender.send(msg.clone());
         let bytes = msg.approx_bytes();
 
         let mut raw_events: Vec<LogEntryEvent> = Vec::new();
         let mut normalized_events: Vec<LogEntryEvent> = Vec::new();
+        let sequenced_msg: SequencedLogMsg;
 
         {
             let mut inner = self.inner.write().unwrap();
-            inner.push_msg(msg.clone(), bytes);
+            let seq = inner.next_seq;
+            inner.next_seq = inner.next_seq.saturating_add(1);
+            inner.max_seq = Some(seq);
+            inner.push_msg(seq, msg.clone(), bytes);
+            sequenced_msg = SequencedLogMsg { seq, msg: msg.clone() };
 
-            match msg {
+            match &msg {
                 LogMsg::Stdout(content) => {
-                    if let Some(event) = inner.push_raw_entry(content, true) {
+                    if let Some(event) = inner.push_raw_entry(content.clone(), true) {
                         raw_events.push(event);
                     }
                 }
                 LogMsg::Stderr(content) => {
-                    if let Some(event) = inner.push_raw_entry(content, false) {
+                    if let Some(event) = inner.push_raw_entry(content.clone(), false) {
                         raw_events.push(event);
                     }
                 }
                 LogMsg::JsonPatch(patch) => {
-                    let updates = extract_normalized_updates(&patch);
+                    let updates = extract_normalized_updates(patch);
                     for update in updates {
                         if let Some(event) = inner.upsert_normalized_entry(update) {
                             normalized_events.push(event);
@@ -177,6 +204,9 @@ impl MsgStore {
                 _ => {}
             }
         }
+
+        let _ = self.sequenced_sender.send(sequenced_msg);
+        let _ = self.sender.send(msg.clone());
 
         for event in raw_events {
             let _ = self.raw_sender.send(event);
@@ -210,6 +240,24 @@ impl MsgStore {
         self.sender.subscribe()
     }
 
+    pub fn get_sequenced_receiver(&self) -> broadcast::Receiver<SequencedLogMsg> {
+        self.sequenced_sender.subscribe()
+    }
+
+    /// Subscribe first, then take a history snapshot (for replay by `after_seq`).
+    pub fn subscribe_sequenced_from(
+        &self,
+        after_seq: Option<u64>,
+    ) -> (
+        Vec<SequencedLogMsg>,
+        broadcast::Receiver<SequencedLogMsg>,
+        SequencedHistoryMetadata,
+    ) {
+        let rx = self.sequenced_sender.subscribe();
+        let (history, meta) = self.sequenced_history_snapshot(after_seq);
+        (history, rx, meta)
+    }
+
     pub fn subscribe_raw_entries(&self) -> broadcast::Receiver<LogEntryEvent> {
         self.raw_sender.subscribe()
     }
@@ -226,6 +274,42 @@ impl MsgStore {
             .iter()
             .map(|s| s.msg.clone())
             .collect()
+    }
+
+    pub fn sequenced_history_metadata(&self) -> SequencedHistoryMetadata {
+        let inner = self.inner.read().unwrap();
+        SequencedHistoryMetadata {
+            min_seq: inner.history.front().map(|entry| entry.seq),
+            max_seq: inner.max_seq,
+            evicted: inner.history_evicted,
+        }
+    }
+
+    pub fn max_seq(&self) -> Option<u64> {
+        self.inner.read().unwrap().max_seq
+    }
+
+    fn sequenced_history_snapshot(
+        &self,
+        after_seq: Option<u64>,
+    ) -> (Vec<SequencedLogMsg>, SequencedHistoryMetadata) {
+        let inner = self.inner.read().unwrap();
+        let meta = SequencedHistoryMetadata {
+            min_seq: inner.history.front().map(|entry| entry.seq),
+            max_seq: inner.max_seq,
+            evicted: inner.history_evicted,
+        };
+
+        let iter = inner.history.iter().filter(|entry| {
+            after_seq.is_none_or(|after| entry.seq > after)
+        });
+        let history = iter
+            .map(|entry| SequencedLogMsg {
+                seq: entry.seq,
+                msg: entry.msg.clone(),
+            })
+            .collect();
+        (history, meta)
     }
 
     pub fn raw_history_page(
@@ -560,7 +644,7 @@ impl MsgStore {
 }
 
 impl Inner {
-    fn push_msg(&mut self, msg: LogMsg, bytes: usize) {
+    fn push_msg(&mut self, seq: u64, msg: LogMsg, bytes: usize) {
         let limits = log_history_config();
 
         while self.history.len() >= limits.max_entries
@@ -568,11 +652,12 @@ impl Inner {
         {
             if let Some(front) = self.history.pop_front() {
                 self.total_bytes = self.total_bytes.saturating_sub(front.bytes);
+                self.history_evicted = true;
             } else {
                 break;
             }
         }
-        self.history.push_back(StoredMsg { msg, bytes });
+        self.history.push_back(StoredMsg { seq, msg, bytes });
         self.total_bytes = self.total_bytes.saturating_add(bytes);
     }
 
@@ -741,10 +826,14 @@ mod tests {
 
     fn store_with_broadcast_capacity(capacity: usize) -> MsgStore {
         let (sender, _) = broadcast::channel(capacity);
+        let (sequenced_sender, _) = broadcast::channel(capacity);
         let (raw_sender, _) = broadcast::channel(capacity);
         let (normalized_sender, _) = broadcast::channel(capacity);
         MsgStore {
             inner: RwLock::new(Inner {
+                next_seq: 1,
+                max_seq: None,
+                history_evicted: false,
                 history: VecDeque::with_capacity(32),
                 total_bytes: 0,
                 raw_entries: VecDeque::with_capacity(64),
@@ -758,6 +847,7 @@ mod tests {
                 finished: false,
             }),
             sender,
+            sequenced_sender,
             raw_sender,
             normalized_sender,
         }
@@ -786,6 +876,43 @@ mod tests {
         assert_eq!(entries[1].entry_index, 1);
         assert_eq!(entries[0].entry_json["type"], "STDOUT");
         assert_eq!(entries[1].entry_json["type"], "STDERR");
+    }
+
+    #[test]
+    fn sequenced_history_is_monotonic_and_filterable() {
+        let store = MsgStore::new();
+        store.push_stdout("a");
+        store.push_stderr("b");
+
+        let meta = store.sequenced_history_metadata();
+        assert_eq!(meta.min_seq, Some(1));
+        assert_eq!(meta.max_seq, Some(2));
+        assert!(!meta.evicted);
+
+        let (history, _rx, _meta) = store.subscribe_sequenced_from(None);
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].seq, 1);
+        assert_eq!(history[1].seq, 2);
+
+        let (history_after, _rx2, _meta2) = store.subscribe_sequenced_from(Some(1));
+        assert_eq!(history_after.len(), 1);
+        assert_eq!(history_after[0].seq, 2);
+    }
+
+    #[test]
+    fn sequenced_history_eviction_updates_min_max_and_flag() {
+        let store = MsgStore::new();
+
+        // Default history byte budget is 8MiB; push >8MiB total so older entries are evicted.
+        let chunk = "x".repeat(5 * 1024 * 1024);
+        store.push_stdout(chunk.clone());
+        store.push_stdout(chunk.clone());
+        store.push_stdout(chunk);
+
+        let meta = store.sequenced_history_metadata();
+        assert_eq!(meta.max_seq, Some(3));
+        assert!(meta.evicted);
+        assert!(meta.min_seq.is_some_and(|min| min > 1));
     }
 
     #[test]

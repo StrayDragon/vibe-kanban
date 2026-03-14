@@ -18,7 +18,7 @@ use db::models::{
     repo::Repo,
 };
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
-use logs_axum::LogMsgAxumExt;
+use logs_axum::SequencedLogMsgAxumExt;
 use repos::{file_search_cache::SearchQuery, project::ProjectServiceError};
 use utils_core::response::ApiResponse;
 use uuid::Uuid;
@@ -37,19 +37,29 @@ pub async fn get_projects(
 pub async fn stream_projects_ws(
     ws: WebSocketUpgrade,
     State(deployment): State<DeploymentImpl>,
+    Query(query): Query<ProjectsStreamQuery>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_projects_ws(socket, deployment).await {
+        if let Err(e) = handle_projects_ws(socket, deployment, query.after_seq).await {
             tracing::warn!("projects WS closed: {}", e);
         }
     })
 }
 
-async fn handle_projects_ws(socket: WebSocket, deployment: DeploymentImpl) -> anyhow::Result<()> {
+#[derive(Debug, serde::Deserialize)]
+pub struct ProjectsStreamQuery {
+    pub after_seq: Option<u64>,
+}
+
+async fn handle_projects_ws(
+    socket: WebSocket,
+    deployment: DeploymentImpl,
+    after_seq: Option<u64>,
+) -> anyhow::Result<()> {
     let shutdown = deployment.shutdown_token();
     let mut stream = deployment
         .events()
-        .stream_projects_raw()
+        .stream_projects_raw(after_seq)
         .await?
         .map_ok(|msg| msg.to_ws_message_unchecked());
 

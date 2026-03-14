@@ -23,7 +23,7 @@ use db::models::{
 use events::EventError;
 use executors_protocol::ExecutorProfileId;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
-use logs_axum::LogMsgAxumExt;
+use logs_axum::SequencedLogMsgAxumExt;
 use serde::{Deserialize, Serialize};
 use tasks::orchestration::{self, CreateAndStartTaskInput};
 use ts_rs::TS;
@@ -45,6 +45,7 @@ pub struct TaskQuery {
     pub project_id: Option<Uuid>,
     pub include_archived: Option<bool>,
     pub archived_kanban_id: Option<Uuid>,
+    pub after_seq: Option<u64>,
 }
 
 pub async fn get_tasks(
@@ -97,7 +98,12 @@ async fn handle_tasks_ws(
     // Get the raw stream and convert LogMsg to WebSocket messages
     let mut stream = deployment
         .events()
-        .stream_tasks_raw(query.project_id, include_archived, query.archived_kanban_id)
+        .stream_tasks_raw(
+            query.project_id,
+            include_archived,
+            query.archived_kanban_id,
+            query.after_seq,
+        )
         .await?
         .map_ok(|msg| msg.to_ws_message_unchecked());
 

@@ -1,4 +1,10 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::HashSet,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use db::{
     DbPool,
@@ -13,6 +19,7 @@ use db::{
 use futures::StreamExt;
 use json_patch::{PatchOperation, RemoveOperation};
 use logs_protocol::LogMsg;
+use logs_store::{SequencedHistoryMetadata, SequencedLogMsg};
 use serde_json::json;
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
@@ -20,17 +27,30 @@ use uuid::Uuid;
 
 use super::{EventService, patches::execution_process_patch, types::EventError};
 
+fn can_resume_from(after_seq: u64, meta: SequencedHistoryMetadata) -> bool {
+    match meta.min_seq {
+        Some(min) => after_seq >= min.saturating_sub(1),
+        None => after_seq == 0,
+    }
+}
+
+fn snapshot_seq_from_meta(meta: SequencedHistoryMetadata) -> u64 {
+    meta.max_seq.unwrap_or(0)
+}
+
 impl EventService {
-    /// Stream raw task messages for a specific project with initial snapshot
+    /// Stream raw task messages for a specific project with initial snapshot.
     pub async fn stream_tasks_raw(
         &self,
         project_id: Option<Uuid>,
         include_archived: bool,
         archived_kanban_id: Option<Uuid>,
-    ) -> Result<futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>, EventError>
-    {
+        after_seq: Option<u64>,
+    ) -> Result<
+        futures::stream::BoxStream<'static, Result<SequencedLogMsg, std::io::Error>>,
+        EventError,
+    > {
         fn build_tasks_snapshot(tasks: Vec<TaskWithAttemptStatus>) -> LogMsg {
-            // Convert task array to object keyed by task ID
             let tasks_map: serde_json::Map<String, serde_json::Value> = tasks
                 .into_iter()
                 .filter_map(|task| {
@@ -66,115 +86,166 @@ impl EventService {
             }
         }
 
-        let receiver = self.msg_store.get_receiver();
+        fn filter_task_patch(
+            patch: json_patch::Patch,
+            project_id: Option<Uuid>,
+            include_archived: bool,
+            archived_kanban_id: Option<Uuid>,
+        ) -> Option<LogMsg> {
+            let matches_filter = |task: &TaskWithAttemptStatus| {
+                let project_ok = project_id.is_none_or(|id| task.project_id == id);
+                let archived_ok = match archived_kanban_id {
+                    Some(want) => task.archived_kanban_id == Some(want),
+                    None => include_archived || task.archived_kanban_id.is_none(),
+                };
+                project_ok && archived_ok
+            };
 
-        // Get initial snapshot of tasks
-        let tasks = Task::find_filtered_with_attempt_status(
-            &self.db.pool,
-            project_id,
-            include_archived,
-            archived_kanban_id,
-        )
-        .await?;
-
-        let initial_msg = build_tasks_snapshot(tasks);
-
-        // Clone necessary data for the async filter
-        let db_pool = self.db.pool.clone();
-
-        // Get filtered event stream
-        let filtered_stream = BroadcastStream::new(receiver).filter_map(move |msg_result| {
-            let db_pool = db_pool.clone();
-            async move {
-                match msg_result {
-                    Ok(LogMsg::JsonPatch(patch)) => {
-                        let project_filter = project_id;
-                        let include_archived = include_archived;
-                        let archived_kanban_filter = archived_kanban_id;
-
-                        let matches_filter = |task: &TaskWithAttemptStatus| {
-                            let project_ok = project_filter.is_none_or(|id| task.project_id == id);
-                            let archived_ok = match archived_kanban_filter {
-                                Some(want) => task.archived_kanban_id == Some(want),
-                                None => include_archived || task.archived_kanban_id.is_none(),
-                            };
-                            project_ok && archived_ok
-                        };
-
-                        // Filter events based on project_id
-                        if let Some(patch_op) = patch.0.first() {
-                            // Check if this is a direct task patch (new format)
-                            if patch_op.path().starts_with("/tasks/") {
-                                match patch_op {
-                                    json_patch::PatchOperation::Add(op) => {
-                                        // Parse task data directly from value
-                                        if let Ok(task) =
-                                            serde_json::from_value::<TaskWithAttemptStatus>(
-                                                op.value.clone(),
-                                            )
-                                        {
-                                            if matches_filter(&task) {
-                                                return Some(Ok(LogMsg::JsonPatch(patch)));
-                                            }
-
-                                            let remove_patch =
-                                                json_patch::Patch(vec![PatchOperation::Remove(
-                                                    RemoveOperation {
-                                                        path: op.path.clone(),
-                                                    },
-                                                )]);
-                                            return Some(Ok(LogMsg::JsonPatch(remove_patch)));
-                                        }
-                                    }
-                                    json_patch::PatchOperation::Replace(op) => {
-                                        // Parse task data directly from value
-                                        if let Ok(task) =
-                                            serde_json::from_value::<TaskWithAttemptStatus>(
-                                                op.value.clone(),
-                                            )
-                                        {
-                                            if matches_filter(&task) {
-                                                return Some(Ok(LogMsg::JsonPatch(patch)));
-                                            }
-
-                                            let remove_patch =
-                                                json_patch::Patch(vec![PatchOperation::Remove(
-                                                    RemoveOperation {
-                                                        path: op.path.clone(),
-                                                    },
-                                                )]);
-                                            return Some(Ok(LogMsg::JsonPatch(remove_patch)));
-                                        }
-                                    }
-                                    json_patch::PatchOperation::Remove(_) => {
-                                        // For remove operations, we need to check project membership differently
-                                        // We could cache this information or let it pass through for now
-                                        // Since we don't have the task data, we'll allow all removals
-                                        // and let the client handle filtering
-                                        return Some(Ok(LogMsg::JsonPatch(patch)));
-                                    }
-                                    _ => {}
-                                }
+            if let Some(patch_op) = patch.0.first()
+                && patch_op.path().starts_with("/tasks/")
+            {
+                match patch_op {
+                    json_patch::PatchOperation::Add(op) => {
+                        if let Ok(task) =
+                            serde_json::from_value::<TaskWithAttemptStatus>(op.value.clone())
+                        {
+                            if matches_filter(&task) {
+                                return Some(LogMsg::JsonPatch(patch));
                             }
+
+                            let remove_patch = json_patch::Patch(vec![PatchOperation::Remove(
+                                RemoveOperation {
+                                    path: op.path.clone(),
+                                },
+                            )]);
+                            return Some(LogMsg::JsonPatch(remove_patch));
                         }
-                        None
                     }
-                    Ok(other) => Some(Ok(other)), // Pass through non-patch messages
-                    Err(BroadcastStreamRecvError::Lagged(skipped)) => {
-                        tracing::warn!(
-                            skipped = skipped,
-                            "tasks stream lagged; resyncing snapshot"
-                        );
-                        let tasks = Task::find_filtered_with_attempt_status(
-                            &db_pool,
+                    json_patch::PatchOperation::Replace(op) => {
+                        if let Ok(task) =
+                            serde_json::from_value::<TaskWithAttemptStatus>(op.value.clone())
+                        {
+                            if matches_filter(&task) {
+                                return Some(LogMsg::JsonPatch(patch));
+                            }
+
+                            let remove_patch = json_patch::Patch(vec![PatchOperation::Remove(
+                                RemoveOperation {
+                                    path: op.path.clone(),
+                                },
+                            )]);
+                            return Some(LogMsg::JsonPatch(remove_patch));
+                        }
+                    }
+                    json_patch::PatchOperation::Remove(_) => {
+                        return Some(LogMsg::JsonPatch(patch));
+                    }
+                    _ => {}
+                }
+            }
+
+            None
+        }
+
+        let (history, receiver, meta) = self.msg_store.subscribe_sequenced_from(after_seq);
+        let snapshot_seq = snapshot_seq_from_meta(meta);
+        let needs_snapshot =
+            after_seq.is_none() || !can_resume_from(after_seq.unwrap_or(0), meta);
+
+        let mut initial_msgs: Vec<SequencedLogMsg> = Vec::new();
+        let initial_last_seq: u64;
+
+        if needs_snapshot {
+            let tasks = Task::find_filtered_with_attempt_status(
+                &self.db.pool,
+                project_id,
+                include_archived,
+                archived_kanban_id,
+            )
+            .await?;
+            initial_msgs.push(SequencedLogMsg {
+                seq: snapshot_seq,
+                msg: build_tasks_snapshot(tasks),
+            });
+            initial_last_seq = snapshot_seq;
+        } else {
+            for item in history {
+                match item.msg {
+                    LogMsg::JsonPatch(patch) => {
+                        if let Some(msg) = filter_task_patch(
+                            patch,
                             project_id,
                             include_archived,
                             archived_kanban_id,
-                        )
-                        .await;
+                        ) {
+                            initial_msgs.push(SequencedLogMsg { seq: item.seq, msg });
+                        }
+                    }
+                    other => initial_msgs.push(SequencedLogMsg {
+                        seq: item.seq,
+                        msg: other,
+                    }),
+                }
+            }
+            initial_last_seq = initial_msgs
+                .last()
+                .map(|msg| msg.seq)
+                .unwrap_or(after_seq.unwrap_or(0));
+        }
 
-                        match tasks {
-                            Ok(tasks) => Some(Ok(build_tasks_snapshot(tasks))),
+        let db_pool = self.db.pool.clone();
+        let msg_store = Arc::clone(&self.msg_store);
+        let last_seq = Arc::new(AtomicU64::new(initial_last_seq));
+        let project_filter = project_id;
+        let archived_filter = archived_kanban_id;
+
+        let filtered_stream = BroadcastStream::new(receiver).filter_map(move |msg_result| {
+            let db_pool = db_pool.clone();
+            let msg_store = Arc::clone(&msg_store);
+            let last_seq = Arc::clone(&last_seq);
+            async move {
+                match msg_result {
+                    Ok(item) => {
+                        if item.seq <= last_seq.load(Ordering::Relaxed) {
+                            return None;
+                        }
+
+                        let msg = match item.msg {
+                            LogMsg::JsonPatch(patch) => filter_task_patch(
+                                patch,
+                                project_filter,
+                                include_archived,
+                                archived_filter,
+                            )?,
+                            other => other,
+                        };
+
+                        last_seq.store(item.seq, Ordering::Relaxed);
+                        Some(Ok(SequencedLogMsg { seq: item.seq, msg }))
+                    }
+                    Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                        let watermark = msg_store.max_seq().unwrap_or(0);
+                        tracing::warn!(
+                            skipped = skipped,
+                            watermark = watermark,
+                            "tasks stream lagged; resyncing snapshot"
+                        );
+
+                        match Task::find_filtered_with_attempt_status(
+                            &db_pool,
+                            project_filter,
+                            include_archived,
+                            archived_filter,
+                        )
+                        .await
+                        {
+                            Ok(tasks) => {
+                                last_seq.store(watermark, Ordering::Relaxed);
+                                Some(Ok(SequencedLogMsg {
+                                    seq: watermark,
+                                    msg: build_tasks_snapshot(tasks),
+                                }))
+                            }
                             Err(err) => {
                                 tracing::error!(
                                     error = %err,
@@ -190,20 +261,20 @@ impl EventService {
             }
         });
 
-        // Start with initial snapshot, then live updates
-        let initial_stream = futures::stream::once(async move { Ok(initial_msg) });
-        let combined_stream = initial_stream.chain(filtered_stream).boxed();
-
-        Ok(combined_stream)
+        let initial_stream =
+            futures::stream::iter(initial_msgs.into_iter().map(Ok::<_, std::io::Error>));
+        Ok(initial_stream.chain(filtered_stream).boxed())
     }
 
-    /// Stream raw project messages with initial snapshot
+    /// Stream raw project messages with initial snapshot.
     pub async fn stream_projects_raw(
         &self,
-    ) -> Result<futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>, EventError>
-    {
+        after_seq: Option<u64>,
+    ) -> Result<
+        futures::stream::BoxStream<'static, Result<SequencedLogMsg, std::io::Error>>,
+        EventError,
+    > {
         fn build_projects_snapshot(projects: Vec<Project>) -> LogMsg {
-            // Convert projects array to object keyed by project ID
             let projects_map: serde_json::Map<String, serde_json::Value> = projects
                 .into_iter()
                 .filter_map(|project| {
@@ -239,36 +310,101 @@ impl EventService {
             }
         }
 
-        let receiver = self.msg_store.get_receiver();
+        fn patch_is_projects(patch: &json_patch::Patch) -> bool {
+            patch.0
+                .first()
+                .is_some_and(|op| op.path().starts_with("/projects"))
+        }
 
-        // Get initial snapshot of projects
-        let projects = Project::find_all(&self.db.pool).await?;
-        let initial_msg = build_projects_snapshot(projects);
+        let (history, receiver, meta) = self.msg_store.subscribe_sequenced_from(after_seq);
+        let snapshot_seq = snapshot_seq_from_meta(meta);
+        let needs_snapshot =
+            after_seq.is_none() || !can_resume_from(after_seq.unwrap_or(0), meta);
+
+        let mut initial_msgs: Vec<SequencedLogMsg> = Vec::new();
+        let initial_last_seq: u64;
+
+        if needs_snapshot {
+            let projects = Project::find_all(&self.db.pool).await?;
+            initial_msgs.push(SequencedLogMsg {
+                seq: snapshot_seq,
+                msg: build_projects_snapshot(projects),
+            });
+            initial_last_seq = snapshot_seq;
+        } else {
+            for item in history {
+                match item.msg {
+                    LogMsg::JsonPatch(patch) => {
+                        if patch_is_projects(&patch) {
+                            initial_msgs.push(SequencedLogMsg {
+                                seq: item.seq,
+                                msg: LogMsg::JsonPatch(patch),
+                            });
+                        }
+                    }
+                    other => initial_msgs.push(SequencedLogMsg {
+                        seq: item.seq,
+                        msg: other,
+                    }),
+                }
+            }
+            initial_last_seq = initial_msgs
+                .last()
+                .map(|msg| msg.seq)
+                .unwrap_or(after_seq.unwrap_or(0));
+        }
 
         let db_pool = self.db.pool.clone();
+        let msg_store = Arc::clone(&self.msg_store);
+        let last_seq = Arc::new(AtomicU64::new(initial_last_seq));
 
-        // Get filtered event stream (projects only)
         let filtered_stream = BroadcastStream::new(receiver).filter_map(move |msg_result| {
             let db_pool = db_pool.clone();
+            let msg_store = Arc::clone(&msg_store);
+            let last_seq = Arc::clone(&last_seq);
             async move {
                 match msg_result {
-                    Ok(LogMsg::JsonPatch(patch)) => {
-                        if let Some(patch_op) = patch.0.first()
-                            && patch_op.path().starts_with("/projects")
-                        {
-                            return Some(Ok(LogMsg::JsonPatch(patch)));
+                    Ok(item) => {
+                        if item.seq <= last_seq.load(Ordering::Relaxed) {
+                            return None;
                         }
-                        None
+
+                        match item.msg {
+                            LogMsg::JsonPatch(patch) => {
+                                if patch_is_projects(&patch) {
+                                    last_seq.store(item.seq, Ordering::Relaxed);
+                                    return Some(Ok(SequencedLogMsg {
+                                        seq: item.seq,
+                                        msg: LogMsg::JsonPatch(patch),
+                                    }));
+                                }
+                                None
+                            }
+                            other => {
+                                last_seq.store(item.seq, Ordering::Relaxed);
+                                Some(Ok(SequencedLogMsg {
+                                    seq: item.seq,
+                                    msg: other,
+                                }))
+                            }
+                        }
                     }
-                    Ok(other) => Some(Ok(other)), // Pass through non-patch messages
                     Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                        let watermark = msg_store.max_seq().unwrap_or(0);
                         tracing::warn!(
                             skipped = skipped,
+                            watermark = watermark,
                             "projects stream lagged; resyncing snapshot"
                         );
 
                         match Project::find_all(&db_pool).await {
-                            Ok(projects) => Some(Ok(build_projects_snapshot(projects))),
+                            Ok(projects) => {
+                                last_seq.store(watermark, Ordering::Relaxed);
+                                Some(Ok(SequencedLogMsg {
+                                    seq: watermark,
+                                    msg: build_projects_snapshot(projects),
+                                }))
+                            }
                             Err(err) => {
                                 tracing::error!(
                                     error = %err,
@@ -284,29 +420,36 @@ impl EventService {
             }
         });
 
-        // Start with initial snapshot, then live updates
-        let initial_stream = futures::stream::once(async move { Ok(initial_msg) });
-        let combined_stream = initial_stream.chain(filtered_stream).boxed();
-
-        Ok(combined_stream)
+        let initial_stream =
+            futures::stream::iter(initial_msgs.into_iter().map(Ok::<_, std::io::Error>));
+        Ok(initial_stream.chain(filtered_stream).boxed())
     }
 
-    /// Stream execution processes for a specific workspace with initial snapshot (raw LogMsg format for WebSocket)
+    /// Stream execution processes for a specific workspace with initial snapshot (raw LogMsg format for WebSocket).
     pub async fn stream_execution_processes_for_workspace_raw(
         &self,
         workspace_id: Uuid,
         show_soft_deleted: bool,
-    ) -> Result<futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>, EventError>
-    {
+        after_seq: Option<u64>,
+    ) -> Result<
+        futures::stream::BoxStream<'static, Result<SequencedLogMsg, std::io::Error>>,
+        EventError,
+    > {
+        async fn load_workspace_session_ids(
+            db_pool: &DbPool,
+            workspace_id: Uuid,
+        ) -> Result<HashSet<Uuid>, EventError> {
+            let sessions = Session::find_by_workspace_id(db_pool, workspace_id).await?;
+            Ok(sessions.into_iter().map(|s| s.id).collect())
+        }
+
         async fn build_execution_processes_snapshot(
             db_pool: &DbPool,
             workspace_id: Uuid,
             show_soft_deleted: bool,
         ) -> Result<(LogMsg, HashSet<Uuid>), EventError> {
-            // Get all sessions for this workspace
             let sessions = Session::find_by_workspace_id(db_pool, workspace_id).await?;
 
-            // Collect all execution processes across all sessions
             let mut all_processes = Vec::new();
             for session in &sessions {
                 let processes =
@@ -315,10 +458,8 @@ impl EventService {
                 all_processes.extend(processes);
             }
 
-            // Collect session IDs for filtering
             let session_ids = sessions.iter().map(|s| s.id).collect::<HashSet<_>>();
 
-            // Convert processes array to object keyed by process ID
             let processes_map: serde_json::Map<String, serde_json::Value> = all_processes
                 .into_iter()
                 .filter_map(|process| {
@@ -383,33 +524,157 @@ impl EventService {
             }
         }
 
-        let receiver = self.msg_store.get_receiver();
+        fn patch_is_execution_processes(patch: &json_patch::Patch) -> bool {
+            patch.0
+                .first()
+                .is_some_and(|op| op.path().starts_with("/execution_processes/"))
+        }
 
-        let (initial_msg, session_ids) =
-            build_execution_processes_snapshot(&self.db.pool, workspace_id, show_soft_deleted)
-                .await?;
+        let (history, receiver, meta) = self.msg_store.subscribe_sequenced_from(after_seq);
+        let snapshot_seq = snapshot_seq_from_meta(meta);
+        let needs_snapshot =
+            after_seq.is_none() || !can_resume_from(after_seq.unwrap_or(0), meta);
+
+        let mut initial_msgs: Vec<SequencedLogMsg> = Vec::new();
+        let session_ids = if needs_snapshot {
+            let (snapshot, session_ids) = build_execution_processes_snapshot(
+                &self.db.pool,
+                workspace_id,
+                show_soft_deleted,
+            )
+            .await?;
+            initial_msgs.push(SequencedLogMsg {
+                seq: snapshot_seq,
+                msg: snapshot,
+            });
+            session_ids
+        } else {
+            load_workspace_session_ids(&self.db.pool, workspace_id).await?
+        };
+
         let session_ids = Arc::new(RwLock::new(session_ids));
 
-        let db_pool = self.db.pool.clone();
+        let initial_last_seq: u64 = if needs_snapshot {
+            snapshot_seq
+        } else {
+            for item in history {
+                match item.msg {
+                    LogMsg::JsonPatch(patch) => {
+                        if !patch_is_execution_processes(&patch) {
+                            continue;
+                        }
 
-        // Get filtered event stream
+                        let Some(op) = patch.0.first() else {
+                            continue;
+                        };
+
+                        match op {
+                            json_patch::PatchOperation::Add(add) => {
+                                if let Ok(process) =
+                                    serde_json::from_value::<ExecutionProcess>(add.value.clone())
+                                    && session_matches_workspace(
+                                        &session_ids,
+                                        &self.db.pool,
+                                        workspace_id,
+                                        process.session_id,
+                                    )
+                                    .await
+                                {
+                                    if !show_soft_deleted && process.dropped {
+                                        initial_msgs.push(SequencedLogMsg {
+                                            seq: item.seq,
+                                            msg: LogMsg::JsonPatch(
+                                                execution_process_patch::remove(process.id),
+                                            ),
+                                        });
+                                    } else {
+                                        initial_msgs.push(SequencedLogMsg {
+                                            seq: item.seq,
+                                            msg: LogMsg::JsonPatch(patch),
+                                        });
+                                    }
+                                }
+                            }
+                            json_patch::PatchOperation::Replace(replace) => {
+                                if let Ok(process) = serde_json::from_value::<ExecutionProcess>(
+                                    replace.value.clone(),
+                                )
+                                    && session_matches_workspace(
+                                        &session_ids,
+                                        &self.db.pool,
+                                        workspace_id,
+                                        process.session_id,
+                                    )
+                                    .await
+                                {
+                                    if !show_soft_deleted && process.dropped {
+                                        initial_msgs.push(SequencedLogMsg {
+                                            seq: item.seq,
+                                            msg: LogMsg::JsonPatch(
+                                                execution_process_patch::remove(process.id),
+                                            ),
+                                        });
+                                    } else {
+                                        initial_msgs.push(SequencedLogMsg {
+                                            seq: item.seq,
+                                            msg: LogMsg::JsonPatch(patch),
+                                        });
+                                    }
+                                }
+                            }
+                            json_patch::PatchOperation::Remove(_) => {
+                                initial_msgs.push(SequencedLogMsg {
+                                    seq: item.seq,
+                                    msg: LogMsg::JsonPatch(patch),
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                    other => initial_msgs.push(SequencedLogMsg {
+                        seq: item.seq,
+                        msg: other,
+                    }),
+                }
+            }
+
+            initial_msgs
+                .last()
+                .map(|msg| msg.seq)
+                .unwrap_or(after_seq.unwrap_or(0))
+        };
+
+        let db_pool = self.db.pool.clone();
+        let msg_store = Arc::clone(&self.msg_store);
+        let last_seq = Arc::new(AtomicU64::new(initial_last_seq));
+
         let filtered_stream = BroadcastStream::new(receiver).filter_map(move |msg_result| {
             let session_ids = Arc::clone(&session_ids);
             let db_pool = db_pool.clone();
+            let msg_store = Arc::clone(&msg_store);
+            let last_seq = Arc::clone(&last_seq);
             async move {
                 match msg_result {
-                    Ok(LogMsg::JsonPatch(patch)) => {
-                        // Filter events based on session_id (must belong to one of the workspace's sessions)
-                        if let Some(patch_op) = patch.0.first() {
-                            // Check if this is a modern execution process patch
-                            if patch_op.path().starts_with("/execution_processes/") {
-                                match patch_op {
-                                    json_patch::PatchOperation::Add(op) => {
-                                        // Parse execution process data directly from value
-                                        if let Ok(process) =
-                                            serde_json::from_value::<ExecutionProcess>(
-                                                op.value.clone(),
-                                            )
+                    Ok(item) => {
+                        if item.seq <= last_seq.load(Ordering::Relaxed) {
+                            return None;
+                        }
+
+                        match item.msg {
+                            LogMsg::JsonPatch(patch) => {
+                                if !patch_is_execution_processes(&patch) {
+                                    return None;
+                                }
+
+                                let Some(op) = patch.0.first() else {
+                                    return None;
+                                };
+
+                                match op {
+                                    json_patch::PatchOperation::Add(add) => {
+                                        if let Ok(process) = serde_json::from_value::<
+                                            ExecutionProcess,
+                                        >(add.value.clone())
                                             && session_matches_workspace(
                                                 &session_ids,
                                                 &db_pool,
@@ -418,20 +683,25 @@ impl EventService {
                                             )
                                             .await
                                         {
+                                            last_seq.store(item.seq, Ordering::Relaxed);
                                             if !show_soft_deleted && process.dropped {
-                                                let remove_patch =
-                                                    execution_process_patch::remove(process.id);
-                                                return Some(Ok(LogMsg::JsonPatch(remove_patch)));
+                                                return Some(Ok(SequencedLogMsg {
+                                                    seq: item.seq,
+                                                    msg: LogMsg::JsonPatch(
+                                                        execution_process_patch::remove(process.id),
+                                                    ),
+                                                }));
                                             }
-                                            return Some(Ok(LogMsg::JsonPatch(patch)));
+                                            return Some(Ok(SequencedLogMsg {
+                                                seq: item.seq,
+                                                msg: LogMsg::JsonPatch(patch),
+                                            }));
                                         }
                                     }
-                                    json_patch::PatchOperation::Replace(op) => {
-                                        // Parse execution process data directly from value
-                                        if let Ok(process) =
-                                            serde_json::from_value::<ExecutionProcess>(
-                                                op.value.clone(),
-                                            )
+                                    json_patch::PatchOperation::Replace(replace) => {
+                                        if let Ok(process) = serde_json::from_value::<
+                                            ExecutionProcess,
+                                        >(replace.value.clone())
                                             && session_matches_workspace(
                                                 &session_ids,
                                                 &db_pool,
@@ -440,31 +710,50 @@ impl EventService {
                                             )
                                             .await
                                         {
+                                            last_seq.store(item.seq, Ordering::Relaxed);
                                             if !show_soft_deleted && process.dropped {
-                                                let remove_patch =
-                                                    execution_process_patch::remove(process.id);
-                                                return Some(Ok(LogMsg::JsonPatch(remove_patch)));
+                                                return Some(Ok(SequencedLogMsg {
+                                                    seq: item.seq,
+                                                    msg: LogMsg::JsonPatch(
+                                                        execution_process_patch::remove(process.id),
+                                                    ),
+                                                }));
                                             }
-                                            return Some(Ok(LogMsg::JsonPatch(patch)));
+                                            return Some(Ok(SequencedLogMsg {
+                                                seq: item.seq,
+                                                msg: LogMsg::JsonPatch(patch),
+                                            }));
                                         }
                                     }
                                     json_patch::PatchOperation::Remove(_) => {
-                                        // For remove operations, we can't verify session_id
-                                        // so we allow all removals and let the client handle filtering
-                                        return Some(Ok(LogMsg::JsonPatch(patch)));
+                                        last_seq.store(item.seq, Ordering::Relaxed);
+                                        return Some(Ok(SequencedLogMsg {
+                                            seq: item.seq,
+                                            msg: LogMsg::JsonPatch(patch),
+                                        }));
                                     }
                                     _ => {}
                                 }
+
+                                None
+                            }
+                            other => {
+                                last_seq.store(item.seq, Ordering::Relaxed);
+                                Some(Ok(SequencedLogMsg {
+                                    seq: item.seq,
+                                    msg: other,
+                                }))
                             }
                         }
-                        None
                     }
-                    Ok(other) => Some(Ok(other)), // Pass through non-patch messages
                     Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                        let watermark = msg_store.max_seq().unwrap_or(0);
                         tracing::warn!(
                             skipped = skipped,
+                            watermark = watermark,
                             "execution process stream lagged; resyncing snapshot"
                         );
+
                         match build_execution_processes_snapshot(
                             &db_pool,
                             workspace_id,
@@ -474,7 +763,11 @@ impl EventService {
                         {
                             Ok((snapshot, refreshed_session_ids)) => {
                                 *session_ids.write().await = refreshed_session_ids;
-                                Some(Ok(snapshot))
+                                last_seq.store(watermark, Ordering::Relaxed);
+                                Some(Ok(SequencedLogMsg {
+                                    seq: watermark,
+                                    msg: snapshot,
+                                }))
                             }
                             Err(err) => {
                                 tracing::error!(
@@ -491,20 +784,21 @@ impl EventService {
             }
         });
 
-        // Start with initial snapshot, then live updates
-        let initial_stream = futures::stream::once(async move { Ok(initial_msg) });
-        let combined_stream = initial_stream.chain(filtered_stream).boxed();
-
-        Ok(combined_stream)
+        let initial_stream =
+            futures::stream::iter(initial_msgs.into_iter().map(Ok::<_, std::io::Error>));
+        Ok(initial_stream.chain(filtered_stream).boxed())
     }
 
-    /// Stream a single scratch item with initial snapshot (raw LogMsg format for WebSocket)
+    /// Stream a single scratch item with initial snapshot (raw LogMsg format for WebSocket).
     pub async fn stream_scratch_raw(
         &self,
         scratch_id: Uuid,
         scratch_type: &db::models::scratch::ScratchType,
-    ) -> Result<futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>, EventError>
-    {
+        after_seq: Option<u64>,
+    ) -> Result<
+        futures::stream::BoxStream<'static, Result<SequencedLogMsg, std::io::Error>>,
+        EventError,
+    > {
         fn build_scratch_snapshot(scratch: Option<Scratch>) -> LogMsg {
             let patch = json!([{
                 "op": "replace",
@@ -521,13 +815,42 @@ impl EventService {
             }
         }
 
+        fn patch_matches_scratch(
+            patch: &json_patch::Patch,
+            scratch_id: Uuid,
+            scratch_type_str: &str,
+        ) -> bool {
+            let Some(op) = patch.0.first() else {
+                return false;
+            };
+            if op.path() != "/scratch" {
+                return false;
+            }
+
+            let value = match op {
+                json_patch::PatchOperation::Add(a) => Some(&a.value),
+                json_patch::PatchOperation::Replace(r) => Some(&r.value),
+                json_patch::PatchOperation::Remove(_) => None,
+                _ => None,
+            };
+
+            let id_str = scratch_id.to_string();
+            value.is_some_and(|v| {
+                let id_matches = v.get("id").and_then(|v| v.as_str()) == Some(&id_str);
+                let type_matches = v
+                    .get("payload")
+                    .and_then(|p| p.get("type"))
+                    .and_then(|t| t.as_str())
+                    == Some(scratch_type_str);
+                id_matches && type_matches
+            })
+        }
+
         async fn load_scratch_snapshot(
             db_pool: &DbPool,
             scratch_id: Uuid,
             scratch_type: &db::models::scratch::ScratchType,
         ) -> LogMsg {
-            // Treat errors (e.g., corrupted/malformed data) the same as "scratch not found"
-            // This prevents the websocket from closing and retrying indefinitely
             let scratch = match Scratch::find_by_id(db_pool, scratch_id, scratch_type).await {
                 Ok(scratch) => scratch,
                 Err(e) => {
@@ -544,70 +867,101 @@ impl EventService {
             build_scratch_snapshot(scratch)
         }
 
-        let receiver = self.msg_store.get_receiver();
+        let (history, receiver, meta) = self.msg_store.subscribe_sequenced_from(after_seq);
+        let snapshot_seq = snapshot_seq_from_meta(meta);
+        let needs_snapshot =
+            after_seq.is_none() || !can_resume_from(after_seq.unwrap_or(0), meta);
 
-        let initial_msg = load_scratch_snapshot(&self.db.pool, scratch_id, scratch_type).await;
+        let scratch_type = *scratch_type;
+        let scratch_type_str = scratch_type.to_string();
+
+        let mut initial_msgs: Vec<SequencedLogMsg> = Vec::new();
+        let initial_last_seq: u64;
+
+        if needs_snapshot {
+            initial_msgs.push(SequencedLogMsg {
+                seq: snapshot_seq,
+                msg: load_scratch_snapshot(&self.db.pool, scratch_id, &scratch_type).await,
+            });
+            initial_last_seq = snapshot_seq;
+        } else {
+            for item in history {
+                match item.msg {
+                    LogMsg::JsonPatch(patch) => {
+                        if patch_matches_scratch(&patch, scratch_id, &scratch_type_str) {
+                            initial_msgs.push(SequencedLogMsg {
+                                seq: item.seq,
+                                msg: LogMsg::JsonPatch(patch),
+                            });
+                        }
+                    }
+                    other => initial_msgs.push(SequencedLogMsg {
+                        seq: item.seq,
+                        msg: other,
+                    }),
+                }
+            }
+            initial_last_seq = initial_msgs
+                .last()
+                .map(|msg| msg.seq)
+                .unwrap_or(after_seq.unwrap_or(0));
+        }
 
         let db_pool = self.db.pool.clone();
-        let scratch_type = *scratch_type;
+        let msg_store = Arc::clone(&self.msg_store);
+        let last_seq = Arc::new(AtomicU64::new(initial_last_seq));
 
-        let type_str = scratch_type.to_string();
-
-        // Filter to only this scratch's events by matching id and payload.type in the patch value
         let filtered_stream = BroadcastStream::new(receiver).filter_map(move |msg_result| {
             let db_pool = db_pool.clone();
-            let id_str = scratch_id.to_string();
-            let type_str = type_str.clone();
+            let msg_store = Arc::clone(&msg_store);
+            let last_seq = Arc::clone(&last_seq);
+            let scratch_type_str = scratch_type_str.clone();
             async move {
                 match msg_result {
-                    Ok(LogMsg::JsonPatch(patch)) => {
-                        if let Some(op) = patch.0.first()
-                            && op.path() == "/scratch"
-                        {
-                            // Extract id and payload.type from the patch value
-                            let value = match op {
-                                json_patch::PatchOperation::Add(a) => Some(&a.value),
-                                json_patch::PatchOperation::Replace(r) => Some(&r.value),
-                                json_patch::PatchOperation::Remove(_) => None,
-                                _ => None,
-                            };
+                    Ok(item) => {
+                        if item.seq <= last_seq.load(Ordering::Relaxed) {
+                            return None;
+                        }
 
-                            let matches = value.is_some_and(|v| {
-                                let id_matches =
-                                    v.get("id").and_then(|v| v.as_str()) == Some(&id_str);
-                                let type_matches = v
-                                    .get("payload")
-                                    .and_then(|p| p.get("type"))
-                                    .and_then(|t| t.as_str())
-                                    == Some(&type_str);
-                                id_matches && type_matches
-                            });
-
-                            if matches {
-                                return Some(Ok(LogMsg::JsonPatch(patch)));
+                        match item.msg {
+                            LogMsg::JsonPatch(patch) => {
+                                if patch_matches_scratch(&patch, scratch_id, &scratch_type_str) {
+                                    last_seq.store(item.seq, Ordering::Relaxed);
+                                    return Some(Ok(SequencedLogMsg {
+                                        seq: item.seq,
+                                        msg: LogMsg::JsonPatch(patch),
+                                    }));
+                                }
+                                None
+                            }
+                            other => {
+                                last_seq.store(item.seq, Ordering::Relaxed);
+                                Some(Ok(SequencedLogMsg {
+                                    seq: item.seq,
+                                    msg: other,
+                                }))
                             }
                         }
-                        None
                     }
-                    Ok(other) => Some(Ok(other)),
                     Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                        let watermark = msg_store.max_seq().unwrap_or(0);
                         tracing::warn!(
                             skipped = skipped,
+                            watermark = watermark,
                             "scratch stream lagged; resyncing snapshot"
                         );
-                        Some(Ok(load_scratch_snapshot(
-                            &db_pool,
-                            scratch_id,
-                            &scratch_type,
-                        )
-                        .await))
+                        last_seq.store(watermark, Ordering::Relaxed);
+                        Some(Ok(SequencedLogMsg {
+                            seq: watermark,
+                            msg: load_scratch_snapshot(&db_pool, scratch_id, &scratch_type).await,
+                        }))
                     }
                 }
             }
         });
 
-        let initial_stream = futures::stream::once(async move { Ok(initial_msg) });
-        let combined_stream = initial_stream.chain(filtered_stream).boxed();
-        Ok(combined_stream)
+        let initial_stream =
+            futures::stream::iter(initial_msgs.into_iter().map(Ok::<_, std::io::Error>));
+        Ok(initial_stream.chain(filtered_stream).boxed())
     }
 }
