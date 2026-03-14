@@ -373,8 +373,11 @@
     "deleting": "Deleting..."
   },
   "errors": {
+    "createFailed": "Failed to create task",
+    "createAndStartFailed": "Failed to create and start task",
     "deleteFailed": "Failed to delete task",
     "loadProjectFailed": "Failed to load project",
+    "updateFailed": "Failed to update task",
     "updateStatusFailed": "Failed to update task status"
   },
   "navigateToParent": "Navigate to parent task attempt",

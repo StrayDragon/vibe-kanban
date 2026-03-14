@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Operation } from 'rfc6902';
 import { useJsonPatchWsStream } from '../useJsonPatchWsStream';
 import { normalizeIdMapPatches } from '../jsonPatchUtils';
@@ -32,6 +32,7 @@ export const useAllTasks = (
   options?: UseAllTasksOptions
 ): UseAllTasksResult => {
   const includeArchived = options?.includeArchived ?? false;
+  const [optimisticStaleTick, setOptimisticStaleTick] = useState(0);
   const endpoint = includeArchived
     ? '/api/tasks/stream/ws?include_archived=true'
     : '/api/tasks/stream/ws';
@@ -65,6 +66,22 @@ export const useAllTasks = (
   }));
 
   const streamTasksById = useMemo(() => data?.tasks ?? {}, [data?.tasks]);
+
+  const hasOptimisticState = useMemo(() => {
+    return (
+      Object.keys(inserts).length > 0 ||
+      Object.keys(overrides).length > 0 ||
+      Object.keys(tombstones).length > 0
+    );
+  }, [inserts, overrides, tombstones]);
+
+  useEffect(() => {
+    if (!hasOptimisticState) return;
+    const timer = window.setTimeout(() => {
+      setOptimisticStaleTick((value) => value + 1);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [hasOptimisticState, optimisticStaleTick]);
 
   const mergedTasksById = useMemo(() => {
     const merged: Record<string, TaskWithAttemptStatus> = {
@@ -210,6 +227,7 @@ export const useAllTasks = (
     inserts,
     markResyncAttempt,
     overrides,
+    optimisticStaleTick,
     resync,
     streamTasksById,
     tombstones,

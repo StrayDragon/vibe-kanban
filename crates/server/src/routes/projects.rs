@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use anyhow;
 use app_runtime::Deployment;
@@ -6,7 +6,7 @@ use axum::{
     Extension, Json, Router,
     extract::{
         Path, Query, State,
-        ws::{WebSocket, WebSocketUpgrade},
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     middleware::from_fn_with_state,
     response::{IntoResponse, Json as ResponseJson},
@@ -24,6 +24,8 @@ use utils_core::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError, middleware::load_project_middleware};
+
+const WS_PING_INTERVAL: Duration = Duration::from_secs(30);
 
 pub async fn get_projects(
     State(deployment): State<DeploymentImpl>,
@@ -52,11 +54,18 @@ async fn handle_projects_ws(socket: WebSocket, deployment: DeploymentImpl) -> an
         .map_ok(|msg| msg.to_ws_message_unchecked());
 
     let (mut sender, mut receiver) = socket.split();
+    let mut ping = tokio::time::interval(WS_PING_INTERVAL);
+    ping.tick().await;
 
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {
                 break;
+            }
+            _ = ping.tick() => {
+                if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
+                }
             }
             item = stream.next() => {
                 match item {

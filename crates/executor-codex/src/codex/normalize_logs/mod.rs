@@ -5,9 +5,8 @@ use std::{
 };
 
 use codex_app_server_protocol::{
-    JSONRPCNotification, JSONRPCResponse, NewConversationResponse, ServerNotification,
+    JSONRPCNotification, JSONRPCResponse, ServerNotification,
 };
-use codex_mcp_types::ContentBlock;
 use codex_protocol::{
     openai_models::ReasoningEffort,
     plan_tool::{StepStatus, UpdatePlanArgs},
@@ -42,8 +41,6 @@ use serde_json::Value;
 use utils_core::{
     approvals::ApprovalStatus, diff::normalize_unified_diff, path::make_path_relative,
 };
-
-use super::session::SessionHandler;
 
 trait ToNormalizedEntry {
     fn to_normalized_entry(&self) -> NormalizedEntry;
@@ -147,6 +144,23 @@ impl ToNormalizedEntry for McpToolState {
             metadata: None,
         }
     }
+}
+
+fn mcp_content_as_markdown(contents: &[Value]) -> Option<String> {
+    let mut texts = Vec::with_capacity(contents.len());
+    for content in contents {
+        match content {
+            Value::String(text) => texts.push(text.clone()),
+            Value::Object(map)
+                if map.get("type").and_then(Value::as_str) == Some("text")
+                    && map.get("text").and_then(Value::as_str).is_some() =>
+            {
+                texts.push(map.get("text").and_then(Value::as_str)?.to_string());
+            }
+            _ => return None,
+        }
+    }
+    Some(texts.join("\n"))
 }
 
 #[derive(Default)]
@@ -429,17 +443,37 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
             }
 
             if let Ok(server_notification) = serde_json::from_str::<ServerNotification>(&line) {
-                if let ServerNotification::SessionConfigured(session_configured) =
-                    server_notification
-                {
-                    msg_store.push_session_id(session_configured.session_id.to_string());
-                    handle_model_params(
-                        session_configured.model,
-                        session_configured.reasoning_effort,
-                        &msg_store,
-                        &entry_index,
-                    );
-                };
+                match server_notification {
+                    ServerNotification::ThreadStarted(payload) => {
+                        let thread_id = payload.thread.id;
+                        if state.agent_session_id.as_deref() != Some(thread_id.as_str()) {
+                            state.agent_session_id = Some(thread_id.clone());
+                            msg_store.push_session_id(thread_id);
+                        }
+                    }
+                    ServerNotification::AgentMessageDelta(payload) => {
+                        let thread_id = payload.thread_id;
+                        if state.agent_session_id.as_deref() != Some(thread_id.as_str()) {
+                            state.agent_session_id = Some(thread_id.clone());
+                            msg_store.push_session_id(thread_id);
+                        }
+                        state.thinking = None;
+                        let (entry, index, is_new) =
+                            state.assistant_message_append(payload.delta);
+                        upsert_normalized_entry(&msg_store, index, entry, is_new);
+                    }
+                    ServerNotification::ReasoningTextDelta(payload) => {
+                        let thread_id = payload.thread_id;
+                        if state.agent_session_id.as_deref() != Some(thread_id.as_str()) {
+                            state.agent_session_id = Some(thread_id.clone());
+                            msg_store.push_session_id(thread_id);
+                        }
+                        state.assistant = None;
+                        let (entry, index, is_new) = state.thinking_append(payload.delta);
+                        upsert_normalized_entry(&msg_store, index, entry, is_new);
+                    }
+                    _ => {}
+                }
                 continue;
             } else if let Some(session_id) = line
                 .strip_prefix(r#"{"method":"sessionConfigured","params":{"sessionId":""#)
@@ -500,7 +534,7 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                     let (entry, index, is_new) = state.thinking_append(delta);
                     upsert_normalized_entry(&msg_store, index, entry, is_new);
                 }
-                EventMsg::AgentMessage(AgentMessageEvent { message }) => {
+                EventMsg::AgentMessage(AgentMessageEvent { message, .. }) => {
                     state.thinking = None;
                     let (entry, index, is_new) = state.assistant_message(message);
                     upsert_normalized_entry(&msg_store, index, entry, is_new);
@@ -521,12 +555,9 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                 }
                 EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
                     call_id,
-                    turn_id: _,
                     command,
-                    cwd: _,
                     reason,
-                    parsed_cmd: _,
-                    proposed_execpolicy_amendment: _,
+                    ..
                 }) => {
                     state.assistant = None;
                     state.thinking = None;
@@ -668,19 +699,9 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                 }
                 EventMsg::ExecCommandEnd(ExecCommandEndEvent {
                     call_id,
-                    turn_id: _,
-                    command: _,
-                    cwd: _,
-                    parsed_cmd: _,
-                    source: _,
-                    interaction_input: _,
-                    stdout: _,
-                    stderr: _,
-                    aggregated_output: _,
                     exit_code,
-                    duration: _,
                     formatted_output,
-                    process_id: _,
+                    ..
                 }) => match state.commands.remove(&call_id) {
                     Some(mut command_state) => {
                         command_state.formatted_output = Some(formatted_output);
@@ -798,41 +819,28 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                     Some(mut mcp_tool_state) => {
                         match result {
                             Ok(value) => {
-                                mcp_tool_state.status = if value.is_error.unwrap_or(false) {
+                                let codex_protocol::mcp::CallToolResult {
+                                    content,
+                                    structured_content,
+                                    is_error,
+                                    ..
+                                } = value;
+                                mcp_tool_state.status = if is_error.unwrap_or(false) {
                                     ToolStatus::Failed
                                 } else {
                                     ToolStatus::Success
                                 };
-                                if value
-                                    .content
-                                    .iter()
-                                    .all(|block| matches!(block, ContentBlock::TextContent(_)))
-                                {
+                                if let Some(markdown) = mcp_content_as_markdown(&content) {
                                     mcp_tool_state.result = Some(ToolResult {
                                         r#type: ToolResultValueType::Markdown,
-                                        value: Value::String(
-                                            value
-                                                .content
-                                                .iter()
-                                                .map(|block| {
-                                                    if let ContentBlock::TextContent(content) =
-                                                        block
-                                                    {
-                                                        content.text.clone()
-                                                    } else {
-                                                        unreachable!()
-                                                    }
-                                                })
-                                                .collect::<Vec<String>>()
-                                                .join("\n"),
-                                        ),
+                                        value: Value::String(markdown),
                                     });
                                 } else {
                                     mcp_tool_state.result = Some(ToolResult {
                                         r#type: ToolResultValueType::Json,
-                                        value: value.structured_content.unwrap_or_else(|| {
-                                            serde_json::to_value(value.content).unwrap_or_default()
-                                        }),
+                                        value: structured_content
+                                            .filter(|value| !value.is_null())
+                                            .unwrap_or_else(|| Value::Array(content)),
                                     });
                                 }
                             }
@@ -1005,7 +1013,11 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                     web_search_state.index = Some(index);
                     state.web_searches.insert(call_id, web_search_state);
                 }
-                EventMsg::WebSearchEnd(WebSearchEndEvent { call_id, query }) => {
+                EventMsg::WebSearchEnd(WebSearchEndEvent {
+                    call_id,
+                    query,
+                    ..
+                }) => {
                     state.assistant = None;
                     state.thinking = None;
                     match state.web_searches.remove(&call_id) {
@@ -1218,22 +1230,34 @@ fn handle_jsonrpc_response(
     msg_store: &Arc<MsgStore>,
     entry_index: &EntryIndexProvider,
 ) {
-    let Ok(response) = serde_json::from_value::<NewConversationResponse>(response.result.clone())
-    else {
-        return;
-    };
+    let thread_id = response
+        .result
+        .pointer("/thread/id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
 
-    match SessionHandler::extract_session_id_from_rollout_path(response.rollout_path) {
-        Ok(session_id) => msg_store.push_session_id(session_id),
-        Err(err) => tracing::error!("failed to extract session id: {err}"),
+    if let Some(thread_id) = thread_id {
+        msg_store.push_session_id(thread_id);
     }
 
-    handle_model_params(
-        response.model,
-        response.reasoning_effort,
-        msg_store,
-        entry_index,
-    );
+    let model = response
+        .result
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
+    let reasoning_effort = response
+        .result
+        .get("reasoningEffort")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<ReasoningEffort>(value).ok());
+
+    if let Some(model) = model {
+        handle_model_params(model, reasoning_effort, msg_store, entry_index);
+    }
 }
 
 fn handle_model_params(
@@ -1405,12 +1429,9 @@ impl ToNormalizedEntryOpt for Approval {
 mod tests {
     use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
-    use codex_app_server_protocol::{
-        JSONRPCNotification, JSONRPCResponse, NewConversationResponse, RequestId,
-    };
-    use codex_mcp_types::{CallToolResult, ContentBlock, ImageContent, TextContent};
+    use codex_app_server_protocol::{JSONRPCNotification, JSONRPCResponse, RequestId};
     use codex_protocol::{
-        ThreadId,
+        mcp::CallToolResult,
         plan_tool::{PlanItemArg, StepStatus, UpdatePlanArgs},
         protocol::{ExecCommandSource, FileChange as CodexProtoFileChange},
     };
@@ -1674,6 +1695,7 @@ mod tests {
                 exit_code: 0,
                 duration: Duration::from_secs(1),
                 formatted_output: "formatted output".to_string(),
+                status: codex_protocol::protocol::ExecCommandStatus::Completed,
             }),
         );
 
@@ -1745,6 +1767,7 @@ mod tests {
                 exit_code: 2,
                 duration: Duration::from_secs(1),
                 formatted_output: "failed".to_string(),
+                status: codex_protocol::protocol::ExecCommandStatus::Failed,
             }),
         );
 
@@ -1799,6 +1822,7 @@ mod tests {
                 exit_code: 0,
                 duration: Duration::from_secs(1),
                 formatted_output: String::new(),
+                status: codex_protocol::protocol::ExecCommandStatus::Completed,
             }),
         );
 
@@ -1859,6 +1883,7 @@ mod tests {
                 stderr: String::new(),
                 success: true,
                 changes: HashMap::new(),
+                status: codex_protocol::protocol::PatchApplyStatus::Completed,
             }),
         );
 
@@ -1930,6 +1955,7 @@ mod tests {
                 stderr: "bad diff".to_string(),
                 success: false,
                 changes: HashMap::new(),
+                status: codex_protocol::protocol::PatchApplyStatus::Failed,
             }),
         );
 
@@ -1978,13 +2004,10 @@ mod tests {
                 invocation: invocation.clone(),
                 duration: Duration::from_secs(1),
                 result: Ok(CallToolResult {
-                    content: vec![ContentBlock::TextContent(TextContent {
-                        annotations: None,
-                        text: "hello".to_string(),
-                        r#type: "text".to_string(),
-                    })],
-                    is_error: None,
                     structured_content: None,
+                    content: vec![json!({"type": "text", "text": "hello"})],
+                    is_error: None,
+                    meta: None,
                 }),
             }),
         );
@@ -2102,13 +2125,10 @@ mod tests {
                 invocation: invocation.clone(),
                 duration: Duration::from_secs(1),
                 result: Ok(CallToolResult {
-                    content: vec![ContentBlock::TextContent(TextContent {
-                        annotations: None,
-                        text: "bad result".to_string(),
-                        r#type: "text".to_string(),
-                    })],
-                    is_error: Some(true),
                     structured_content: None,
+                    content: vec![json!({"type": "text", "text": "bad result"})],
+                    is_error: Some(true),
+                    meta: None,
                 }),
             }),
         );
@@ -2164,14 +2184,14 @@ mod tests {
                 invocation: invocation.clone(),
                 duration: Duration::from_secs(1),
                 result: Ok(CallToolResult {
-                    content: vec![ContentBlock::ImageContent(ImageContent {
-                        annotations: None,
-                        data: "ZGF0YQ==".to_string(),
-                        mime_type: "image/png".to_string(),
-                        r#type: "image".to_string(),
+                    structured_content: Some(json!({"path": "out.png"})),
+                    content: vec![json!({
+                        "type": "image",
+                        "data": "ZGF0YQ==",
+                        "mimeType": "image/png"
                     })],
                     is_error: Some(false),
-                    structured_content: Some(json!({"path": "out.png"})),
+                    meta: None,
                 }),
             }),
         );
@@ -2218,6 +2238,10 @@ mod tests {
             EventMsg::WebSearchEnd(WebSearchEndEvent {
                 call_id: "web-1".to_string(),
                 query: "rust lang".to_string(),
+                action: codex_protocol::models::WebSearchAction::Search {
+                    query: Some("rust lang".to_string()),
+                    queries: None,
+                },
             }),
         );
 
@@ -2334,22 +2358,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn normalize_logs_handles_new_conversation_response() {
+    async fn normalize_logs_handles_thread_response_payload() {
         let msg_store = Arc::new(MsgStore::new());
         normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
 
-        let session_id = "123e4567-e89b-12d3-a456-426614174000";
         let response = JSONRPCResponse {
             id: RequestId::String("1".to_string()),
-            result: serde_json::to_value(NewConversationResponse {
-                conversation_id: ThreadId::new(),
-                model: "gpt-4.1".to_string(),
-                reasoning_effort: Some(ReasoningEffort::High),
-                rollout_path: PathBuf::from(format!(
-                    "/tmp/rollout-2024-01-01T00-00-00-{session_id}.jsonl"
-                )),
-            })
-            .expect("response"),
+            result: json!({
+                "thread": { "id": "thread_123" },
+                "model": "gpt-4.1",
+                "reasoningEffort": ReasoningEffort::High,
+            }),
         };
 
         push_json_line(
@@ -2368,7 +2387,7 @@ mod tests {
             msg_store
                 .get_history()
                 .iter()
-                .any(|msg| matches!(msg, LogMsg::SessionId(id) if id == session_id))
+                .any(|msg| matches!(msg, LogMsg::SessionId(id) if id == "thread_123"))
         );
 
         msg_store.push_finished();

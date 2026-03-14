@@ -1,10 +1,12 @@
+use std::time::Duration;
+
 use anyhow;
 use app_runtime::Deployment;
 use axum::{
     Extension, Json, Router,
     extract::{
         Query, State,
-        ws::{WebSocket, WebSocketUpgrade},
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode},
     middleware::from_fn_with_state,
@@ -35,6 +37,8 @@ use crate::{
     routes::{task_attempts::WorkspaceRepoInput, task_deletion},
     task_runtime::DeploymentTaskRuntime,
 };
+
+const WS_PING_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TaskQuery {
@@ -99,11 +103,19 @@ async fn handle_tasks_ws(
 
     // Split socket into sender and receiver
     let (mut sender, mut receiver) = socket.split();
+    let mut ping = tokio::time::interval(WS_PING_INTERVAL);
+    // Interval ticks immediately on creation; skip the first one.
+    ping.tick().await;
 
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {
                 break;
+            }
+            _ = ping.tick() => {
+                if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
+                }
             }
             item = stream.next() => {
                 match item {

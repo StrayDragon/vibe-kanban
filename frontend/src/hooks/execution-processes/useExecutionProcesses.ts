@@ -14,7 +14,9 @@ interface UseExecutionProcessesResult {
   isAttemptRunning: boolean;
   isLoading: boolean;
   isConnected: boolean;
+  isResyncing: boolean;
   error: string | null;
+  resync: (reason?: string) => void;
 }
 
 /**
@@ -59,7 +61,7 @@ export const useExecutionProcesses = (
     []
   );
 
-  const { data, isConnected, error } =
+  const { data, isConnected, isResyncing, error, resync } =
     useJsonPatchWsStream<ExecutionProcessState>(
       endpoint,
       connectEnabled,
@@ -88,6 +90,8 @@ export const useExecutionProcesses = (
     isAttemptRunning,
     isLoading,
     isConnected,
+    isResyncing,
     error,
+    resync,
   };
 };

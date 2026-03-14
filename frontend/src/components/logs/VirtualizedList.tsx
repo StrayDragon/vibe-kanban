@@ -249,6 +249,16 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     const prevEntriesByKey = new Map(
       entries.map((entry) => [entry.patchKey, entry])
     );
+    const hasNewUserMessage =
+      addType === 'running' &&
+      newEntries.some((entry) => {
+        if (prevEntriesByKey.has(entry.patchKey)) return false;
+        return (
+          entry.type === 'NORMALIZED_ENTRY' &&
+          entry.content.entry_type.type === 'user_message' &&
+          entry.content.content.trim().length > 0
+        );
+      });
     let minChangedIndex: number | null = null;
     newEntries.forEach((entry, index) => {
       const prevEntry = prevEntriesByKey.get(entry.patchKey);
@@ -263,7 +273,11 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
     const appended = nextLen > prevLen;
     let pendingScrollAction: PendingScrollAction | null = null;
     const shouldCaptureResizeAnchor =
-      addType === 'running' && hasContentChanges && !loading && !wasNearBottom;
+      addType === 'running' &&
+      hasContentChanges &&
+      !loading &&
+      !wasNearBottom &&
+      !hasNewUserMessage;
 
     if (shouldCaptureResizeAnchor) {
       captureResizeAnchor();
@@ -312,6 +326,10 @@ const VirtualizedList = ({ attempt, task }: VirtualizedListProps) => {
       } else if (anchor) {
         pendingResizeAnchorRef.current = null;
       }
+    }
+
+    if (!pendingScrollAction && hasNewUserMessage) {
+      pendingScrollAction = { type: 'bottom', behavior: 'auto' };
     }
 
     if (

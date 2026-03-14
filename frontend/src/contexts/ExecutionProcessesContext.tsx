@@ -13,7 +13,9 @@ type ExecutionProcessesContextType = {
 
   isLoading: boolean;
   isConnected: boolean;
+  isResyncing: boolean;
   error: string | null;
+  resync: (reason?: string) => void;
 };
 
 const ExecutionProcessesContext =
@@ -29,7 +31,9 @@ export const ExecutionProcessesProvider: React.FC<{
     isAttemptRunning,
     isLoading,
     isConnected,
+    isResyncing,
     error,
+    resync,
   } = useExecutionProcesses(attemptId, { showSoftDeleted: true });
 
   const visible = useMemo(
@@ -65,7 +69,9 @@ export const ExecutionProcessesProvider: React.FC<{
       isAttemptRunningVisible,
       isLoading,
       isConnected,
+      isResyncing,
       error,
+      resync,
     }),
     [
       executionProcesses,
@@ -76,7 +82,9 @@ export const ExecutionProcessesProvider: React.FC<{
       isAttemptRunningVisible,
       isLoading,
       isConnected,
+      isResyncing,
       error,
+      resync,
     ]
   );
 

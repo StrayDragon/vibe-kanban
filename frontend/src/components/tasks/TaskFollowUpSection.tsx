@@ -68,6 +68,7 @@ export function TaskFollowUpSection({
     forceStopExecution,
     isStopping,
     processes,
+    resyncExecutionProcesses,
   } = useAttemptExecution(workspaceId, task.id);
 
   const { data: branchStatus, refetch: refetchBranchStatus } =
@@ -361,6 +362,9 @@ export function TaskFollowUpSection({
       onAfterSendCleanup: () => {
         cancelDebouncedSave(); // Cancel any pending debounced save to avoid race condition
         setLocalMessage(''); // Clear local state immediately
+        // Best-effort: if the execution-processes WS missed the create event, force a snapshot
+        // resync so the UI reflects the new follow-up run immediately.
+        resyncExecutionProcesses?.('follow-up-sent');
         // Scratch deletion is handled by the backend when the queued message is consumed
       },
     });

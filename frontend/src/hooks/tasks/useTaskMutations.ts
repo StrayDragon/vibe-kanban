@@ -60,13 +60,29 @@ export function useTaskMutations(projectId?: string) {
         navigate(`${paths.task(projectId, createdTask.id)}/attempts/latest`);
       }
 
-      // Populate optimistic stream state best-effort for create-only flows.
+      // Populate optimistic stream state to guarantee a visible UI update even
+      // if the task stream misses the create event.
+      useOptimisticTasksStore.getState().insertTask({
+        has_in_progress_attempt: false,
+        last_attempt_failed: false,
+        executor: '',
+        dispatch_state: null,
+        orchestration: null,
+        ...createdTask,
+      });
+
+      // Best-effort: refresh with canonical attempt-status fields.
       void tasksApi
         .getById(createdTask.id)
         .then((full) => useOptimisticTasksStore.getState().insertTask(full))
         .catch(() => {});
     },
     onError: (err) => {
+      toast({
+        variant: 'destructive',
+        title: t('tasks:errors.createFailed'),
+        description: err instanceof Error ? err.message : undefined,
+      });
       console.error('Failed to create task:', err);
     },
   });
@@ -98,6 +114,11 @@ export function useTaskMutations(projectId?: string) {
       }
     },
     onError: (err) => {
+      toast({
+        variant: 'destructive',
+        title: t('tasks:errors.createAndStartFailed'),
+        description: err instanceof Error ? err.message : undefined,
+      });
       console.error('Failed to create and start task:', err);
     },
   });
@@ -145,6 +166,11 @@ export function useTaskMutations(projectId?: string) {
           .getState()
           .restoreSnapshot(variables.taskId, context.snapshot);
       }
+      toast({
+        variant: 'destructive',
+        title: t('tasks:errors.updateFailed'),
+        description: err instanceof Error ? err.message : undefined,
+      });
       console.error('Failed to update task:', err);
     },
   });

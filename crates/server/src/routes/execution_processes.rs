@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::{sync::OnceLock, time::Duration};
 
 use anyhow;
 use app_runtime::Deployment;
@@ -31,6 +31,7 @@ use crate::{DeploymentImpl, error::ApiError, middleware::load_execution_process_
 const DEFAULT_NORMALIZED_HISTORY_PAGE_SIZE: usize = 20;
 const DEFAULT_RAW_HISTORY_PAGE_SIZE: usize = 200;
 const MAX_HISTORY_PAGE_SIZE: usize = 1000;
+const WS_PING_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Deserialize)]
 pub struct ExecutionProcessQuery {
@@ -244,10 +245,17 @@ async fn handle_log_entries_ws(
     let mut stream = stream;
 
     let (mut sender, mut receiver) = socket.split();
+    let mut ping = tokio::time::interval(WS_PING_INTERVAL);
+    ping.tick().await;
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {
                 break;
+            }
+            _ = ping.tick() => {
+                if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
+                }
             }
             item = stream.next() => {
                 match item {
@@ -367,11 +375,18 @@ async fn handle_execution_processes_ws(
         .map_ok(|msg| msg.to_ws_message_unchecked());
 
     let (mut sender, mut receiver) = socket.split();
+    let mut ping = tokio::time::interval(WS_PING_INTERVAL);
+    ping.tick().await;
 
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {
                 break;
+            }
+            _ = ping.tick() => {
+                if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
+                }
             }
             item = stream.next() => {
                 match item {

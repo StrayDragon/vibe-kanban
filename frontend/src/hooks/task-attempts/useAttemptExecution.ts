@@ -13,6 +13,7 @@ export function useAttemptExecution(attemptId?: string, taskId?: string) {
     executionProcessesVisible: executionProcesses,
     isAttemptRunningVisible: isAttemptRunning,
     isLoading: streamLoading,
+    resync,
   } = useExecutionProcessesContext();
 
   // Get setup script processes that need detailed info
@@ -95,5 +96,6 @@ export function useAttemptExecution(attemptId?: string, taskId?: string) {
     stopExecution,
     forceStopExecution,
     isStopping,
+    resyncExecutionProcesses: resync,
   };
 }

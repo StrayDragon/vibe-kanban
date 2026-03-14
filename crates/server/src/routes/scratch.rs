@@ -1,9 +1,11 @@
+use std::time::Duration;
+
 use app_runtime::Deployment;
 use axum::{
     Json, Router,
     extract::{
         Path, State,
-        ws::{WebSocket, WebSocketUpgrade},
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::{IntoResponse, Json as ResponseJson},
     routing::get,
@@ -16,6 +18,8 @@ use utils_core::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};
+
+const WS_PING_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Path parameters for scratch routes with composite key
 #[derive(Deserialize)]
@@ -127,11 +131,18 @@ async fn handle_scratch_ws(
         .map_ok(|msg| msg.to_ws_message_unchecked());
 
     let (mut sender, mut receiver) = socket.split();
+    let mut ping = tokio::time::interval(WS_PING_INTERVAL);
+    ping.tick().await;
 
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {
                 break;
+            }
+            _ = ping.tick() => {
+                if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
+                }
             }
             item = stream.next() => {
                 match item {

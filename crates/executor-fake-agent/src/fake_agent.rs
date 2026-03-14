@@ -10,9 +10,9 @@ use std::{
 
 use async_trait::async_trait;
 use codex_app_server_protocol::JSONRPCNotification;
-use codex_mcp_types::{CallToolResult, ContentBlock, TextContent};
 use codex_protocol::{
     ThreadId,
+    mcp::CallToolResult,
     protocol::{
         AgentMessageDeltaEvent, AgentMessageEvent, AgentReasoningDeltaEvent, AskForApproval,
         BackgroundEventEvent, EventMsg, ExecApprovalRequestEvent, ExecCommandBeginEvent,
@@ -962,6 +962,7 @@ fn emit_message_steps(
     }
     let final_event = EventMsg::AgentMessage(AgentMessageEvent {
         message: text.to_string(),
+        phase: None,
     });
     steps.push(FakeAgentStep::Emit(event_line(final_event)?));
     Ok(steps)
@@ -1133,7 +1134,10 @@ fn generate_random_steps(
         let event = EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta: chunk });
         steps.push(FakeAgentStep::Emit(event_line(event)?));
     }
-    let final_event = EventMsg::AgentMessage(AgentMessageEvent { message: response });
+    let final_event = EventMsg::AgentMessage(AgentMessageEvent {
+        message: response,
+        phase: None,
+    });
     steps.push(FakeAgentStep::Emit(event_line(final_event)?));
 
     let background = EventMsg::BackgroundEvent(BackgroundEventEvent {
@@ -1165,11 +1169,16 @@ fn build_session_configured_event_with_id(
     Ok(EventMsg::SessionConfigured(
         codex_protocol::protocol::SessionConfiguredEvent {
             session_id,
+            forked_from_id: None,
+            thread_name: None,
             model: "fake-agent".to_string(),
             model_provider_id: "fake-agent".to_string(),
+            service_tier: None,
             approval_policy: AskForApproval::OnRequest,
+            approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
             sandbox_policy: SandboxPolicy::WorkspaceWrite {
                 writable_roots: Vec::new(),
+                read_only_access: codex_protocol::protocol::ReadOnlyAccess::FullAccess,
                 network_access: false,
                 exclude_tmpdir_env_var: false,
                 exclude_slash_tmp: false,
@@ -1179,7 +1188,8 @@ fn build_session_configured_event_with_id(
             history_log_id: 0,
             history_entry_count: 0,
             initial_messages: None,
-            rollout_path,
+            network_proxy: None,
+            rollout_path: Some(rollout_path),
         },
     ))
 }
@@ -1200,11 +1210,17 @@ fn generate_exec_command_steps(
     if approvals {
         let approval = EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
             call_id: call_id.clone(),
+            approval_id: None,
             turn_id: turn_id.to_string(),
             command: command.clone(),
             cwd: cwd.to_path_buf(),
             reason: Some("fake agent approval".to_string()),
+            network_approval_context: None,
             proposed_execpolicy_amendment: None,
+            proposed_network_policy_amendments: None,
+            additional_permissions: None,
+            skill_metadata: None,
+            available_decisions: None,
             parsed_cmd: parsed_cmd.clone(),
         });
         steps.push(FakeAgentStep::Emit(event_line(approval)?));
@@ -1251,6 +1267,7 @@ fn generate_exec_command_steps(
         exit_code: 0,
         duration: Duration::from_millis(120),
         formatted_output: output.trim().to_string(),
+        status: codex_protocol::protocol::ExecCommandStatus::Completed,
     });
     steps.push(FakeAgentStep::Emit(event_line(end)?));
 
@@ -1326,6 +1343,7 @@ fn generate_patch_steps(
         stderr: String::new(),
         success: true,
         changes,
+        status: codex_protocol::protocol::PatchApplyStatus::Completed,
     });
     steps.push(FakeAgentStep::Emit(event_line(end)?));
 
@@ -1343,15 +1361,11 @@ fn generate_mcp_steps(rng: &mut FakeRng) -> Result<Vec<FakeAgentStep>, FakeAgent
         call_id: call_id.clone(),
         invocation: invocation.clone(),
     });
-    let content = ContentBlock::TextContent(TextContent {
-        annotations: None,
-        text: "fake mcp result".to_string(),
-        r#type: "text".to_string(),
-    });
     let result = CallToolResult {
-        content: vec![content],
-        is_error: None,
         structured_content: None,
+        content: vec![json!({"type": "text", "text": "fake mcp result"})],
+        is_error: None,
+        meta: None,
     };
     let end = EventMsg::McpToolCallEnd(McpToolCallEndEvent {
         call_id,
@@ -1371,7 +1385,14 @@ fn generate_web_steps(rng: &mut FakeRng) -> Result<Vec<FakeAgentStep>, FakeAgent
         call_id: call_id.clone(),
     });
     let query = format!("fake query {}", rng.next_u64() % 100);
-    let end = EventMsg::WebSearchEnd(WebSearchEndEvent { call_id, query });
+    let end = EventMsg::WebSearchEnd(WebSearchEndEvent {
+        action: codex_protocol::models::WebSearchAction::Search {
+            query: Some(query.clone()),
+            queries: None,
+        },
+        call_id,
+        query,
+    });
     Ok(vec![
         FakeAgentStep::Emit(event_line(begin)?),
         FakeAgentStep::Emit(event_line(end)?),

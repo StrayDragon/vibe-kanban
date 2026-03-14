@@ -386,8 +386,11 @@
     "deleting": "正在删除..."
   },
   "errors": {
+    "createFailed": "创建任务失败",
+    "createAndStartFailed": "创建并启动任务失败",
     "deleteFailed": "删除任务失败",
     "loadProjectFailed": "加载项目失败",
+    "updateFailed": "更新任务失败",
     "updateStatusFailed": "更新任务状态失败"
   },
   "navigateToParent": "导航到父任务尝试",

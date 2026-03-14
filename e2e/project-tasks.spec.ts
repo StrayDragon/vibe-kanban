@@ -29,11 +29,12 @@ test.describe('project tasks', () => {
     await expect(autoStartSwitch).toHaveAttribute('aria-checked', 'false');
     await page.locator(`#${uiIds.taskFormSubmit}`).click();
 
-    const todoColumn = page.getByTestId('kanban-column-todo');
-    const doneColumn = page.getByTestId('kanban-column-done');
+    const kanban = page.locator('#kanban');
+    const todoColumn = kanban.getByTestId('kanban-column-todo');
+    const doneColumn = kanban.getByTestId('kanban-column-done');
 
     await expect(
-      todoColumn.getByRole('heading', { name: taskTitle })
+      todoColumn.getByRole('heading', { name: taskTitle }).first()
     ).toBeVisible({ timeout: 60_000 });
 
     await doneColumn.scrollIntoViewIfNeeded();
@@ -52,16 +53,20 @@ test.describe('project tasks', () => {
     });
     await page.mouse.up();
 
-    await expect(doneColumn.getByRole('heading', { name: taskTitle })).toBeVisible();
     await expect(
-      todoColumn.getByRole('heading', { name: taskTitle })
+      doneColumn.getByRole('heading', { name: taskTitle }).first()
+    ).toBeVisible();
+    await expect(
+      todoColumn.getByRole('heading', { name: taskTitle }).first()
     ).toHaveCount(0);
 
     await page.reload();
 
-    const doneColumnAfterReload = page.getByTestId('kanban-column-done');
+    const doneColumnAfterReload = page
+      .locator('#kanban')
+      .getByTestId('kanban-column-done');
     await expect(
-      doneColumnAfterReload.getByRole('heading', { name: taskTitle })
+      doneColumnAfterReload.getByRole('heading', { name: taskTitle }).first()
     ).toBeVisible();
 
     const card = doneColumnAfterReload.getByRole('button', {
@@ -75,7 +80,7 @@ test.describe('project tasks', () => {
     await page.locator(`#${uiIds.taskFormSubmit}`).click();
 
     await expect(
-      doneColumnAfterReload.getByRole('heading', { name: editedTitle })
+      doneColumnAfterReload.getByRole('heading', { name: editedTitle }).first()
     ).toBeVisible({ timeout: 60_000 });
 
     const editedCard = doneColumnAfterReload.getByRole('button', {
@@ -89,12 +94,15 @@ test.describe('project tasks', () => {
     await deleteDialog.getByRole('button', { name: /delete/i }).click();
 
     await expect(
-      doneColumnAfterReload.getByRole('heading', { name: editedTitle })
+      doneColumnAfterReload.getByRole('heading', { name: editedTitle }).first()
     ).toHaveCount(0, { timeout: 60_000 });
 
     await page.reload();
     await expect(
-      page.getByTestId('kanban-column-done').getByRole('heading', { name: editedTitle })
+      page
+        .locator('#kanban')
+        .getByTestId('kanban-column-done')
+        .getByRole('heading', { name: editedTitle })
     ).toHaveCount(0);
   });
 });

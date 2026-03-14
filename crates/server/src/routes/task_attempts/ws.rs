@@ -1,9 +1,11 @@
+use std::time::Duration;
+
 use app_runtime::Deployment;
 use axum::{
     Extension,
     extract::{
         Query, State,
-        ws::{WebSocket, WebSocketUpgrade},
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
 };
@@ -12,6 +14,8 @@ use execution::container::ContainerService;
 
 use super::DiffStreamQuery;
 use crate::DeploymentImpl;
+
+const WS_PING_INTERVAL: Duration = Duration::from_secs(30);
 
 #[axum::debug_handler]
 pub async fn stream_task_attempt_diff_ws(
@@ -50,11 +54,18 @@ async fn handle_task_attempt_diff_ws(
     let mut stream = stream.map_ok(|msg: LogMsg| msg.to_ws_message_unchecked());
 
     let (mut sender, mut receiver) = socket.split();
+    let mut ping = tokio::time::interval(WS_PING_INTERVAL);
+    ping.tick().await;
 
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {
                 break;
+            }
+            _ = ping.tick() => {
+                if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
+                }
             }
             item = stream.next() => {
                 match item {

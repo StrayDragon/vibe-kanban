@@ -1,6 +1,5 @@
 use std::{
-    borrow::Cow,
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     io,
     sync::{Arc, OnceLock},
 };
@@ -9,12 +8,14 @@ use async_trait::async_trait;
 use codex_app_server_protocol::{
     ApplyPatchApprovalResponse, ClientInfo, ClientNotification, ClientRequest,
     CommandExecutionApprovalDecision, CommandExecutionRequestApprovalResponse,
-    ExecCommandApprovalResponse, ExecPolicyAmendment, FileChangeApprovalDecision,
-    FileChangeRequestApprovalResponse, GetAuthStatusParams, GetAuthStatusResponse,
-    InitializeParams, InitializeResponse, JSONRPCError, JSONRPCNotification, JSONRPCRequest,
-    JSONRPCResponse, RequestId, ServerNotification, ServerRequest, ThreadForkParams,
-    ThreadForkResponse, ThreadStartParams, ThreadStartResponse, TurnStartParams, TurnStartResponse,
-    UserInput,
+    DynamicToolCallOutputContentItem, DynamicToolCallResponse, ExecCommandApprovalResponse,
+    ExecPolicyAmendment, FileChangeApprovalDecision, FileChangeRequestApprovalResponse,
+    GetAuthStatusParams, GetAuthStatusResponse, GrantedPermissionProfile, InitializeParams,
+    InitializeResponse, JSONRPCError, JSONRPCErrorError, JSONRPCNotification, JSONRPCRequest,
+    JSONRPCResponse, McpServerElicitationAction, McpServerElicitationRequestResponse,
+    PermissionGrantScope, PermissionsRequestApprovalResponse, RequestId, ServerRequest,
+    ThreadForkParams, ThreadForkResponse, ThreadStartParams, ThreadStartResponse, ToolRequestUserInputAnswer,
+    ToolRequestUserInputResponse, TurnStartParams, TurnStartResponse, UserInput,
 };
 use codex_protocol::protocol::{EventMsg, ReviewDecision};
 use executors_core::{
@@ -31,6 +32,12 @@ use super::{
     jsonrpc::{JsonRpcCallbacks, JsonRpcPeer},
     normalize_logs::Approval,
 };
+
+fn strip_thread_turns(value: &mut Value) {
+    if let Some(turns) = value.pointer_mut("/thread/turns") {
+        *turns = Value::Array(Vec::new());
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,6 +87,7 @@ impl AppServerClient {
                     title: None,
                     version: env!("CARGO_PKG_VERSION").to_string(),
                 },
+                capabilities: None,
             },
         };
 
@@ -107,7 +115,17 @@ impl AppServerClient {
             request_id: self.next_request_id(),
             params,
         };
-        self.send_request(request, "thread/fork").await
+        // `thread/fork` responses can include the persisted thread history (`thread.turns.items`),
+        // which evolves over time. We only need the forked thread id + config for follow-ups,
+        // so strip the turns to keep deserialization forward-compatible with newer item variants
+        // (e.g. `contextCompaction`).
+        let mut raw: Value = self.send_request(request, "thread/fork").await?;
+        strip_thread_turns(&mut raw);
+        serde_json::from_value::<ThreadForkResponse>(raw).map_err(|err| {
+            ExecutorError::Io(io::Error::other(format!(
+                "failed to decode thread/fork response: {err}",
+            )))
+        })
     }
 
     pub async fn turn_start(
@@ -122,11 +140,15 @@ impl AppServerClient {
                 input,
                 cwd: None,
                 approval_policy: None,
+                approvals_reviewer: None,
                 sandbox_policy: None,
                 model: None,
+                service_tier: None,
                 effort: None,
                 summary: None,
+                personality: None,
                 output_schema: None,
+                collaboration_mode: None,
             },
         };
         self.send_request(request, "turn/start").await
@@ -257,6 +279,11 @@ impl AppServerClient {
                             proposed_execpolicy_amendment,
                         ),
                     },
+                    ReviewDecision::NetworkPolicyAmendment {
+                        network_policy_amendment,
+                    } => CommandExecutionApprovalDecision::ApplyNetworkPolicyAmendment {
+                        network_policy_amendment: network_policy_amendment.into(),
+                    },
                     ReviewDecision::Denied => CommandExecutionApprovalDecision::Decline,
                     ReviewDecision::Abort => CommandExecutionApprovalDecision::Cancel,
                 };
@@ -305,6 +332,7 @@ impl AppServerClient {
                     ReviewDecision::ApprovedForSession => {
                         FileChangeApprovalDecision::AcceptForSession
                     }
+                    ReviewDecision::NetworkPolicyAmendment { .. } => FileChangeApprovalDecision::Decline,
                     ReviewDecision::Denied => FileChangeApprovalDecision::Decline,
                     ReviewDecision::Abort => FileChangeApprovalDecision::Cancel,
                 };
@@ -315,6 +343,81 @@ impl AppServerClient {
                     self.enqueue_feedback(message).await;
                 }
                 Ok(())
+            }
+            ServerRequest::ToolRequestUserInput { request_id, params } => {
+                tracing::warn!(
+                    thread_id = %params.thread_id,
+                    turn_id = %params.turn_id,
+                    item_id = %params.item_id,
+                    "ToolRequestUserInput is unsupported; responding with empty answers"
+                );
+                let answers = params
+                    .questions
+                    .into_iter()
+                    .map(|question| {
+                        (
+                            question.id,
+                            ToolRequestUserInputAnswer { answers: Vec::new() },
+                        )
+                    })
+                    .collect::<HashMap<_, _>>();
+                let response = ToolRequestUserInputResponse { answers };
+                send_server_response(peer, request_id, response).await
+            }
+            ServerRequest::McpServerElicitationRequest { request_id, params } => {
+                tracing::warn!(
+                    thread_id = %params.thread_id,
+                    server_name = %params.server_name,
+                    "McpServerElicitationRequest is unsupported; declining"
+                );
+                let response = McpServerElicitationRequestResponse {
+                    action: McpServerElicitationAction::Decline,
+                    content: None,
+                    meta: None,
+                };
+                send_server_response(peer, request_id, response).await
+            }
+            ServerRequest::PermissionsRequestApproval { request_id, params } => {
+                tracing::warn!(
+                    thread_id = %params.thread_id,
+                    turn_id = %params.turn_id,
+                    item_id = %params.item_id,
+                    "PermissionsRequestApproval is unsupported; granting none"
+                );
+                let response = PermissionsRequestApprovalResponse {
+                    permissions: GrantedPermissionProfile::default(),
+                    scope: PermissionGrantScope::default(),
+                };
+                send_server_response(peer, request_id, response).await
+            }
+            ServerRequest::DynamicToolCall { request_id, params } => {
+                tracing::warn!(
+                    thread_id = %params.thread_id,
+                    turn_id = %params.turn_id,
+                    call_id = %params.call_id,
+                    tool = %params.tool,
+                    "DynamicToolCall is unsupported; returning error output"
+                );
+                let response = DynamicToolCallResponse {
+                    content_items: vec![DynamicToolCallOutputContentItem::InputText {
+                        text: format!("Dynamic tool `{}` is not supported by this client", params.tool),
+                    }],
+                    success: false,
+                };
+                send_server_response(peer, request_id, response).await
+            }
+            ServerRequest::ChatgptAuthTokensRefresh { request_id, params: _ } => {
+                tracing::error!("ChatgptAuthTokensRefresh is unsupported by this client");
+                peer.send(&JSONRPCError {
+                    id: request_id,
+                    error: JSONRPCErrorError {
+                        code: -32601,
+                        message: "ChatgptAuthTokensRefresh is unsupported by this client"
+                            .to_string(),
+                        data: None,
+                    },
+                })
+                .await
             }
         }
     }
@@ -440,11 +543,15 @@ impl AppServerClient {
                 }],
                 cwd: None,
                 approval_policy: None,
+                approvals_reviewer: None,
                 sandbox_policy: None,
                 model: None,
+                service_tier: None,
                 effort: None,
                 summary: None,
+                personality: None,
                 output_schema: None,
+                collaboration_mode: None,
             },
         };
         tokio::spawn(async move {
@@ -504,21 +611,7 @@ impl JsonRpcCallbacks for AppServerClient {
         raw: &str,
         notification: JSONRPCNotification,
     ) -> Result<bool, ExecutorError> {
-        let raw =
-            if let Ok(mut server_notification) = serde_json::from_str::<ServerNotification>(raw) {
-                if let ServerNotification::SessionConfigured(session_configured) =
-                    &mut server_notification
-                {
-                    // history can be large, which might get truncated during transmission, corrupting the JSON line and losing valuable session and model information.
-                    session_configured.initial_messages = None;
-                    Cow::Owned(serde_json::to_string(&server_notification)?)
-                } else {
-                    Cow::Borrowed(raw)
-                }
-            } else {
-                Cow::Borrowed(raw)
-            };
-        self.log_writer.log_raw(&raw).await?;
+        self.log_writer.log_raw(raw).await?;
 
         let method = notification.method.as_str();
         if !method.starts_with("codex/event") {
@@ -691,6 +784,7 @@ mod tests {
             id: RequestId::Integer(1),
             method: "unknown.method".to_string(),
             params: None,
+            trace: None,
         };
 
         client
@@ -773,7 +867,7 @@ mod tests {
         let notification = JSONRPCNotification {
             method: "codex/event".to_string(),
             params: Some(serde_json::json!({
-                "msg": { "type": "turn_complete" }
+                "msg": { "type": "turn_complete", "turn_id": "turn-1", "last_agent_message": null }
             })),
         };
 
@@ -802,5 +896,64 @@ mod tests {
             .expect("notification");
 
         assert!(!finished);
+    }
+}
+
+#[cfg(test)]
+mod thread_fork_sanitization_tests {
+    use codex_app_server_protocol::ThreadForkResponse;
+    use serde_json::json;
+
+    use super::strip_thread_turns;
+
+    #[test]
+    fn thread_fork_response_sanitization_skips_unknown_turn_items() {
+        // Newer Codex versions can persist additional ThreadItem variants. We want `thread/fork`
+        // decoding to be forward-compatible so follow-ups keep working.
+        let mut raw = json!({
+            "thread": {
+                "id": "thread_123",
+                "preview": "hello",
+                "ephemeral": false,
+                "modelProvider": "openai",
+                "createdAt": 0,
+                "updatedAt": 0,
+                "status": { "type": "idle" },
+                "path": "/tmp/thread_123.json",
+                "cwd": "/tmp",
+                "cliVersion": "0.0.0",
+                "source": "exec",
+                "gitInfo": null,
+                "turns": [{
+                    "id": "turn_1",
+                    "status": "completed",
+                    "error": null,
+                    "items": [{
+                        "type": "futureThreadItem",
+                        "id": "item_1",
+                    }]
+                }]
+            },
+            "model": "gpt-4.1",
+            "modelProvider": "openai",
+            "cwd": "/tmp",
+            "approvalPolicy": "never",
+            "approvalsReviewer": "user",
+            "sandbox": { "type": "dangerFullAccess" },
+            "reasoningEffort": null
+        });
+
+        let err = serde_json::from_value::<ThreadForkResponse>(raw.clone())
+            .expect_err("expected strict decode to fail on unknown item variant");
+        assert!(
+            err.to_string().contains("futureThreadItem"),
+            "expected error to mention unknown variant, got: {err}"
+        );
+
+        strip_thread_turns(&mut raw);
+        let parsed: ThreadForkResponse =
+            serde_json::from_value(raw).expect("sanitized decode should succeed");
+        assert_eq!(parsed.thread.id, "thread_123");
+        assert!(parsed.thread.turns.is_empty());
     }
 }

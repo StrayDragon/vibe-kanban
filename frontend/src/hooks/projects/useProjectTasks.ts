@@ -29,6 +29,7 @@ export interface UseProjectTasksResult {
 export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
   const endpoint = `/api/tasks/stream/ws?project_id=${encodeURIComponent(projectId)}`;
   const [connectEnabled, setConnectEnabled] = useState(false);
+  const [optimisticStaleTick, setOptimisticStaleTick] = useState(0);
 
   useEffect(() => {
     setConnectEnabled(false);
@@ -68,6 +69,23 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
   }));
 
   const streamTasksById = useMemo(() => data?.tasks ?? {}, [data?.tasks]);
+
+  const hasOptimisticState = useMemo(() => {
+    return (
+      Object.keys(inserts).length > 0 ||
+      Object.keys(overrides).length > 0 ||
+      Object.keys(tombstones).length > 0
+    );
+  }, [inserts, overrides, tombstones]);
+
+  useEffect(() => {
+    if (!connectEnabled) return;
+    if (!hasOptimisticState) return;
+    const timer = window.setTimeout(() => {
+      setOptimisticStaleTick((value) => value + 1);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [connectEnabled, hasOptimisticState, optimisticStaleTick]);
 
   const mergedTasksById = useMemo(() => {
     const merged: Record<string, TaskWithAttemptStatus> = {
@@ -221,6 +239,7 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
     inserts,
     markResyncAttempt,
     overrides,
+    optimisticStaleTick,
     projectId,
     resync,
     streamTasksById,
