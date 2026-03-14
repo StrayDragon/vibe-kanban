@@ -114,6 +114,71 @@ pub struct ExecutorConfigs {
     pub executors: HashMap<BaseCodingAgent, ExecutorConfig>,
 }
 
+/// On-disk overrides format.
+///
+/// We persist only diffs from embedded defaults, plus an explicit list of
+/// "deleted" built-in variants (tombstones) so users can remove preset
+/// configurations from the merged view.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct ExecutorProfilesOverrides {
+    /// Built-in variant keys removed by the user, by executor.
+    ///
+    /// Stored separately because the overrides file cannot represent deletions
+    /// by omission (defaults would re-introduce them on merge).
+    #[serde(default)]
+    #[serde(rename = "__deleted_variants")]
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    deleted_variants: HashMap<BaseCodingAgent, Vec<String>>,
+
+    /// Variant config overrides and user-added variants.
+    #[serde(default)]
+    executors: HashMap<BaseCodingAgent, ExecutorConfig>,
+}
+
+impl ExecutorProfilesOverrides {
+    fn canonicalise(&mut self) {
+        // Canonicalise executor variant keys
+        for profile in self.executors.values_mut() {
+            let mut replacements = Vec::new();
+            for key in profile.configurations.keys().cloned().collect::<Vec<_>>() {
+                let canon = canonical_variant_key(&key);
+                if canon != key {
+                    replacements.push((key, canon));
+                }
+            }
+            for (old, new) in replacements {
+                if let Some(cfg) = profile.configurations.remove(&old) {
+                    profile.configurations.entry(new).or_insert(cfg);
+                }
+            }
+        }
+
+        // Canonicalise tombstones, drop DEFAULT (required), and de-dup
+        for variants in self.deleted_variants.values_mut() {
+            let mut canon = variants
+                .iter()
+                .map(canonical_variant_key)
+                .filter(|k| k != "DEFAULT")
+                .collect::<Vec<_>>();
+            canon.sort();
+            canon.dedup();
+            *variants = canon;
+        }
+        self.deleted_variants.retain(|_, v| !v.is_empty());
+    }
+
+    fn apply_deletions_to_defaults(&self, defaults: &mut ExecutorConfigs) {
+        for (executor_key, variants) in &self.deleted_variants {
+            let Some(profile) = defaults.executors.get_mut(executor_key) else {
+                continue;
+            };
+            for variant in variants {
+                profile.configurations.remove(variant);
+            }
+        }
+    }
+}
+
 impl ExecutorConfigs {
     /// Normalise all variant keys in-place
     fn canonicalise(&mut self) {
@@ -209,28 +274,31 @@ impl ExecutorConfigs {
         };
 
         // Parse user overrides
-        let mut user_overrides = match serde_json::from_str::<Self>(&content) {
+        let mut user_overrides = match serde_json::from_str::<ExecutorProfilesOverrides>(&content) {
             Ok(user_overrides) => user_overrides,
             Err(parse_err) => match Self::migrate_profiles_json(&content) {
-                Ok(Some(migrated)) => match serde_json::from_str::<Self>(&migrated) {
-                    Ok(mut migrated_overrides) => {
-                        tracing::info!("Migrated legacy profiles.json to current format");
-                        migrated_overrides.canonicalise();
-                        if let Ok(serialized) = serde_json::to_string_pretty(&migrated_overrides)
-                            && let Err(err) = fs::write(&profiles_path, serialized)
-                        {
-                            tracing::error!("Failed to write migrated profiles.json: {}", err);
+                Ok(Some(migrated)) => {
+                    match serde_json::from_str::<ExecutorProfilesOverrides>(&migrated) {
+                        Ok(mut migrated_overrides) => {
+                            tracing::info!("Migrated legacy profiles.json to current format");
+                            migrated_overrides.canonicalise();
+                            if let Ok(serialized) =
+                                serde_json::to_string_pretty(&migrated_overrides)
+                                && let Err(err) = fs::write(&profiles_path, serialized)
+                            {
+                                tracing::error!("Failed to write migrated profiles.json: {}", err);
+                            }
+                            migrated_overrides
                         }
-                        migrated_overrides
+                        Err(err) => {
+                            tracing::error!(
+                                "Failed to parse migrated profiles.json: {}, using defaults only",
+                                err
+                            );
+                            return defaults;
+                        }
                     }
-                    Err(err) => {
-                        tracing::error!(
-                            "Failed to parse migrated profiles.json: {}, using defaults only",
-                            err
-                        );
-                        return defaults;
-                    }
-                },
+                }
                 Ok(None) => {
                     tracing::error!(
                         "Failed to parse user profiles.json: {}, using defaults only",
@@ -251,7 +319,15 @@ impl ExecutorConfigs {
 
         tracing::info!("Loaded user profile overrides from profiles.json");
         user_overrides.canonicalise();
-        Self::merge_with_defaults(defaults, user_overrides)
+
+        // Apply tombstones before merging overrides
+        user_overrides.apply_deletions_to_defaults(&mut defaults);
+        Self::merge_with_defaults(
+            defaults,
+            Self {
+                executors: user_overrides.executors,
+            },
+        )
     }
 
     /// Save user profile overrides to file (only saves what differs from defaults)
@@ -268,7 +344,7 @@ impl ExecutorConfigs {
         let overrides = Self::compute_overrides(&defaults, &self_clone)?;
 
         // Validate the merged result would be valid
-        let merged = Self::merge_with_defaults(defaults, overrides.clone());
+        let merged = Self::merge_with_overrides(defaults, &overrides);
         Self::validate_merged(&merged)?;
 
         // Write overrides directly to file
@@ -299,10 +375,14 @@ impl ExecutorConfigs {
     }
 
     /// Compute what overrides are needed to transform defaults into current config
-    fn compute_overrides(defaults: &Self, current: &Self) -> Result<Self, ProfileError> {
+    fn compute_overrides(
+        defaults: &Self,
+        current: &Self,
+    ) -> Result<ExecutorProfilesOverrides, ProfileError> {
         let mut overrides = Self {
             executors: HashMap::new(),
         };
+        let mut deleted_variants: HashMap<BaseCodingAgent, Vec<String>> = HashMap::new();
 
         // Fast scan for any illegal deletions BEFORE allocating/cloning
         for (executor_key, default_profile) in &defaults.executors {
@@ -315,13 +395,20 @@ impl ExecutorConfigs {
 
             let current_profile = &current.executors[executor_key];
 
-            // Check if ANY built-in configuration was removed
+            // Record removed built-in configurations as tombstones.
+            // (DEFAULT remains required; deleting it is still rejected.)
             for config_name in default_profile.configurations.keys() {
                 if !current_profile.configurations.contains_key(config_name) {
-                    return Err(ProfileError::CannotDeleteBuiltInConfig {
-                        executor: *executor_key,
-                        variant: config_name.clone(),
-                    });
+                    if config_name == "DEFAULT" {
+                        return Err(ProfileError::CannotDeleteBuiltInConfig {
+                            executor: *executor_key,
+                            variant: config_name.clone(),
+                        });
+                    }
+                    deleted_variants
+                        .entry(*executor_key)
+                        .or_default()
+                        .push(config_name.clone());
                 }
             }
         }
@@ -361,7 +448,27 @@ impl ExecutorConfigs {
             }
         }
 
-        Ok(overrides)
+        // Canonicalise and de-dup deleted variants for stable output
+        for variants in deleted_variants.values_mut() {
+            variants.sort();
+            variants.dedup();
+        }
+        deleted_variants.retain(|_, v| !v.is_empty());
+
+        Ok(ExecutorProfilesOverrides {
+            deleted_variants,
+            executors: overrides.executors,
+        })
+    }
+
+    fn merge_with_overrides(mut defaults: Self, overrides: &ExecutorProfilesOverrides) -> Self {
+        overrides.apply_deletions_to_defaults(&mut defaults);
+        Self::merge_with_defaults(
+            defaults,
+            Self {
+                executors: overrides.executors.clone(),
+            },
+        )
     }
 
     /// Validate that merged profiles are consistent and valid
@@ -504,5 +611,100 @@ pub fn to_default_variant(id: &ExecutorProfileId) -> ExecutorProfileId {
     ExecutorProfileId {
         executor: id.executor,
         variant: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compute_overrides_records_builtin_variant_deletions() {
+        let mut defaults = ExecutorConfigs::from_defaults();
+        defaults.canonicalise();
+
+        let mut current = defaults.clone();
+        let claude = current
+            .executors
+            .get_mut(&BaseCodingAgent::ClaudeCode)
+            .expect("CLAUDE_CODE profile");
+        assert!(claude.configurations.contains_key("PLAN"));
+        claude.configurations.remove("PLAN");
+
+        let overrides =
+            ExecutorConfigs::compute_overrides(&defaults, &current).expect("compute overrides");
+        let deleted = overrides
+            .deleted_variants
+            .get(&BaseCodingAgent::ClaudeCode)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(deleted, vec!["PLAN".to_string()]);
+        assert!(overrides.executors.is_empty());
+
+        let merged = ExecutorConfigs::merge_with_overrides(defaults, &overrides);
+        assert_eq!(merged, current);
+    }
+
+    #[test]
+    fn compute_overrides_supports_builtin_deletion_and_custom_addition() {
+        let mut defaults = ExecutorConfigs::from_defaults();
+        defaults.canonicalise();
+
+        let mut current = defaults.clone();
+        let claude = current
+            .executors
+            .get_mut(&BaseCodingAgent::ClaudeCode)
+            .expect("CLAUDE_CODE profile");
+
+        claude
+            .configurations
+            .remove("OPUS")
+            .expect("OPUS exists in defaults");
+        let default_cfg = claude
+            .configurations
+            .get("DEFAULT")
+            .cloned()
+            .expect("DEFAULT exists");
+        claude
+            .configurations
+            .insert("CUSTOM".to_string(), default_cfg);
+
+        let overrides =
+            ExecutorConfigs::compute_overrides(&defaults, &current).expect("compute overrides");
+        let deleted = overrides
+            .deleted_variants
+            .get(&BaseCodingAgent::ClaudeCode)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(deleted, vec!["OPUS".to_string()]);
+
+        let claude_overrides = overrides
+            .executors
+            .get(&BaseCodingAgent::ClaudeCode)
+            .expect("CLAUDE_CODE overrides");
+        assert!(claude_overrides.configurations.contains_key("CUSTOM"));
+        assert!(!claude_overrides.configurations.contains_key("DEFAULT"));
+
+        let merged = ExecutorConfigs::merge_with_overrides(defaults, &overrides);
+        assert_eq!(merged, current);
+    }
+
+    #[test]
+    fn compute_overrides_rejects_deleting_default_variant() {
+        let mut defaults = ExecutorConfigs::from_defaults();
+        defaults.canonicalise();
+
+        let mut current = defaults.clone();
+        let claude = current
+            .executors
+            .get_mut(&BaseCodingAgent::ClaudeCode)
+            .expect("CLAUDE_CODE profile");
+        claude.configurations.remove("DEFAULT");
+
+        let err = ExecutorConfigs::compute_overrides(&defaults, &current).unwrap_err();
+        assert!(matches!(
+            err,
+            ProfileError::CannotDeleteBuiltInConfig { .. }
+        ));
     }
 }
