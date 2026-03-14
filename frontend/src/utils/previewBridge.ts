@@ -99,6 +99,11 @@ export class ClickToComponentListener {
           }
           break;
 
+        case 'enable-button':
+          // Sent by this listener to request the iframe to enable the UI.
+          // No action needed when receiving it.
+          break;
+
         default:
           this.handlers.onUnknownMessage?.(data);
       }

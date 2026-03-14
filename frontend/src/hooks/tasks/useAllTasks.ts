@@ -47,23 +47,17 @@ export const useAllTasks = (
   const { data, isConnected, isResyncing, error, resync } =
     useJsonPatchWsStream(endpoint, true, initialData, { deduplicatePatches });
 
-  const {
-    inserts,
-    overrides,
-    tombstones,
-    clearInsert,
-    clearOverride,
-    clearTombstone,
-    markResyncAttempt,
-  } = useOptimisticTasksStore((state) => ({
-    inserts: state.inserts,
-    overrides: state.overrides,
-    tombstones: state.tombstones,
-    clearInsert: state.clearInsert,
-    clearOverride: state.clearOverride,
-    clearTombstone: state.clearTombstone,
-    markResyncAttempt: state.markResyncAttempt,
-  }));
+  const inserts = useOptimisticTasksStore((state) => state.inserts);
+  const overrides = useOptimisticTasksStore((state) => state.overrides);
+  const tombstones = useOptimisticTasksStore((state) => state.tombstones);
+  const clearInsert = useOptimisticTasksStore((state) => state.clearInsert);
+  const clearOverride = useOptimisticTasksStore((state) => state.clearOverride);
+  const clearTombstone = useOptimisticTasksStore(
+    (state) => state.clearTombstone
+  );
+  const markResyncAttempt = useOptimisticTasksStore(
+    (state) => state.markResyncAttempt
+  );
 
   const streamTasksById = useMemo(() => data?.tasks ?? {}, [data?.tasks]);
 

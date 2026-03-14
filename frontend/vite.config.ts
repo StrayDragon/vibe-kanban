@@ -57,6 +57,10 @@ export default defineConfig({
     executorSchemasPlugin(),
   ],
   resolve: {
+    // Codemirror is extremely sensitive to duplicated module instances.
+    // Vite 8 + pnpm can otherwise bundle multiple copies and break instanceof
+    // checks at runtime ("Unrecognized extension value in extension set").
+    dedupe: ['@codemirror/state', '@codemirror/view', '@codemirror/language'],
     alias: {
       "@": path.resolve(__dirname, "./src"),
       "@api": path.resolve(__dirname, "./src/api"),

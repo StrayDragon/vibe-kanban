@@ -429,11 +429,12 @@ export const useConversationHistory = ({
               case 'CleanupScript':
                 toolName = 'Cleanup Script';
                 break;
+              case 'DevServer':
+                toolName = 'Dev Server';
+                break;
               case 'ToolInstallScript':
                 toolName = 'Tool Install Script';
                 break;
-              default:
-                return [];
             }
 
             const executionProcess = getLiveExecutionProcess(
@@ -454,7 +455,7 @@ export const useConversationHistory = ({
 
             const exitCode = Number(executionProcess?.exit_code) || 0;
             const exit_status: CommandExitStatus | null =
-              executionProcess?.status === 'running'
+              executionProcess?.status === ExecutionProcessStatus.running
                 ? null
                 : {
                     type: 'exit_code',

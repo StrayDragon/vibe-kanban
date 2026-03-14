@@ -76,6 +76,23 @@ Rollback strategy: revert the smallest failing batch; keep the lockfile diff sco
 
 Config versioning: no user config migrations are expected.
 
+## Baseline & Targets (2026-03-14)
+
+Baseline and upgrade candidates were captured via `pnpm -C frontend outdated --format json`.
+
+### Safe-lane targets (planned)
+
+- **Build:** `vite` `5.4.19` → `8.0.0`; `@vitejs/plugin-react` `4.5.2` → `6.0.1`
+- **Test:** `vitest` `1.6.1` → `4.1.0`; `jsdom` `24.1.3` → `28.1.0`
+- **Lint:** `eslint` `8.57.1` → `10.0.3`; `@typescript-eslint/*` `6.21.0` → `8.57.0`; `eslint-plugin-react-hooks` `4.6.2` → `7.0.1`; `eslint-plugin-check-file` `2.8.0` → `3.3.1`
+- **Core tooling:** `typescript` `5.9.2` → `5.9.3`; `postcss` `8.5.6` → `8.5.8`; `autoprefixer` `10.4.21` → `10.4.27`
+- **State:** `zustand` `4.5.7` → `5.0.11`
+
+### High-risk lane candidates (spike only)
+
+- **Styling:** `tailwindcss` `3.4.17` → `4.2.1`
+- **React ecosystem:** `react`/`react-dom` `18.3.1` → `19.2.4`; `react-router-dom` `6.30.3` → `7.13.1`
+
 ## Open Questions
 
 - Do we want to standardize on a single “supported Node version” beyond `>=18` for more reproducible builds?

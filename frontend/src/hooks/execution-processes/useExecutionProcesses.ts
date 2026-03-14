@@ -14,6 +14,8 @@ interface UseExecutionProcessesResult {
   resync: (reason?: string) => void;
 }
 
+const EMPTY_EXECUTION_PROCESSES_BY_ID: Record<string, ExecutionProcess> = {};
+
 /**
  * Stream execution processes for a task attempt via WebSocket (JSON Patch) and expose as array + map.
  * Server sends initial snapshot: replace /execution_processes with an object keyed by id.
@@ -57,7 +59,10 @@ export const useExecutionProcesses = (
   const optimisticById = useOptimisticExecutionProcessesStore(
     useCallback(
       (state) =>
-        taskAttemptId ? (state.byAttemptId[taskAttemptId] ?? {}) : {},
+        taskAttemptId
+          ? (state.byAttemptId[taskAttemptId] ??
+              EMPTY_EXECUTION_PROCESSES_BY_ID)
+          : EMPTY_EXECUTION_PROCESSES_BY_ID,
       [taskAttemptId]
     )
   );
