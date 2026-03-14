@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { attemptsApi } from '@/lib/api';
 import type { Workspace } from 'shared/types';
+import { taskAttemptKeys } from '@/query-keys/taskAttemptKeys';
 
 export const attemptKeys = {
-  byId: (attemptId: string | undefined) => ['attempt', attemptId] as const,
+  byId: (attemptId: string | undefined) => taskAttemptKeys.attempt(attemptId),
 };
 
 type Options = {

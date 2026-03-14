@@ -1,12 +1,6 @@
-import { useCallback, useMemo } from 'react';
-import type { Operation } from 'rfc6902';
-import { normalizeIdMapPatches } from '../jsonPatchUtils';
-import { useJsonPatchWsStream } from '../useJsonPatchWsStream';
+import { useMemo } from 'react';
+import { useIdMapWsStream } from '@/realtime';
 import type { Project } from 'shared/types';
-
-type ProjectsState = {
-  projects: Record<string, Project>;
-};
 
 export interface UseProjectsResult {
   projects: Project[];
@@ -19,19 +13,11 @@ export interface UseProjectsResult {
 export function useProjects(): UseProjectsResult {
   const endpoint = '/api/projects/stream/ws';
 
-  const initialData = useCallback((): ProjectsState => ({ projects: {} }), []);
-
-  const deduplicatePatches = useCallback(
-    (patches: Operation[], current: ProjectsState | undefined) =>
-      normalizeIdMapPatches(patches, current?.projects, '/projects/'),
-    []
-  );
-
-  const { data, isConnected, error } = useJsonPatchWsStream<ProjectsState>(
+  const { data, isConnected, error } = useIdMapWsStream<'projects', Project>(
     endpoint,
     true,
-    initialData,
-    { deduplicatePatches }
+    'projects',
+    '/projects/'
   );
 
   const projectsById = useMemo(() => data?.projects ?? {}, [data]);

@@ -1,5 +1,5 @@
 import type { LogStreamEvent, PatchType } from 'shared/types';
-import { withApiTokenQuery } from '@/api/token';
+import { createWebSocket } from '@/lib/api';
 
 interface StreamOptions {
   onAppend?: (entryIndex: bigint, entry: PatchType) => void;
@@ -21,8 +21,7 @@ export function streamLogEntries(
   url: string,
   opts: StreamOptions = {}
 ): StreamController {
-  const wsUrl = withApiTokenQuery(url.replace(/^http/, 'ws'));
-  const ws = new WebSocket(wsUrl);
+  const ws = createWebSocket(url);
   let connected = false;
   let closedByClient = false;
   let finished = false;

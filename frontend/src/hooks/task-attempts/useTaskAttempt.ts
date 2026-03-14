@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { attemptsApi } from '@/lib/api';
 import type { WorkspaceWithSession } from '@/types/attempt';
+import { taskAttemptKeys } from '@/query-keys/taskAttemptKeys';
 
 export function useTaskAttempt(attemptId?: string) {
   return useQuery({
-    queryKey: ['taskAttempt', attemptId],
+    queryKey: taskAttemptKeys.attempt(attemptId),
     queryFn: () => attemptsApi.get(attemptId!),
     enabled: !!attemptId,
   });
@@ -16,7 +17,7 @@ export function useTaskAttempt(attemptId?: string) {
  */
 export function useTaskAttemptWithSession(attemptId?: string) {
   return useQuery<WorkspaceWithSession>({
-    queryKey: ['taskAttemptWithSession', attemptId],
+    queryKey: taskAttemptKeys.attemptWithSession(attemptId),
     queryFn: () => attemptsApi.getWithSession(attemptId!),
     enabled: !!attemptId,
   });

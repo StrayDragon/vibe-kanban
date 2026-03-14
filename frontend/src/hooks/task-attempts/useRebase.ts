@@ -3,6 +3,8 @@ import { attemptsApi, Result } from '@/lib/api';
 import type { RebaseTaskAttemptRequest } from 'shared/types';
 import type { GitOperationError } from 'shared/types';
 import { repoBranchKeys } from './useRepoBranches';
+import { branchStatusKeys } from './useBranchStatus';
+import { taskAttemptKeys } from '@/query-keys/taskAttemptKeys';
 
 export function useRebase(
   attemptId: string | undefined,
@@ -40,12 +42,12 @@ export function useRebase(
       onSuccess: () => {
         // Refresh branch status immediately
         queryClient.invalidateQueries({
-          queryKey: ['branchStatus', attemptId],
+          queryKey: branchStatusKeys.byAttempt(attemptId),
         });
 
         // Invalidate taskAttempt query to refresh attempt.target_branch
         queryClient.invalidateQueries({
-          queryKey: ['taskAttempt', attemptId],
+          queryKey: taskAttemptKeys.attempt(attemptId),
         });
 
         // Refresh branch list
@@ -61,7 +63,7 @@ export function useRebase(
         console.error('Failed to rebase:', err);
         // Even on failure (likely conflicts), re-fetch branch status immediately to show rebase-in-progress
         queryClient.invalidateQueries({
-          queryKey: ['branchStatus', attemptId],
+          queryKey: branchStatusKeys.byAttempt(attemptId),
         });
         onError?.(err);
       },

@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import type { ApiResponse, LogHistoryPage, PatchType } from 'shared/types';
-import { streamLogEntries } from '@/utils/streamLogEntries';
+import type { LogHistoryPage, PatchType } from 'shared/types';
+import { executionProcessesApi } from '@/lib/api';
+import { openLogStream } from '@/realtime';
 
 type LogEntry = Extract<PatchType, { type: 'STDOUT' } | { type: 'STDERR' }>;
 
@@ -46,7 +47,7 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
   const droppedLinesRef = useRef<boolean>(false);
   const entriesRef = useRef<Map<string, LogEntry>>(new Map());
   const entryOrderRef = useRef<bigint[]>([]);
-  const controllerRef = useRef<ReturnType<typeof streamLogEntries> | null>(
+  const controllerRef = useRef<ReturnType<typeof openLogStream> | null>(
     null
   );
   const retryTimerRef = useRef<number | null>(null);
@@ -66,23 +67,10 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
 
   const fetchHistoryPage = useCallback(
     async (cursorValue: bigint | null) => {
-      const params = new URLSearchParams();
-      params.set('limit', String(RAW_HISTORY_PAGE_SIZE));
-      if (cursorValue !== null) {
-        params.set('cursor', String(cursorValue));
-      }
-
-      const res = await fetch(
-        `/api/execution-processes/${processId}/raw-logs/v2?${params.toString()}`
-      );
-      if (!res.ok) {
-        throw new Error('Failed to load log history');
-      }
-      const body = (await res.json()) as ApiResponse<LogHistoryPage>;
-      if (!body.data) {
-        throw new Error('No log history returned');
-      }
-      return body.data;
+      return executionProcessesApi.getRawLogsPage(processId, {
+        limit: RAW_HISTORY_PAGE_SIZE,
+        cursor: cursorValue,
+      });
     },
     [processId]
   );
@@ -248,7 +236,7 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
     const openStream = () => {
       controllerRef.current?.close();
 
-      const controller = streamLogEntries(
+      const controller = openLogStream(
         `/api/execution-processes/${processId}/raw-logs/v2/ws`,
         {
           onOpen: () => {

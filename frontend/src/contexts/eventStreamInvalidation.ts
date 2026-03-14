@@ -1,8 +1,8 @@
 import type { QueryClient } from '@tanstack/react-query';
 import type { Operation } from 'rfc6902';
-import { taskAttemptKeys } from '@/hooks/task-attempts/useTaskAttempts';
 import { branchStatusKeys } from '@/hooks/task-attempts/useBranchStatus';
 import { collectInvalidations } from '@/utils/eventInvalidation';
+import { taskAttemptKeys } from '@/query-keys/taskAttemptKeys';
 
 type InvalidatableQueryClient = Pick<QueryClient, 'invalidateQueries'>;
 
@@ -27,10 +27,10 @@ export function invalidateQueriesFromJsonPatch(
       queryKey: branchStatusKeys.byAttempt(workspaceId),
     });
     queryClient.invalidateQueries({
-      queryKey: ['taskAttempt', workspaceId],
+      queryKey: taskAttemptKeys.attempt(workspaceId),
     });
     queryClient.invalidateQueries({
-      queryKey: ['taskAttemptWithSession', workspaceId],
+      queryKey: taskAttemptKeys.attemptWithSession(workspaceId),
     });
   }
 

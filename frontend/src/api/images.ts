@@ -1,27 +1,16 @@
-import type { ImageResponse } from 'shared/types';
+import type { ImageMetadata, ImageResponse } from 'shared/types';
 
-import { ApiError, handleApiResponse, makeRequest } from './client';
+import { handleApiResponse, makeRequest } from './client';
 
 export const imagesApi = {
   upload: async (file: File): Promise<ImageResponse> => {
     const formData = new FormData();
     formData.append('image', file);
 
-    const response = await fetch('/api/images/upload', {
+    const response = await makeRequest('/api/images/upload', {
       method: 'POST',
       body: formData,
-      credentials: 'include',
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new ApiError(
-        `Failed to upload image: ${errorText}`,
-        response.status,
-        response
-      );
-    }
-
     return handleApiResponse<ImageResponse>(response);
   },
 
@@ -29,21 +18,10 @@ export const imagesApi = {
     const formData = new FormData();
     formData.append('image', file);
 
-    const response = await fetch(`/api/images/task/${taskId}/upload`, {
+    const response = await makeRequest(`/api/images/task/${taskId}/upload`, {
       method: 'POST',
       body: formData,
-      credentials: 'include',
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new ApiError(
-        `Failed to upload image: ${errorText}`,
-        response.status,
-        response
-      );
-    }
-
     return handleApiResponse<ImageResponse>(response);
   },
 
@@ -54,24 +32,13 @@ export const imagesApi = {
     const formData = new FormData();
     formData.append('image', file);
 
-    const response = await fetch(
+    const response = await makeRequest(
       `/api/task-attempts/${attemptId}/images/upload`,
       {
         method: 'POST',
         body: formData,
-        credentials: 'include',
       }
     );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new ApiError(
-        `Failed to upload image: ${errorText}`,
-        response.status,
-        response
-      );
-    }
-
     return handleApiResponse<ImageResponse>(response);
   },
 
@@ -85,6 +52,26 @@ export const imagesApi = {
   getTaskImages: async (taskId: string): Promise<ImageResponse[]> => {
     const response = await makeRequest(`/api/images/task/${taskId}`);
     return handleApiResponse<ImageResponse[]>(response);
+  },
+
+  getAttemptImageMetadata: async (
+    attemptId: string,
+    path: string
+  ): Promise<ImageMetadata | null> => {
+    const response = await makeRequest(
+      `/api/task-attempts/${attemptId}/images/metadata?path=${encodeURIComponent(path)}`
+    );
+    return handleApiResponse<ImageMetadata | null>(response);
+  },
+
+  getTaskImageMetadata: async (
+    taskId: string,
+    path: string
+  ): Promise<ImageMetadata | null> => {
+    const response = await makeRequest(
+      `/api/images/task/${taskId}/metadata?path=${encodeURIComponent(path)}`
+    );
+    return handleApiResponse<ImageMetadata | null>(response);
   },
 
   getImageUrl: (imageId: string): string => {

@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { attemptsApi } from '@/lib/api';
 import { repoBranchKeys } from './useRepoBranches';
+import { branchStatusKeys } from './useBranchStatus';
 
 type MergeParams = {
   repoId: string;
@@ -22,7 +23,9 @@ export function useMerge(
     },
     onSuccess: () => {
       // Refresh attempt-specific branch information
-      queryClient.invalidateQueries({ queryKey: ['branchStatus', attemptId] });
+      queryClient.invalidateQueries({
+        queryKey: branchStatusKeys.byAttempt(attemptId),
+      });
 
       // Invalidate all repo branches queries
       queryClient.invalidateQueries({ queryKey: repoBranchKeys.all });

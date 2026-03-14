@@ -5,6 +5,7 @@ import { useTaskStopping } from '@/stores/useTaskDetailsUiStore';
 import { useExecutionProcessesContext } from '@/contexts/ExecutionProcessesContext';
 import type { AttemptData } from '@/lib/types';
 import type { ExecutionProcess } from 'shared/types';
+import { executionProcessKeys } from '@/query-keys/executionProcessKeys';
 
 export function useAttemptExecution(attemptId?: string, taskId?: string) {
   const { isStopping, setIsStopping } = useTaskStopping(taskId || '');
@@ -25,7 +26,7 @@ export function useAttemptExecution(attemptId?: string, taskId?: string) {
   // Fetch details for setup processes
   const processDetailQueries = useQueries({
     queries: setupProcesses.map((process) => ({
-      queryKey: ['processDetails', process.id],
+      queryKey: executionProcessKeys.details(process.id),
       queryFn: () => executionProcessesApi.getDetails(process.id),
       enabled: !!process.id,
     })),

@@ -8,7 +8,7 @@ import {
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Operation } from 'rfc6902';
-import { withApiTokenQuery } from '@/api/token';
+import { createEventSource } from '@/lib/api';
 import { invalidateQueriesFromJsonPatch } from '@/contexts/eventStreamInvalidation';
 
 type EventStreamContextType = {
@@ -23,7 +23,7 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    const source = new EventSource(withApiTokenQuery('/api/events'));
+    const source = createEventSource('/api/events');
 
     source.onopen = () => {
       setIsConnected(true);

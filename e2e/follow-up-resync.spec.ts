@@ -64,7 +64,7 @@ test('follow-up send triggers execution-processes resync', async ({
   );
   await expect(
     page.locator('#kanban').getByRole('heading', { name: taskTitle })
-  ).toBeVisible({ timeout: 60_000 });
+  ).toBeVisible({ timeout: 15_000 });
 
   // Ensure attempt history is loaded before asserting on follow-up UI.
   await expect(page.getByText('Loading History')).toBeHidden({
@@ -118,7 +118,7 @@ test('follow-up send triggers execution-processes resync', async ({
 
     // Ensure the follow-up message is visible in the conversation history.
     await expect(page.getByText(message, { exact: true })).toBeVisible({
-      timeout: 60_000,
+      timeout: 15_000,
     });
 
     await expect(sendButton).toBeDisabled({ timeout: 10_000 });

@@ -4,13 +4,14 @@ import type {
   CliDependencyPreflightResponse,
 } from 'shared/types';
 import { configApi } from '@/lib/api';
+import { cliKeys } from '@/query-keys/cliKeys';
 
 export function useCliDependencyPreflight(
   agent: BaseCodingAgent | null | undefined,
   enabled = true
 ) {
   return useQuery<CliDependencyPreflightResponse>({
-    queryKey: ['cli-preflight', agent],
+    queryKey: cliKeys.dependencyPreflight(agent),
     queryFn: () => configApi.cliPreflight(agent as BaseCodingAgent),
     enabled: enabled && !!agent,
     staleTime: 30_000,

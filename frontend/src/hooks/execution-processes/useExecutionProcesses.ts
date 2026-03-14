@@ -1,12 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { Operation } from 'rfc6902';
-import { useJsonPatchWsStream } from '../useJsonPatchWsStream';
-import { normalizeIdMapPatches } from '../jsonPatchUtils';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ExecutionProcess } from 'shared/types';
-
-type ExecutionProcessState = {
-  execution_processes: Record<string, ExecutionProcess>;
-};
+import { useIdMapWsStream } from '@/realtime';
+import { useOptimisticExecutionProcessesStore } from '@/stores/useOptimisticExecutionProcessesStore';
 
 interface UseExecutionProcessesResult {
   executionProcesses: ExecutionProcess[];
@@ -47,29 +42,42 @@ export const useExecutionProcesses = (
     return () => window.clearTimeout(timer);
   }, [taskAttemptId, showSoftDeleted]);
 
-  const initialData = useCallback(
-    (): ExecutionProcessState => ({ execution_processes: {} }),
-    []
-  );
-  const deduplicatePatches = useCallback(
-    (patches: Operation[], current: ExecutionProcessState | undefined) =>
-      normalizeIdMapPatches(
-        patches,
-        current?.execution_processes,
-        '/execution_processes/'
-      ),
-    []
-  );
-
   const { data, isConnected, isResyncing, error, resync } =
-    useJsonPatchWsStream<ExecutionProcessState>(
+    useIdMapWsStream<'execution_processes', ExecutionProcess>(
       endpoint,
       connectEnabled,
-      initialData,
-      { deduplicatePatches }
+      'execution_processes',
+      '/execution_processes/'
     );
 
-  const executionProcessesById = data?.execution_processes ?? {};
+  const streamById = useMemo(
+    () => data?.execution_processes ?? {},
+    [data?.execution_processes]
+  );
+  const optimisticById = useOptimisticExecutionProcessesStore(
+    useCallback(
+      (state) =>
+        taskAttemptId ? (state.byAttemptId[taskAttemptId] ?? {}) : {},
+      [taskAttemptId]
+    )
+  );
+  const removeManyOptimistic = useOptimisticExecutionProcessesStore(
+    (state) => state.removeMany
+  );
+
+  useEffect(() => {
+    if (!taskAttemptId) return;
+    const optimisticIds = Object.keys(optimisticById);
+    if (optimisticIds.length === 0) return;
+    const present = optimisticIds.filter((id) => !!streamById[id]);
+    if (present.length > 0) {
+      removeManyOptimistic(taskAttemptId, present);
+    }
+  }, [optimisticById, removeManyOptimistic, streamById, taskAttemptId]);
+
+  const executionProcessesById = taskAttemptId
+    ? { ...optimisticById, ...streamById }
+    : streamById;
   const executionProcesses = Object.values(executionProcessesById).sort(
     (a, b) =>
       new Date(a.created_at as unknown as string).getTime() -

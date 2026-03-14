@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { applyPatch } from 'rfc6902';
 import type { Operation } from 'rfc6902';
-import { withApiTokenQuery } from '@/api/token';
+import { createWebSocket } from '@/lib/api';
 
 type WsJsonPatchMsg = { JsonPatch: Operation[] };
 type WsFinishedMsg = { finished: boolean };
@@ -151,9 +151,7 @@ export const useJsonPatchWsStream = <T extends object>(
         setIsResyncing(true);
       }
 
-      // Convert HTTP endpoint to WebSocket endpoint
-      const wsEndpoint = withApiTokenQuery(endpoint.replace(/^http/, 'ws'));
-      const ws = new WebSocket(wsEndpoint);
+      const ws = createWebSocket(endpoint);
 
       ws.onopen = () => {
         if (closeOnOpenForResyncRef.current) {

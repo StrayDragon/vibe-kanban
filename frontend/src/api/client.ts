@@ -20,7 +20,19 @@ export class ApiError<E = unknown> extends Error {
 
 export const makeRequest = async (url: string, options: RequestInit = {}) => {
   const headers = new Headers(options.headers ?? {});
-  if (!headers.has('Content-Type')) {
+  const body = options.body;
+  const isFormData =
+    typeof FormData !== 'undefined' && body instanceof FormData;
+  const isUrlSearchParams =
+    typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams;
+  const isBlob = typeof Blob !== 'undefined' && body instanceof Blob;
+  const shouldSetJsonContentType =
+    !headers.has('Content-Type') &&
+    body != null &&
+    !isFormData &&
+    !isUrlSearchParams &&
+    !isBlob;
+  if (shouldSetJsonContentType) {
     headers.set('Content-Type', 'application/json');
   }
 

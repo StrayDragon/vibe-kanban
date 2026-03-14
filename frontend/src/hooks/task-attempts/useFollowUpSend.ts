@@ -1,9 +1,11 @@
 import { useCallback, useState } from 'react';
 import { sessionsApi } from '@/lib/api';
-import type { CreateFollowUpAttempt } from 'shared/types';
+import type { CreateFollowUpAttempt, ExecutionProcess } from 'shared/types';
+import { useOptimisticExecutionProcessesStore } from '@/stores/useOptimisticExecutionProcessesStore';
 
 type Args = {
   sessionId?: string;
+  attemptId?: string;
   message: string;
   conflictMarkdown: string | null;
   reviewMarkdown: string;
@@ -12,10 +14,12 @@ type Args = {
   clearComments: () => void;
   clearClickedElements?: () => void;
   onAfterSendCleanup: () => void;
+  resyncExecutionProcesses?: (reason?: string) => void;
 };
 
 export function useFollowUpSend({
   sessionId,
+  attemptId,
   message,
   conflictMarkdown,
   reviewMarkdown,
@@ -24,6 +28,7 @@ export function useFollowUpSend({
   clearComments,
   clearClickedElements,
   onAfterSendCleanup,
+  resyncExecutionProcesses,
 }: Args) {
   const [isSendingFollowUp, setIsSendingFollowUp] = useState(false);
   const [followUpError, setFollowUpError] = useState<string | null>(null);
@@ -53,7 +58,16 @@ export function useFollowUpSend({
           force_when_dirty: null,
           perform_git_reset: null,
         };
-        await sessionsApi.followUp(sessionId, body);
+        const process: ExecutionProcess = await sessionsApi.followUp(
+          sessionId,
+          body
+        );
+        if (attemptId) {
+          useOptimisticExecutionProcessesStore
+            .getState()
+            .insert(attemptId, process);
+        }
+        resyncExecutionProcesses?.('follow-up-sent');
         clearComments();
         clearClickedElements?.();
         onAfterSendCleanup();
@@ -69,6 +83,7 @@ export function useFollowUpSend({
     },
     [
       sessionId,
+      attemptId,
       message,
       conflictMarkdown,
       reviewMarkdown,
@@ -77,6 +92,7 @@ export function useFollowUpSend({
       clearComments,
       clearClickedElements,
       onAfterSendCleanup,
+      resyncExecutionProcesses,
     ]
   );
 

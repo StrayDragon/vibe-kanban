@@ -1,4 +1,8 @@
-import type { ExecutionProcess, ExecutionProcessRepoState } from 'shared/types';
+import type {
+  ExecutionProcess,
+  ExecutionProcessRepoState,
+  LogHistoryPage,
+} from 'shared/types';
 
 import { handleApiResponse, makeRequest } from './client';
 
@@ -6,6 +10,38 @@ export const executionProcessesApi = {
   getDetails: async (processId: string): Promise<ExecutionProcess> => {
     const response = await makeRequest(`/api/execution-processes/${processId}`);
     return handleApiResponse<ExecutionProcess>(response);
+  },
+
+  getRawLogsPage: async (
+    processId: string,
+    params: { limit: number; cursor?: bigint | null }
+  ): Promise<LogHistoryPage> => {
+    const search = new URLSearchParams();
+    search.set('limit', String(params.limit));
+    if (params.cursor != null) {
+      search.set('cursor', String(params.cursor));
+    }
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    const response = await makeRequest(
+      `/api/execution-processes/${processId}/raw-logs/v2${suffix}`
+    );
+    return handleApiResponse<LogHistoryPage>(response);
+  },
+
+  getNormalizedLogsPage: async (
+    processId: string,
+    params: { limit: number; cursor?: bigint | null }
+  ): Promise<LogHistoryPage> => {
+    const search = new URLSearchParams();
+    search.set('limit', String(params.limit));
+    if (params.cursor != null) {
+      search.set('cursor', String(params.cursor));
+    }
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    const response = await makeRequest(
+      `/api/execution-processes/${processId}/normalized-logs/v2${suffix}`
+    );
+    return handleApiResponse<LogHistoryPage>(response);
   },
 
   getRepoStates: async (

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Operation } from 'rfc6902';
 import { invalidateQueriesFromJsonPatch } from './eventStreamInvalidation';
-import { taskAttemptKeys } from '@/hooks/task-attempts/useTaskAttempts';
 import { branchStatusKeys } from '@/hooks/task-attempts/useBranchStatus';
+import { taskAttemptKeys } from '@/query-keys/taskAttemptKeys';
 
 describe('invalidateQueriesFromJsonPatch', () => {
   it('invalidates attempt and branch status queries for workspace updates', () => {
@@ -34,10 +34,10 @@ describe('invalidateQueriesFromJsonPatch', () => {
       queryKey: branchStatusKeys.byAttempt('workspace-1'),
     });
     expect(invalidateQueries).toHaveBeenCalledWith({
-      queryKey: ['taskAttempt', 'workspace-1'],
+      queryKey: taskAttemptKeys.attempt('workspace-1'),
     });
     expect(invalidateQueries).toHaveBeenCalledWith({
-      queryKey: ['taskAttemptWithSession', 'workspace-1'],
+      queryKey: taskAttemptKeys.attemptWithSession('workspace-1'),
     });
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: branchStatusKeys.all,

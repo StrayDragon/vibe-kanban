@@ -1,6 +1,5 @@
 // useConversationHistory.ts
 import {
-  ApiResponse,
   CommandExitStatus,
   ExecutionProcess,
   ExecutionProcessStatus,
@@ -14,7 +13,8 @@ import {
 } from 'shared/types';
 import { useExecutionProcessesContext } from '@/contexts/ExecutionProcessesContext';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { streamLogEntries } from '@/utils/streamLogEntries';
+import { executionProcessesApi } from '@/lib/api';
+import { openLogStream } from '@/realtime';
 
 export type PatchTypeWithKey = PatchType & {
   patchKey: string;
@@ -208,26 +208,10 @@ const fetchLogHistoryPage = async (
   executionProcess: ExecutionProcess,
   cursor: bigint | null
 ): Promise<LogHistoryPage> => {
-  const endpoint = isScriptProcess(executionProcess)
-    ? 'raw-logs/v2'
-    : 'normalized-logs/v2';
-  const params = new URLSearchParams();
-  params.set('limit', String(CONVERSATION_PAGE_SIZE));
-  if (cursor !== null) {
-    params.set('cursor', String(cursor));
-  }
-
-  const res = await fetch(
-    `/api/execution-processes/${executionProcess.id}/${endpoint}?${params.toString()}`
-  );
-  if (!res.ok) {
-    throw new Error(`Failed to load logs for ${executionProcess.id}`);
-  }
-  const body = (await res.json()) as ApiResponse<LogHistoryPage>;
-  if (!body.data) {
-    throw new Error(`No log history returned for ${executionProcess.id}`);
-  }
-  return body.data;
+  const params = { limit: CONVERSATION_PAGE_SIZE, cursor };
+  return isScriptProcess(executionProcess)
+    ? executionProcessesApi.getRawLogsPage(executionProcess.id, params)
+    : executionProcessesApi.getNormalizedLogsPage(executionProcess.id, params);
 };
 
 export const useConversationHistory = ({
@@ -775,7 +759,7 @@ export const useConversationHistory = ({
           ? 'raw-logs/v2/ws'
           : 'normalized-logs/v2/ws';
 
-        const controller = streamLogEntries(
+        const controller = openLogStream(
           `/api/execution-processes/${executionProcess.id}/${endpoint}`,
           {
             onOpen: () => {

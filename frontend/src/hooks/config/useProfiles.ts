@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { profilesApi } from '@/lib/api';
 import type { JsonValue } from 'shared/types';
+import { profileKeys } from '@/query-keys/profileKeys';
 
 export type UseProfilesReturn = {
   // data
@@ -25,7 +26,7 @@ export function useProfiles(): UseProfilesReturn {
   const queryClient = useQueryClient();
 
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['profiles'],
+    queryKey: profileKeys.all,
     queryFn: () => profilesApi.load(),
     staleTime: 1000 * 60, // 1 minute cache
   });
@@ -35,7 +36,7 @@ export function useProfiles(): UseProfilesReturn {
     onSuccess: (_, content) => {
       // Optimistically update cache with new content
       queryClient.setQueryData<{ content: string; path: string }>(
-        ['profiles'],
+        profileKeys.all,
         (old) => (old ? { ...old, content } : old)
       );
     },

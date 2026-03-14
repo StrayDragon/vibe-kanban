@@ -35,7 +35,7 @@ test.describe('project tasks', () => {
 
     await expect(
       todoColumn.getByRole('heading', { name: taskTitle }).first()
-    ).toBeVisible({ timeout: 60_000 });
+    ).toBeVisible({ timeout: 15_000 });
 
     await doneColumn.scrollIntoViewIfNeeded();
     const draggableCard = todoColumn

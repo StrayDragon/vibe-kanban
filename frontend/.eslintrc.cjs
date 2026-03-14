@@ -1,5 +1,58 @@
 const i18nCheck = process.env.LINT_I18N === 'true';
 
+const restrictedSyntaxModal = [
+  {
+    selector:
+      'CallExpression[callee.object.name="NiceModal"][callee.property.name="show"]',
+    message:
+      'Do not use NiceModal.show() directly. Use DialogName.show(props) instead.',
+  },
+  {
+    selector:
+      'CallExpression[callee.object.name="NiceModal"][callee.property.name="register"]',
+    message:
+      'Do not use NiceModal.register(). Dialogs are registered automatically.',
+  },
+  {
+    selector: 'CallExpression[callee.name="showModal"]',
+    message: 'Do not use showModal(). Use DialogName.show(props) instead.',
+  },
+  {
+    selector: 'CallExpression[callee.name="hideModal"]',
+    message: 'Do not use hideModal(). Use DialogName.hide() instead.',
+  },
+  {
+    selector: 'CallExpression[callee.name="removeModal"]',
+    message: 'Do not use removeModal(). Use DialogName.remove() instead.',
+  },
+];
+
+const restrictedSyntaxNetwork = [
+  {
+    selector: 'CallExpression[callee.name="fetch"]',
+    message:
+      'Do not call fetch() outside frontend/src/api/**. Use the API layer (e.g. makeRequest/handleApiResponse) instead.',
+  },
+  {
+    selector: 'NewExpression[callee.name="WebSocket"]',
+    message:
+      'Do not construct WebSocket outside frontend/src/api/**. Use createWebSocket() from the API layer instead.',
+  },
+  {
+    selector: 'NewExpression[callee.name="EventSource"]',
+    message:
+      'Do not construct EventSource outside frontend/src/api/**. Use createEventSource() from the API layer instead.',
+  },
+];
+
+const restrictedSyntaxQueryKeys = [
+  {
+    selector: 'Property[key.name="queryKey"] > ArrayExpression',
+    message:
+      'Do not inline React Query queryKey arrays in hooks. Define/import a domain key factory (e.g. *Keys) and use that instead.',
+  },
+];
+
 module.exports = {
   root: true,
   env: {
@@ -58,31 +111,8 @@ module.exports = {
     ],
     'no-restricted-syntax': [
       'error',
-      {
-        selector:
-          'CallExpression[callee.object.name="NiceModal"][callee.property.name="show"]',
-        message:
-          'Do not use NiceModal.show() directly. Use DialogName.show(props) instead.',
-      },
-      {
-        selector:
-          'CallExpression[callee.object.name="NiceModal"][callee.property.name="register"]',
-        message:
-          'Do not use NiceModal.register(). Dialogs are registered automatically.',
-      },
-      {
-        selector: 'CallExpression[callee.name="showModal"]',
-        message:
-          'Do not use showModal(). Use DialogName.show(props) instead.',
-      },
-      {
-        selector: 'CallExpression[callee.name="hideModal"]',
-        message: 'Do not use hideModal(). Use DialogName.hide() instead.',
-      },
-      {
-        selector: 'CallExpression[callee.name="removeModal"]',
-        message: 'Do not use removeModal(). Use DialogName.remove() instead.',
-      },
+      ...restrictedSyntaxModal,
+      ...restrictedSyntaxNetwork,
     ],
     // i18n rule - only active when LINT_I18N=true
     'i18next/no-literal-string': i18nCheck
@@ -172,7 +202,27 @@ module.exports = {
       files: ['src/lib/modals.ts', 'src/App.tsx', 'src/components/dialogs/**/*.{ts,tsx}'],
       rules: {
         'no-restricted-imports': 'off',
-        'no-restricted-syntax': 'off',
+        'no-restricted-syntax': ['error', ...restrictedSyntaxNetwork],
+      },
+    },
+    {
+      // API boundary allowlist: only API modules may call fetch / construct WS/SSE
+      files: ['src/api/**/*.{ts,tsx}'],
+      rules: {
+        'no-restricted-syntax': ['error', ...restrictedSyntaxModal],
+      },
+    },
+    {
+      // Guardrail: hooks must not inline queryKey arrays
+      files: ['src/hooks/**/*.{ts,tsx}'],
+      excludedFiles: ['**/*.test.{ts,tsx}'],
+      rules: {
+        'no-restricted-syntax': [
+          'error',
+          ...restrictedSyntaxModal,
+          ...restrictedSyntaxNetwork,
+          ...restrictedSyntaxQueryKeys,
+        ],
       },
     },
   ],

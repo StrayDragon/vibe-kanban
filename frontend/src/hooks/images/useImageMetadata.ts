@@ -2,6 +2,8 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { ImageMetadata } from 'shared/types';
 import type { LocalImageMetadata } from '@/components/ui/wysiwyg/context/task-attempt-context';
+import { imagesApi } from '@/lib/api';
+import { imageKeys } from '@/query-keys/imageKeys';
 
 export function useImageMetadata(
   taskAttemptId: string | undefined,
@@ -38,25 +40,20 @@ export function useImageMetadata(
   const shouldFetch = isVibeImage && hasContext && !localImage;
 
   const query = useQuery({
-    queryKey: ['imageMetadata', taskAttemptId, taskId, src],
+    queryKey: imageKeys.metadata({ taskAttemptId, taskId, src }),
     queryFn: async (): Promise<ImageMetadata | null> => {
       // Pure API logic - no local image handling
       if (taskAttemptId) {
-        const res = await fetch(
-          `/api/task-attempts/${taskAttemptId}/images/metadata?path=${encodeURIComponent(src)}`
+        const attemptMetadata = await imagesApi.getAttemptImageMetadata(
+          taskAttemptId,
+          src
         );
-        const data = await res.json();
-        const attemptMetadata = data.data as ImageMetadata | null;
         if (attemptMetadata?.exists || !taskId) {
           return attemptMetadata;
         }
       }
       if (taskId) {
-        const res = await fetch(
-          `/api/images/task/${taskId}/metadata?path=${encodeURIComponent(src)}`
-        );
-        const data = await res.json();
-        return data.data as ImageMetadata | null;
+        return imagesApi.getTaskImageMetadata(taskId, src);
       }
       return null;
     },

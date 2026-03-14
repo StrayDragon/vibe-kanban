@@ -2,16 +2,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo } from 'react';
 import { attemptsApi } from '@/lib/api';
 import type { RepoWithTargetBranch } from 'shared/types';
+import { taskAttemptKeys } from '@/query-keys/taskAttemptKeys';
 
 export function useAttemptRepo(attemptId?: string) {
   const queryClient = useQueryClient();
 
   const query = useQuery<RepoWithTargetBranch[]>({
-    queryKey: ['attemptRepo', attemptId],
-    queryFn: async () => {
-      const repos = await attemptsApi.getRepos(attemptId!);
-      return repos;
-    },
+    queryKey: taskAttemptKeys.repo(attemptId),
+    queryFn: () => attemptsApi.getRepos(attemptId!),
     enabled: !!attemptId,
   });
 
@@ -19,7 +17,7 @@ export function useAttemptRepo(attemptId?: string) {
 
   // Use React Query cache for shared state across all hook consumers
   const { data: selectedRepoId = null } = useQuery<string | null>({
-    queryKey: ['attemptRepoSelection', attemptId],
+    queryKey: taskAttemptKeys.repoSelection(attemptId),
     queryFn: () => null,
     enabled: false,
     staleTime: Infinity,
@@ -27,7 +25,7 @@ export function useAttemptRepo(attemptId?: string) {
 
   const setSelectedRepoId = useCallback(
     (id: string | null) => {
-      queryClient.setQueryData(['attemptRepoSelection', attemptId], id);
+      queryClient.setQueryData(taskAttemptKeys.repoSelection(attemptId), id);
     },
     [queryClient, attemptId]
   );

@@ -3,13 +3,9 @@ import { attemptsApi } from '@/lib/api';
 import type { Workspace } from 'shared/types';
 import type { WorkspaceWithSession } from '@/types/attempt';
 import { useSsePollingInterval } from '@/hooks/utils/useSsePollingInterval';
+import { taskAttemptKeys } from '@/query-keys/taskAttemptKeys';
 
-export const taskAttemptKeys = {
-  all: ['taskAttempts'] as const,
-  byTask: (taskId: string | undefined) => ['taskAttempts', taskId] as const,
-  byTaskWithSessions: (taskId: string | undefined) =>
-    ['taskAttemptsWithSessions', taskId] as const,
-};
+export { taskAttemptKeys };
 
 type Options = {
   enabled?: boolean;

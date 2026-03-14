@@ -30,4 +30,15 @@ describe('makeRequest', () => {
     const headers = new Headers(init?.headers);
     expect(headers.has('Authorization')).toBe(false);
   });
+
+  it('does not set JSON Content-Type for FormData bodies', async () => {
+    const body = new FormData();
+    body.append('file', 'x');
+
+    await makeRequest('/api/upload', { method: 'POST', body });
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    const headers = new Headers(init?.headers);
+    expect(headers.get('Content-Type')).toBe(null);
+  });
 });

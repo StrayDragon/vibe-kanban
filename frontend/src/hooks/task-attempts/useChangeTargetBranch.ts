@@ -5,6 +5,8 @@ import type {
   ChangeTargetBranchResponse,
 } from 'shared/types';
 import { repoBranchKeys } from './useRepoBranches';
+import { branchStatusKeys } from './useBranchStatus';
+import { taskAttemptKeys } from '@/query-keys/taskAttemptKeys';
 
 type ChangeTargetBranchParams = {
   newTargetBranch: string;
@@ -38,11 +40,11 @@ export function useChangeTargetBranch(
     onSuccess: (data) => {
       if (attemptId) {
         queryClient.invalidateQueries({
-          queryKey: ['branchStatus', attemptId],
+          queryKey: branchStatusKeys.byAttempt(attemptId),
         });
         // Invalidate taskAttempt query to refresh attempt.target_branch
         queryClient.invalidateQueries({
-          queryKey: ['taskAttempt', attemptId],
+          queryKey: taskAttemptKeys.attempt(attemptId),
         });
       }
 
@@ -58,7 +60,7 @@ export function useChangeTargetBranch(
       console.error('Failed to change target branch:', err);
       if (attemptId) {
         queryClient.invalidateQueries({
-          queryKey: ['branchStatus', attemptId],
+          queryKey: branchStatusKeys.byAttempt(attemptId),
         });
       }
       onError?.(err);
