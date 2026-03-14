@@ -80,9 +80,6 @@ export default defineConfig({
     },
     open: process.env.VITE_OPEN === "true",
   },
-  optimizeDeps: {
-    exclude: ["wa-sqlite"],
-  },
   build: { sourcemap: shouldGenerateSourceMap },
   test: {
     environment: "jsdom",
