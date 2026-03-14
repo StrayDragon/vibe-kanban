@@ -16,13 +16,13 @@ use codex_app_server_protocol::{
     ThreadForkResponse, ThreadStartParams, ThreadStartResponse, TurnStartParams, TurnStartResponse,
     UserInput,
 };
-use codex_protocol::protocol::ReviewDecision;
+use codex_protocol::protocol::{EventMsg, ReviewDecision};
 use executors_core::{
     approvals::{ExecutorApprovalError, ExecutorApprovalService},
     executors::ExecutorError,
     log_writer::LogWriter,
 };
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{self, Value};
 use tokio::sync::Mutex;
 use utils_core::approvals::ApprovalStatus;
@@ -31,6 +31,12 @@ use super::{
     jsonrpc::{JsonRpcCallbacks, JsonRpcPeer},
     normalize_logs::Approval,
 };
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexEventNotificationParams {
+    msg: EventMsg,
+}
 
 pub struct AppServerClient {
     rpc: OnceLock<JsonRpcPeer>,
@@ -527,7 +533,14 @@ impl JsonRpcCallbacks for AppServerClient {
 
         let has_finished = method
             .strip_prefix("codex/event/")
-            .is_some_and(|suffix| suffix == "task_complete");
+            .is_some_and(|suffix| matches!(suffix, "task_complete" | "turn_complete"))
+            || notification
+                .params
+                .as_ref()
+                .and_then(|params| {
+                    serde_json::from_value::<CodexEventNotificationParams>(params.clone()).ok()
+                })
+                .is_some_and(|params| matches!(params.msg, EventMsg::TurnComplete(_)));
 
         Ok(has_finished)
     }
@@ -722,6 +735,46 @@ mod tests {
         let notification = JSONRPCNotification {
             method: "codex/event/task_complete".to_string(),
             params: None,
+        };
+
+        let finished = client
+            .on_notification(&peer, "raw", notification)
+            .await
+            .expect("notification");
+
+        assert!(finished);
+    }
+
+    #[tokio::test]
+    async fn on_notification_turn_complete_returns_true() {
+        let state = Arc::new(Mutex::new(ResponseState::default()));
+        let peer = spawn_peer(state).await;
+        let client = AppServerClient::new(LogWriter::new(tokio::io::sink()), None, false);
+
+        let notification = JSONRPCNotification {
+            method: "codex/event/turn_complete".to_string(),
+            params: None,
+        };
+
+        let finished = client
+            .on_notification(&peer, "raw", notification)
+            .await
+            .expect("notification");
+
+        assert!(finished);
+    }
+
+    #[tokio::test]
+    async fn on_notification_turn_complete_in_params_returns_true() {
+        let state = Arc::new(Mutex::new(ResponseState::default()));
+        let peer = spawn_peer(state).await;
+        let client = AppServerClient::new(LogWriter::new(tokio::io::sink()), None, false);
+
+        let notification = JSONRPCNotification {
+            method: "codex/event".to_string(),
+            params: Some(serde_json::json!({
+                "msg": { "type": "turn_complete" }
+            })),
         };
 
         let finished = client
