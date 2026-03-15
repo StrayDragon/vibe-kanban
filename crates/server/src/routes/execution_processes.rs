@@ -14,7 +14,7 @@ use axum::{
     routing::{get, post},
 };
 use db::models::{
-    execution_process::{ExecutionProcess, ExecutionProcessError, ExecutionProcessStatus},
+    execution_process::{ExecutionProcess, ExecutionProcessStatus},
     execution_process_repo_state::ExecutionProcessRepoState,
 };
 use execution::container::ContainerService;
@@ -198,42 +198,88 @@ pub async fn stream_raw_logs_v2_ws(
     ws: WebSocketUpgrade,
     State(deployment): State<DeploymentImpl>,
     Path(exec_id): Path<Uuid>,
-) -> Result<impl IntoResponse, ApiError> {
-    let shutdown = deployment.shutdown_token();
-    let stream = deployment
-        .container()
-        .stream_raw_log_entries(&exec_id)
-        .await
-        .ok_or_else(|| {
-            ApiError::ExecutionProcess(ExecutionProcessError::ExecutionProcessNotFound)
-        })?;
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
 
-    Ok(ws.on_upgrade(move |socket| async move {
+    ws.on_upgrade(move |socket| async move {
+        let shutdown = deployment.shutdown_token();
+        let stream = deployment
+            .container()
+            .stream_raw_log_entries(&exec_id)
+            .await;
+
+        let Some(stream) = stream else {
+            tracing::warn!(
+                execution_process_id = %exec_id,
+                user_agent = user_agent.as_deref(),
+                close_code = 4404_u16,
+                close_reason = "execution_process_not_found",
+                "raw logs WS rejected"
+            );
+
+            let (mut sender, _) = socket.split();
+            let _ = sender
+                .send(Message::Close(Some(CloseFrame {
+                    code: CloseCode::from(4404_u16),
+                    reason: Utf8Bytes::from_static("execution_process_not_found"),
+                })))
+                .await;
+            let _ = sender.close().await;
+            return;
+        };
+
         if let Err(e) = handle_log_entries_ws(socket, stream, shutdown).await {
             tracing::warn!("raw logs WS closed: {}", e);
         }
-    }))
+    })
 }
 
 pub async fn stream_normalized_logs_v2_ws(
     ws: WebSocketUpgrade,
     State(deployment): State<DeploymentImpl>,
     Path(exec_id): Path<Uuid>,
-) -> Result<impl IntoResponse, ApiError> {
-    let shutdown = deployment.shutdown_token();
-    let stream = deployment
-        .container()
-        .stream_normalized_log_entries(&exec_id)
-        .await
-        .ok_or_else(|| {
-            ApiError::ExecutionProcess(ExecutionProcessError::ExecutionProcessNotFound)
-        })?;
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
 
-    Ok(ws.on_upgrade(move |socket| async move {
+    ws.on_upgrade(move |socket| async move {
+        let shutdown = deployment.shutdown_token();
+        let stream = deployment
+            .container()
+            .stream_normalized_log_entries(&exec_id)
+            .await;
+
+        let Some(stream) = stream else {
+            tracing::warn!(
+                execution_process_id = %exec_id,
+                user_agent = user_agent.as_deref(),
+                close_code = 4404_u16,
+                close_reason = "execution_process_not_found",
+                "normalized logs WS rejected"
+            );
+
+            let (mut sender, _) = socket.split();
+            let _ = sender
+                .send(Message::Close(Some(CloseFrame {
+                    code: CloseCode::from(4404_u16),
+                    reason: Utf8Bytes::from_static("execution_process_not_found"),
+                })))
+                .await;
+            let _ = sender.close().await;
+            return;
+        };
+
         if let Err(e) = handle_log_entries_ws(socket, stream, shutdown).await {
             tracing::warn!("normalized logs WS closed: {}", e);
         }
-    }))
+    })
 }
 
 async fn handle_log_entries_ws(
@@ -472,18 +518,25 @@ pub async fn get_execution_process_repo_states(
 }
 
 pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
-    let workspace_id_router = Router::new()
+    // WebSocket routes must not rely on the model-loader middleware: returning a 404 during the
+    // WS handshake surfaces as a browser-side 1006 and can trigger aggressive reconnect loops.
+    // Instead, WS handlers should always upgrade and then close with a meaningful close code.
+    let workspace_id_ws_router = Router::new()
+        .route("/raw-logs/v2/ws", get(stream_raw_logs_v2_ws))
+        .route("/normalized-logs/v2/ws", get(stream_normalized_logs_v2_ws));
+
+    let workspace_id_http_router = Router::new()
         .route("/", get(get_execution_process_by_id))
         .route("/stop", post(stop_execution_process))
         .route("/repo-states", get(get_execution_process_repo_states))
         .route("/raw-logs/v2", get(get_raw_logs_v2))
-        .route("/raw-logs/v2/ws", get(stream_raw_logs_v2_ws))
         .route("/normalized-logs/v2", get(get_normalized_logs_v2))
-        .route("/normalized-logs/v2/ws", get(stream_normalized_logs_v2_ws))
         .layer(from_fn_with_state(
             deployment.clone(),
             load_execution_process_middleware::<DeploymentImpl>,
         ));
+
+    let workspace_id_router = workspace_id_ws_router.merge(workspace_id_http_router);
 
     let workspaces_router = Router::new()
         .route("/stream/ws", get(stream_execution_processes_ws))

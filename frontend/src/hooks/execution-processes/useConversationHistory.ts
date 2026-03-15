@@ -760,7 +760,10 @@ export const useConversationHistory = ({
           ? 'raw-logs/v2/ws'
           : 'normalized-logs/v2/ws';
 
-        const controller = openLogStream(
+        let controller: ReturnType<typeof openLogStream> | null = null;
+        let shouldCloseAfterInit = false;
+
+        controller = openLogStream(
           `/api/execution-processes/${executionProcess.id}/${endpoint}`,
           {
             onOpen: () => {
@@ -844,15 +847,21 @@ export const useConversationHistory = ({
                 'running',
                 false
               );
-              controller.close();
+              shouldCloseAfterInit = true;
+              controller?.close();
               resolve();
             },
-            onError: () => {
-              controller.close();
-              reject();
+            onError: (err) => {
+              shouldCloseAfterInit = true;
+              controller?.close();
+              reject(err);
             },
           }
         );
+
+        if (shouldCloseAfterInit) {
+          controller?.close();
+        }
       });
     },
     [emitEntries, refreshRunningHistory]
@@ -864,12 +873,21 @@ export const useConversationHistory = ({
         try {
           await attachLiveStream(executionProcess);
           break;
-        } catch (_) {
+        } catch (err) {
+          if (
+            typeof err === 'object' &&
+            err !== null &&
+            'code' in err &&
+            (err as { code?: number }).code === 4404
+          ) {
+            await refreshRunningHistory(executionProcess).catch(() => null);
+            break;
+          }
           await new Promise((resolve) => setTimeout(resolve, 500));
         }
       }
     },
-    [attachLiveStream]
+    [attachLiveStream, refreshRunningHistory]
   );
 
   const loadInitialEntries = useCallback(async () => {

@@ -10,12 +10,12 @@ use codex_app_server_protocol::{
     CommandExecutionApprovalDecision, CommandExecutionRequestApprovalResponse,
     DynamicToolCallOutputContentItem, DynamicToolCallResponse, ExecCommandApprovalResponse,
     ExecPolicyAmendment, FileChangeApprovalDecision, FileChangeRequestApprovalResponse,
-    GetAuthStatusParams, GetAuthStatusResponse, GrantedPermissionProfile, InitializeParams,
-    JSONRPCError, JSONRPCErrorError, JSONRPCNotification, JSONRPCRequest, JSONRPCResponse,
-    McpServerElicitationAction, McpServerElicitationRequestResponse, PermissionGrantScope,
-    PermissionsRequestApprovalResponse, RequestId, ServerRequest, ThreadForkParams,
-    ThreadStartParams, ToolRequestUserInputAnswer, ToolRequestUserInputResponse, TurnStartParams,
-    TurnStartResponse, UserInput,
+    GetAuthStatusParams, GetAuthStatusResponse, GrantedPermissionProfile, InitializeCapabilities,
+    InitializeParams, JSONRPCError, JSONRPCErrorError, JSONRPCNotification, JSONRPCRequest,
+    JSONRPCResponse, McpServerElicitationAction, McpServerElicitationRequestResponse,
+    PermissionGrantScope, PermissionsRequestApprovalResponse, RequestId, ServerRequest,
+    ThreadForkParams, ThreadStartParams, ToolRequestUserInputAnswer, ToolRequestUserInputResponse,
+    TurnStartParams, TurnStartResponse, UserInput,
 };
 use codex_protocol::protocol::{EventMsg, ReviewDecision};
 use executors_core::{
@@ -101,7 +101,11 @@ impl AppServerClient {
                     title: None,
                     version: env!("CARGO_PKG_VERSION").to_string(),
                 },
-                capabilities: None,
+                capabilities: Some(InitializeCapabilities {
+                    // VK uses experimental fields like `thread/start.dynamicTools`.
+                    experimental_api: true,
+                    opt_out_notification_methods: None,
+                }),
             },
         };
 
@@ -140,7 +144,6 @@ impl AppServerClient {
                 input,
                 cwd: None,
                 approval_policy: None,
-                approvals_reviewer: None,
                 sandbox_policy: None,
                 model: None,
                 service_tier: None,
@@ -641,7 +644,6 @@ impl AppServerClient {
                 }],
                 cwd: None,
                 approval_policy: None,
-                approvals_reviewer: None,
                 sandbox_policy: None,
                 model: None,
                 service_tier: None,
@@ -1103,7 +1105,8 @@ mod tests {
         assert!(matches!(
             parsed.content_items.first(),
             Some(DynamicToolCallOutputContentItem::InputText { text })
-                if text.contains("Invalid arguments") && text.contains("vk.get_attempt_status")
+                if text.contains("Invalid arguments")
+                    && text.contains(crate::codex::dynamic_tools::VK_TOOL_GET_ATTEMPT_STATUS)
         ));
     }
 

@@ -1175,7 +1175,6 @@ fn build_session_configured_event_with_id(
             model_provider_id: "fake-agent".to_string(),
             service_tier: None,
             approval_policy: AskForApproval::OnRequest,
-            approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
             sandbox_policy: SandboxPolicy::WorkspaceWrite {
                 writable_roots: Vec::new(),
                 read_only_access: codex_protocol::protocol::ReadOnlyAccess::FullAccess,

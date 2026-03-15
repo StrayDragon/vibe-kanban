@@ -5,11 +5,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-pub const VK_TOOL_GET_ATTEMPT_STATUS: &str = "vk.get_attempt_status";
-pub const VK_TOOL_TAIL_ATTEMPT_LOGS: &str = "vk.tail_attempt_logs";
-pub const VK_TOOL_GET_ATTEMPT_CHANGES: &str = "vk.get_attempt_changes";
+// Codex tool names must match `^[a-zA-Z0-9_-]+$` (no dots).
+pub const VK_TOOL_GET_ATTEMPT_STATUS: &str = "vk_get_attempt_status";
+pub const VK_TOOL_TAIL_ATTEMPT_LOGS: &str = "vk_tail_attempt_logs";
+pub const VK_TOOL_GET_ATTEMPT_CHANGES: &str = "vk_get_attempt_changes";
 #[cfg(test)]
-pub const VK_TOOL_TEST_MUTATING: &str = "vk.__test_mutating";
+pub const VK_TOOL_TEST_MUTATING: &str = "vk__test_mutating";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VkDynamicToolKind {
@@ -61,7 +62,6 @@ impl VkDynamicToolRegistry {
                     description: "Get a human-readable summary of the current VK attempt."
                         .to_string(),
                     input_schema: schema_attempt_id_only(),
-                    defer_loading: false,
                 },
                 kind: VkDynamicToolKind::ReadOnly,
             },
@@ -71,7 +71,6 @@ impl VkDynamicToolRegistry {
                     description: "Tail recent executor protocol logs for the current VK attempt."
                         .to_string(),
                     input_schema: schema_tail_attempt_logs(),
-                    defer_loading: false,
                 },
                 kind: VkDynamicToolKind::ReadOnly,
             },
@@ -81,7 +80,6 @@ impl VkDynamicToolRegistry {
                     description: "Summarize git changes in the current VK attempt workspace."
                         .to_string(),
                     input_schema: schema_get_attempt_changes(),
-                    defer_loading: false,
                 },
                 kind: VkDynamicToolKind::ReadOnly,
             },
@@ -93,7 +91,6 @@ impl VkDynamicToolRegistry {
                 name: VK_TOOL_TEST_MUTATING.to_string(),
                 description: "Test-only mutating tool (requires approval).".to_string(),
                 input_schema: schema_attempt_id_only(),
-                defer_loading: false,
             },
             kind: VkDynamicToolKind::Mutating,
         });

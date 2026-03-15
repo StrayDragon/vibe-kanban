@@ -234,7 +234,10 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
     const openStream = () => {
       controllerRef.current?.close();
 
-      const controller = openLogStream(
+      let controller: ReturnType<typeof openLogStream> | null = null;
+      let shouldCloseAfterInit = false;
+
+      controller = openLogStream(
         `/api/execution-processes/${processId}/raw-logs/v2/ws`,
         {
           onOpen: () => {
@@ -257,10 +260,21 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
           },
           onFinished: () => {
             finishedRef.current = true;
-            controller.close();
+            shouldCloseAfterInit = true;
+            controller?.close();
           },
-          onError: () => {
+          onError: (err) => {
             if (streamCycleRef.current !== cycle || finishedRef.current) return;
+            if (
+              typeof err === 'object' &&
+              err !== null &&
+              'code' in err &&
+              (err as { code?: number }).code === 4404
+            ) {
+              finishedRef.current = true;
+              setError('Execution process not found');
+              return;
+            }
             setError('Connection failed');
             scheduleReconnect();
           },
@@ -268,6 +282,10 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
       );
 
       controllerRef.current = controller;
+
+      if (shouldCloseAfterInit) {
+        controller?.close();
+      }
     };
 
     openStream();

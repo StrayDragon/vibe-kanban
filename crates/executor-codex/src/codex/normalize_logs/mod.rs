@@ -158,8 +158,8 @@ struct DynamicToolState {
 fn summarize_vk_dynamic_tool_args(tool: &str, arguments: &Value) -> Option<String> {
     let attempt_id = arguments.get("attempt_id").and_then(Value::as_str)?;
     match tool {
-        "vk.get_attempt_status" => Some(format!("attempt_id={attempt_id}")),
-        "vk.tail_attempt_logs" => {
+        "vk_get_attempt_status" => Some(format!("attempt_id={attempt_id}")),
+        "vk_tail_attempt_logs" => {
             let max_lines = arguments
                 .get("max_lines")
                 .and_then(Value::as_u64)
@@ -167,7 +167,7 @@ fn summarize_vk_dynamic_tool_args(tool: &str, arguments: &Value) -> Option<Strin
                 .unwrap_or_else(|| "?".to_string());
             Some(format!("attempt_id={attempt_id} max_lines={max_lines}"))
         }
-        "vk.get_attempt_changes" => {
+        "vk_get_attempt_changes" => {
             let max_files = arguments
                 .get("max_files")
                 .and_then(Value::as_u64)
@@ -2577,7 +2577,7 @@ mod tests {
             EventMsg::DynamicToolCallRequest(DynamicToolCallRequest {
                 call_id: "tool-1".to_string(),
                 turn_id: "turn-1".to_string(),
-                tool: "vk.get_attempt_status".to_string(),
+                tool: "vk_get_attempt_status".to_string(),
                 arguments: json!({ "attempt_id": attempt_id }),
             }),
         );
@@ -2587,7 +2587,7 @@ mod tests {
             EventMsg::DynamicToolCallResponse(DynamicToolCallResponseEvent {
                 call_id: "tool-1".to_string(),
                 turn_id: "turn-1".to_string(),
-                tool: "vk.get_attempt_status".to_string(),
+                tool: "vk_get_attempt_status".to_string(),
                 arguments: json!({ "attempt_id": attempt_id }),
                 content_items: vec![DynamicToolCallOutputContentItem::InputText {
                     text: "ok".to_string(),
@@ -2604,7 +2604,7 @@ mod tests {
                 action_type,
                 status,
             } => {
-                tool_name == "vk.get_attempt_status"
+                tool_name == "vk_get_attempt_status"
                     && matches!(status, ToolStatus::Success)
                     && matches!(action_type, ActionType::Tool { .. })
             }
@@ -2612,7 +2612,7 @@ mod tests {
         })
         .await;
 
-        assert!(entry.content.contains("vk.get_attempt_status"));
+        assert!(entry.content.contains("vk_get_attempt_status"));
         msg_store.push_finished();
     }
 

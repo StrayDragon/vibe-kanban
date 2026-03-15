@@ -313,7 +313,6 @@ impl Codex {
             service_tier: None,
             cwd: Some(cwd.to_string_lossy().to_string()),
             approval_policy,
-            approvals_reviewer: None,
             sandbox,
             config: self.build_config_overrides(),
             service_name: None,
@@ -539,12 +538,10 @@ impl Codex {
                         service_tier: overrides.service_tier,
                         cwd: overrides.cwd,
                         approval_policy: overrides.approval_policy,
-                        approvals_reviewer: overrides.approvals_reviewer,
                         sandbox: overrides.sandbox,
                         config: overrides.config,
                         base_instructions: overrides.base_instructions,
                         developer_instructions: overrides.developer_instructions,
-                        ephemeral: overrides.ephemeral.unwrap_or(false),
                         persist_extended_history: overrides.persist_extended_history,
                     })
                     .await?;
@@ -624,7 +621,7 @@ mod tests {
     use executors_core::{env::ExecutionEnv, executors::StandardCodingAgentExecutor};
     use serde_json::json;
 
-    use super::{Codex, build_input_items};
+    use super::{Codex, build_input_items, dynamic_tools};
 
     #[test]
     fn build_input_items_interleaves_images_in_order() {
@@ -684,9 +681,21 @@ mod tests {
         let params = executor.build_thread_start_params(std::path::Path::new("/tmp"));
         let tools = params.dynamic_tools.expect("dynamic tools registered");
         let names = tools.into_iter().map(|t| t.name).collect::<Vec<_>>();
-        assert!(names.iter().any(|n| n == "vk.get_attempt_status"));
-        assert!(names.iter().any(|n| n == "vk.tail_attempt_logs"));
-        assert!(names.iter().any(|n| n == "vk.get_attempt_changes"));
+        assert!(
+            names
+                .iter()
+                .any(|n| n == dynamic_tools::VK_TOOL_GET_ATTEMPT_STATUS)
+        );
+        assert!(
+            names
+                .iter()
+                .any(|n| n == dynamic_tools::VK_TOOL_TAIL_ATTEMPT_LOGS)
+        );
+        assert!(
+            names
+                .iter()
+                .any(|n| n == dynamic_tools::VK_TOOL_GET_ATTEMPT_CHANGES)
+        );
     }
 
     #[test]
@@ -835,12 +844,12 @@ if [ "${1:-}" = "app-server" ]; then
         ;;
       *\"method\":\"thread/start\"*)
         echo "$line" | grep -q '\"dynamicTools\"' || { echo "missing dynamicTools" >&2; exit 1; }
-        echo "$line" | grep -q 'vk.get_attempt_status' || { echo "missing vk.get_attempt_status" >&2; exit 1; }
+        echo "$line" | grep -q 'vk_get_attempt_status' || { echo "missing vk_get_attempt_status" >&2; exit 1; }
         echo "{\"id\":3,\"result\":{\"thread\":{\"id\":\"$thread_id\"}}}"
         ;;
       *\"method\":\"turn/start\"*)
         echo "{\"id\":4,\"result\":{\"turn\":{\"id\":\"$turn_id\",\"items\":[],\"status\":\"completed\",\"error\":null}}}"
-        echo "{\"id\":$tool_req_id,\"method\":\"item/tool/call\",\"params\":{\"threadId\":\"$thread_id\",\"turnId\":\"$turn_id\",\"callId\":\"$tool_call_id\",\"tool\":\"vk.get_attempt_status\",\"arguments\":{}}}"
+        echo "{\"id\":$tool_req_id,\"method\":\"item/tool/call\",\"params\":{\"threadId\":\"$thread_id\",\"turnId\":\"$turn_id\",\"callId\":\"$tool_call_id\",\"tool\":\"vk_get_attempt_status\",\"arguments\":{}}}"
         ;;
       *\"id\":99*)
         echo "$line" | grep -q '\"success\":true' || { echo "tool call not successful" >&2; exit 1; }

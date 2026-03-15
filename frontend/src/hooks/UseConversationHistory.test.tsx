@@ -665,4 +665,91 @@ describe('useConversationHistory', () => {
       ).toBe(true);
     });
   });
+
+  it('does not retry live streams when execution process is not found', async () => {
+    const now = new Date().toISOString();
+    const executionProcess: ExecutionProcess = {
+      id: 'process-missing-live-stream',
+      session_id: 'session-missing-live-stream',
+      run_reason: 'codingagent',
+      executor_action: {
+        typ: {
+          type: 'CodingAgentInitialRequest',
+          prompt: 'hello',
+          executor_profile_id: {
+            executor: BaseCodingAgent.CODEX,
+            variant: null,
+          },
+          image_paths: {},
+          working_dir: null,
+        },
+        next_action: null,
+      },
+      status: ExecutionProcessStatus.running,
+      exit_code: null,
+      dropped: false,
+      started_at: now,
+      completed_at: null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    mockExecutionContext.executionProcessesVisible = [executionProcess];
+    mockExecutionContext.isLoading = false;
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () =>
+        makeApiResponse({
+          entries: [],
+          next_cursor: null,
+          has_more: false,
+          history_truncated: false,
+        }),
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    streamLogEntriesMock.mockImplementation((_url, opts) => {
+      opts?.onError?.(
+        Object.assign(new Error('execution process not found'), { code: 4404 })
+      );
+      return {
+        close: vi.fn(),
+        isConnected: () => false,
+      };
+    });
+
+    const attempt: Workspace = {
+      id: 'workspace-missing-live-stream',
+      task_id: 'task-missing-live-stream',
+      container_ref: null,
+      branch: 'main',
+      agent_working_dir: null,
+      setup_completed_at: null,
+      latest_hook_run: null,
+      after_prepare_hook_status: null,
+      after_prepare_hook_ran_at: null,
+      after_prepare_hook_error_summary: null,
+      before_cleanup_hook_status: null,
+      before_cleanup_hook_ran_at: null,
+      before_cleanup_hook_error_summary: null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    vi.useFakeTimers();
+
+    const onEntriesUpdated = vi.fn();
+    renderHook(() => useConversationHistory({ attempt, onEntriesUpdated }));
+
+    await act(async () => {});
+    expect(streamLogEntriesMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+
+    expect(streamLogEntriesMock).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
 });

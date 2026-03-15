@@ -66,10 +66,22 @@ export function streamLogEntries(
     opts.onError?.(err);
   });
 
-  ws.addEventListener('close', () => {
+  ws.addEventListener('close', (event) => {
     connected = false;
     if (!finished && !closedByClient && !sawError) {
-      opts.onError?.(new Error('Log stream closed unexpectedly'));
+      const err = Object.assign(
+        new Error(
+          `Log stream closed (code=${event.code}${
+            event.reason ? `, reason=${event.reason}` : ''
+          })`
+        ),
+        {
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean,
+        }
+      );
+      opts.onError?.(err);
     }
   });
 
