@@ -105,7 +105,17 @@ impl AppServerClient {
             request_id: self.next_request_id(),
             params,
         };
-        self.send_request(request, "thread/start").await
+        // `thread/start` responses can include a persisted thread history (`thread.turns.items`),
+        // which evolves over time. We only need the thread id + config for subsequent turns,
+        // so strip the turns to keep deserialization forward-compatible with newer item variants
+        // (e.g. `contextCompaction`).
+        let mut raw: Value = self.send_request(request, "thread/start").await?;
+        strip_thread_turns(&mut raw);
+        serde_json::from_value::<ThreadStartResponse>(raw).map_err(|err| {
+            ExecutorError::Io(io::Error::other(format!(
+                "failed to decode thread/start response: {err}",
+            )))
+        })
     }
 
     pub async fn thread_fork(
@@ -963,6 +973,65 @@ mod thread_fork_sanitization_tests {
 
         strip_thread_turns(&mut raw);
         let parsed: ThreadForkResponse =
+            serde_json::from_value(raw).expect("sanitized decode should succeed");
+        assert_eq!(parsed.thread.id, "thread_123");
+        assert!(parsed.thread.turns.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod thread_start_sanitization_tests {
+    use codex_app_server_protocol::ThreadStartResponse;
+    use serde_json::json;
+
+    use super::strip_thread_turns;
+
+    #[test]
+    fn thread_start_response_sanitization_skips_unknown_turn_items() {
+        // Newer Codex versions can persist additional ThreadItem variants. We want `thread/start`
+        // decoding to be forward-compatible so follow-ups keep working.
+        let mut raw = json!({
+            "thread": {
+                "id": "thread_123",
+                "preview": "hello",
+                "ephemeral": false,
+                "modelProvider": "openai",
+                "createdAt": 0,
+                "updatedAt": 0,
+                "status": { "type": "idle" },
+                "path": "/tmp/thread_123.json",
+                "cwd": "/tmp",
+                "cliVersion": "0.0.0",
+                "source": "exec",
+                "gitInfo": null,
+                "turns": [{
+                    "id": "turn_1",
+                    "status": "completed",
+                    "error": null,
+                    "items": [{
+                        "type": "futureThreadItem",
+                        "id": "item_1",
+                    }]
+                }]
+            },
+            "model": "gpt-4.1",
+            "modelProvider": "openai",
+            "cwd": "/tmp",
+            "approvalPolicy": "never",
+            "approvalsReviewer": "user",
+            "sandbox": { "type": "dangerFullAccess" },
+            "reasoningEffort": null
+        });
+
+        let err = serde_json::from_value::<ThreadStartResponse>(raw.clone())
+            .expect_err("expected strict decode to fail on unknown item variant");
+        assert!(
+            err.to_string().contains("futureThreadItem"),
+            "expected error to mention unknown variant, got: {err}"
+        );
+
+        strip_thread_turns(&mut raw);
+        let parsed: ThreadStartResponse =
             serde_json::from_value(raw).expect("sanitized decode should succeed");
         assert_eq!(parsed.thread.id, "thread_123");
         assert!(parsed.thread.turns.is_empty());
