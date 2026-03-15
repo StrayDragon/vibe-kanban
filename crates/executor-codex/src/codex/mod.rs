@@ -477,14 +477,13 @@ impl Codex {
         match resume_session {
             None => {
                 let params = conversation_params;
-                let response = client.thread_start(params).await?;
-                let thread_id = response.thread.id;
+                let thread_id = client.thread_start(params).await?;
                 client.register_thread(&thread_id).await?;
                 client.turn_start(&thread_id, input_items).await?;
             }
             Some(session_id) => {
                 let overrides = conversation_params;
-                let response = client
+                let thread_id = client
                     .thread_fork(ThreadForkParams {
                         thread_id: session_id.clone(),
                         path: None,
@@ -502,8 +501,7 @@ impl Codex {
                         persist_extended_history: overrides.persist_extended_history,
                     })
                     .await?;
-                tracing::debug!("forked thread for session {session_id}, response {response:?}");
-                let thread_id = response.thread.id;
+                tracing::debug!("forked thread for session {session_id}: {thread_id}");
                 client.register_thread(&thread_id).await?;
                 client.turn_start(&thread_id, input_items).await?;
             }

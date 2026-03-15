@@ -11,12 +11,11 @@ use codex_app_server_protocol::{
     DynamicToolCallOutputContentItem, DynamicToolCallResponse, ExecCommandApprovalResponse,
     ExecPolicyAmendment, FileChangeApprovalDecision, FileChangeRequestApprovalResponse,
     GetAuthStatusParams, GetAuthStatusResponse, GrantedPermissionProfile, InitializeParams,
-    InitializeResponse, JSONRPCError, JSONRPCErrorError, JSONRPCNotification, JSONRPCRequest,
-    JSONRPCResponse, McpServerElicitationAction, McpServerElicitationRequestResponse,
-    PermissionGrantScope, PermissionsRequestApprovalResponse, RequestId, ServerRequest,
-    ThreadForkParams, ThreadForkResponse, ThreadStartParams, ThreadStartResponse,
-    ToolRequestUserInputAnswer, ToolRequestUserInputResponse, TurnStartParams, TurnStartResponse,
-    UserInput,
+    JSONRPCError, JSONRPCErrorError, JSONRPCNotification, JSONRPCRequest, JSONRPCResponse,
+    McpServerElicitationAction, McpServerElicitationRequestResponse, PermissionGrantScope,
+    PermissionsRequestApprovalResponse, RequestId, ServerRequest, ThreadForkParams,
+    ThreadStartParams, ToolRequestUserInputAnswer, ToolRequestUserInputResponse, TurnStartParams,
+    TurnStartResponse, UserInput,
 };
 use codex_protocol::protocol::{EventMsg, ReviewDecision};
 use executors_core::{
@@ -34,10 +33,16 @@ use super::{
     normalize_logs::Approval,
 };
 
-fn strip_thread_turns(value: &mut Value) {
-    if let Some(turns) = value.pointer_mut("/thread/turns") {
-        *turns = Value::Array(Vec::new());
-    }
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadResponseLite {
+    thread: ThreadLite,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadLite {
+    id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,51 +97,27 @@ impl AppServerClient {
             },
         };
 
-        self.send_request::<InitializeResponse>(request, "initialize")
-            .await?;
+        // The app-server initialize response evolves over time; we only need an acknowledgment.
+        self.send_request::<Value>(request, "initialize").await?;
         self.send_message(&ClientNotification::Initialized).await
     }
 
-    pub async fn thread_start(
-        &self,
-        params: ThreadStartParams,
-    ) -> Result<ThreadStartResponse, ExecutorError> {
+    pub async fn thread_start(&self, params: ThreadStartParams) -> Result<String, ExecutorError> {
         let request = ClientRequest::ThreadStart {
             request_id: self.next_request_id(),
             params,
         };
-        // `thread/start` responses can include a persisted thread history (`thread.turns.items`),
-        // which evolves over time. We only need the thread id + config for subsequent turns,
-        // so strip the turns to keep deserialization forward-compatible with newer item variants
-        // (e.g. `contextCompaction`).
-        let mut raw: Value = self.send_request(request, "thread/start").await?;
-        strip_thread_turns(&mut raw);
-        serde_json::from_value::<ThreadStartResponse>(raw).map_err(|err| {
-            ExecutorError::Io(io::Error::other(format!(
-                "failed to decode thread/start response: {err}",
-            )))
-        })
+        let response: ThreadResponseLite = self.send_request(request, "thread/start").await?;
+        Ok(response.thread.id)
     }
 
-    pub async fn thread_fork(
-        &self,
-        params: ThreadForkParams,
-    ) -> Result<ThreadForkResponse, ExecutorError> {
+    pub async fn thread_fork(&self, params: ThreadForkParams) -> Result<String, ExecutorError> {
         let request = ClientRequest::ThreadFork {
             request_id: self.next_request_id(),
             params,
         };
-        // `thread/fork` responses can include the persisted thread history (`thread.turns.items`),
-        // which evolves over time. We only need the forked thread id + config for follow-ups,
-        // so strip the turns to keep deserialization forward-compatible with newer item variants
-        // (e.g. `contextCompaction`).
-        let mut raw: Value = self.send_request(request, "thread/fork").await?;
-        strip_thread_turns(&mut raw);
-        serde_json::from_value::<ThreadForkResponse>(raw).map_err(|err| {
-            ExecutorError::Io(io::Error::other(format!(
-                "failed to decode thread/fork response: {err}",
-            )))
-        })
+        let response: ThreadResponseLite = self.send_request(request, "thread/fork").await?;
+        Ok(response.thread.id)
     }
 
     pub async fn turn_start(
@@ -921,30 +902,16 @@ mod tests {
 }
 
 #[cfg(test)]
-mod thread_fork_sanitization_tests {
-    use codex_app_server_protocol::ThreadForkResponse;
+mod thread_response_lite_tests {
     use serde_json::json;
 
-    use super::strip_thread_turns;
-
     #[test]
-    fn thread_fork_response_sanitization_skips_unknown_turn_items() {
-        // Newer Codex versions can persist additional ThreadItem variants. We want `thread/fork`
-        // decoding to be forward-compatible so follow-ups keep working.
-        let mut raw = json!({
+    fn thread_response_lite_decodes_when_thread_turn_items_evolve() {
+        // Thread history evolves quickly (new items like `contextCompaction`, etc). We only need
+        // the thread id, so decoding should not be coupled to the full `thread.turns` schema.
+        let raw = json!({
             "thread": {
                 "id": "thread_123",
-                "preview": "hello",
-                "ephemeral": false,
-                "modelProvider": "openai",
-                "createdAt": 0,
-                "updatedAt": 0,
-                "status": { "type": "idle" },
-                "path": "/tmp/thread_123.json",
-                "cwd": "/tmp",
-                "cliVersion": "0.0.0",
-                "source": "exec",
-                "gitInfo": null,
                 "turns": [{
                     "id": "turn_1",
                     "status": "completed",
@@ -959,81 +926,11 @@ mod thread_fork_sanitization_tests {
             "modelProvider": "openai",
             "cwd": "/tmp",
             "approvalPolicy": "never",
-            "approvalsReviewer": "user",
             "sandbox": { "type": "dangerFullAccess" },
             "reasoningEffort": null
         });
-
-        let err = serde_json::from_value::<ThreadForkResponse>(raw.clone())
-            .expect_err("expected strict decode to fail on unknown item variant");
-        assert!(
-            err.to_string().contains("futureThreadItem"),
-            "expected error to mention unknown variant, got: {err}"
-        );
-
-        strip_thread_turns(&mut raw);
-        let parsed: ThreadForkResponse =
-            serde_json::from_value(raw).expect("sanitized decode should succeed");
+        let parsed: super::ThreadResponseLite =
+            serde_json::from_value(raw).expect("lite decode should succeed");
         assert_eq!(parsed.thread.id, "thread_123");
-        assert!(parsed.thread.turns.is_empty());
-    }
-}
-
-#[cfg(test)]
-mod thread_start_sanitization_tests {
-    use codex_app_server_protocol::ThreadStartResponse;
-    use serde_json::json;
-
-    use super::strip_thread_turns;
-
-    #[test]
-    fn thread_start_response_sanitization_skips_unknown_turn_items() {
-        // Newer Codex versions can persist additional ThreadItem variants. We want `thread/start`
-        // decoding to be forward-compatible so follow-ups keep working.
-        let mut raw = json!({
-            "thread": {
-                "id": "thread_123",
-                "preview": "hello",
-                "ephemeral": false,
-                "modelProvider": "openai",
-                "createdAt": 0,
-                "updatedAt": 0,
-                "status": { "type": "idle" },
-                "path": "/tmp/thread_123.json",
-                "cwd": "/tmp",
-                "cliVersion": "0.0.0",
-                "source": "exec",
-                "gitInfo": null,
-                "turns": [{
-                    "id": "turn_1",
-                    "status": "completed",
-                    "error": null,
-                    "items": [{
-                        "type": "futureThreadItem",
-                        "id": "item_1",
-                    }]
-                }]
-            },
-            "model": "gpt-4.1",
-            "modelProvider": "openai",
-            "cwd": "/tmp",
-            "approvalPolicy": "never",
-            "approvalsReviewer": "user",
-            "sandbox": { "type": "dangerFullAccess" },
-            "reasoningEffort": null
-        });
-
-        let err = serde_json::from_value::<ThreadStartResponse>(raw.clone())
-            .expect_err("expected strict decode to fail on unknown item variant");
-        assert!(
-            err.to_string().contains("futureThreadItem"),
-            "expected error to mention unknown variant, got: {err}"
-        );
-
-        strip_thread_turns(&mut raw);
-        let parsed: ThreadStartResponse =
-            serde_json::from_value(raw).expect("sanitized decode should succeed");
-        assert_eq!(parsed.thread.id, "thread_123");
-        assert!(parsed.thread.turns.is_empty());
     }
 }
