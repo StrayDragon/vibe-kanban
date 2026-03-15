@@ -48,7 +48,18 @@
           "helper": "选择创建任务尝试时使用的默认代理配置。"
         },
         "variant": "默认",
-        "defaultLabel": "默认"
+        "defaultLabel": "默认",
+        "codexCompatibility": {
+          "checking": "正在检查 Codex 协议兼容性…",
+          "protocolLine": "Codex 协议：{{status}}",
+          "cliVersionLine": "codex-cli：{{version}}",
+          "recheck": "重新检查",
+          "status": {
+            "compatible": "兼容",
+            "incompatible": "不兼容",
+            "unknown": "未知"
+          }
+        }
       },
       "editor": {
         "title": "编辑器",

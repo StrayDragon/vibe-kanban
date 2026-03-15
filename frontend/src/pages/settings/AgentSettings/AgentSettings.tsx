@@ -38,6 +38,7 @@ import { DeleteConfigurationDialog } from '@/components/dialogs/settings/DeleteC
 import { SyncLlmanDialog } from '@/components/dialogs/settings/SyncLlmanDialog';
 import { useAgentAvailability } from '@/hooks/config/useAgentAvailability';
 import { AgentAvailabilityIndicator } from '@/components/AgentAvailabilityIndicator';
+import { useCodexCompatibility } from '@/hooks/config/useCodexCompatibility';
 import type {
   BaseCodingAgent,
   ExecutorConfigs,
@@ -48,6 +49,7 @@ type ExecutorsMap = Record<string, Record<string, Record<string, unknown>>>;
 
 export function AgentSettings() {
   const { t } = useTranslation(['settings', 'common']);
+  const codexAgent = 'CODEX' as BaseCodingAgent;
   // Use profiles hook for server state
   const {
     profilesContent: serverProfilesContent,
@@ -94,6 +96,41 @@ export function AgentSettings() {
 
   // Check agent availability when draft executor changes
   const agentAvailability = useAgentAvailability(executorDraft?.executor);
+
+  const codexDefaultVariant =
+    executorDraft?.executor === codexAgent
+      ? (executorDraft.variant ?? null)
+      : null;
+  const codexDefaultCompatibility = useCodexCompatibility(codexDefaultVariant);
+  const codexDefaultStatus = codexDefaultCompatibility.compatibility?.status;
+  const codexDefaultStatusLabel = codexDefaultStatus
+    ? t(
+        `settings.general.taskExecution.codexCompatibility.status.${codexDefaultStatus}`,
+        {
+          defaultValue: codexDefaultStatus,
+        }
+      )
+    : null;
+  const codexDefaultIncompatible =
+    codexDefaultCompatibility.compatibility?.status === 'incompatible';
+  const disableCodexExecutorOption =
+    codexDefaultIncompatible && executorDraft?.executor !== codexAgent;
+
+  const selectedConfigurationForCompatibility =
+    selectedConfiguration.startsWith('__') ? 'DEFAULT' : selectedConfiguration;
+  const codexEditorCompatibility = useCodexCompatibility(
+    selectedConfigurationForCompatibility,
+    selectedExecutorType === codexAgent
+  );
+  const codexEditorStatus = codexEditorCompatibility.compatibility?.status;
+  const codexEditorStatusLabel = codexEditorStatus
+    ? t(
+        `settings.general.taskExecution.codexCompatibility.status.${codexEditorStatus}`,
+        {
+          defaultValue: codexEditorStatus,
+        }
+      )
+    : null;
 
   const commandInfo = agentCommandResolutions?.[selectedExecutorType] ?? null;
   const executorsMap = localParsedProfiles?.executors as
@@ -599,7 +636,14 @@ export function AgentSettings() {
                     Object.entries(profiles)
                       .sort((a, b) => a[0].localeCompare(b[0]))
                       .map(([profileKey]) => (
-                        <SelectItem key={profileKey} value={profileKey}>
+                        <SelectItem
+                          key={profileKey}
+                          value={profileKey}
+                          disabled={
+                            profileKey === codexAgent &&
+                            disableCodexExecutorOption
+                          }
+                        >
                           {profileKey}
                         </SelectItem>
                       ))}
@@ -672,6 +716,88 @@ export function AgentSettings() {
               })()}
             </div>
             <AgentAvailabilityIndicator availability={agentAvailability} />
+            {executorDraft?.executor === codexAgent && (
+              <div className="space-y-2">
+                {codexDefaultCompatibility.isChecking && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>
+                      {t(
+                        'settings.general.taskExecution.codexCompatibility.checking'
+                      )}
+                    </span>
+                  </div>
+                )}
+
+                {codexDefaultCompatibility.error && (
+                  <Alert variant="destructive">
+                    <AlertDescription>
+                      {codexDefaultCompatibility.error}
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {codexDefaultCompatibility.compatibility && (
+                  <Alert
+                    variant={
+                      codexDefaultCompatibility.compatibility.status ===
+                      'compatible'
+                        ? 'success'
+                        : codexDefaultCompatibility.compatibility.status ===
+                            'incompatible'
+                          ? 'destructive'
+                          : 'default'
+                    }
+                  >
+                    <AlertDescription>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-medium">
+                            {t(
+                              'settings.general.taskExecution.codexCompatibility.protocolLine',
+                              {
+                                status:
+                                  codexDefaultStatusLabel ??
+                                  codexDefaultCompatibility.compatibility
+                                    .status,
+                              }
+                            )}
+                          </div>
+                          {codexDefaultCompatibility.compatibility
+                            .codex_cli_version && (
+                            <div className="text-xs text-muted-foreground">
+                              {t(
+                                'settings.general.taskExecution.codexCompatibility.cliVersionLine',
+                                {
+                                  version:
+                                    codexDefaultCompatibility.compatibility
+                                      .codex_cli_version,
+                                }
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => codexDefaultCompatibility.refresh()}
+                          disabled={codexDefaultCompatibility.isChecking}
+                        >
+                          {t(
+                            'settings.general.taskExecution.codexCompatibility.recheck'
+                          )}
+                        </Button>
+                      </div>
+                      {codexDefaultCompatibility.compatibility.message && (
+                        <pre className="mt-2 whitespace-pre-wrap text-xs">
+                          {codexDefaultCompatibility.compatibility.message}
+                        </pre>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </div>
+            )}
             <p className="text-sm text-muted-foreground">
               {t('settings.general.taskExecution.executor.helper')}
             </p>
@@ -679,7 +805,12 @@ export function AgentSettings() {
           <div className="flex justify-end">
             <Button
               onClick={handleSaveExecutorProfile}
-              disabled={!executorDirty || executorSaving}
+              disabled={
+                !executorDirty ||
+                executorSaving ||
+                (executorDraft?.executor === codexAgent &&
+                  codexDefaultIncompatible)
+              }
             >
               {executorSaving && (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -835,6 +966,89 @@ export function AgentSettings() {
                   {t('settings.agents.command.versionLabel')}: {versionLabel}
                 </div>
               </div>
+
+              {selectedExecutorType === codexAgent && (
+                <div className="space-y-2">
+                  {codexEditorCompatibility.isChecking && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>
+                        {t(
+                          'settings.general.taskExecution.codexCompatibility.checking'
+                        )}
+                      </span>
+                    </div>
+                  )}
+
+                  {codexEditorCompatibility.error && (
+                    <Alert variant="destructive">
+                      <AlertDescription>
+                        {codexEditorCompatibility.error}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {codexEditorCompatibility.compatibility && (
+                    <Alert
+                      variant={
+                        codexEditorCompatibility.compatibility.status ===
+                        'compatible'
+                          ? 'success'
+                          : codexEditorCompatibility.compatibility.status ===
+                              'incompatible'
+                            ? 'destructive'
+                            : 'default'
+                      }
+                    >
+                      <AlertDescription>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-medium">
+                              {t(
+                                'settings.general.taskExecution.codexCompatibility.protocolLine',
+                                {
+                                  status:
+                                    codexEditorStatusLabel ??
+                                    codexEditorCompatibility.compatibility
+                                      .status,
+                                }
+                              )}
+                            </div>
+                            {codexEditorCompatibility.compatibility
+                              .codex_cli_version && (
+                              <div className="text-xs text-muted-foreground">
+                                {t(
+                                  'settings.general.taskExecution.codexCompatibility.cliVersionLine',
+                                  {
+                                    version:
+                                      codexEditorCompatibility.compatibility
+                                        .codex_cli_version,
+                                  }
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => codexEditorCompatibility.refresh()}
+                            disabled={codexEditorCompatibility.isChecking}
+                          >
+                            {t(
+                              'settings.general.taskExecution.codexCompatibility.recheck'
+                            )}
+                          </Button>
+                        </div>
+                        {codexEditorCompatibility.compatibility.message && (
+                          <pre className="mt-2 whitespace-pre-wrap text-xs">
+                            {codexEditorCompatibility.compatibility.message}
+                          </pre>
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+              )}
 
               {commandFallbackToLatest && (
                 <Alert>

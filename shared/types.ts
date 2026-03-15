@@ -275,6 +275,8 @@ export type CheckEditorAvailabilityResponse = { available: boolean, };
 
 export type CheckAgentAvailabilityQuery = { executor: BaseCodingAgent, };
 
+export type CheckAgentCompatibilityQuery = { executor: BaseCodingAgent, variant: string | null, refresh: boolean | null, };
+
 export type CliDependencyPreflightQuery = { executor: BaseCodingAgent, };
 
 export type GhCliPreflightStatus = { "type": "ready" } | { "type": "not_installed" } | { "type": "not_authenticated" } | { "type": "error", message: string, };
@@ -508,7 +510,7 @@ export type Gemini = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig,
 
 export type Amp = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, dangerously_allow_all?: boolean | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
 
-export type Codex = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, sandbox?: SandboxMode | null, ask_for_approval?: AskForApproval | null, oss?: boolean | null, model?: string | null, model_reasoning_effort?: ReasoningEffort | null, model_reasoning_summary?: ReasoningSummary | null, model_reasoning_summary_format?: ReasoningSummaryFormat | null, profile?: string | null, base_instructions?: string | null, include_apply_patch_tool?: boolean | null, model_provider?: string | null, compact_prompt?: string | null, developer_instructions?: string | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
+export type Codex = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, sandbox?: SandboxMode | null, ask_for_approval?: AskForApproval | null, oss?: boolean | null, model?: string | null, model_reasoning_effort?: ReasoningEffort | null, model_reasoning_summary?: ReasoningSummary | null, model_reasoning_summary_format?: ReasoningSummaryFormat | null, profile?: string | null, base_instructions?: string | null, include_apply_patch_tool?: boolean | null, enable_dynamic_tools?: boolean | null, model_provider?: string | null, compact_prompt?: string | null, developer_instructions?: string | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
 
 export type SandboxMode = "auto" | "read-only" | "workspace-write" | "danger-full-access";
 
@@ -519,6 +521,10 @@ export type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export type ReasoningSummary = "auto" | "concise" | "detailed" | "none";
 
 export type ReasoningSummaryFormat = "none" | "experimental";
+
+export type CodexProtocolCompatibilityStatus = "compatible" | "incompatible" | "not_installed" | "unknown";
+
+export type CodexProtocolCompatibility = { status: CodexProtocolCompatibilityStatus, expected_v2_schema_sha256: string, runtime_v2_schema_sha256: string | null, codex_cli_version: string | null, base_command: string, message: string | null, };
 
 export type FakeAgent = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, seed?: bigint | null, cadence_ms: bigint, message_chunk_min: number, message_chunk_max: number, tool_events: FakeToolEvents, write_fake_files: boolean, include_reasoning: boolean, scenario_path?: string | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
 

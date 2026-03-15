@@ -172,13 +172,13 @@ The list below shows where each env var name appears in the repo (best-effort).
 - `VK_LOG_PERSISTENCE_MODE`: `crates/execution/src/container/mod.rs`
 - `VK_NORMALIZED_LOG_HISTORY_PAGE_SIZE`: `crates/server/src/routes/execution_processes.rs`
 - `VK_OPEN_BROWSER_STARTUP`: `crates/server/src/main.rs`, `justfile`, `scripts/run-e2e.js`
-- `VK_PROJECT_ID`: `crates/execution/src/container/local.rs`
-- `VK_PROJECT_NAME`: `crates/execution/src/container/local.rs`, `crates/executors-core/src/env.rs`
+- `VK_PROJECT_ID`: `crates/execution/src/container/local.rs`, `crates/executor-codex/src/codex/mod.rs`
+- `VK_PROJECT_NAME`: `crates/execution/src/container/local.rs`, `crates/executor-codex/src/codex/mod.rs`, `crates/executors-core/src/env.rs`
 - `VK_QUEUED_MESSAGES_TTL_SECS`: `crates/config/src/cache_budget.rs`
 - `VK_RAW_LOG_HISTORY_PAGE_SIZE`: `crates/server/src/routes/execution_processes.rs`
 - `VK_SHARED_API_BASE`: `crates/server/build.rs`
-- `VK_TASK_ID`: `crates/execution/src/container/local.rs`
-- `VK_WORKSPACE_BRANCH`: `crates/execution/src/container/local.rs`
+- `VK_TASK_ID`: `crates/execution/src/container/local.rs`, `crates/executor-codex/src/codex/mod.rs`
+- `VK_WORKSPACE_BRANCH`: `crates/execution/src/container/local.rs`, `crates/executor-codex/src/codex/mod.rs`
 - `VK_WORKSPACE_CLEANUP_INTERVAL_SECS`: `crates/execution/src/container/local.rs`
 - `VK_WORKSPACE_EXPIRED_TTL_SECS`: `crates/execution/src/container/local.rs`
-- `VK_WORKSPACE_ID`: `crates/execution/src/container/local.rs`
+- `VK_WORKSPACE_ID`: `crates/execution/src/container/local.rs`, `crates/executor-codex/src/codex/dynamic_tools.rs`, `crates/executor-codex/src/codex/mod.rs`

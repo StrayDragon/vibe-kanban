@@ -1,4 +1,6 @@
 pub mod client;
+pub mod compatibility;
+pub mod dynamic_tools;
 pub mod jsonrpc;
 pub mod normalize_logs;
 pub mod session;
@@ -132,6 +134,8 @@ pub struct Codex {
     pub base_instructions: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub include_apply_patch_tool: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enable_dynamic_tools: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -268,10 +272,11 @@ impl Codex {
             )
             .await;
         let mut builder = CommandBuilder::new(resolved.base_command);
-        builder = builder.extend_params(["app-server"]);
         if self.oss.unwrap_or(false) {
+            // `--oss` is a top-level Codex flag and must come before subcommands.
             builder = builder.extend_params(["--oss"]);
         }
+        builder = builder.extend_params(["app-server"]);
 
         apply_overrides(builder, &self.cmd)
     }
@@ -296,6 +301,12 @@ impl Codex {
             Some(AskForApproval::Never) => Some(ProtocolAskForApproval::Never),
         };
 
+        let dynamic_tools = if self.enable_dynamic_tools.unwrap_or(true) {
+            Some(dynamic_tools::VkDynamicToolRegistry::vk_default().specs())
+        } else {
+            None
+        };
+
         ThreadStartParams {
             model: self.model.clone(),
             model_provider: self.model_provider.clone(),
@@ -310,7 +321,7 @@ impl Codex {
             developer_instructions: self.developer_instructions.clone(),
             personality: None,
             ephemeral: None,
-            dynamic_tools: None,
+            dynamic_tools,
             mock_experimental_field: None,
             experimental_raw_events: false,
             persist_extended_history: false,
@@ -358,6 +369,18 @@ impl Codex {
         resume_session: Option<&str>,
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
+        let compat = compatibility::check_codex_protocol_compatibility(
+            &self.cmd,
+            self.oss.unwrap_or(false),
+            false,
+        )
+        .await;
+        if compat.status == compatibility::CodexProtocolCompatibilityStatus::Incompatible {
+            return Err(ExecutorError::Io(std::io::Error::other(
+                compatibility::compatibility_error_message(&compat),
+            )));
+        }
+
         let (program_path, args) = command_parts.into_resolved().await?;
 
         let mut process = Command::new(program_path);
@@ -395,6 +418,14 @@ impl Codex {
             (Some(SandboxMode::DangerFullAccess), None)
         );
         let approvals = self.approvals.clone();
+        let mut dynamic_tool_context =
+            dynamic_tools::VkDynamicToolContext::new(current_dir.to_path_buf());
+        dynamic_tool_context.project_name = env.vars.get("VK_PROJECT_NAME").cloned();
+        dynamic_tool_context.project_id = env.vars.get("VK_PROJECT_ID").cloned();
+        dynamic_tool_context.task_id = env.vars.get("VK_TASK_ID").cloned();
+        dynamic_tool_context.attempt_id = env.vars.get("VK_WORKSPACE_ID").cloned();
+        dynamic_tool_context.workspace_branch = env.vars.get("VK_WORKSPACE_BRANCH").cloned();
+
         tokio::spawn(async move {
             let exit_signal_tx = ExitSignalSender::new(exit_signal_tx);
             let log_writer = LogWriter::new(new_stdout);
@@ -408,6 +439,7 @@ impl Codex {
                 exit_signal_tx.clone(),
                 approvals,
                 auto_approve,
+                dynamic_tool_context,
             )
             .await
             {
@@ -462,8 +494,10 @@ impl Codex {
         exit_signal_tx: ExitSignalSender,
         approvals: Option<Arc<dyn ExecutorApprovalService>>,
         auto_approve: bool,
+        dynamic_tool_context: dynamic_tools::VkDynamicToolContext,
     ) -> Result<(), ExecutorError> {
-        let client = AppServerClient::new(log_writer, approvals, auto_approve);
+        let client =
+            AppServerClient::new(log_writer, approvals, auto_approve, dynamic_tool_context);
         let rpc_peer =
             JsonRpcPeer::spawn(child_stdin, child_stdout, client.clone(), exit_signal_tx);
         client.connect(rpc_peer);
@@ -574,8 +608,10 @@ mod tests {
     use std::{collections::HashMap, path::PathBuf};
 
     use codex_app_server_protocol::UserInput;
+    use executors_core::{env::ExecutionEnv, executors::StandardCodingAgentExecutor};
+    use serde_json::json;
 
-    use super::build_input_items;
+    use super::{Codex, build_input_items};
 
     #[test]
     fn build_input_items_interleaves_images_in_order() {
@@ -627,5 +663,224 @@ mod tests {
             }
             _ => panic!("expected text item"),
         }
+    }
+
+    #[test]
+    fn thread_start_params_registers_dynamic_tools_by_default() {
+        let executor: Codex = serde_json::from_value(json!({})).expect("default config");
+        let params = executor.build_thread_start_params(std::path::Path::new("/tmp"));
+        let tools = params.dynamic_tools.expect("dynamic tools registered");
+        let names = tools.into_iter().map(|t| t.name).collect::<Vec<_>>();
+        assert!(names.iter().any(|n| n == "vk.get_attempt_status"));
+        assert!(names.iter().any(|n| n == "vk.tail_attempt_logs"));
+        assert!(names.iter().any(|n| n == "vk.get_attempt_changes"));
+    }
+
+    #[test]
+    fn thread_start_params_skips_dynamic_tools_when_disabled() {
+        let mut executor: Codex = serde_json::from_value(json!({})).expect("default config");
+        executor.enable_dynamic_tools = Some(false);
+        let params = executor.build_thread_start_params(std::path::Path::new("/tmp"));
+        assert!(params.dynamic_tools.is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn spawn_fails_fast_with_compatibility_message_when_incompatible() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let fake_codex = dir.path().join("codex");
+
+        std::fs::write(
+            &fake_codex,
+            r#"#!/bin/sh
+set -eu
+
+if [ "${1:-}" = "--version" ]; then
+  echo "codex-cli 0.0.0-test"
+  exit 0
+fi
+
+if [ "${1:-}" = "--oss" ]; then
+  shift
+fi
+
+if [ "${1:-}" = "app-server" ] && [ "${2:-}" = "generate-json-schema" ]; then
+  out=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--out" ]; then
+      out="$2"
+      shift 2
+      continue
+    fi
+    shift
+  done
+  if [ -z "$out" ]; then
+    echo "missing --out" >&2
+    exit 1
+  fi
+  mkdir -p "$out"
+  echo '{"vk":"mismatch"}' > "$out/codex_app_server_protocol.v2.schemas.json"
+  exit 0
+fi
+
+echo "unexpected args: $*" >&2
+exit 1
+"#,
+        )
+        .expect("write fake codex");
+
+        let mut perms = std::fs::metadata(&fake_codex)
+            .expect("metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_codex, perms).expect("chmod");
+
+        let executor: Codex = serde_json::from_value(json!({
+            "base_command_override": fake_codex.to_string_lossy(),
+        }))
+        .expect("executor config");
+
+        let env = ExecutionEnv::new();
+        let err = executor
+            .spawn(dir.path(), "hello", &env)
+            .await
+            .expect_err("spawn should be blocked");
+
+        let msg = err.to_string();
+        assert!(msg.contains("Codex protocol is incompatible"));
+        assert!(msg.contains("Expected protocol fingerprint"));
+        assert!(msg.contains("Fix: upgrade Vibe Kanban"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dynamic_tool_call_smoke_test_executes_tool() {
+        use std::os::unix::fs::PermissionsExt;
+
+        use executors_core::executors::ExecutorExitResult;
+        use tokio::time::{Duration, timeout};
+
+        let root = tempfile::tempdir().expect("tempdir");
+        let schema_dir = root.path().join("schema");
+        std::fs::create_dir_all(&schema_dir).expect("schema dir");
+        codex_app_server_protocol::generate_json(&schema_dir)
+            .expect("generate pinned protocol schema");
+
+        let bundle_path = schema_dir.join("codex_app_server_protocol.v2.schemas.json");
+        assert!(bundle_path.exists(), "schema bundle missing");
+
+        let attempt_id = "3b3a4b8a-3b55-4f8b-9af6-0fef7f7c0b4b";
+        let fake_codex = root.path().join("codex");
+
+        let script = r#"#!/bin/sh
+set -eu
+
+BUNDLE_PATH="__BUNDLE_PATH__"
+ATTEMPT_ID_EXPECT="__ATTEMPT_ID_EXPECT__"
+
+if [ "${1:-}" = "--version" ]; then
+  echo "codex-cli 0.0.0-test"
+  exit 0
+fi
+
+if [ "${1:-}" = "--oss" ]; then
+  shift
+fi
+
+if [ "${1:-}" = "app-server" ] && [ "${2:-}" = "generate-json-schema" ]; then
+  out=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--out" ]; then
+      out="$2"
+      shift 2
+      continue
+    fi
+    shift
+  done
+  mkdir -p "$out"
+  cp "$BUNDLE_PATH" "$out/codex_app_server_protocol.v2.schemas.json"
+  exit 0
+fi
+
+if [ "${1:-}" = "app-server" ]; then
+  thread_id="thread_123"
+  turn_id="turn_1"
+  tool_req_id=99
+  tool_call_id="call_1"
+
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+
+    case "$line" in
+      *\"method\":\"initialize\"*)
+        echo "{\"id\":1,\"result\":{}}"
+        ;;
+      *\"method\":\"getAuthStatus\"*)
+        echo "{\"id\":2,\"result\":{\"authMethod\":\"apikey\",\"requiresOpenaiAuth\":false}}"
+        ;;
+      *\"method\":\"thread/start\"*)
+        echo "$line" | grep -q '\"dynamicTools\"' || { echo "missing dynamicTools" >&2; exit 1; }
+        echo "$line" | grep -q 'vk.get_attempt_status' || { echo "missing vk.get_attempt_status" >&2; exit 1; }
+        echo "{\"id\":3,\"result\":{\"thread\":{\"id\":\"$thread_id\"}}}"
+        ;;
+      *\"method\":\"turn/start\"*)
+        echo "{\"id\":4,\"result\":{\"turn\":{\"id\":\"$turn_id\",\"items\":[],\"status\":\"completed\",\"error\":null}}}"
+        echo "{\"id\":$tool_req_id,\"method\":\"item/tool/call\",\"params\":{\"threadId\":\"$thread_id\",\"turnId\":\"$turn_id\",\"callId\":\"$tool_call_id\",\"tool\":\"vk.get_attempt_status\",\"arguments\":{}}}"
+        ;;
+      *\"id\":99*)
+        echo "$line" | grep -q '\"success\":true' || { echo "tool call not successful" >&2; exit 1; }
+        echo "$line" | grep -q "$ATTEMPT_ID_EXPECT" || { echo "missing attempt id in tool output" >&2; exit 1; }
+        echo "{\"method\":\"codex/event/turn_complete\"}"
+        exit 0
+        ;;
+      *)
+        # ignore
+        ;;
+    esac
+  done
+
+  echo "unexpected EOF" >&2
+  exit 1
+fi
+
+echo "unexpected args: $*" >&2
+exit 1
+"#
+        .replace(
+            "__BUNDLE_PATH__",
+            bundle_path.to_string_lossy().as_ref(),
+        )
+        .replace("__ATTEMPT_ID_EXPECT__", attempt_id);
+
+        std::fs::write(&fake_codex, script).expect("write fake codex");
+
+        let mut perms = std::fs::metadata(&fake_codex)
+            .expect("metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_codex, perms).expect("chmod");
+
+        let executor: Codex = serde_json::from_value(json!({
+            "base_command_override": fake_codex.to_string_lossy(),
+        }))
+        .expect("executor config");
+
+        let mut env = ExecutionEnv::new();
+        env.insert("VK_WORKSPACE_ID", attempt_id);
+
+        let mut spawned = executor
+            .spawn(root.path(), "hello", &env)
+            .await
+            .expect("spawn");
+
+        let exit_signal = spawned.exit_signal.take().expect("exit signal");
+        let result = timeout(Duration::from_secs(5), exit_signal)
+            .await
+            .expect("timeout")
+            .expect("exit result");
+
+        assert!(matches!(result, ExecutorExitResult::Success));
     }
 }

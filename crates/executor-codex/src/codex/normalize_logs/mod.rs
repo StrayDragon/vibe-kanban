@@ -6,16 +6,18 @@ use std::{
 
 use codex_app_server_protocol::{JSONRPCNotification, JSONRPCResponse, ServerNotification};
 use codex_protocol::{
+    dynamic_tools::{DynamicToolCallOutputContentItem, DynamicToolCallRequest},
     openai_models::ReasoningEffort,
     plan_tool::{StepStatus, UpdatePlanArgs},
     protocol::{
         AgentMessageDeltaEvent, AgentMessageEvent, AgentReasoningDeltaEvent, AgentReasoningEvent,
         AgentReasoningSectionBreakEvent, ApplyPatchApprovalRequestEvent, BackgroundEventEvent,
-        ErrorEvent, EventMsg, ExecApprovalRequestEvent, ExecCommandBeginEvent, ExecCommandEndEvent,
-        ExecCommandOutputDeltaEvent, ExecOutputStream, FileChange as CodexProtoFileChange,
-        McpInvocation, McpToolCallBeginEvent, McpToolCallEndEvent, PatchApplyBeginEvent,
-        PatchApplyEndEvent, StreamErrorEvent, ThreadRolledBackEvent, TokenUsageInfo,
-        ViewImageToolCallEvent, WarningEvent, WebSearchBeginEvent, WebSearchEndEvent,
+        DynamicToolCallResponseEvent, ErrorEvent, EventMsg, ExecApprovalRequestEvent,
+        ExecCommandBeginEvent, ExecCommandEndEvent, ExecCommandOutputDeltaEvent, ExecOutputStream,
+        FileChange as CodexProtoFileChange, McpInvocation, McpToolCallBeginEvent,
+        McpToolCallEndEvent, PatchApplyBeginEvent, PatchApplyEndEvent, StreamErrorEvent,
+        ThreadRolledBackEvent, TokenUsageInfo, ViewImageToolCallEvent, WarningEvent,
+        WebSearchBeginEvent, WebSearchEndEvent,
     },
 };
 use executors_core::{
@@ -144,6 +146,79 @@ impl ToNormalizedEntry for McpToolState {
     }
 }
 
+struct DynamicToolState {
+    index: Option<usize>,
+    tool: String,
+    arguments: Value,
+    result: Option<ToolResult>,
+    status: ToolStatus,
+    call_id: String,
+}
+
+fn summarize_vk_dynamic_tool_args(tool: &str, arguments: &Value) -> Option<String> {
+    let attempt_id = arguments.get("attempt_id").and_then(Value::as_str)?;
+    match tool {
+        "vk.get_attempt_status" => Some(format!("attempt_id={attempt_id}")),
+        "vk.tail_attempt_logs" => {
+            let max_lines = arguments
+                .get("max_lines")
+                .and_then(Value::as_u64)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "?".to_string());
+            Some(format!("attempt_id={attempt_id} max_lines={max_lines}"))
+        }
+        "vk.get_attempt_changes" => {
+            let max_files = arguments
+                .get("max_files")
+                .and_then(Value::as_u64)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "?".to_string());
+            Some(format!("attempt_id={attempt_id} max_files={max_files}"))
+        }
+        _ => Some(format!("attempt_id={attempt_id}")),
+    }
+}
+
+fn dynamic_tool_output_as_markdown(items: &[DynamicToolCallOutputContentItem]) -> String {
+    let mut parts = Vec::with_capacity(items.len());
+    for item in items {
+        match item {
+            DynamicToolCallOutputContentItem::InputText { text } => parts.push(text.clone()),
+            DynamicToolCallOutputContentItem::InputImage { image_url } => {
+                parts.push(format!("image: {image_url}"))
+            }
+        }
+    }
+    parts.join("\n")
+}
+
+impl ToNormalizedEntry for DynamicToolState {
+    fn to_normalized_entry(&self) -> NormalizedEntry {
+        let summary = summarize_vk_dynamic_tool_args(&self.tool, &self.arguments);
+        let content = match summary {
+            Some(summary) => format!("{} ({summary})", self.tool),
+            None => self.tool.clone(),
+        };
+        NormalizedEntry {
+            timestamp: None,
+            entry_type: NormalizedEntryType::ToolUse {
+                tool_name: self.tool.clone(),
+                action_type: ActionType::Tool {
+                    tool_name: self.tool.clone(),
+                    arguments: Some(self.arguments.clone()),
+                    result: self.result.clone(),
+                },
+                status: self.status.clone(),
+            },
+            content,
+            metadata: serde_json::to_value(ToolCallMetadata {
+                tool_call_id: self.call_id.clone(),
+            })
+            .ok(),
+        }
+    }
+}
+
 fn mcp_content_as_markdown(contents: &[Value]) -> Option<String> {
     let mut texts = Vec::with_capacity(contents.len());
     for content in contents {
@@ -237,6 +312,7 @@ struct LogState {
     thinking: Option<StreamingText>,
     commands: HashMap<String, CommandState>,
     mcp_tools: HashMap<String, McpToolState>,
+    dynamic_tools: HashMap<String, DynamicToolState>,
     patches: HashMap<String, PatchState>,
     web_searches: HashMap<String, WebSearchState>,
     token_usage_info: Option<TokenUsageInfo>,
@@ -256,6 +332,7 @@ impl LogState {
             thinking: None,
             commands: HashMap::new(),
             mcp_tools: HashMap::new(),
+            dynamic_tools: HashMap::new(),
             patches: HashMap::new(),
             web_searches: HashMap::new(),
             token_usage_info: None,
@@ -789,6 +866,106 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                             metadata: None,
                         },
                     );
+                }
+                EventMsg::DynamicToolCallRequest(DynamicToolCallRequest {
+                    call_id,
+                    tool,
+                    arguments,
+                    ..
+                }) => {
+                    state.assistant = None;
+                    state.thinking = None;
+                    let mut tool_state = DynamicToolState {
+                        index: None,
+                        tool,
+                        arguments,
+                        result: None,
+                        status: ToolStatus::Created,
+                        call_id: call_id.clone(),
+                    };
+                    let index = add_normalized_entry(
+                        &msg_store,
+                        &entry_index,
+                        tool_state.to_normalized_entry(),
+                    );
+                    tool_state.index = Some(index);
+                    state.dynamic_tools.insert(call_id, tool_state);
+                }
+                EventMsg::DynamicToolCallResponse(DynamicToolCallResponseEvent {
+                    call_id,
+                    tool,
+                    arguments,
+                    content_items,
+                    success,
+                    error,
+                    ..
+                }) => {
+                    let status = if success {
+                        ToolStatus::Success
+                    } else {
+                        ToolStatus::Failed
+                    };
+                    let mut markdown = dynamic_tool_output_as_markdown(&content_items);
+                    if let Some(err) = error.filter(|e| !e.trim().is_empty()) {
+                        if !markdown.trim().is_empty() {
+                            markdown.push_str("\n\n");
+                        }
+                        markdown.push_str(&format!("Error: {err}"));
+                    }
+
+                    let result = if markdown.trim().is_empty() {
+                        None
+                    } else {
+                        Some(ToolResult {
+                            r#type: ToolResultValueType::Markdown,
+                            value: Value::String(markdown),
+                        })
+                    };
+
+                    match state.dynamic_tools.remove(&call_id) {
+                        Some(mut tool_state) => {
+                            tool_state.tool = tool;
+                            tool_state.arguments = arguments;
+                            tool_state.status = status;
+                            tool_state.result = result;
+
+                            let Some(index) = tool_state.index else {
+                                tracing::error!(
+                                    call_id = %call_id,
+                                    "missing entry index for existing dynamic tool state"
+                                );
+                                emit_normalization_error(
+                                    &msg_store,
+                                    &entry_index,
+                                    Some(&call_id),
+                                    "missing entry index for dynamic tool call response",
+                                );
+                                continue;
+                            };
+
+                            replace_normalized_entry(
+                                &msg_store,
+                                index,
+                                tool_state.to_normalized_entry(),
+                            );
+                        }
+                        None => {
+                            let mut tool_state = DynamicToolState {
+                                index: None,
+                                tool,
+                                arguments,
+                                result,
+                                status,
+                                call_id: call_id.clone(),
+                            };
+                            let index = add_normalized_entry(
+                                &msg_store,
+                                &entry_index,
+                                tool_state.to_normalized_entry(),
+                            );
+                            tool_state.index = Some(index);
+                        }
+                    }
                 }
                 EventMsg::McpToolCallBegin(McpToolCallBeginEvent {
                     call_id,
@@ -1424,9 +1601,12 @@ mod tests {
 
     use codex_app_server_protocol::{JSONRPCNotification, JSONRPCResponse, RequestId};
     use codex_protocol::{
+        dynamic_tools::{DynamicToolCallOutputContentItem, DynamicToolCallRequest},
         mcp::CallToolResult,
         plan_tool::{PlanItemArg, StepStatus, UpdatePlanArgs},
-        protocol::{ExecCommandSource, FileChange as CodexProtoFileChange},
+        protocol::{
+            DynamicToolCallResponseEvent, ExecCommandSource, FileChange as CodexProtoFileChange,
+        },
     };
     use executors_core::logs::{
         ActionType, CommandExitStatus, FileChange, NormalizedEntry, NormalizedEntryError,
@@ -2383,6 +2563,56 @@ mod tests {
                 .any(|msg| matches!(msg, LogMsg::SessionId(id) if id == "thread_123"))
         );
 
+        msg_store.push_finished();
+    }
+
+    #[tokio::test]
+    async fn normalize_logs_dynamic_tool_call_emits_tool_use() {
+        let msg_store = Arc::new(MsgStore::new());
+        normalize_logs(msg_store.clone(), std::path::Path::new("/repo"));
+
+        let attempt_id = "3b3a4b8a-3b55-4f8b-9af6-0fef7f7c0b4b";
+        push_codex_event(
+            &msg_store,
+            EventMsg::DynamicToolCallRequest(DynamicToolCallRequest {
+                call_id: "tool-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                tool: "vk.get_attempt_status".to_string(),
+                arguments: json!({ "attempt_id": attempt_id }),
+            }),
+        );
+
+        push_codex_event(
+            &msg_store,
+            EventMsg::DynamicToolCallResponse(DynamicToolCallResponseEvent {
+                call_id: "tool-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                tool: "vk.get_attempt_status".to_string(),
+                arguments: json!({ "attempt_id": attempt_id }),
+                content_items: vec![DynamicToolCallOutputContentItem::InputText {
+                    text: "ok".to_string(),
+                }],
+                success: true,
+                error: None,
+                duration: Duration::from_millis(5),
+            }),
+        );
+
+        let entry = wait_for_entry(&msg_store, |entry| match &entry.entry_type {
+            NormalizedEntryType::ToolUse {
+                tool_name,
+                action_type,
+                status,
+            } => {
+                tool_name == "vk.get_attempt_status"
+                    && matches!(status, ToolStatus::Success)
+                    && matches!(action_type, ActionType::Tool { .. })
+            }
+            _ => false,
+        })
+        .await;
+
+        assert!(entry.content.contains("vk.get_attempt_status"));
         msg_store.push_finished();
     }
 

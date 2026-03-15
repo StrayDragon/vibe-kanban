@@ -29,6 +29,7 @@ use tokio::sync::Mutex;
 use utils_core::approvals::ApprovalStatus;
 
 use super::{
+    dynamic_tools::{VkDynamicToolContext, VkDynamicToolKind, VkDynamicToolRegistry},
     jsonrpc::{JsonRpcCallbacks, JsonRpcPeer},
     normalize_logs::Approval,
 };
@@ -58,6 +59,9 @@ pub struct AppServerClient {
     thread_id: Mutex<Option<String>>,
     pending_feedback: Mutex<VecDeque<String>>,
     auto_approve: bool,
+    dynamic_tool_registry: VkDynamicToolRegistry,
+    dynamic_tool_context: VkDynamicToolContext,
+    recent_log_lines: Mutex<VecDeque<String>>,
 }
 
 impl AppServerClient {
@@ -65,14 +69,18 @@ impl AppServerClient {
         log_writer: LogWriter,
         approvals: Option<Arc<dyn ExecutorApprovalService>>,
         auto_approve: bool,
+        dynamic_tool_context: VkDynamicToolContext,
     ) -> Arc<Self> {
         Arc::new(Self {
             rpc: OnceLock::new(),
             log_writer,
             approvals,
             auto_approve,
+            dynamic_tool_registry: VkDynamicToolRegistry::vk_default(),
+            dynamic_tool_context,
             thread_id: Mutex::new(None),
             pending_feedback: Mutex::new(VecDeque::new()),
+            recent_log_lines: Mutex::new(VecDeque::new()),
         })
     }
 
@@ -387,22 +395,84 @@ impl AppServerClient {
                 send_server_response(peer, request_id, response).await
             }
             ServerRequest::DynamicToolCall { request_id, params } => {
-                tracing::warn!(
-                    thread_id = %params.thread_id,
-                    turn_id = %params.turn_id,
-                    call_id = %params.call_id,
-                    tool = %params.tool,
-                    "DynamicToolCall is unsupported; returning error output"
-                );
-                let response = DynamicToolCallResponse {
-                    content_items: vec![DynamicToolCallOutputContentItem::InputText {
-                        text: format!(
-                            "Dynamic tool `{}` is not supported by this client",
-                            params.tool
-                        ),
-                    }],
-                    success: false,
+                let tool = params.tool.clone();
+                if !self.dynamic_tool_registry.is_supported(&tool) {
+                    let response = DynamicToolCallResponse {
+                        content_items: vec![DynamicToolCallOutputContentItem::InputText {
+                            text: format!("Unsupported dynamic tool: `{tool}`"),
+                        }],
+                        success: false,
+                    };
+                    return send_server_response(peer, request_id, response).await;
+                }
+
+                let kind = self
+                    .dynamic_tool_registry
+                    .kind(&tool)
+                    .unwrap_or(VkDynamicToolKind::ReadOnly);
+
+                if kind == VkDynamicToolKind::Mutating {
+                    let status = match self
+                        .request_tool_approval(&tool, params.arguments.clone(), &params.call_id)
+                        .await
+                    {
+                        Ok(status) => status,
+                        Err(err) => {
+                            tracing::error!("failed to request dynamic tool approval: {err}");
+                            ApprovalStatus::Denied {
+                                reason: Some("approval service error".to_string()),
+                            }
+                        }
+                    };
+
+                    self.log_writer
+                        .log_raw(
+                            &Approval::approval_response(
+                                params.call_id.clone(),
+                                tool.clone(),
+                                status.clone(),
+                            )
+                            .raw(),
+                        )
+                        .await?;
+
+                    if !matches!(status, ApprovalStatus::Approved) {
+                        let response = DynamicToolCallResponse {
+                            content_items: vec![DynamicToolCallOutputContentItem::InputText {
+                                text:
+                                    "Dynamic tool execution requires approval and was not approved."
+                                        .to_string(),
+                            }],
+                            success: false,
+                        };
+                        return send_server_response(peer, request_id, response).await;
+                    }
+                }
+
+                let recent_logs = self.recent_log_snapshot().await;
+                let result = self
+                    .dynamic_tool_registry
+                    .execute(
+                        &self.dynamic_tool_context,
+                        &tool,
+                        params.arguments,
+                        Some(recent_logs),
+                    )
+                    .await;
+
+                let response = match result {
+                    Ok(content_items) => DynamicToolCallResponse {
+                        content_items,
+                        success: true,
+                    },
+                    Err(message) => DynamicToolCallResponse {
+                        content_items: vec![DynamicToolCallOutputContentItem::InputText {
+                            text: message,
+                        }],
+                        success: false,
+                    },
                 };
+
                 send_server_response(peer, request_id, response).await
             }
             ServerRequest::ChatgptAuthTokensRefresh {
@@ -468,6 +538,32 @@ impl AppServerClient {
 
     fn next_request_id(&self) -> RequestId {
         self.rpc().next_request_id()
+    }
+
+    async fn record_recent_log_line(&self, raw: &str) {
+        const MAX_RECENT_LOG_LINES: usize = 500;
+        const MAX_LINE_CHARS: usize = 4000;
+
+        let mut line = raw.to_string();
+        if line.len() > MAX_LINE_CHARS {
+            line.truncate(MAX_LINE_CHARS);
+            line.push_str("…(truncated)");
+        }
+
+        let mut guard = self.recent_log_lines.lock().await;
+        guard.push_back(line);
+        while guard.len() > MAX_RECENT_LOG_LINES {
+            guard.pop_front();
+        }
+    }
+
+    async fn recent_log_snapshot(&self) -> Vec<String> {
+        self.recent_log_lines
+            .lock()
+            .await
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
     }
 
     async fn review_decision(
@@ -575,6 +671,7 @@ impl JsonRpcCallbacks for AppServerClient {
         raw: &str,
         request: JSONRPCRequest,
     ) -> Result<(), ExecutorError> {
+        self.record_recent_log_line(raw).await;
         self.log_writer.log_raw(raw).await?;
         match ServerRequest::try_from(request.clone()) {
             Ok(server_request) => self.handle_server_request(peer, server_request).await,
@@ -595,6 +692,7 @@ impl JsonRpcCallbacks for AppServerClient {
         raw: &str,
         _response: &JSONRPCResponse,
     ) -> Result<(), ExecutorError> {
+        self.record_recent_log_line(raw).await;
         self.log_writer.log_raw(raw).await
     }
 
@@ -604,6 +702,7 @@ impl JsonRpcCallbacks for AppServerClient {
         raw: &str,
         _error: &JSONRPCError,
     ) -> Result<(), ExecutorError> {
+        self.record_recent_log_line(raw).await;
         self.log_writer.log_raw(raw).await
     }
 
@@ -613,6 +712,7 @@ impl JsonRpcCallbacks for AppServerClient {
         raw: &str,
         notification: JSONRPCNotification,
     ) -> Result<bool, ExecutorError> {
+        self.record_recent_log_line(raw).await;
         self.log_writer.log_raw(raw).await?;
 
         let method = notification.method.as_str();
@@ -641,6 +741,7 @@ impl JsonRpcCallbacks for AppServerClient {
     }
 
     async fn on_non_json(&self, raw: &str) -> Result<(), ExecutorError> {
+        self.record_recent_log_line(raw).await;
         self.log_writer.log_raw(raw).await?;
         Ok(())
     }
@@ -680,6 +781,7 @@ mod tests {
     use std::{process::Stdio, sync::Arc};
 
     use async_trait::async_trait;
+    use codex_app_server_protocol::DynamicToolCallParams;
     use tokio::{
         process::Command,
         sync::{Mutex, oneshot},
@@ -780,7 +882,12 @@ mod tests {
     async fn on_request_unknown_method_sends_null_result() {
         let state = Arc::new(Mutex::new(ResponseState::default()));
         let peer = spawn_peer(state.clone()).await;
-        let client = AppServerClient::new(LogWriter::new(tokio::io::sink()), None, true);
+        let client = AppServerClient::new(
+            LogWriter::new(tokio::io::sink()),
+            None,
+            true,
+            VkDynamicToolContext::new(std::env::temp_dir()),
+        );
 
         let request = JSONRPCRequest {
             id: RequestId::Integer(1),
@@ -803,7 +910,12 @@ mod tests {
     async fn on_notification_turn_aborted_flushes_pending_feedback() {
         let state = Arc::new(Mutex::new(ResponseState::default()));
         let peer = spawn_peer(state).await;
-        let client = AppServerClient::new(LogWriter::new(tokio::io::sink()), None, false);
+        let client = AppServerClient::new(
+            LogWriter::new(tokio::io::sink()),
+            None,
+            false,
+            VkDynamicToolContext::new(std::env::temp_dir()),
+        );
 
         client.enqueue_feedback("feedback".to_string()).await;
         assert_eq!(client.pending_feedback.lock().await.len(), 1);
@@ -826,7 +938,12 @@ mod tests {
     async fn on_notification_task_complete_returns_true() {
         let state = Arc::new(Mutex::new(ResponseState::default()));
         let peer = spawn_peer(state).await;
-        let client = AppServerClient::new(LogWriter::new(tokio::io::sink()), None, false);
+        let client = AppServerClient::new(
+            LogWriter::new(tokio::io::sink()),
+            None,
+            false,
+            VkDynamicToolContext::new(std::env::temp_dir()),
+        );
 
         let notification = JSONRPCNotification {
             method: "codex/event/task_complete".to_string(),
@@ -845,7 +962,12 @@ mod tests {
     async fn on_notification_turn_complete_returns_true() {
         let state = Arc::new(Mutex::new(ResponseState::default()));
         let peer = spawn_peer(state).await;
-        let client = AppServerClient::new(LogWriter::new(tokio::io::sink()), None, false);
+        let client = AppServerClient::new(
+            LogWriter::new(tokio::io::sink()),
+            None,
+            false,
+            VkDynamicToolContext::new(std::env::temp_dir()),
+        );
 
         let notification = JSONRPCNotification {
             method: "codex/event/turn_complete".to_string(),
@@ -864,7 +986,12 @@ mod tests {
     async fn on_notification_turn_complete_in_params_returns_true() {
         let state = Arc::new(Mutex::new(ResponseState::default()));
         let peer = spawn_peer(state).await;
-        let client = AppServerClient::new(LogWriter::new(tokio::io::sink()), None, false);
+        let client = AppServerClient::new(
+            LogWriter::new(tokio::io::sink()),
+            None,
+            false,
+            VkDynamicToolContext::new(std::env::temp_dir()),
+        );
 
         let notification = JSONRPCNotification {
             method: "codex/event".to_string(),
@@ -885,7 +1012,12 @@ mod tests {
     async fn on_notification_non_codex_event_returns_false() {
         let state = Arc::new(Mutex::new(ResponseState::default()));
         let peer = spawn_peer(state).await;
-        let client = AppServerClient::new(LogWriter::new(tokio::io::sink()), None, false);
+        let client = AppServerClient::new(
+            LogWriter::new(tokio::io::sink()),
+            None,
+            false,
+            VkDynamicToolContext::new(std::env::temp_dir()),
+        );
 
         let notification = JSONRPCNotification {
             method: "other/event".to_string(),
@@ -898,6 +1030,193 @@ mod tests {
             .expect("notification");
 
         assert!(!finished);
+    }
+
+    #[tokio::test]
+    async fn dynamic_tool_call_unknown_tool_returns_failure() {
+        let state = Arc::new(Mutex::new(ResponseState::default()));
+        let peer = spawn_peer(state.clone()).await;
+
+        let client = AppServerClient::new(
+            LogWriter::new(tokio::io::sink()),
+            None,
+            true,
+            VkDynamicToolContext::new(std::env::temp_dir()),
+        );
+
+        let request = ServerRequest::DynamicToolCall {
+            request_id: RequestId::Integer(1),
+            params: DynamicToolCallParams {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                call_id: "call-1".to_string(),
+                tool: "vk.unknown".to_string(),
+                arguments: serde_json::json!({}),
+            },
+        };
+
+        client
+            .handle_server_request(&peer, request)
+            .await
+            .expect("handle request");
+
+        let response = wait_for_response(state).await;
+        let parsed: DynamicToolCallResponse =
+            serde_json::from_value(response.result).expect("decode response");
+        assert!(!parsed.success);
+        assert!(matches!(
+            parsed.content_items.first(),
+            Some(DynamicToolCallOutputContentItem::InputText { text })
+                if text.contains("Unsupported dynamic tool") && text.contains("vk.unknown")
+        ));
+    }
+
+    #[tokio::test]
+    async fn dynamic_tool_call_invalid_args_returns_failure() {
+        let state = Arc::new(Mutex::new(ResponseState::default()));
+        let peer = spawn_peer(state.clone()).await;
+
+        let mut ctx = VkDynamicToolContext::new(std::env::temp_dir());
+        ctx.attempt_id = Some("3b3a4b8a-3b55-4f8b-9af6-0fef7f7c0b4b".to_string());
+        let client = AppServerClient::new(LogWriter::new(tokio::io::sink()), None, true, ctx);
+
+        let request = ServerRequest::DynamicToolCall {
+            request_id: RequestId::Integer(1),
+            params: DynamicToolCallParams {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                call_id: "call-1".to_string(),
+                tool: crate::codex::dynamic_tools::VK_TOOL_GET_ATTEMPT_STATUS.to_string(),
+                arguments: serde_json::json!({ "attempt_id": 123 }),
+            },
+        };
+
+        client
+            .handle_server_request(&peer, request)
+            .await
+            .expect("handle request");
+
+        let response = wait_for_response(state).await;
+        let parsed: DynamicToolCallResponse =
+            serde_json::from_value(response.result).expect("decode response");
+        assert!(!parsed.success);
+        assert!(matches!(
+            parsed.content_items.first(),
+            Some(DynamicToolCallOutputContentItem::InputText { text })
+                if text.contains("Invalid arguments") && text.contains("vk.get_attempt_status")
+        ));
+    }
+
+    #[tokio::test]
+    async fn dynamic_tool_call_read_only_tool_succeeds() {
+        let state = Arc::new(Mutex::new(ResponseState::default()));
+        let peer = spawn_peer(state.clone()).await;
+
+        let attempt_id = "3b3a4b8a-3b55-4f8b-9af6-0fef7f7c0b4b";
+        let mut ctx = VkDynamicToolContext::new(std::env::temp_dir());
+        ctx.attempt_id = Some(attempt_id.to_string());
+        let client = AppServerClient::new(LogWriter::new(tokio::io::sink()), None, true, ctx);
+
+        let request = ServerRequest::DynamicToolCall {
+            request_id: RequestId::Integer(1),
+            params: DynamicToolCallParams {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                call_id: "call-1".to_string(),
+                tool: crate::codex::dynamic_tools::VK_TOOL_GET_ATTEMPT_STATUS.to_string(),
+                arguments: serde_json::json!({}),
+            },
+        };
+
+        client
+            .handle_server_request(&peer, request)
+            .await
+            .expect("handle request");
+
+        let response = wait_for_response(state).await;
+        let parsed: DynamicToolCallResponse =
+            serde_json::from_value(response.result).expect("decode response");
+        assert!(parsed.success);
+        assert!(matches!(
+            parsed.content_items.first(),
+            Some(DynamicToolCallOutputContentItem::InputText { text })
+                if text.contains(&format!("attempt_id: {attempt_id}"))
+        ));
+    }
+
+    #[tokio::test]
+    async fn dynamic_tool_call_mutating_tool_requests_approval_and_denies() {
+        #[derive(Default)]
+        struct RecordingApprovalService {
+            calls: Mutex<Vec<(String, String)>>,
+        }
+
+        #[async_trait]
+        impl ExecutorApprovalService for RecordingApprovalService {
+            async fn request_tool_approval(
+                &self,
+                tool_name: &str,
+                _tool_input: Value,
+                tool_call_id: &str,
+            ) -> Result<ApprovalStatus, ExecutorApprovalError> {
+                self.calls
+                    .lock()
+                    .await
+                    .push((tool_name.to_string(), tool_call_id.to_string()));
+                Ok(ApprovalStatus::Denied {
+                    reason: Some("no".to_string()),
+                })
+            }
+        }
+
+        let approvals = Arc::new(RecordingApprovalService::default());
+        let state = Arc::new(Mutex::new(ResponseState::default()));
+        let peer = spawn_peer(state.clone()).await;
+
+        let attempt_id = "3b3a4b8a-3b55-4f8b-9af6-0fef7f7c0b4b";
+        let mut ctx = VkDynamicToolContext::new(std::env::temp_dir());
+        ctx.attempt_id = Some(attempt_id.to_string());
+
+        let client = AppServerClient::new(
+            LogWriter::new(tokio::io::sink()),
+            Some(approvals.clone()),
+            false,
+            ctx,
+        );
+
+        let request = ServerRequest::DynamicToolCall {
+            request_id: RequestId::Integer(1),
+            params: DynamicToolCallParams {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                call_id: "call-1".to_string(),
+                tool: crate::codex::dynamic_tools::VK_TOOL_TEST_MUTATING.to_string(),
+                arguments: serde_json::json!({}),
+            },
+        };
+
+        client
+            .handle_server_request(&peer, request)
+            .await
+            .expect("handle request");
+
+        let response = wait_for_response(state).await;
+        let parsed: DynamicToolCallResponse =
+            serde_json::from_value(response.result).expect("decode response");
+        assert!(!parsed.success);
+        assert!(matches!(
+            parsed.content_items.first(),
+            Some(DynamicToolCallOutputContentItem::InputText { text })
+                if text.contains("requires approval")
+        ));
+
+        let calls = approvals.calls.lock().await.clone();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].0,
+            crate::codex::dynamic_tools::VK_TOOL_TEST_MUTATING
+        );
+        assert_eq!(calls[0].1, "call-1");
     }
 }
 

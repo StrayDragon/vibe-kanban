@@ -4,6 +4,7 @@ import type {
   CheckEditorAvailabilityResponse,
   CliDependencyPreflightResponse,
   Config,
+  CodexProtocolCompatibility,
   EditorType,
   UserSystemInfo,
 } from 'shared/types';
@@ -40,6 +41,27 @@ export const configApi = {
       `/api/agents/check-availability?executor=${encodeURIComponent(agent)}`
     );
     return handleApiResponse<AvailabilityInfo>(response);
+  },
+
+  checkAgentCompatibility: async (
+    agent: BaseCodingAgent,
+    variant?: string | null,
+    refresh?: boolean
+  ): Promise<CodexProtocolCompatibility> => {
+    const params = new URLSearchParams();
+    params.set('executor', agent);
+    if (variant) {
+      params.set('variant', variant);
+    }
+    if (refresh) {
+      params.set('refresh', 'true');
+    }
+
+    const response = await makeRequest(
+      `/api/agents/check-compatibility?${params.toString()}`,
+      { cache: 'no-store' }
+    );
+    return handleApiResponse<CodexProtocolCompatibility>(response);
   },
 
   cliPreflight: async (

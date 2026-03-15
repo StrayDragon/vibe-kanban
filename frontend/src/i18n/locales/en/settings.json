@@ -48,7 +48,18 @@
           "helper": "Choose the default agent configuration to use when creating a task attempt."
         },
         "variant": "DEFAULT",
-        "defaultLabel": "Default"
+        "defaultLabel": "Default",
+        "codexCompatibility": {
+          "checking": "Checking Codex protocol compatibility…",
+          "protocolLine": "Codex protocol: {{status}}",
+          "cliVersionLine": "codex-cli: {{version}}",
+          "recheck": "Re-check",
+          "status": {
+            "compatible": "Compatible",
+            "incompatible": "Incompatible",
+            "unknown": "Unknown"
+          }
+        }
       },
       "editor": {
         "title": "Editor",

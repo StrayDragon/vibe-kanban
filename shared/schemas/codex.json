@@ -146,6 +146,12 @@
         "null"
       ]
     },
+    "enable_dynamic_tools": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "model_provider": {
       "type": [
         "string",

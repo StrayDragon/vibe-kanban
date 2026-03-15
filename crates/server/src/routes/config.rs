@@ -46,6 +46,10 @@ pub fn router() -> Router<DeploymentImpl> {
             get(check_editor_availability),
         )
         .route("/agents/check-availability", get(check_agent_availability))
+        .route(
+            "/agents/check-compatibility",
+            get(check_agent_compatibility),
+        )
         .route("/preflight/cli", get(cli_dependency_preflight))
 }
 
@@ -568,6 +572,54 @@ async fn check_agent_availability(
     };
 
     ResponseJson(ApiResponse::success(info))
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+pub struct CheckAgentCompatibilityQuery {
+    executor: BaseCodingAgent,
+    #[serde(default)]
+    variant: Option<String>,
+    #[serde(default)]
+    refresh: Option<bool>,
+}
+
+async fn check_agent_compatibility(
+    State(_deployment): State<DeploymentImpl>,
+    Query(query): Query<CheckAgentCompatibilityQuery>,
+) -> Result<
+    ResponseJson<
+        ApiResponse<executors::executors::codex::compatibility::CodexProtocolCompatibility>,
+    >,
+    ApiError,
+> {
+    if query.executor != BaseCodingAgent::Codex {
+        return Err(ApiError::BadRequest(
+            "Compatibility check is only supported for Codex".to_string(),
+        ));
+    }
+
+    let profiles = ExecutorConfigs::get_cached();
+    let profile_id = ExecutorProfileId {
+        executor: query.executor,
+        variant: query.variant.clone(),
+    };
+
+    let Some(coding_agent) = profiles.get_coding_agent(&profile_id) else {
+        return Err(ApiError::BadRequest("Executor not found".to_string()));
+    };
+
+    let CodingAgent::Codex(config) = coding_agent else {
+        return Err(ApiError::BadRequest("Executor is not Codex".to_string()));
+    };
+
+    let compat = executors::executors::codex::compatibility::check_codex_protocol_compatibility(
+        &config.cmd,
+        config.oss.unwrap_or(false),
+        query.refresh.unwrap_or(false),
+    )
+    .await;
+
+    Ok(ResponseJson(ApiResponse::success(compat)))
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]
