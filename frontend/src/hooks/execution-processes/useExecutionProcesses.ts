@@ -44,13 +44,10 @@ export const useExecutionProcesses = (
     return () => window.clearTimeout(timer);
   }, [taskAttemptId, showSoftDeleted]);
 
-  const { data, isConnected, isResyncing, error, resync } =
-    useIdMapWsStream<'execution_processes', ExecutionProcess>(
-      endpoint,
-      connectEnabled,
-      'execution_processes',
-      '/execution_processes/'
-    );
+  const { data, isConnected, isResyncing, error, resync } = useIdMapWsStream<
+    'execution_processes',
+    ExecutionProcess
+  >(endpoint, connectEnabled, 'execution_processes', '/execution_processes/');
 
   const streamById = useMemo(
     () => data?.execution_processes ?? {},
@@ -61,7 +58,7 @@ export const useExecutionProcesses = (
       (state) =>
         taskAttemptId
           ? (state.byAttemptId[taskAttemptId] ??
-              EMPTY_EXECUTION_PROCESSES_BY_ID)
+            EMPTY_EXECUTION_PROCESSES_BY_ID)
           : EMPTY_EXECUTION_PROCESSES_BY_ID,
       [taskAttemptId]
     )

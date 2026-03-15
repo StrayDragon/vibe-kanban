@@ -112,7 +112,9 @@ pub async fn stream_scratch_ws(
     Query(query): Query<ScratchStreamQuery>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_scratch_ws(socket, deployment, id, scratch_type, query.after_seq).await {
+        if let Err(e) =
+            handle_scratch_ws(socket, deployment, id, scratch_type, query.after_seq).await
+        {
             tracing::warn!("scratch WS closed: {}", e);
         }
     })

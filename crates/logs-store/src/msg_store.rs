@@ -175,7 +175,10 @@ impl MsgStore {
             inner.next_seq = inner.next_seq.saturating_add(1);
             inner.max_seq = Some(seq);
             inner.push_msg(seq, msg.clone(), bytes);
-            sequenced_msg = SequencedLogMsg { seq, msg: msg.clone() };
+            sequenced_msg = SequencedLogMsg {
+                seq,
+                msg: msg.clone(),
+            };
 
             match &msg {
                 LogMsg::Stdout(content) => {
@@ -300,9 +303,10 @@ impl MsgStore {
             evicted: inner.history_evicted,
         };
 
-        let iter = inner.history.iter().filter(|entry| {
-            after_seq.is_none_or(|after| entry.seq > after)
-        });
+        let iter = inner
+            .history
+            .iter()
+            .filter(|entry| after_seq.is_none_or(|after| entry.seq > after));
         let history = iter
             .map(|entry| SequencedLogMsg {
                 seq: entry.seq,

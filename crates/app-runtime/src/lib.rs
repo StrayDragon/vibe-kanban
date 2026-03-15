@@ -183,38 +183,38 @@ pub trait Deployment: Clone + Send + Sync + 'static {
     async fn stream_events(
         &self,
     ) -> futures::stream::BoxStream<'static, Result<Event, std::io::Error>> {
-        let (history, receiver, _meta) = self
-            .events()
-            .msg_store()
-            .subscribe_sequenced_from(None);
+        let (history, receiver, _meta) = self.events().msg_store().subscribe_sequenced_from(None);
 
         let initial_last_seq = history.last().map(|m| m.seq).unwrap_or(0);
         let last_seq = Arc::new(AtomicU64::new(initial_last_seq));
 
         let hist = futures::stream::iter(history.into_iter().map(Ok::<_, std::io::Error>));
-        let live = futures::stream::unfold((receiver, last_seq), |(mut receiver, last_seq)| async move {
-            loop {
-                match receiver.recv().await {
-                    Ok(msg) => {
-                        if msg.seq <= last_seq.load(Ordering::Relaxed) {
+        let live = futures::stream::unfold(
+            (receiver, last_seq),
+            |(mut receiver, last_seq)| async move {
+                loop {
+                    match receiver.recv().await {
+                        Ok(msg) => {
+                            if msg.seq <= last_seq.load(Ordering::Relaxed) {
+                                continue;
+                            }
+                            last_seq.store(msg.seq, Ordering::Relaxed);
+                            return Some((Ok::<_, std::io::Error>(msg), (receiver, last_seq)));
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            tracing::warn!(
+                                skipped = skipped,
+                                "events SSE receiver lagged; dropping missed messages"
+                            );
                             continue;
                         }
-                        last_seq.store(msg.seq, Ordering::Relaxed);
-                        return Some((Ok::<_, std::io::Error>(msg), (receiver, last_seq)));
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        tracing::warn!(
-                            skipped = skipped,
-                            "events SSE receiver lagged; dropping missed messages"
-                        );
-                        continue;
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        return None;
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            return None;
+                        }
                     }
                 }
-            }
-        });
+            },
+        );
 
         let sequenced_stream = hist.chain(live);
 

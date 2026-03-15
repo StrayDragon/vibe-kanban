@@ -16,4 +16,3 @@ export const taskAttemptKeys = {
   branch: (attemptId: string | undefined) =>
     ['attemptBranch', attemptId] as const,
 };
-

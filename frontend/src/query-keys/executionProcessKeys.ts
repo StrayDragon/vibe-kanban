@@ -4,4 +4,3 @@ export const executionProcessKeys = {
   details: (processId: string | undefined) =>
     ['processDetails', processId] as const,
 };
-

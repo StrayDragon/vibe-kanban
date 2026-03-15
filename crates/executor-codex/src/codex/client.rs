@@ -14,8 +14,9 @@ use codex_app_server_protocol::{
     InitializeResponse, JSONRPCError, JSONRPCErrorError, JSONRPCNotification, JSONRPCRequest,
     JSONRPCResponse, McpServerElicitationAction, McpServerElicitationRequestResponse,
     PermissionGrantScope, PermissionsRequestApprovalResponse, RequestId, ServerRequest,
-    ThreadForkParams, ThreadForkResponse, ThreadStartParams, ThreadStartResponse, ToolRequestUserInputAnswer,
-    ToolRequestUserInputResponse, TurnStartParams, TurnStartResponse, UserInput,
+    ThreadForkParams, ThreadForkResponse, ThreadStartParams, ThreadStartResponse,
+    ToolRequestUserInputAnswer, ToolRequestUserInputResponse, TurnStartParams, TurnStartResponse,
+    UserInput,
 };
 use codex_protocol::protocol::{EventMsg, ReviewDecision};
 use executors_core::{
@@ -332,7 +333,9 @@ impl AppServerClient {
                     ReviewDecision::ApprovedForSession => {
                         FileChangeApprovalDecision::AcceptForSession
                     }
-                    ReviewDecision::NetworkPolicyAmendment { .. } => FileChangeApprovalDecision::Decline,
+                    ReviewDecision::NetworkPolicyAmendment { .. } => {
+                        FileChangeApprovalDecision::Decline
+                    }
                     ReviewDecision::Denied => FileChangeApprovalDecision::Decline,
                     ReviewDecision::Abort => FileChangeApprovalDecision::Cancel,
                 };
@@ -357,7 +360,9 @@ impl AppServerClient {
                     .map(|question| {
                         (
                             question.id,
-                            ToolRequestUserInputAnswer { answers: Vec::new() },
+                            ToolRequestUserInputAnswer {
+                                answers: Vec::new(),
+                            },
                         )
                     })
                     .collect::<HashMap<_, _>>();
@@ -400,13 +405,19 @@ impl AppServerClient {
                 );
                 let response = DynamicToolCallResponse {
                     content_items: vec![DynamicToolCallOutputContentItem::InputText {
-                        text: format!("Dynamic tool `{}` is not supported by this client", params.tool),
+                        text: format!(
+                            "Dynamic tool `{}` is not supported by this client",
+                            params.tool
+                        ),
                     }],
                     success: false,
                 };
                 send_server_response(peer, request_id, response).await
             }
-            ServerRequest::ChatgptAuthTokensRefresh { request_id, params: _ } => {
+            ServerRequest::ChatgptAuthTokensRefresh {
+                request_id,
+                params: _,
+            } => {
                 tracing::error!("ChatgptAuthTokensRefresh is unsupported by this client");
                 peer.send(&JSONRPCError {
                     id: request_id,

@@ -4,9 +4,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use codex_app_server_protocol::{
-    JSONRPCNotification, JSONRPCResponse, ServerNotification,
-};
+use codex_app_server_protocol::{JSONRPCNotification, JSONRPCResponse, ServerNotification};
 use codex_protocol::{
     openai_models::ReasoningEffort,
     plan_tool::{StepStatus, UpdatePlanArgs},
@@ -458,8 +456,7 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                             msg_store.push_session_id(thread_id);
                         }
                         state.thinking = None;
-                        let (entry, index, is_new) =
-                            state.assistant_message_append(payload.delta);
+                        let (entry, index, is_new) = state.assistant_message_append(payload.delta);
                         upsert_normalized_entry(&msg_store, index, entry, is_new);
                     }
                     ServerNotification::ReasoningTextDelta(payload) => {
@@ -1013,11 +1010,7 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
                     web_search_state.index = Some(index);
                     state.web_searches.insert(call_id, web_search_state);
                 }
-                EventMsg::WebSearchEnd(WebSearchEndEvent {
-                    call_id,
-                    query,
-                    ..
-                }) => {
+                EventMsg::WebSearchEnd(WebSearchEndEvent { call_id, query, .. }) => {
                     state.assistant = None;
                     state.thinking = None;
                     match state.web_searches.remove(&call_id) {

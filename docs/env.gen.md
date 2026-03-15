@@ -132,18 +132,18 @@ The list below shows where each env var name appears in the repo (best-effort).
 - `DISABLE_WORKSPACE_EXPIRED_CLEANUP`: `crates/execution/src/container/local.rs`
 - `DISABLE_WORKTREE_ORPHAN_CLEANUP`: `crates/repos/src/workspace_manager.rs`, `package.json`
 - `FRONTEND_PORT`: `frontend/vite.config.ts`, `package.json`, `scripts/run-e2e.js`
-- `HOST`: `crates/server/src/http/mod.rs`, `crates/server/src/main.rs`, `justfile`, `scripts/run-e2e.js`
+- `HOST`: `crates/server/src/http/mod.rs`, `crates/server/src/main.rs`, `justfile`, `scripts/run-e2e-just-run.js`, `scripts/run-e2e.js`
 - `KANBAN_OPENAI_API_BASE`: `crates/server/src/routes/translation.rs`
 - `KANBAN_OPENAI_API_KEY`: `crates/server/src/routes/translation.rs`
 - `KANBAN_OPENAI_DEFAULT_MODEL`: `crates/server/src/routes/translation.rs`
 - `OPENAI_API_BASE`: `crates/server/src/routes/translation.rs`
 - `OPENAI_API_KEY`: `crates/server/src/routes/translation.rs`
 - `OPENAI_DEFAULT_MODEL`: `crates/server/src/routes/translation.rs`
-- `PORT`: `crates/server/src/main.rs`, `justfile`, `scripts/run-e2e.js`, `scripts/setup-dev-environment.js`
+- `PORT`: `crates/server/src/main.rs`, `justfile`, `scripts/run-e2e-just-run.js`, `scripts/run-e2e.js`, `scripts/setup-dev-environment.js`
 - `POSTHOG_API_ENDPOINT`: `crates/server/build.rs`
 - `POSTHOG_API_KEY`: `crates/server/build.rs`
 - `RUST_LOG`: `crates/executor-codex/src/codex/mod.rs`, `crates/server/src/main.rs`, `package.json`
-- `VIBE_ASSET_DIR`: `crates/server/src/test_support.rs`, `crates/utils-assets/src/assets.rs`, `scripts/run-e2e.js`
+- `VIBE_ASSET_DIR`: `crates/server/src/test_support.rs`, `crates/utils-assets/src/assets.rs`, `scripts/run-e2e-just-run.js`, `scripts/run-e2e.js`
 - `VIBE_BACKEND_URL`: —
 - `VIBE_DB_RESET_ON_MIGRATION_ERROR`: `crates/db/src/lib.rs`
 - `VIBE_FAKE_AGENT_CONFIG`: `crates/executor-fake-agent/src/fake_agent.rs`

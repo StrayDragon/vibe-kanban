@@ -113,11 +113,10 @@ impl EventService {
                                 return Some(LogMsg::JsonPatch(patch));
                             }
 
-                            let remove_patch = json_patch::Patch(vec![PatchOperation::Remove(
-                                RemoveOperation {
+                            let remove_patch =
+                                json_patch::Patch(vec![PatchOperation::Remove(RemoveOperation {
                                     path: op.path.clone(),
-                                },
-                            )]);
+                                })]);
                             return Some(LogMsg::JsonPatch(remove_patch));
                         }
                     }
@@ -129,11 +128,10 @@ impl EventService {
                                 return Some(LogMsg::JsonPatch(patch));
                             }
 
-                            let remove_patch = json_patch::Patch(vec![PatchOperation::Remove(
-                                RemoveOperation {
+                            let remove_patch =
+                                json_patch::Patch(vec![PatchOperation::Remove(RemoveOperation {
                                     path: op.path.clone(),
-                                },
-                            )]);
+                                })]);
                             return Some(LogMsg::JsonPatch(remove_patch));
                         }
                     }
@@ -149,8 +147,7 @@ impl EventService {
 
         let (history, receiver, meta) = self.msg_store.subscribe_sequenced_from(after_seq);
         let snapshot_seq = snapshot_seq_from_meta(meta);
-        let needs_snapshot =
-            after_seq.is_none() || !can_resume_from(after_seq.unwrap_or(0), meta);
+        let needs_snapshot = after_seq.is_none() || !can_resume_from(after_seq.unwrap_or(0), meta);
 
         let mut initial_msgs: Vec<SequencedLogMsg> = Vec::new();
         let initial_last_seq: u64;
@@ -311,15 +308,15 @@ impl EventService {
         }
 
         fn patch_is_projects(patch: &json_patch::Patch) -> bool {
-            patch.0
+            patch
+                .0
                 .first()
                 .is_some_and(|op| op.path().starts_with("/projects"))
         }
 
         let (history, receiver, meta) = self.msg_store.subscribe_sequenced_from(after_seq);
         let snapshot_seq = snapshot_seq_from_meta(meta);
-        let needs_snapshot =
-            after_seq.is_none() || !can_resume_from(after_seq.unwrap_or(0), meta);
+        let needs_snapshot = after_seq.is_none() || !can_resume_from(after_seq.unwrap_or(0), meta);
 
         let mut initial_msgs: Vec<SequencedLogMsg> = Vec::new();
         let initial_last_seq: u64;
@@ -525,24 +522,21 @@ impl EventService {
         }
 
         fn patch_is_execution_processes(patch: &json_patch::Patch) -> bool {
-            patch.0
+            patch
+                .0
                 .first()
                 .is_some_and(|op| op.path().starts_with("/execution_processes/"))
         }
 
         let (history, receiver, meta) = self.msg_store.subscribe_sequenced_from(after_seq);
         let snapshot_seq = snapshot_seq_from_meta(meta);
-        let needs_snapshot =
-            after_seq.is_none() || !can_resume_from(after_seq.unwrap_or(0), meta);
+        let needs_snapshot = after_seq.is_none() || !can_resume_from(after_seq.unwrap_or(0), meta);
 
         let mut initial_msgs: Vec<SequencedLogMsg> = Vec::new();
         let session_ids = if needs_snapshot {
-            let (snapshot, session_ids) = build_execution_processes_snapshot(
-                &self.db.pool,
-                workspace_id,
-                show_soft_deleted,
-            )
-            .await?;
+            let (snapshot, session_ids) =
+                build_execution_processes_snapshot(&self.db.pool, workspace_id, show_soft_deleted)
+                    .await?;
             initial_msgs.push(SequencedLogMsg {
                 seq: snapshot_seq,
                 msg: snapshot,
@@ -598,14 +592,13 @@ impl EventService {
                             json_patch::PatchOperation::Replace(replace) => {
                                 if let Ok(process) = serde_json::from_value::<ExecutionProcess>(
                                     replace.value.clone(),
+                                ) && session_matches_workspace(
+                                    &session_ids,
+                                    &self.db.pool,
+                                    workspace_id,
+                                    process.session_id,
                                 )
-                                    && session_matches_workspace(
-                                        &session_ids,
-                                        &self.db.pool,
-                                        workspace_id,
-                                        process.session_id,
-                                    )
-                                    .await
+                                .await
                                 {
                                     if !show_soft_deleted && process.dropped {
                                         initial_msgs.push(SequencedLogMsg {
@@ -666,15 +659,14 @@ impl EventService {
                                     return None;
                                 }
 
-                                let Some(op) = patch.0.first() else {
-                                    return None;
-                                };
+                                let op = patch.0.first()?;
 
                                 match op {
                                     json_patch::PatchOperation::Add(add) => {
-                                        if let Ok(process) = serde_json::from_value::<
-                                            ExecutionProcess,
-                                        >(add.value.clone())
+                                        if let Ok(process) =
+                                            serde_json::from_value::<ExecutionProcess>(
+                                                add.value.clone(),
+                                            )
                                             && session_matches_workspace(
                                                 &session_ids,
                                                 &db_pool,
@@ -699,9 +691,10 @@ impl EventService {
                                         }
                                     }
                                     json_patch::PatchOperation::Replace(replace) => {
-                                        if let Ok(process) = serde_json::from_value::<
-                                            ExecutionProcess,
-                                        >(replace.value.clone())
+                                        if let Ok(process) =
+                                            serde_json::from_value::<ExecutionProcess>(
+                                                replace.value.clone(),
+                                            )
                                             && session_matches_workspace(
                                                 &session_ids,
                                                 &db_pool,
@@ -869,8 +862,7 @@ impl EventService {
 
         let (history, receiver, meta) = self.msg_store.subscribe_sequenced_from(after_seq);
         let snapshot_seq = snapshot_seq_from_meta(meta);
-        let needs_snapshot =
-            after_seq.is_none() || !can_resume_from(after_seq.unwrap_or(0), meta);
+        let needs_snapshot = after_seq.is_none() || !can_resume_from(after_seq.unwrap_or(0), meta);
 
         let scratch_type = *scratch_type;
         let scratch_type_str = scratch_type.to_string();

@@ -19,7 +19,7 @@ export function useIdMapWsStream<K extends string, T extends object>(
   patchPrefix: string
 ) {
   const initialData = useCallback(
-    (): IdMapState<K, T> => ({ [mapKey]: {} } as IdMapState<K, T>),
+    (): IdMapState<K, T> => ({ [mapKey]: {} }) as IdMapState<K, T>,
     [mapKey]
   );
 
@@ -36,4 +36,3 @@ export function useIdMapWsStream<K extends string, T extends object>(
     { deduplicatePatches }
   );
 }
-

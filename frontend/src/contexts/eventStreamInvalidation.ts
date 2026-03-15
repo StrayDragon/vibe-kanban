@@ -17,7 +17,9 @@ export function invalidateQueriesFromHints(
   hints: InvalidationHints
 ) {
   const taskIds = Array.isArray(hints.taskIds) ? hints.taskIds : [];
-  const workspaceIds = Array.isArray(hints.workspaceIds) ? hints.workspaceIds : [];
+  const workspaceIds = Array.isArray(hints.workspaceIds)
+    ? hints.workspaceIds
+    : [];
   const hasExecutionProcess = Boolean(hints.hasExecutionProcess);
 
   for (const taskId of taskIds) {

@@ -91,14 +91,13 @@ fn invalidation_hints_from_patch_json(patch: &Value) -> Option<Value> {
                 }
 
                 let op_kind = op.get("op").and_then(|v| v.as_str());
-                if matches!(op_kind, Some("add" | "replace")) {
-                    if let Some(task_id) = op
+                if matches!(op_kind, Some("add" | "replace"))
+                    && let Some(task_id) = op
                         .get("value")
                         .and_then(|v| v.get("task_id"))
                         .and_then(|v| v.as_str())
-                    {
-                        task_ids.insert(task_id.to_string());
-                    }
+                {
+                    task_ids.insert(task_id.to_string());
                 }
             }
             "execution_processes" => {
@@ -149,14 +148,11 @@ impl SequencedLogMsgAxumExt for SequencedLogMsg {
 
     fn to_ws_message_unchecked(&self) -> Message {
         if matches!(self.msg, LogMsg::Finished) {
-            return Message::Text(
-                format!(r#"{{"seq":{},"finished":true}}"#, self.seq).into(),
-            );
+            return Message::Text(format!(r#"{{"seq":{},"finished":true}}"#, self.seq).into());
         }
 
-        let value = serde_json::to_value(&self.msg).unwrap_or_else(|_| {
-            serde_json::json!({ "error": "serialization_failed" })
-        });
+        let value = serde_json::to_value(&self.msg)
+            .unwrap_or_else(|_| serde_json::json!({ "error": "serialization_failed" }));
 
         let value = match value {
             Value::Object(mut map) => {
@@ -175,9 +171,8 @@ impl SequencedLogMsgAxumExt for SequencedLogMsg {
             }),
         };
 
-        let json = serde_json::to_string(&value).unwrap_or_else(|_| {
-            r#"{"error":"serialization_failed"}"#.to_string()
-        });
+        let json = serde_json::to_string(&value)
+            .unwrap_or_else(|_| r#"{"error":"serialization_failed"}"#.to_string());
 
         Message::Text(json.into())
     }
@@ -230,7 +225,10 @@ mod tests {
         let value = decode_text_message(msg.to_ws_message_unchecked());
         assert_eq!(value["seq"], 7);
         assert_eq!(value["finished"], true);
-        assert!(value.get("Finished").is_none(), "must preserve legacy finished shape");
+        assert!(
+            value.get("Finished").is_none(),
+            "must preserve legacy finished shape"
+        );
     }
 
     #[test]
@@ -243,7 +241,10 @@ mod tests {
         }))
         .expect("valid JsonPatch log msg");
 
-        let msg = SequencedLogMsg { seq: 1, msg: log_msg };
+        let msg = SequencedLogMsg {
+            seq: 1,
+            msg: log_msg,
+        };
         let value = decode_text_message(msg.to_ws_message_unchecked());
 
         let invalidate = value
@@ -254,10 +255,7 @@ mod tests {
             invalidate.get("taskIds"),
             Some(&serde_json::json!([task_id]))
         );
-        assert_eq!(
-            invalidate.get("workspaceIds"),
-            Some(&serde_json::json!([]))
-        );
+        assert_eq!(invalidate.get("workspaceIds"), Some(&serde_json::json!([])));
         assert_eq!(
             invalidate.get("hasExecutionProcess"),
             Some(&serde_json::json!(false))
@@ -275,7 +273,10 @@ mod tests {
         }))
         .expect("valid JsonPatch log msg");
 
-        let msg = SequencedLogMsg { seq: 1, msg: log_msg };
+        let msg = SequencedLogMsg {
+            seq: 1,
+            msg: log_msg,
+        };
         let value = decode_text_message(msg.to_ws_message_unchecked());
 
         let invalidate = value
@@ -306,21 +307,18 @@ mod tests {
         }))
         .expect("valid JsonPatch log msg");
 
-        let msg = SequencedLogMsg { seq: 1, msg: log_msg };
+        let msg = SequencedLogMsg {
+            seq: 1,
+            msg: log_msg,
+        };
         let value = decode_text_message(msg.to_ws_message_unchecked());
 
         let invalidate = value
             .get("invalidate")
             .and_then(|v| v.as_object())
             .expect("invalidate hints missing");
-        assert_eq!(
-            invalidate.get("taskIds"),
-            Some(&serde_json::json!([]))
-        );
-        assert_eq!(
-            invalidate.get("workspaceIds"),
-            Some(&serde_json::json!([]))
-        );
+        assert_eq!(invalidate.get("taskIds"), Some(&serde_json::json!([])));
+        assert_eq!(invalidate.get("workspaceIds"), Some(&serde_json::json!([])));
         assert_eq!(
             invalidate.get("hasExecutionProcess"),
             Some(&serde_json::json!(true))

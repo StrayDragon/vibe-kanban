@@ -13,4 +13,3 @@ export function createWebSocket(url: string): WebSocket {
 export function createEventSource(url: string): EventSource {
   return new EventSource(withApiTokenQuery(url));
 }
-

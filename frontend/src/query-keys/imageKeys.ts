@@ -5,11 +5,5 @@ export const imageKeys = {
     taskId: string | undefined;
     src: string;
   }) =>
-    [
-      'imageMetadata',
-      params.taskAttemptId,
-      params.taskId,
-      params.src,
-    ] as const,
+    ['imageMetadata', params.taskAttemptId, params.taskId, params.src] as const,
 };
-

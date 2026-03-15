@@ -41,7 +41,8 @@ export type SerializationConfig<T> =
   | FencedSerialization<T>;
 
 /** Interface for the generated node instance */
-export interface GeneratedDecoratorNode<T> extends DecoratorNode<JSX.Element> {
+export interface GeneratedDecoratorNode<T>
+  extends DecoratorNode<React.JSX.Element> {
   getData(): T;
 }
 
@@ -101,7 +102,7 @@ export function createDecoratorNode<T>(
   };
 
   // Generated node class
-  class GeneratedNode extends DecoratorNode<JSX.Element> {
+  class GeneratedNode extends DecoratorNode<React.JSX.Element> {
     __data: T;
 
     static getType(): string {
@@ -155,7 +156,7 @@ export function createDecoratorNode<T>(
       return this.__data;
     }
 
-    decorate(): JSX.Element {
+    decorate(): React.JSX.Element {
       return (
         <NodeComponent
           data={this.__data}

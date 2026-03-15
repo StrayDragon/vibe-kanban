@@ -62,7 +62,9 @@ export const useJsonPatchWsStream = <T extends object>(
   const retryAttemptsRef = useRef<number>(0);
   const finishedRef = useRef<boolean>(false);
   const hadErrorRef = useRef<boolean>(false);
-  const connectRef = useRef<(kind: 'initial' | 'retry' | 'resync') => void>();
+  const connectRef = useRef<
+    ((kind: 'initial' | 'retry' | 'resync') => void) | null
+  >(null);
   const closeForResyncRef = useRef<boolean>(false);
   const closeOnOpenForResyncRef = useRef<boolean>(false);
   const lastSeqRef = useRef<number | null>(null);
@@ -286,7 +288,7 @@ export const useJsonPatchWsStream = <T extends object>(
     // Create WebSocket if it doesn't exist.
     // This preserves existing UI state while (re)connecting.
     if (!wsRef.current) {
-      connectRef.current('initial');
+      connectRef.current?.('initial');
     }
 
     return () => {

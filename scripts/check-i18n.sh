@@ -10,15 +10,84 @@ RULE="i18next/no-literal-string"
 lint_count() {
   local dir=$1
   local tmp
+  local config_dir
+  local config
   tmp=$(mktemp)
-  
-  trap 'rm -f "$tmp"' RETURN
+
+  if [ ! -d "$dir/frontend" ]; then
+    echo "0"
+    return 0
+  fi
+
+  config_dir=$(mktemp -d -p "$dir/frontend" eslint-i18n-config-XXXXXX)
+  config="$config_dir/eslint-i18n.config.mjs"
+
+  trap 'rm -f "$tmp"; rm -rf "$config_dir"' RETURN
+
+  cat > "$config" <<'EOF'
+import { createRequire } from 'node:module';
+
+const require = createRequire('__REPO_ROOT_FRONTEND__/package.json');
+const tsParser = require('@typescript-eslint/parser');
+const i18next = require('eslint-plugin-i18next');
+
+const i18nCheck = process.env.LINT_I18N === 'true';
+
+export default [
+  {
+    ignores: ['dist/**'],
+  },
+  {
+    files: ['**/*.{ts,tsx}'],
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+        ecmaFeatures: { jsx: true },
+      },
+    },
+    plugins: { i18next },
+    rules: {
+      'i18next/no-literal-string': i18nCheck
+        ? [
+            'warn',
+            {
+              markupOnly: true,
+              ignoreAttribute: [
+                'data-testid',
+                'to',
+                'href',
+                'id',
+                'key',
+                'type',
+                'role',
+                'className',
+                'style',
+                'aria-describedby',
+              ],
+              'jsx-components': {
+                exclude: ['code'],
+              },
+            },
+          ]
+        : 'off',
+    },
+  },
+];
+EOF
+
+  # Replace placeholder after writing the file (avoid expanding variables in the heredoc).
+  perl -pi -e "s|__REPO_ROOT_FRONTEND__|$REPO_ROOT/frontend|g" "$config"
   
   (
     set -eo pipefail
     cd "$dir/frontend"
-    # Lint current directory using ESLint from PR workspace
+    # Lint the target checkout using ESLint deps from this workspace.
+    # (The baseline shallow clone has no node_modules, and with flat config we need
+    # the config file to live under this workspace so plugin imports resolve.)
     LINT_I18N=true npx --prefix "$REPO_ROOT/frontend" eslint . \
+      --config "$config" \
       --ext ts,tsx \
       --format json \
       --output-file "$tmp" \

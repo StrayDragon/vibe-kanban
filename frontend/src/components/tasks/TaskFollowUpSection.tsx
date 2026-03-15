@@ -494,7 +494,7 @@ export function TaskFollowUpSection({
   );
 
   // Attachment button - file input ref and handlers
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null!);
   const handleAttachClick = useCallback(() => {
     fileInputRef.current?.click();
   }, []);

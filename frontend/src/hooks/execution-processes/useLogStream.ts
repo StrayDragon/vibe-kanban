@@ -47,9 +47,7 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
   const droppedLinesRef = useRef<boolean>(false);
   const entriesRef = useRef<Map<string, LogEntry>>(new Map());
   const entryOrderRef = useRef<bigint[]>([]);
-  const controllerRef = useRef<ReturnType<typeof openLogStream> | null>(
-    null
-  );
+  const controllerRef = useRef<ReturnType<typeof openLogStream> | null>(null);
   const retryTimerRef = useRef<number | null>(null);
   const retryAttemptsRef = useRef<number>(0);
   const refreshInFlightRef = useRef(false);

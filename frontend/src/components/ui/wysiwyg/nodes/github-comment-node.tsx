@@ -36,7 +36,7 @@ function GitHubCommentComponent({
   data: NormalizedComment;
   nodeKey: NodeKey;
   onDoubleClickEdit: (event: React.MouseEvent) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const handleClick = useCallback(
     (event: React.MouseEvent) => {
       event.preventDefault();

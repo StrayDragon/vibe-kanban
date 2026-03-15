@@ -41,7 +41,7 @@ function ImageComponent({
   data: ImageData;
   nodeKey: NodeKey;
   onDoubleClickEdit: (event: React.MouseEvent) => void;
-}): JSX.Element {
+}): React.JSX.Element {
   const { src, altText } = data;
   const taskAttemptId = useTaskAttemptId();
   const taskId = useTaskId();
