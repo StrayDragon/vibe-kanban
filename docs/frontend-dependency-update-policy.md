@@ -20,7 +20,7 @@ This document describes how to update frontend dependencies safely in Vibe Kanba
 
 - `pnpm -C frontend outdated`
 - `pnpm -C frontend audit --prod`
-- `pnpm -C frontend dlx knip --reporter compact`
+- `pnpm run frontend:knip`
 
 2) **Prefer upgrades over overrides**
 

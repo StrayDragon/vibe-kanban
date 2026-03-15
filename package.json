@@ -21,7 +21,7 @@
     "frontend:dev": "cd frontend && npm run dev -- --port ${FRONTEND_PORT:-3000} --host",
     "frontend:check": "cd frontend && npm run check",
     "frontend:audit:prod": "pnpm -C frontend audit --prod",
-    "frontend:knip": "pnpm -C frontend dlx knip --reporter compact",
+    "frontend:knip": "pnpm dlx knip --reporter compact --workspace ./frontend --dependencies --files",
     "backend:lint": "cargo clippy --workspace --all-targets --all-features -- -D warnings",
     "backend:dev": "BACKEND_PORT=$(node scripts/setup-dev-environment.js backend) npm run backend:dev:watch",
     "backend:check": "cargo check",
