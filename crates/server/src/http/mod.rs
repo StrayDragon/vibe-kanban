@@ -51,6 +51,7 @@ mod tests {
         http::{Request, StatusCode, header},
     };
     use config::AccessControlMode;
+    use executors::profile::ExecutorConfigs;
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -379,5 +380,140 @@ mod tests {
 
         let _ = fs::remove_dir_all(&allowed_root);
         let _ = fs::remove_dir_all(&outside_root);
+    }
+
+    #[tokio::test]
+    async fn check_agent_compatibility_rejects_non_codex_executor() {
+        let (_env_guard, deployment) = setup_deployment().await;
+        let app = super::router(deployment);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/agents/check-compatibility?executor=CLAUDE_CODE")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json.get("success").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            json.get("message").and_then(|v| v.as_str()),
+            Some("Compatibility check is only supported for Codex")
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn check_agent_compatibility_returns_incompatible_with_message() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_env_guard, deployment) = setup_deployment().await;
+
+        let asset_dir = std::env::var("VIBE_ASSET_DIR").expect("VIBE_ASSET_DIR");
+        let asset_dir = std::path::PathBuf::from(asset_dir);
+        let profiles_path = asset_dir.join("profiles.json");
+
+        let fake_codex = asset_dir.join("fake-codex");
+        std::fs::write(
+            &fake_codex,
+            r#"#!/bin/sh
+set -eu
+
+if [ "${1:-}" = "--version" ]; then
+  echo "codex-cli 0.0.0-test"
+  exit 0
+fi
+
+if [ "${1:-}" = "--oss" ]; then
+  shift
+fi
+
+if [ "${1:-}" = "app-server" ] && [ "${2:-}" = "generate-json-schema" ]; then
+  out=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--out" ]; then
+      out="$2"
+      shift 2
+      continue
+    fi
+    shift
+  done
+  if [ -z "$out" ]; then
+    echo "missing --out" >&2
+    exit 1
+  fi
+  mkdir -p "$out"
+  echo '{"vk":"mismatch"}' > "$out/codex_app_server_protocol.v2.schemas.json"
+  exit 0
+fi
+
+echo "unexpected args: $*" >&2
+exit 1
+"#,
+        )
+        .expect("write fake codex");
+
+        let mut perms = std::fs::metadata(&fake_codex)
+            .expect("metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_codex, perms).expect("chmod");
+
+        let overrides = serde_json::json!({
+            "executors": {
+                "CODEX": {
+                    "DEFAULT": {
+                        "CODEX": {
+                            "base_command_override": fake_codex.to_string_lossy(),
+                        }
+                    }
+                }
+            }
+        });
+        std::fs::write(&profiles_path, format!("{}\n", overrides))
+            .expect("write profiles override");
+        ExecutorConfigs::reload();
+
+        let app = super::router(deployment);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/agents/check-compatibility?executor=CODEX&refresh=true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json.get("success").and_then(|v| v.as_bool()), Some(true));
+        let data = json.get("data").expect("data");
+        assert_eq!(
+            data.get("status").and_then(|v| v.as_str()),
+            Some("incompatible")
+        );
+        assert!(
+            data.get("expected_v2_schema_sha256")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.is_empty())
+        );
+        assert!(
+            data.get("runtime_v2_schema_sha256")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.is_empty())
+        );
+
+        let message = data.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(message.contains("Codex protocol is incompatible"));
+        assert!(message.contains("Expected protocol fingerprint"));
+        assert!(message.contains("Base command:"));
     }
 }

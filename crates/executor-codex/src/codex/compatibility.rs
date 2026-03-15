@@ -101,14 +101,20 @@ pub async fn check_codex_protocol_compatibility(
             };
         }
         Err(err) => {
-            return CodexProtocolCompatibility {
+            let raw_error = err.to_string();
+            let mut compat = CodexProtocolCompatibility {
                 status: CodexProtocolCompatibilityStatus::Unknown,
                 expected_v2_schema_sha256: EXPECTED_V2_SCHEMA_SHA256.to_string(),
                 runtime_v2_schema_sha256: None,
                 codex_cli_version: None,
                 base_command,
-                message: Some(err.to_string()),
+                message: None,
             };
+            compat.message = Some(unknown_compatibility_error_message(
+                &compat,
+                Some(&raw_error),
+            ));
+            return compat;
         }
     };
 
@@ -139,14 +145,22 @@ pub async fn check_codex_protocol_compatibility(
             .await
             {
                 Ok(result) => result,
-                Err(err) => CodexProtocolCompatibility {
-                    status: CodexProtocolCompatibilityStatus::Unknown,
-                    expected_v2_schema_sha256: EXPECTED_V2_SCHEMA_SHA256.to_string(),
-                    runtime_v2_schema_sha256: None,
-                    codex_cli_version,
-                    base_command: base_command.clone(),
-                    message: Some(err.to_string()),
-                },
+                Err(err) => {
+                    let raw_error = err.to_string();
+                    let mut compat = CodexProtocolCompatibility {
+                        status: CodexProtocolCompatibilityStatus::Unknown,
+                        expected_v2_schema_sha256: EXPECTED_V2_SCHEMA_SHA256.to_string(),
+                        runtime_v2_schema_sha256: None,
+                        codex_cli_version,
+                        base_command: base_command.clone(),
+                        message: None,
+                    };
+                    compat.message = Some(unknown_compatibility_error_message(
+                        &compat,
+                        Some(&raw_error),
+                    ));
+                    compat
+                }
             }
         })
         .await
@@ -276,6 +290,7 @@ async fn run_schema_fingerprint(
 pub fn compatibility_error_message(compat: &CodexProtocolCompatibility) -> String {
     let mut lines = Vec::new();
     lines.push("Codex protocol is incompatible with this Vibe Kanban build.".to_string());
+    lines.push(format!("Base command: {}", compat.base_command));
     if let Some(version) = compat.codex_cli_version.as_deref() {
         lines.push(format!("Detected codex-cli version: {version}"));
     }
@@ -291,6 +306,49 @@ pub fn compatibility_error_message(compat: &CodexProtocolCompatibility) -> Strin
             .to_string(),
     );
     lines.join("\n")
+}
+
+fn unknown_compatibility_error_message(
+    compat: &CodexProtocolCompatibility,
+    raw_error: Option<&str>,
+) -> String {
+    let mut lines = Vec::new();
+    lines.push("Unable to verify Codex protocol compatibility (status: unknown).".to_string());
+    lines.push("Failing fast to avoid runtime decode crashes.".to_string());
+    lines.push(format!("Base command: {}", compat.base_command));
+    if let Some(version) = compat.codex_cli_version.as_deref() {
+        lines.push(format!("Detected codex-cli version: {version}"));
+    }
+    if let Some(runtime) = compat.runtime_v2_schema_sha256.as_deref() {
+        lines.push(format!("Runtime protocol fingerprint: {runtime}"));
+    }
+    lines.push(format!(
+        "Expected protocol fingerprint: {}",
+        compat.expected_v2_schema_sha256
+    ));
+    if let Some(message) = raw_error {
+        lines.push(format!("Error: {message}"));
+    }
+    lines.push(
+        "Fix: upgrade Vibe Kanban, or align your local codex-cli to a compatible version."
+            .to_string(),
+    );
+    lines.join("\n")
+}
+
+pub fn compatibility_blocking_error_message(compat: &CodexProtocolCompatibility) -> String {
+    match compat.status {
+        CodexProtocolCompatibilityStatus::Compatible => "Codex protocol is compatible.".to_string(),
+        CodexProtocolCompatibilityStatus::Incompatible => compatibility_error_message(compat),
+        CodexProtocolCompatibilityStatus::NotInstalled => format!(
+            "Codex CLI is not installed or not available in PATH (base command: {}).",
+            compat.base_command
+        ),
+        CodexProtocolCompatibilityStatus::Unknown => compat
+            .message
+            .clone()
+            .unwrap_or_else(|| unknown_compatibility_error_message(compat, None)),
+    }
 }
 
 pub fn v2_schema_bundle_path(dir: &Path) -> std::path::PathBuf {

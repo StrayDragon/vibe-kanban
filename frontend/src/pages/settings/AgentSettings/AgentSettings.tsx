@@ -111,10 +111,11 @@ export function AgentSettings() {
         }
       )
     : null;
-  const codexDefaultIncompatible =
-    codexDefaultCompatibility.compatibility?.status === 'incompatible';
+  const codexDefaultBlocked =
+    codexDefaultCompatibility.compatibility?.status === 'incompatible' ||
+    codexDefaultCompatibility.compatibility?.status === 'unknown';
   const disableCodexExecutorOption =
-    codexDefaultIncompatible && executorDraft?.executor !== codexAgent;
+    codexDefaultBlocked && executorDraft?.executor !== codexAgent;
 
   const selectedConfigurationForCompatibility =
     selectedConfiguration.startsWith('__') ? 'DEFAULT' : selectedConfiguration;
@@ -744,7 +745,9 @@ export function AgentSettings() {
                       'compatible'
                         ? 'success'
                         : codexDefaultCompatibility.compatibility.status ===
-                            'incompatible'
+                              'incompatible' ||
+                            codexDefaultCompatibility.compatibility.status ===
+                              'unknown'
                           ? 'destructive'
                           : 'default'
                     }
@@ -808,8 +811,7 @@ export function AgentSettings() {
               disabled={
                 !executorDirty ||
                 executorSaving ||
-                (executorDraft?.executor === codexAgent &&
-                  codexDefaultIncompatible)
+                (executorDraft?.executor === codexAgent && codexDefaultBlocked)
               }
             >
               {executorSaving && (
@@ -995,7 +997,9 @@ export function AgentSettings() {
                         'compatible'
                           ? 'success'
                           : codexEditorCompatibility.compatibility.status ===
-                              'incompatible'
+                                'incompatible' ||
+                              codexEditorCompatibility.compatibility.status ===
+                                'unknown'
                             ? 'destructive'
                             : 'default'
                       }

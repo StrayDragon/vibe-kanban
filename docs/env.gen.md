@@ -143,7 +143,7 @@ The list below shows where each env var name appears in the repo (best-effort).
 - `POSTHOG_API_ENDPOINT`: `crates/server/build.rs`
 - `POSTHOG_API_KEY`: `crates/server/build.rs`
 - `RUST_LOG`: `crates/executor-codex/src/codex/mod.rs`, `crates/server/src/main.rs`, `package.json`
-- `VIBE_ASSET_DIR`: `crates/server/src/test_support.rs`, `crates/utils-assets/src/assets.rs`, `scripts/run-e2e-just-run.js`, `scripts/run-e2e.js`
+- `VIBE_ASSET_DIR`: `crates/server/src/http/mod.rs`, `crates/server/src/test_support.rs`, `crates/utils-assets/src/assets.rs`, `scripts/run-e2e-just-run.js`, `scripts/run-e2e.js`
 - `VIBE_BACKEND_URL`: —
 - `VIBE_DB_RESET_ON_MIGRATION_ERROR`: `crates/db/src/lib.rs`
 - `VIBE_FAKE_AGENT_CONFIG`: `crates/executor-fake-agent/src/fake_agent.rs`

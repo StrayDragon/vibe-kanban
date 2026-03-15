@@ -375,9 +375,22 @@ impl Codex {
             false,
         )
         .await;
-        if compat.status == compatibility::CodexProtocolCompatibilityStatus::Incompatible {
+        if matches!(
+            compat.status,
+            compatibility::CodexProtocolCompatibilityStatus::Incompatible
+                | compatibility::CodexProtocolCompatibilityStatus::Unknown
+        ) {
+            tracing::error!(
+                status = ?compat.status,
+                expected_v2_schema_sha256 = %compat.expected_v2_schema_sha256,
+                runtime_v2_schema_sha256 = ?compat.runtime_v2_schema_sha256,
+                codex_cli_version = ?compat.codex_cli_version,
+                base_command = %compat.base_command,
+                message = ?compat.message,
+                "blocking Codex spawn due to protocol compatibility"
+            );
             return Err(ExecutorError::Io(std::io::Error::other(
-                compatibility::compatibility_error_message(&compat),
+                compatibility::compatibility_blocking_error_message(&compat),
             )));
         }
 
