@@ -2,6 +2,8 @@ import { useTranslation } from 'react-i18next';
 import { MultiFileSearchTextarea } from '@/components/ui/multi-file-search-textarea';
 
 interface CopyFilesFieldProps {
+  id?: string;
+  name?: string;
   value: string;
   onChange: (value: string) => void;
   projectId: string;
@@ -9,6 +11,8 @@ interface CopyFilesFieldProps {
 }
 
 export function CopyFilesField({
+  id,
+  name,
   value,
   onChange,
   projectId,
@@ -18,6 +22,8 @@ export function CopyFilesField({
 
   return (
     <MultiFileSearchTextarea
+      id={id}
+      name={name}
       value={value}
       onChange={onChange}
       placeholder={t('copyFilesPlaceholderWithSearch')}

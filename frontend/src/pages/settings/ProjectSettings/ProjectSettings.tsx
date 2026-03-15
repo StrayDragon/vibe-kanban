@@ -1680,10 +1680,12 @@ export function ProjectSettings() {
                       </div>
 
                       <div className="space-y-2">
-                        <Label>
+                        <Label htmlFor="project-copy-files">
                           {t('settings.projects.scripts.copyFiles.label')}
                         </Label>
                         <CopyFilesField
+                          id="project-copy-files"
+                          name="copy_files"
                           value={scriptsDraft.copy_files}
                           onChange={(value) =>
                             updateScriptsDraft({ copy_files: value })

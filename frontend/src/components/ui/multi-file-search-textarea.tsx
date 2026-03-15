@@ -16,6 +16,8 @@ interface CachedFileSearchResults {
 }
 
 interface MultiFileSearchTextareaProps {
+  id?: string;
+  name?: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
@@ -28,6 +30,8 @@ interface MultiFileSearchTextareaProps {
 }
 
 export function MultiFileSearchTextarea({
+  id,
+  name,
   value,
   onChange,
   placeholder = 'Start typing a file path...',
@@ -350,6 +354,8 @@ export function MultiFileSearchTextarea({
     >
       <AutoExpandingTextarea
         ref={textareaRef}
+        id={id}
+        name={name}
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
