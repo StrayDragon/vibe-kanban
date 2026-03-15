@@ -48,14 +48,6 @@ export function useTaskMutations(projectId?: string) {
           queryKey: taskLineageKeys.byTask(createdTask.origin_task_id),
         });
       }
-      queryClient.invalidateQueries({
-        queryKey: taskLineageKeys.byTask(createdTask.id),
-      });
-      if (createdTask.origin_task_id) {
-        queryClient.invalidateQueries({
-          queryKey: taskLineageKeys.byTask(createdTask.origin_task_id),
-        });
-      }
       if (projectId) {
         navigate(`${paths.task(projectId, createdTask.id)}/attempts/latest`);
       }

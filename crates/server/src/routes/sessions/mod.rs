@@ -230,7 +230,11 @@ pub async fn follow_up(
                     "Workspace not found".to_string(),
                 )))?;
 
-            tracing::info!("{:?}", workspace);
+            tracing::debug!(
+                workspace_id = %workspace.id,
+                session_id = %session.id,
+                "Follow-up request loaded workspace"
+            );
 
             deployment
                 .container()
