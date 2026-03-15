@@ -40,10 +40,7 @@ where
 {
     match load_future.await {
         Ok(Some(model)) => Ok(model),
-        Ok(None) => {
-            tracing::warn!("{model_name} {model_id} not found");
-            Err(StatusCode::NOT_FOUND)
-        }
+        Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(error) => {
             tracing::error!("Failed to fetch {model_name} {model_id}: {error}");
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -63,7 +60,36 @@ where
     E: Display,
     Fut: Future<Output = Result<Option<M>, E>>,
 {
-    let model = fetch_model_or_status(model_name, model_id, load_future).await?;
+    let model = match fetch_model_or_status(model_name, model_id, load_future).await {
+        Ok(model) => model,
+        Err(status) => {
+            let user_agent = request
+                .headers()
+                .get(axum::http::header::USER_AGENT)
+                .and_then(|value| value.to_str().ok());
+            if status == StatusCode::NOT_FOUND {
+                tracing::warn!(
+                    model_name,
+                    model_id = %model_id,
+                    method = %request.method(),
+                    uri = %request.uri(),
+                    user_agent,
+                    "model not found"
+                );
+            } else {
+                tracing::error!(
+                    model_name,
+                    model_id = %model_id,
+                    method = %request.method(),
+                    uri = %request.uri(),
+                    user_agent,
+                    status = %status,
+                    "model loader failed"
+                );
+            }
+            return Err(status);
+        }
+    };
     let mut request = request;
     request.extensions_mut().insert(model);
     Ok(next.run(request).await)

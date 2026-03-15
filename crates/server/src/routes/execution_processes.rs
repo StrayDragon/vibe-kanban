@@ -6,8 +6,9 @@ use axum::{
     Extension, Router,
     extract::{
         Path, Query, State,
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{CloseCode, CloseFrame, Message, Utf8Bytes, WebSocket, WebSocketUpgrade},
     },
+    http::{HeaderMap, header},
     middleware::from_fn_with_state,
     response::{IntoResponse, Json as ResponseJson},
     routing::{get, post},
@@ -346,7 +347,13 @@ pub async fn stream_execution_processes_ws(
     ws: WebSocketUpgrade,
     State(deployment): State<DeploymentImpl>,
     Query(query): Query<ExecutionProcessQuery>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
+
     ws.on_upgrade(move |socket| async move {
         if let Err(e) = handle_execution_processes_ws(
             socket,
@@ -354,10 +361,15 @@ pub async fn stream_execution_processes_ws(
             query.workspace_id,
             query.show_soft_deleted.unwrap_or(false),
             query.after_seq,
+            user_agent,
         )
         .await
         {
-            tracing::warn!("execution processes WS closed: {}", e);
+            tracing::warn!(
+                workspace_id = %query.workspace_id,
+                error = %e,
+                "execution processes WS closed"
+            );
         }
     })
 }
@@ -368,16 +380,49 @@ async fn handle_execution_processes_ws(
     workspace_id: uuid::Uuid,
     show_soft_deleted: bool,
     after_seq: Option<u64>,
+    user_agent: Option<String>,
 ) -> anyhow::Result<()> {
     let shutdown = deployment.shutdown_token();
-    // Get the raw stream and convert LogMsg to WebSocket messages
-    let mut stream = deployment
-        .events()
-        .stream_execution_processes_for_workspace_raw(workspace_id, show_soft_deleted, after_seq)
-        .await?
-        .map_ok(|msg| msg.to_ws_message_unchecked());
 
     let (mut sender, mut receiver) = socket.split();
+
+    // Get the raw stream and convert LogMsg to WebSocket messages
+    let mut stream = match deployment
+        .events()
+        .stream_execution_processes_for_workspace_raw(workspace_id, show_soft_deleted, after_seq)
+        .await
+    {
+        Ok(stream) => stream.map_ok(|msg| msg.to_ws_message_unchecked()),
+        Err(err) => {
+            let (code, reason) = match &err {
+                events::EventError::Database(db::DbErr::RecordNotFound(_)) => {
+                    (4404_u16, "workspace_not_found")
+                }
+                _ => (1011_u16, "stream_error"),
+            };
+
+            tracing::warn!(
+                workspace_id = %workspace_id,
+                show_soft_deleted = show_soft_deleted,
+                after_seq = after_seq,
+                user_agent = user_agent.as_deref(),
+                close_code = code,
+                close_reason = reason,
+                error = %err,
+                "execution processes WS rejected"
+            );
+
+            let _ = sender
+                .send(Message::Close(Some(CloseFrame {
+                    code: CloseCode::from(code),
+                    reason: Utf8Bytes::from_static(reason),
+                })))
+                .await;
+
+            let _ = sender.close().await;
+            return Ok(());
+        }
+    };
     let mut ping = tokio::time::interval(WS_PING_INTERVAL);
     ping.tick().await;
 

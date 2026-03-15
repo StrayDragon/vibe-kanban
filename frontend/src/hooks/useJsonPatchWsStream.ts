@@ -268,6 +268,20 @@ export const useJsonPatchWsStream = <T extends object>(
           return;
         }
 
+        // Terminal close codes: don't reconnect (avoid "infinite reconnect" background loops).
+        if (evt?.code === 4404) {
+          const reason = typeof evt.reason === 'string' ? evt.reason : '';
+          const message =
+            reason === 'workspace_not_found'
+              ? 'Workspace not found'
+              : reason.trim().length > 0
+                ? reason
+                : 'Resource not found';
+          setError(message);
+          setIsResyncing(false);
+          return;
+        }
+
         const isCleanClose = evt?.code === 1000 && evt?.wasClean;
         if (isCleanClose && !reconnectOnCleanClose) {
           setIsResyncing(false);
