@@ -202,3 +202,100 @@ test('events SSE does not replay history; resume via after_seq replays missed in
   });
 });
 
+test('events SSE sends invalidate_all when resume is unavailable', async ({
+  page,
+  reposDir,
+  makeName,
+}) => {
+  test.setTimeout(120_000);
+
+  await page.addInitScript(() => {
+    (window as any).__vkSseEvents = [];
+    (window as any).__vkSseNextId = 1;
+
+    const OriginalEventSource = EventSource;
+
+    (window as any).EventSource = function EventSource(
+      url: string,
+      eventSourceInitDict?: EventSourceInit
+    ) {
+      const es =
+        eventSourceInitDict === undefined
+          ? new OriginalEventSource(url)
+          : new OriginalEventSource(url, eventSourceInitDict);
+
+      const id = (window as any).__vkSseNextId++;
+      (es as any).__vkEsId = id;
+
+      es.addEventListener('invalidate_all', (evt) => {
+        (window as any).__vkSseEvents.push({
+          esId: id,
+          type: 'invalidate_all',
+          lastEventId: (evt as any).lastEventId ?? null,
+          data: (evt as any).data ?? null,
+        });
+      });
+
+      return es;
+    } as any;
+
+    (window as any).EventSource.prototype = OriginalEventSource.prototype;
+    (window as any).EventSource.CONNECTING = OriginalEventSource.CONNECTING;
+    (window as any).EventSource.OPEN = OriginalEventSource.OPEN;
+    (window as any).EventSource.CLOSED = OriginalEventSource.CLOSED;
+  });
+
+  const projectName = makeName('project');
+  const repoFolderName = makeName('repo');
+  const { project } = await createRepoAndProject(page.request, {
+    name: projectName,
+    reposDir,
+    repoFolderName,
+  });
+
+  await page.goto(`/projects/${project.id}/tasks`);
+
+  // Ask for a resume point far beyond watermark to force an explicit invalidate_all.
+  const requestedAfterSeq = 9_999_999;
+  const esId: number = await page.evaluate(({ requestedAfterSeq }) => {
+    (window as any).__vkCustomSse?.close();
+    const es = new EventSource(
+      `/api/events?after_seq=${encodeURIComponent(String(requestedAfterSeq))}`
+    );
+    (window as any).__vkCustomSse = es;
+    return (es as any).__vkEsId as number;
+  }, { requestedAfterSeq });
+
+  await page.waitForFunction(
+    ({ esId }) => {
+      const events: Array<{ esId: number; data: unknown }> =
+        (window as any).__vkSseEvents ?? [];
+      return events.some(
+        (evt) =>
+          evt.esId === esId && typeof evt.data === 'string' && evt.data.length > 0
+      );
+    },
+    { esId }
+  );
+
+  const payload = await page.evaluate(({ esId }) => {
+    const events: Array<{ esId: number; data: unknown }> =
+      (window as any).__vkSseEvents ?? [];
+    const match = events.find(
+      (evt) => evt.esId === esId && typeof evt.data === 'string'
+    );
+    if (!match || typeof match.data !== 'string') return null;
+    try {
+      return JSON.parse(match.data) as { reason?: string };
+    } catch {
+      return null;
+    }
+  }, { esId });
+
+  expect(payload?.reason).toBe('resume_unavailable');
+
+  await page.evaluate(() => {
+    (window as any).__vkCustomSse?.close();
+    (window as any).__vkCustomSse = null;
+  });
+});
