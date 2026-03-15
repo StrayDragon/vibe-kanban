@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { archivedKanbansApi } from '@/lib/api';
 import { useProject } from '@/contexts/ProjectContext';
 import { paths } from '@/lib/paths';
+import { archivedKanbanKeys } from '@/query-keys/archivedKanbanKeys';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -24,7 +25,7 @@ export function ProjectArchives() {
     error,
     refetch,
   } = useQuery({
-    queryKey: ['archived-kanbans', projectId],
+    queryKey: archivedKanbanKeys.byProject(projectId),
     queryFn: () => archivedKanbansApi.listByProject(projectId!),
     enabled: Boolean(projectId),
     staleTime: 15_000,

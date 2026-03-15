@@ -111,10 +111,10 @@ const RemoveWorktreeDialogImpl = NiceModal.create<RemoveWorktreeDialogProps>(
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: taskAttemptKeys.all }),
           queryClient.invalidateQueries({
-            queryKey: ['taskAttempt', selectedAttempt.id],
+            queryKey: taskAttemptKeys.attempt(selectedAttempt.id),
           }),
           queryClient.invalidateQueries({
-            queryKey: ['taskAttemptWithSession', selectedAttempt.id],
+            queryKey: taskAttemptKeys.attemptWithSession(selectedAttempt.id),
           }),
           queryClient.invalidateQueries({
             queryKey: taskAttemptKeys.byTaskWithSessions(task.id),

@@ -17,6 +17,7 @@ import {
 import type { ExecutorConfig } from 'shared/types';
 import { configApi } from '../lib/api';
 import { updateLanguageFromConfig } from '../i18n/config';
+import { userSystemKeys } from '@/query-keys/userSystemKeys';
 
 interface UserSystemState {
   config: Config | null;
@@ -67,7 +68,7 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
   const queryClient = useQueryClient();
 
   const { data: userSystemInfo, isLoading } = useQuery({
-    queryKey: ['user-system'],
+    queryKey: userSystemKeys.all,
     queryFn: configApi.getConfig,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
@@ -97,7 +98,7 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
 
   const updateConfig = useCallback(
     (updates: Partial<Config>) => {
-      queryClient.setQueryData<UserSystemInfo>(['user-system'], (old) => {
+      queryClient.setQueryData<UserSystemInfo>(userSystemKeys.all, (old) => {
         if (!old) return old;
         return {
           ...old,
@@ -128,7 +129,7 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
 
       try {
         const saved = await configApi.saveConfig(newConfig);
-        queryClient.setQueryData<UserSystemInfo>(['user-system'], (old) => {
+        queryClient.setQueryData<UserSystemInfo>(userSystemKeys.all, (old) => {
           if (!old) return old;
           return {
             ...old,
@@ -138,7 +139,7 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
         return true;
       } catch (err) {
         console.error('Error saving config:', err);
-        queryClient.invalidateQueries({ queryKey: ['user-system'] });
+        queryClient.invalidateQueries({ queryKey: userSystemKeys.all });
         return false;
       }
     },
@@ -146,12 +147,12 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
   );
 
   const reloadSystem = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: ['user-system'] });
+    await queryClient.invalidateQueries({ queryKey: userSystemKeys.all });
   }, [queryClient]);
 
   const setEnvironment = useCallback(
     (env: Environment | null) => {
-      queryClient.setQueryData<UserSystemInfo>(['user-system'], (old) => {
+      queryClient.setQueryData<UserSystemInfo>(userSystemKeys.all, (old) => {
         if (!old || !env) return old;
         return { ...old, environment: env };
       });
@@ -161,7 +162,7 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
 
   const setProfiles = useCallback(
     (newProfiles: Record<string, ExecutorConfig> | null) => {
-      queryClient.setQueryData<UserSystemInfo>(['user-system'], (old) => {
+      queryClient.setQueryData<UserSystemInfo>(userSystemKeys.all, (old) => {
         if (!old || !newProfiles) return old;
         return {
           ...old,
@@ -174,7 +175,7 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
 
   const setCapabilities = useCallback(
     (newCapabilities: Record<string, BaseAgentCapability[]> | null) => {
-      queryClient.setQueryData<UserSystemInfo>(['user-system'], (old) => {
+      queryClient.setQueryData<UserSystemInfo>(userSystemKeys.all, (old) => {
         if (!old || !newCapabilities) return old;
         return { ...old, capabilities: newCapabilities };
       });
@@ -184,7 +185,7 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
 
   const setAgentCommandResolutions = useCallback(
     (newResolutions: Record<string, AgentCommandResolution> | null) => {
-      queryClient.setQueryData<UserSystemInfo>(['user-system'], (old) => {
+      queryClient.setQueryData<UserSystemInfo>(userSystemKeys.all, (old) => {
         if (!old || !newResolutions) return old;
         return { ...old, agent_command_resolutions: newResolutions };
       });

@@ -162,6 +162,7 @@ export default [
         'error',
         ...restrictedSyntaxModal,
         ...restrictedSyntaxNetwork,
+        ...restrictedSyntaxQueryKeys,
       ],
       // i18n rule - only active when LINT_I18N=true
       'i18next/no-literal-string': i18nCheck
@@ -259,14 +260,22 @@ export default [
     ],
     rules: {
       'no-restricted-imports': 'off',
-      'no-restricted-syntax': ['error', ...restrictedSyntaxNetwork],
+      'no-restricted-syntax': [
+        'error',
+        ...restrictedSyntaxNetwork,
+        ...restrictedSyntaxQueryKeys,
+      ],
     },
   },
   {
     // API boundary allowlist: only API modules may call fetch / construct WS/SSE
     files: ['src/api/**/*.{ts,tsx}'],
     rules: {
-      'no-restricted-syntax': ['error', ...restrictedSyntaxModal],
+      'no-restricted-syntax': [
+        'error',
+        ...restrictedSyntaxModal,
+        ...restrictedSyntaxQueryKeys,
+      ],
     },
   },
   {

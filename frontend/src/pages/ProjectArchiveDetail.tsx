@@ -7,6 +7,7 @@ import { archivedKanbansApi } from '@/lib/api';
 import { useProject } from '@/contexts/ProjectContext';
 import { paths } from '@/lib/paths';
 import { useArchivedKanbanTasks } from '@/hooks/archived-kanbans/useArchivedKanbanTasks';
+import { archivedKanbanKeys } from '@/query-keys/archivedKanbanKeys';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -35,7 +36,7 @@ export function ProjectArchiveDetail() {
     isLoading,
     error,
   } = useQuery({
-    queryKey: ['archived-kanban', archiveId],
+    queryKey: archivedKanbanKeys.byId(archiveId),
     queryFn: () => archivedKanbansApi.getById(archiveId!),
     enabled: Boolean(archiveId),
     staleTime: 15_000,

@@ -43,6 +43,7 @@ import { useQueueStatus } from '@/hooks/sessions/useQueueStatus';
 import { attemptsApi, projectsApi } from '@/lib/api';
 import { GitHubCommentsDialog } from '@/components/dialogs/tasks/GitHubCommentsDialog';
 import { ConfirmDialog } from '@/components/dialogs';
+import { projectKeys } from '@/query-keys/projectKeys';
 import type { NormalizedComment } from '@/components/ui/wysiwyg/nodes/github-comment-node';
 import type { Session } from 'shared/types';
 
@@ -79,9 +80,16 @@ export function TaskFollowUpSection({
     return selectedRepoId ?? repos[0]?.id;
   }, [selectedRepoId, repos]);
 
-  const repoIds = useMemo(() => repos.map((repo) => repo.id), [repos]);
+  const repoIds = useMemo(
+    () =>
+      repos
+        .map((repo) => repo.id)
+        .slice()
+        .sort((left, right) => left.localeCompare(right)),
+    [repos]
+  );
   const { data: projectRepoScripts = [] } = useQuery<ProjectRepo[]>({
-    queryKey: ['projectRepoScripts', projectId, repoIds],
+    queryKey: projectKeys.repoScripts(projectId, repoIds),
     queryFn: async () => {
       if (!projectId) return [];
       return Promise.all(

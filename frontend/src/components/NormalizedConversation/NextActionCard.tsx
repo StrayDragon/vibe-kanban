@@ -25,6 +25,7 @@ import { getIdeName } from '@/components/ide/IdeIcon';
 import { useProject } from '@/contexts/ProjectContext';
 import { useQuery } from '@tanstack/react-query';
 import { attemptsApi } from '@/lib/api';
+import { taskAttemptKeys } from '@/query-keys/taskAttemptKeys';
 import {
   BaseAgentCapability,
   type BaseCodingAgent,
@@ -62,7 +63,7 @@ export function NextActionCard({
   const editorIntegrationEnabled = useEditorIntegrationEnabled();
 
   const { data: attempt } = useQuery({
-    queryKey: ['attemptWithSession', attemptId],
+    queryKey: taskAttemptKeys.attemptWithSession(attemptId),
     queryFn: () => attemptsApi.getWithSession(attemptId!),
     enabled: !!attemptId && failed,
   });

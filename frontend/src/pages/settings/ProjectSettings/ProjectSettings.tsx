@@ -34,6 +34,7 @@ import { attemptsApi, projectsApi, tasksApi } from '@/lib/api';
 import { repoBranchKeys } from '@/hooks/task-attempts/useRepoBranches';
 import { WorkspaceHookMenuSummary } from '@/components/tasks/WorkspaceHookMenuSummary';
 import { getWorkspaceHookOutcome } from '@/utils/workspaceHooks';
+import { projectKeys } from '@/query-keys/projectKeys';
 import type {
   Project,
   ProjectRepo,
@@ -271,7 +272,7 @@ export function ProjectSettings() {
     attempt: WorkspaceWithSession;
     task: TaskWithAttemptStatus;
   } | null>({
-    queryKey: ['projectLatestLifecycleHook', selectedProjectId],
+    queryKey: projectKeys.latestLifecycleHookOutcome(selectedProjectId),
     enabled:
       showLatestHookOutcome &&
       hasConfiguredLifecycleHooks &&
@@ -566,7 +567,7 @@ export function ProjectSettings() {
       });
       setRepositories((prev) => [...prev, newRepo]);
       queryClient.invalidateQueries({
-        queryKey: ['projectRepositories', selectedProjectId],
+        queryKey: projectKeys.repositories(selectedProjectId),
       });
       queryClient.invalidateQueries({
         queryKey: repoBranchKeys.byRepo(newRepo.id),
@@ -589,7 +590,7 @@ export function ProjectSettings() {
       await projectsApi.deleteRepository(selectedProjectId, repoId);
       setRepositories((prev) => prev.filter((r) => r.id !== repoId));
       queryClient.invalidateQueries({
-        queryKey: ['projectRepositories', selectedProjectId],
+        queryKey: projectKeys.repositories(selectedProjectId),
       });
       queryClient.invalidateQueries({
         queryKey: repoBranchKeys.byRepo(repoId),
