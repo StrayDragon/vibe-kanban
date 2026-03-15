@@ -1,9 +1,6 @@
 use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    collections::{HashMap, VecDeque},
+    sync::Arc,
 };
 
 mod notification;
@@ -182,31 +179,120 @@ pub trait Deployment: Clone + Send + Sync + 'static {
 
     async fn stream_events(
         &self,
+        resume_after_seq: Option<u64>,
     ) -> futures::stream::BoxStream<'static, Result<Event, std::io::Error>> {
-        let (history, receiver, _meta) = self.events().msg_store().subscribe_sequenced_from(None);
+        fn can_resume_from(after_seq: u64, meta: logs_store::SequencedHistoryMetadata) -> bool {
+            match meta.min_seq {
+                Some(min) => after_seq >= min.saturating_sub(1),
+                None => after_seq == 0,
+            }
+        }
 
-        let initial_last_seq = history.last().map(|m| m.seq).unwrap_or(0);
-        let last_seq = Arc::new(AtomicU64::new(initial_last_seq));
+        fn invalidate_all_event(id: u64, payload: serde_json::Value) -> Event {
+            let data = serde_json::to_string(&payload)
+                .unwrap_or_else(|_| r#"{"reason":"unknown"}"#.into());
+            Event::default()
+                .event("invalidate_all")
+                .id(id.to_string())
+                .data(data)
+        }
 
-        let hist = futures::stream::iter(history.into_iter().map(Ok::<_, std::io::Error>));
+        let msg_store = Arc::clone(self.events().msg_store());
+
+        // By default, do NOT replay global history. Instead, start at the current watermark so the
+        // event stream only carries forward-going invalidations.
+        let subscribe_after_seq = resume_after_seq.or_else(|| msg_store.max_seq());
+
+        let (history, receiver, meta) = msg_store.subscribe_sequenced_from(subscribe_after_seq);
+        let watermark = meta.max_seq.unwrap_or(0);
+
+        let last_history_seq = history.last().map(|m| m.seq);
+        let mut initial_events: Vec<Event> = Vec::new();
+        let mut initial_last_seq = subscribe_after_seq.unwrap_or(0);
+
+        if let Some(requested_after_seq) = resume_after_seq {
+            let can_resume =
+                requested_after_seq <= watermark && can_resume_from(requested_after_seq, meta);
+            if !can_resume {
+                initial_events.push(invalidate_all_event(
+                    watermark,
+                    serde_json::json!({
+                        "reason": "resume_unavailable",
+                        "requested_after_seq": requested_after_seq,
+                        "min_seq": meta.min_seq,
+                        "watermark": watermark,
+                        "evicted": meta.evicted,
+                    }),
+                ));
+                initial_last_seq = watermark;
+            } else {
+                for msg in history {
+                    // Prefer the targeted backend hints when possible. The frontend can then skip
+                    // (potentially expensive) patch-based invalidation for the same seq.
+                    if let Some(invalidate) = msg.to_invalidate_sse_event() {
+                        initial_events.push(invalidate);
+                    }
+                    initial_events.push(msg.to_sse_event());
+                }
+                initial_last_seq = last_history_seq.unwrap_or(requested_after_seq);
+            }
+        } else {
+            for msg in history {
+                if let Some(invalidate) = msg.to_invalidate_sse_event() {
+                    initial_events.push(invalidate);
+                }
+                initial_events.push(msg.to_sse_event());
+            }
+            initial_last_seq = last_history_seq.unwrap_or(initial_last_seq);
+        }
+
+        struct LiveState {
+            receiver: tokio::sync::broadcast::Receiver<logs_store::SequencedLogMsg>,
+            msg_store: Arc<MsgStore>,
+            last_seq: u64,
+            pending: VecDeque<Event>,
+        }
+
+        let hist = futures::stream::iter(initial_events.into_iter().map(Ok::<_, std::io::Error>));
         let live = futures::stream::unfold(
-            (receiver, last_seq),
-            |(mut receiver, last_seq)| async move {
+            LiveState {
+                receiver,
+                msg_store,
+                last_seq: initial_last_seq,
+                pending: VecDeque::new(),
+            },
+            |mut state| async move {
+                if let Some(event) = state.pending.pop_front() {
+                    return Some((Ok::<_, std::io::Error>(event), state));
+                }
+
                 loop {
-                    match receiver.recv().await {
+                    match state.receiver.recv().await {
                         Ok(msg) => {
-                            if msg.seq <= last_seq.load(Ordering::Relaxed) {
+                            if msg.seq <= state.last_seq {
                                 continue;
                             }
-                            last_seq.store(msg.seq, Ordering::Relaxed);
-                            return Some((Ok::<_, std::io::Error>(msg), (receiver, last_seq)));
+                            state.last_seq = msg.seq;
+                            if let Some(invalidate) = msg.to_invalidate_sse_event() {
+                                state.pending.push_back(invalidate);
+                            }
+                            state.pending.push_back(msg.to_sse_event());
+                            if let Some(event) = state.pending.pop_front() {
+                                return Some((Ok::<_, std::io::Error>(event), state));
+                            }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                            tracing::warn!(
-                                skipped = skipped,
-                                "events SSE receiver lagged; dropping missed messages"
+                            let watermark = state.msg_store.max_seq().unwrap_or(state.last_seq);
+                            state.last_seq = watermark;
+                            let event = invalidate_all_event(
+                                watermark,
+                                serde_json::json!({
+                                    "reason": "lagged",
+                                    "skipped": skipped,
+                                    "watermark": watermark,
+                                }),
                             );
-                            continue;
+                            return Some((Ok::<_, std::io::Error>(event), state));
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                             return None;
@@ -216,21 +302,7 @@ pub trait Deployment: Clone + Send + Sync + 'static {
             },
         );
 
-        let sequenced_stream = hist.chain(live);
-
-        sequenced_stream
-            .flat_map(|result| match result {
-                Ok(msg) => {
-                    let mut events: Vec<Result<Event, std::io::Error>> = Vec::with_capacity(2);
-                    events.push(Ok(msg.to_sse_event()));
-                    if let Some(invalidate) = msg.to_invalidate_sse_event() {
-                        events.push(Ok(invalidate));
-                    }
-                    futures::stream::iter(events)
-                }
-                Err(err) => futures::stream::iter(vec![Err(err)]),
-            })
-            .boxed()
+        hist.chain(live).boxed()
     }
 }
 

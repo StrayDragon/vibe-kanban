@@ -81,12 +81,28 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
       invalidateQueriesFromHints(queryClient, hints);
     };
 
+    const handleInvalidateAll = (event: MessageEvent<string>) => {
+      // Backend uses this as an explicit "resync required" signal when the event stream cannot
+      // guarantee continuity (e.g., missed messages due to eviction/lag).
+      try {
+        if (event.data) {
+          JSON.parse(event.data);
+        }
+      } catch (err) {
+        console.warn('Failed to parse SSE invalidate_all event', err);
+      }
+
+      queryClient.invalidateQueries();
+    };
+
     source.addEventListener('json_patch', handleJsonPatch);
     source.addEventListener('invalidate', handleInvalidate);
+    source.addEventListener('invalidate_all', handleInvalidateAll);
 
     return () => {
       source.removeEventListener('json_patch', handleJsonPatch);
       source.removeEventListener('invalidate', handleInvalidate);
+      source.removeEventListener('invalidate_all', handleInvalidateAll);
       source.close();
     };
   }, [queryClient]);
