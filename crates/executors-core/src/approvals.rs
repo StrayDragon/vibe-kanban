@@ -33,6 +33,22 @@ pub trait ExecutorApprovalService: Send + Sync {
         tool_input: Value,
         tool_call_id: &str,
     ) -> Result<ApprovalStatus, ExecutorApprovalError>;
+
+    /// Optional hook: executor is waiting for a human decision (non-tool-approval flow).
+    ///
+    /// Default is a no-op so executors can call this without requiring every backend
+    /// to implement task status transitions.
+    async fn notify_task_needs_review(&self) -> Result<(), ExecutorApprovalError> {
+        Ok(())
+    }
+
+    /// Optional hook: executor resumed from a human-decision state.
+    ///
+    /// Default is a no-op so executors can call this without requiring every backend
+    /// to implement task status transitions.
+    async fn notify_task_resumed(&self) -> Result<(), ExecutorApprovalError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default)]

@@ -46,7 +46,7 @@ struct ThreadLite {
     id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CodexEventNotificationParams {
     msg: EventMsg,
@@ -731,16 +731,34 @@ impl JsonRpcCallbacks for AppServerClient {
             return Ok(false);
         }
 
+        let parsed_params = notification.params.as_ref().and_then(|params| {
+            serde_json::from_value::<CodexEventNotificationParams>(params.clone()).ok()
+        });
+
+        if let Some(params) = parsed_params.as_ref() {
+            match params.msg {
+                EventMsg::EnteredReviewMode(..) => {
+                    if let Some(approvals) = self.approvals.as_ref() {
+                        if let Err(err) = approvals.notify_task_needs_review().await {
+                            tracing::debug!("Failed to notify task needs review (ignored): {err}");
+                        }
+                    }
+                }
+                EventMsg::ExitedReviewMode(..) => {
+                    if let Some(approvals) = self.approvals.as_ref() {
+                        if let Err(err) = approvals.notify_task_resumed().await {
+                            tracing::debug!("Failed to notify task resumed (ignored): {err}");
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
         let has_finished = method
             .strip_prefix("codex/event/")
             .is_some_and(|suffix| matches!(suffix, "task_complete" | "turn_complete"))
-            || notification
-                .params
-                .as_ref()
-                .and_then(|params| {
-                    serde_json::from_value::<CodexEventNotificationParams>(params.clone()).ok()
-                })
-                .is_some_and(|params| matches!(params.msg, EventMsg::TurnComplete(_)));
+            || parsed_params.is_some_and(|params| matches!(params.msg, EventMsg::TurnComplete(_)));
 
         Ok(has_finished)
     }
@@ -787,6 +805,7 @@ mod tests {
 
     use async_trait::async_trait;
     use codex_app_server_protocol::DynamicToolCallParams;
+    use codex_protocol::protocol::{ExitedReviewModeEvent, ReviewRequest, ReviewTarget};
     use tokio::{
         process::Command,
         sync::{Mutex, oneshot},
@@ -992,6 +1011,131 @@ mod tests {
             .expect("notification");
 
         assert!(finished);
+    }
+
+    #[tokio::test]
+    async fn on_notification_entered_review_mode_notifies_task_needs_review() {
+        #[derive(Default)]
+        struct RecordingReviewHooks {
+            needs_review: Mutex<usize>,
+            resumed: Mutex<usize>,
+        }
+
+        #[async_trait]
+        impl ExecutorApprovalService for RecordingReviewHooks {
+            async fn request_tool_approval(
+                &self,
+                _tool_name: &str,
+                _tool_input: Value,
+                _tool_call_id: &str,
+            ) -> Result<ApprovalStatus, ExecutorApprovalError> {
+                Ok(ApprovalStatus::Approved)
+            }
+
+            async fn notify_task_needs_review(&self) -> Result<(), ExecutorApprovalError> {
+                *self.needs_review.lock().await += 1;
+                Ok(())
+            }
+
+            async fn notify_task_resumed(&self) -> Result<(), ExecutorApprovalError> {
+                *self.resumed.lock().await += 1;
+                Ok(())
+            }
+        }
+
+        let hooks = Arc::new(RecordingReviewHooks::default());
+        let state = Arc::new(Mutex::new(ResponseState::default()));
+        let peer = spawn_peer(state).await;
+        let client = AppServerClient::new(
+            LogWriter::new(tokio::io::sink()),
+            Some(hooks.clone()),
+            false,
+            VkDynamicToolContext::new(std::env::temp_dir()),
+        );
+
+        let notification = JSONRPCNotification {
+            method: "codex/event/entered_review_mode".to_string(),
+            params: Some(
+                serde_json::to_value(CodexEventNotificationParams {
+                    msg: EventMsg::EnteredReviewMode(ReviewRequest {
+                        target: ReviewTarget::UncommittedChanges,
+                        user_facing_hint: None,
+                    }),
+                })
+                .expect("serialize params"),
+            ),
+        };
+
+        let finished = client
+            .on_notification(&peer, "raw", notification)
+            .await
+            .expect("notification");
+
+        assert!(!finished);
+        assert_eq!(*hooks.needs_review.lock().await, 1);
+        assert_eq!(*hooks.resumed.lock().await, 0);
+    }
+
+    #[tokio::test]
+    async fn on_notification_exited_review_mode_notifies_task_resumed() {
+        #[derive(Default)]
+        struct RecordingReviewHooks {
+            needs_review: Mutex<usize>,
+            resumed: Mutex<usize>,
+        }
+
+        #[async_trait]
+        impl ExecutorApprovalService for RecordingReviewHooks {
+            async fn request_tool_approval(
+                &self,
+                _tool_name: &str,
+                _tool_input: Value,
+                _tool_call_id: &str,
+            ) -> Result<ApprovalStatus, ExecutorApprovalError> {
+                Ok(ApprovalStatus::Approved)
+            }
+
+            async fn notify_task_needs_review(&self) -> Result<(), ExecutorApprovalError> {
+                *self.needs_review.lock().await += 1;
+                Ok(())
+            }
+
+            async fn notify_task_resumed(&self) -> Result<(), ExecutorApprovalError> {
+                *self.resumed.lock().await += 1;
+                Ok(())
+            }
+        }
+
+        let hooks = Arc::new(RecordingReviewHooks::default());
+        let state = Arc::new(Mutex::new(ResponseState::default()));
+        let peer = spawn_peer(state).await;
+        let client = AppServerClient::new(
+            LogWriter::new(tokio::io::sink()),
+            Some(hooks.clone()),
+            false,
+            VkDynamicToolContext::new(std::env::temp_dir()),
+        );
+
+        let notification = JSONRPCNotification {
+            method: "codex/event/exited_review_mode".to_string(),
+            params: Some(
+                serde_json::to_value(CodexEventNotificationParams {
+                    msg: EventMsg::ExitedReviewMode(ExitedReviewModeEvent {
+                        review_output: None,
+                    }),
+                })
+                .expect("serialize params"),
+            ),
+        };
+
+        let finished = client
+            .on_notification(&peer, "raw", notification)
+            .await
+            .expect("notification");
+
+        assert!(!finished);
+        assert_eq!(*hooks.needs_review.lock().await, 0);
+        assert_eq!(*hooks.resumed.lock().await, 1);
     }
 
     #[tokio::test]

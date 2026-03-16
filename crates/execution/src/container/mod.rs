@@ -2250,28 +2250,34 @@ pub trait ContainerService {
             return Ok(());
         };
 
-        // Determine the run reason of the next action
-        let next_run_reason = match (action.typ(), next_action.typ()) {
-            (ExecutorActionType::ScriptRequest(_), ExecutorActionType::ScriptRequest(_)) => {
-                ExecutionProcessRunReason::SetupScript
-            }
-            (
-                ExecutorActionType::CodingAgentInitialRequest(_)
-                | ExecutorActionType::CodingAgentFollowUpRequest(_),
-                ExecutorActionType::ScriptRequest(_),
-            ) => ExecutionProcessRunReason::CleanupScript,
-            (
-                _,
-                ExecutorActionType::CodingAgentFollowUpRequest(_)
-                | ExecutorActionType::CodingAgentInitialRequest(_),
-            ) => ExecutionProcessRunReason::CodingAgent,
-        };
+        // Determine the run reason of the next action based on the action itself.
+        //
+        // Important: script→script chains are used for both setup and cleanup scripts. If we
+        // hardcode script→script as SetupScript, multi-repo cleanup chains end with a SetupScript
+        // process, and `should_finalize` will never mark the task InReview.
+        let next_run_reason = run_reason_for_action(next_action.typ());
 
         self.start_execution(&ctx.workspace, &ctx.session, next_action, &next_run_reason)
             .await?;
 
         tracing::debug!("Started next action: {:?}", next_action);
         Ok(())
+    }
+}
+
+fn run_reason_for_action(typ: &ExecutorActionType) -> ExecutionProcessRunReason {
+    match typ {
+        ExecutorActionType::CodingAgentInitialRequest(_)
+        | ExecutorActionType::CodingAgentFollowUpRequest(_) => {
+            ExecutionProcessRunReason::CodingAgent
+        }
+        ExecutorActionType::ScriptRequest(request) => match request.context {
+            ScriptContext::CleanupScript => ExecutionProcessRunReason::CleanupScript,
+            ScriptContext::DevServer => ExecutionProcessRunReason::DevServer,
+            ScriptContext::SetupScript | ScriptContext::ToolInstallScript => {
+                ExecutionProcessRunReason::SetupScript
+            }
+        },
     }
 }
 
@@ -2336,7 +2342,53 @@ fn entry_stats(entries: &[LogEntryRow]) -> Option<(i64, i64, i64)> {
 mod tests {
     use std::time::Duration;
 
+    use executors_protocol::BaseCodingAgent;
+
     use super::*;
+
+    #[test]
+    fn run_reason_for_action_respects_script_context() {
+        let mk = |context: ScriptContext| {
+            ExecutorActionType::ScriptRequest(ScriptRequest {
+                script: "true".to_string(),
+                language: ScriptRequestLanguage::Bash,
+                context,
+                working_dir: None,
+            })
+        };
+
+        assert_eq!(
+            run_reason_for_action(&mk(ScriptContext::SetupScript)),
+            ExecutionProcessRunReason::SetupScript
+        );
+        assert_eq!(
+            run_reason_for_action(&mk(ScriptContext::ToolInstallScript)),
+            ExecutionProcessRunReason::SetupScript
+        );
+        assert_eq!(
+            run_reason_for_action(&mk(ScriptContext::CleanupScript)),
+            ExecutionProcessRunReason::CleanupScript
+        );
+        assert_eq!(
+            run_reason_for_action(&mk(ScriptContext::DevServer)),
+            ExecutionProcessRunReason::DevServer
+        );
+    }
+
+    #[test]
+    fn run_reason_for_action_maps_coding_agent_requests() {
+        let action = ExecutorActionType::CodingAgentInitialRequest(CodingAgentInitialRequest {
+            prompt: "hi".to_string(),
+            executor_profile_id: ExecutorProfileId::new(BaseCodingAgent::FakeAgent),
+            working_dir: None,
+            image_paths: None,
+        });
+
+        assert_eq!(
+            run_reason_for_action(&action),
+            ExecutionProcessRunReason::CodingAgent
+        );
+    }
 
     #[test]
     fn append_node_instructions_to_prompt_appends_trimmed_instructions() {

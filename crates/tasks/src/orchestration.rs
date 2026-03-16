@@ -97,9 +97,14 @@ pub async fn create_task_and_start<R: TaskRuntime + Sync>(
         .await;
 
     let tx = db.begin().await?;
-    let task = Task::create(&tx, &input.task, task_id).await?;
+    let mut task_payload = input.task.clone();
+    if matches!(task_payload.status, None | Some(TaskStatus::Todo)) {
+        task_payload.status = Some(TaskStatus::InProgress);
+    }
 
-    if let Some(image_ids) = &input.task.image_ids {
+    let task = Task::create(&tx, &task_payload, task_id).await?;
+
+    if let Some(image_ids) = &task_payload.image_ids {
         TaskImage::associate_many_dedup(&tx, task.id, image_ids).await?;
     }
 
@@ -196,6 +201,9 @@ pub async fn create_task_attempt<R: TaskRuntime + Sync>(
     .await?;
 
     WorkspaceRepo::create_many(&tx, workspace.id, &attempt_plan.repos).await?;
+    if matches!(original_task_status, TaskStatus::Todo) {
+        Task::update_status(&tx, task.id, TaskStatus::InProgress).await?;
+    }
     tx.commit().await?;
 
     if let Err(err) = runtime
@@ -561,4 +569,146 @@ async fn cleanup_failed_attempt_start<R: TaskRuntime + Sync>(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use async_trait::async_trait;
+    use db::models::{
+        project::{CreateProject, Project},
+        repo::Repo,
+        task::{CreateTask, Task},
+        workspace_repo::CreateWorkspaceRepo,
+    };
+    use executors_protocol::{BaseCodingAgent, ExecutorProfileId};
+    use sea_orm::Database;
+    use sea_orm_migration::MigratorTrait;
+
+    use super::*;
+
+    struct NoopRuntime;
+
+    #[async_trait]
+    impl TaskRuntime for NoopRuntime {
+        async fn git_branch_from_workspace(&self, attempt_id: Uuid, task_title: &str) -> String {
+            format!("attempt-{}-{}", attempt_id, task_title.replace(' ', "-"))
+        }
+
+        async fn start_workspace(
+            &self,
+            _workspace: &Workspace,
+            _executor_profile_id: ExecutorProfileId,
+            _prompt_override: Option<String>,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn delete_workspace_container(&self, _workspace: &Workspace) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn has_running_processes(&self, _task_id: Uuid) -> Result<bool, String> {
+            Ok(false)
+        }
+    }
+
+    async fn setup_db() -> db::DbPool {
+        let pool = Database::connect("sqlite::memory:").await.unwrap();
+        db_migration::Migrator::up(&pool, None).await.unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn create_task_attempt_marks_todo_task_in_progress() {
+        let db = setup_db().await;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &db,
+            &CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let repo = Repo::find_or_create(&db, Path::new("/tmp/vk-test-repo"), "Repo")
+            .await
+            .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &db,
+            &CreateTask::from_title_description(project_id, "Test task".to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let runtime = NoopRuntime;
+        create_task_attempt(
+            &runtime,
+            &db,
+            &CreateTaskAttemptInput {
+                task_id,
+                executor_profile_id: ExecutorProfileId::new(BaseCodingAgent::FakeAgent),
+                repos: vec![CreateWorkspaceRepo {
+                    repo_id: repo.id,
+                    target_branch: "main".to_string(),
+                }],
+                prompt_override: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let task = Task::find_by_id(&db, task_id).await.unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::InProgress);
+    }
+
+    #[tokio::test]
+    async fn create_task_and_start_marks_todo_task_in_progress() {
+        let db = setup_db().await;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &db,
+            &CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let repo = Repo::find_or_create(&db, Path::new("/tmp/vk-test-repo2"), "Repo")
+            .await
+            .unwrap();
+
+        let runtime = NoopRuntime;
+        let task = create_task_and_start(
+            &runtime,
+            &db,
+            &CreateAndStartTaskInput {
+                task: CreateTask::from_title_description(project_id, "Test task".to_string(), None),
+                executor_profile_id: ExecutorProfileId::new(BaseCodingAgent::FakeAgent),
+                repos: vec![CreateWorkspaceRepo {
+                    repo_id: repo.id,
+                    target_branch: "main".to_string(),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(task.status, TaskStatus::InProgress);
+
+        let persisted = Task::find_by_id(&db, task.id).await.unwrap().unwrap();
+        assert_eq!(persisted.status, TaskStatus::InProgress);
+    }
 }

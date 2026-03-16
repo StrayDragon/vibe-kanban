@@ -451,6 +451,18 @@ pub(crate) async fn ensure_task_in_review(pool: &db::DbPool, execution_process_i
     }
 }
 
+pub(crate) async fn ensure_task_in_progress(pool: &db::DbPool, execution_process_id: Uuid) {
+    if let Ok(ctx) = ExecutionProcess::load_context(pool, execution_process_id).await
+        && ctx.task.status == TaskStatus::InReview
+        && let Err(e) = Task::update_status(pool, ctx.task.id, TaskStatus::InProgress).await
+    {
+        tracing::warn!(
+            "Failed to update task status to InProgress after resuming execution: {}",
+            e
+        );
+    }
+}
+
 /// Find a matching tool use entry that hasn't been assigned to an approval yet
 /// Matches by tool call id from tool metadata
 fn find_matching_tool_use(

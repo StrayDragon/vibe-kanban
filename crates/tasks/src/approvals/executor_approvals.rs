@@ -78,4 +78,14 @@ impl ExecutorApprovalService for ExecutorApprovalBridge {
 
         Ok(status)
     }
+
+    async fn notify_task_needs_review(&self) -> Result<(), ExecutorApprovalError> {
+        super::ensure_task_in_review(&self.db.pool, self.execution_process_id).await;
+        Ok(())
+    }
+
+    async fn notify_task_resumed(&self) -> Result<(), ExecutorApprovalError> {
+        super::ensure_task_in_progress(&self.db.pool, self.execution_process_id).await;
+        Ok(())
+    }
 }

@@ -5,9 +5,12 @@ import {
   type WorkspaceWithSession,
 } from '@/types/attempt';
 import { taskAttemptKeys } from '@/hooks/task-attempts/useTaskAttempts';
+import { useOptimisticTasksStore } from '@/stores/useOptimisticTasksStore';
+import { taskKeys } from '@/hooks/tasks/useTask';
 import type {
   ExecutorProfileId,
   TaskAttemptPromptPreset,
+  TaskWithAttemptStatus,
   WorkspaceRepoInput,
   Workspace,
 } from 'shared/types';
@@ -37,6 +40,22 @@ export function useAttemptCreation({
         repos,
         prompt_preset: promptPreset ?? null,
       }),
+    onMutate: async () => {
+      const store = useOptimisticTasksStore.getState();
+      const snapshot = store.getSnapshot(taskId);
+
+      // Optimistically move the task immediately so Kanban/overview updates even
+      // if the task stream misses the server-side status patch.
+      store.setOverride(taskId, { status: 'inprogress' });
+
+      // Keep any single-task query caches consistent with the optimistic UI.
+      queryClient.setQueryData<TaskWithAttemptStatus | undefined>(
+        taskKeys.byId(taskId),
+        (old) => (old ? { ...old, status: 'inprogress' } : old)
+      );
+
+      return { snapshot };
+    },
     onSuccess: (newAttempt: Workspace) => {
       queryClient.setQueryData(
         taskAttemptKeys.byTask(taskId),
@@ -55,6 +74,12 @@ export function useAttemptCreation({
         queryKey: taskAttemptKeys.byTaskWithSessions(taskId),
       });
       onSuccess?.(newAttempt);
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.snapshot) {
+        useOptimisticTasksStore.getState().restoreSnapshot(taskId, context.snapshot);
+      }
+      queryClient.invalidateQueries({ queryKey: taskKeys.byId(taskId) });
     },
   });
 
