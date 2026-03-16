@@ -191,9 +191,15 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
         if (streamRank > patchRank) {
           const updatedAtMs = Date.parse(streamTask.updated_at);
           const skewToleranceMs = 5_000;
+          const baseUpdatedAtMs = entry.meta.baseUpdatedAtMs;
+          const hasBaseUpdatedAtMs =
+            typeof baseUpdatedAtMs === 'number' &&
+            Number.isFinite(baseUpdatedAtMs);
           const serverLooksNewer =
             Number.isFinite(updatedAtMs) &&
-            updatedAtMs >= entry.meta.setAt - skewToleranceMs;
+            (hasBaseUpdatedAtMs
+              ? updatedAtMs > baseUpdatedAtMs
+              : updatedAtMs >= entry.meta.setAt - skewToleranceMs);
           if (serverLooksNewer) {
             const nextPatch = { ...patch };
             delete nextPatch.status;

@@ -43,10 +43,16 @@ export function useAttemptCreation({
     onMutate: async () => {
       const store = useOptimisticTasksStore.getState();
       const snapshot = store.getSnapshot(taskId);
+      const previousTask = queryClient.getQueryData<TaskWithAttemptStatus>(
+        taskKeys.byId(taskId)
+      );
+      const baseUpdatedAtMs = previousTask
+        ? Date.parse(previousTask.updated_at)
+        : null;
 
       // Optimistically move the task immediately so Kanban/overview updates even
       // if the task stream misses the server-side status patch.
-      store.setOverride(taskId, { status: 'inprogress' });
+      store.setOverride(taskId, { status: 'inprogress' }, { baseUpdatedAtMs });
 
       // Keep any single-task query caches consistent with the optimistic UI.
       queryClient.setQueryData<TaskWithAttemptStatus | undefined>(

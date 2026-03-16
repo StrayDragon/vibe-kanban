@@ -5,6 +5,11 @@ type OptimisticMeta = {
   setAt: number;
   resyncAttempts: number;
   lastResyncAt: number | null;
+  /**
+   * Best-effort baseline of the task's `updated_at` (server time) when the optimistic
+   * entry was created. Used to avoid relying on client clock for stale-override detection.
+   */
+  baseUpdatedAtMs: number | null;
 };
 
 type InsertEntry = {
@@ -31,6 +36,7 @@ const newMeta = (): OptimisticMeta => ({
   setAt: Date.now(),
   resyncAttempts: 0,
   lastResyncAt: null,
+  baseUpdatedAtMs: null,
 });
 
 type OptimisticTasksStore = {
@@ -47,7 +53,7 @@ type OptimisticTasksStore = {
   setOverride: (
     taskId: string,
     patch: Partial<TaskWithAttemptStatus>,
-    options?: { replace?: boolean }
+    options?: { replace?: boolean; baseUpdatedAtMs?: number | null }
   ) => void;
   clearOverride: (taskId: string) => void;
 
@@ -129,6 +135,12 @@ export const useOptimisticTasksStore = create<OptimisticTasksStore>(
       const replace = options?.replace ?? false;
       set((state) => {
         const existing = state.overrides[taskId];
+        const baseUpdatedAtMs =
+          typeof options?.baseUpdatedAtMs === 'number'
+            ? options.baseUpdatedAtMs
+            : options?.baseUpdatedAtMs === null
+              ? null
+              : (existing?.meta.baseUpdatedAtMs ?? null);
         const nextPatch = replace
           ? patch
           : {
@@ -138,7 +150,10 @@ export const useOptimisticTasksStore = create<OptimisticTasksStore>(
         return {
           overrides: {
             ...state.overrides,
-            [taskId]: { patch: nextPatch, meta: newMeta() },
+            [taskId]: {
+              patch: nextPatch,
+              meta: { ...newMeta(), baseUpdatedAtMs },
+            },
           },
         };
       });

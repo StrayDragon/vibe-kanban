@@ -137,4 +137,57 @@ describe('useProjectTasks optimistic overrides', () => {
     expect(useOptimisticTasksStore.getState().overrides[taskId]).toBeDefined();
     expect(result.current.tasksById[taskId].status).toBe('todo');
   });
+
+  it('clears an optimistic status override using baseUpdatedAtMs even if client time is skewed', async () => {
+    const projectId = 'project-1';
+    const taskId = 'task-1';
+
+    useOptimisticTasksStore
+      .getState()
+      .setOverride(taskId, { status: 'inprogress' }, { baseUpdatedAtMs: 0 });
+
+    streamTasks = {
+      [taskId]: makeTask({
+        id: taskId,
+        project_id: projectId,
+        status: 'inreview',
+        updated_at: new Date(1_000).toISOString(),
+      }),
+    };
+
+    const { result } = renderHook(() => useProjectTasks(projectId));
+
+    await act(async () => {});
+
+    expect(
+      useOptimisticTasksStore.getState().overrides[taskId]
+    ).toBeUndefined();
+    expect(result.current.tasksById[taskId].status).toBe('inreview');
+  });
+
+  it('keeps an optimistic backward status override when the stream has not advanced (baseUpdatedAtMs)', async () => {
+    const projectId = 'project-1';
+    const taskId = 'task-1';
+    const baseUpdatedAtMs = Date.parse('2026-03-16T00:00:00Z');
+
+    useOptimisticTasksStore
+      .getState()
+      .setOverride(taskId, { status: 'inprogress' }, { baseUpdatedAtMs });
+
+    streamTasks = {
+      [taskId]: makeTask({
+        id: taskId,
+        project_id: projectId,
+        status: 'inreview',
+        updated_at: new Date(baseUpdatedAtMs).toISOString(),
+      }),
+    };
+
+    const { result } = renderHook(() => useProjectTasks(projectId));
+
+    await act(async () => {});
+
+    expect(useOptimisticTasksStore.getState().overrides[taskId]).toBeDefined();
+    expect(result.current.tasksById[taskId].status).toBe('inprogress');
+  });
 });

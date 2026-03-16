@@ -121,6 +121,12 @@ export function useTaskMutations(projectId?: string) {
     onMutate: async ({ taskId, data }) => {
       const store = useOptimisticTasksStore.getState();
       const snapshot = store.getSnapshot(taskId);
+      const previousTask = queryClient.getQueryData<TaskWithAttemptStatus>(
+        taskKeys.byId(taskId)
+      );
+      const baseUpdatedAtMs = previousTask
+        ? Date.parse(previousTask.updated_at)
+        : null;
       const patch: Partial<TaskWithAttemptStatus> = {};
 
       if (typeof data.title === 'string') patch.title = data.title;
@@ -136,7 +142,7 @@ export function useTaskMutations(projectId?: string) {
       }
 
       if (Object.keys(patch).length > 0) {
-        store.setOverride(taskId, patch);
+        store.setOverride(taskId, patch, { baseUpdatedAtMs });
       }
 
       return { snapshot };

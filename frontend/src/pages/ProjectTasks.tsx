@@ -655,7 +655,16 @@ export function ProjectTasks() {
 
       const store = useOptimisticTasksStore.getState();
       const snapshot = store.getSnapshot(draggedTaskId);
-      store.setOverride(draggedTaskId, { status: newStatus });
+      const baseUpdatedAtMs = Date.parse(task.updated_at);
+      store.setOverride(
+        draggedTaskId,
+        { status: newStatus },
+        {
+          baseUpdatedAtMs: Number.isFinite(baseUpdatedAtMs)
+            ? baseUpdatedAtMs
+            : null,
+        }
+      );
 
       try {
         await tasksApi.update(draggedTaskId, {
