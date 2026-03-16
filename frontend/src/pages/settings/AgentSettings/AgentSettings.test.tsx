@@ -173,11 +173,12 @@ describe('AgentSettings Codex compatibility gate', () => {
     'disables saving when CODEX is selected and status is %s, even when dirty',
     async (status) => {
       setCompatStatus(status);
+      const updateAndSaveConfig = vi.fn().mockResolvedValue(true);
       userSystemState.current = {
         config: {
           executor_profile: { executor: 'CODEX', variant: null },
         },
-        updateAndSaveConfig: vi.fn().mockResolvedValue(true),
+        updateAndSaveConfig,
         profiles: {
           CLAUDE_CODE: { DEFAULT: {} },
           CODEX: { DEFAULT: {}, HIGH: {} },
@@ -192,16 +193,20 @@ describe('AgentSettings Codex compatibility gate', () => {
         name: 'common:buttons.save',
       }) as HTMLButtonElement;
       expect(saveButton.disabled).toBe(true);
+
+      fireEvent.click(saveButton);
+      expect(updateAndSaveConfig).not.toHaveBeenCalled();
     }
   );
 
   it('allows saving when CODEX is selected and status is compatible', async () => {
     setCompatStatus('compatible');
+    const updateAndSaveConfig = vi.fn().mockResolvedValue(true);
     userSystemState.current = {
       config: {
         executor_profile: { executor: 'CODEX', variant: null },
       },
-      updateAndSaveConfig: vi.fn().mockResolvedValue(true),
+      updateAndSaveConfig,
       profiles: {
         CLAUDE_CODE: { DEFAULT: {} },
         CODEX: { DEFAULT: {}, HIGH: {} },
@@ -216,5 +221,8 @@ describe('AgentSettings Codex compatibility gate', () => {
       name: 'common:buttons.save',
     }) as HTMLButtonElement;
     expect(saveButton.disabled).toBe(false);
+
+    fireEvent.click(saveButton);
+    expect(updateAndSaveConfig).toHaveBeenCalledTimes(1);
   });
 });
