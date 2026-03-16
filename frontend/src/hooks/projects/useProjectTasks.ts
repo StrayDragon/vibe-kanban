@@ -9,6 +9,14 @@ type TasksState = {
   tasks: Record<string, TaskWithAttemptStatus>;
 };
 
+const taskStatusRank: Record<TaskStatus, number> = {
+  todo: 0,
+  inprogress: 1,
+  inreview: 2,
+  done: 3,
+  cancelled: 4,
+};
+
 export interface UseProjectTasksResult {
   tasks: TaskWithAttemptStatus[];
   tasksById: Record<string, TaskWithAttemptStatus>;
@@ -54,6 +62,7 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
   const overrides = useOptimisticTasksStore((state) => state.overrides);
   const tombstones = useOptimisticTasksStore((state) => state.tombstones);
   const clearInsert = useOptimisticTasksStore((state) => state.clearInsert);
+  const setOverride = useOptimisticTasksStore((state) => state.setOverride);
   const clearOverride = useOptimisticTasksStore((state) => state.clearOverride);
   const clearTombstone = useOptimisticTasksStore(
     (state) => state.clearTombstone
@@ -166,6 +175,35 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
       });
       if (satisfied) {
         clearOverride(taskId);
+        return;
+      }
+
+      // If the stream skips over an optimistic status (e.g. todo -> inreview),
+      // a stale optimistic override would otherwise mask the authoritative task
+      // status indefinitely until a full refresh.
+      const patchStatus = patch.status;
+      if (
+        typeof patchStatus === 'string' &&
+        streamTask.status !== patchStatus
+      ) {
+        const streamRank = taskStatusRank[streamTask.status];
+        const patchRank = taskStatusRank[patchStatus as TaskStatus];
+        if (streamRank > patchRank) {
+          const updatedAtMs = Date.parse(streamTask.updated_at);
+          const skewToleranceMs = 5_000;
+          const serverLooksNewer =
+            Number.isFinite(updatedAtMs) &&
+            updatedAtMs >= entry.meta.setAt - skewToleranceMs;
+          if (serverLooksNewer) {
+            const nextPatch = { ...patch };
+            delete nextPatch.status;
+            if (Object.keys(nextPatch).length === 0) {
+              clearOverride(taskId);
+            } else {
+              setOverride(taskId, nextPatch, { replace: true });
+            }
+          }
+        }
       }
     });
   }, [
@@ -174,6 +212,7 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
     clearTombstone,
     inserts,
     overrides,
+    setOverride,
     streamTasksById,
     tombstones,
   ]);

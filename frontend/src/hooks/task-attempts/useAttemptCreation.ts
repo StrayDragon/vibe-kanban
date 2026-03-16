@@ -77,7 +77,9 @@ export function useAttemptCreation({
     },
     onError: (_err, _vars, context) => {
       if (context?.snapshot) {
-        useOptimisticTasksStore.getState().restoreSnapshot(taskId, context.snapshot);
+        useOptimisticTasksStore
+          .getState()
+          .restoreSnapshot(taskId, context.snapshot);
       }
       queryClient.invalidateQueries({ queryKey: taskKeys.byId(taskId) });
     },

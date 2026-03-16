@@ -738,17 +738,17 @@ impl JsonRpcCallbacks for AppServerClient {
         if let Some(params) = parsed_params.as_ref() {
             match params.msg {
                 EventMsg::EnteredReviewMode(..) => {
-                    if let Some(approvals) = self.approvals.as_ref() {
-                        if let Err(err) = approvals.notify_task_needs_review().await {
-                            tracing::debug!("Failed to notify task needs review (ignored): {err}");
-                        }
+                    if let Some(approvals) = self.approvals.as_ref()
+                        && let Err(err) = approvals.notify_task_needs_review().await
+                    {
+                        tracing::debug!("Failed to notify task needs review (ignored): {err}");
                     }
                 }
                 EventMsg::ExitedReviewMode(..) => {
-                    if let Some(approvals) = self.approvals.as_ref() {
-                        if let Err(err) = approvals.notify_task_resumed().await {
-                            tracing::debug!("Failed to notify task resumed (ignored): {err}");
-                        }
+                    if let Some(approvals) = self.approvals.as_ref()
+                        && let Err(err) = approvals.notify_task_resumed().await
+                    {
+                        tracing::debug!("Failed to notify task resumed (ignored): {err}");
                     }
                 }
                 _ => {}
