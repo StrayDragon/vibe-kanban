@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { AlertTriangle, Plus } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
-import { tasksApi } from '@/lib/api';
+import { ApiError, tasksApi } from '@/lib/api';
 import type { RepoBranchStatus, Workspace } from 'shared/types';
 import { openTaskForm } from '@/lib/openTaskForm';
 import { FeatureShowcaseDialog } from '@/components/dialogs/global/FeatureShowcaseDialog';
@@ -55,6 +55,7 @@ import { DiffsPanel } from '@/components/panels/DiffsPanel';
 import TaskAttemptPanel from '@/components/panels/TaskAttemptPanel';
 import TaskPanel from '@/components/panels/TaskPanel';
 import TodoPanel from '@/components/tasks/TodoPanel';
+import { AttemptCompletionTasksResync } from '@/components/tasks/AttemptCompletionTasksResync';
 import { NewCard, NewCardHeader } from '@/components/ui/new-card';
 import {
   Breadcrumb,
@@ -183,6 +184,7 @@ export function ProjectTasks() {
     tasksByStatus,
     isLoading,
     error: streamError,
+    resync: resyncTasks,
   } = useProjectTasks(projectId || '');
 
   const selectedTask = useMemo(
@@ -295,7 +297,34 @@ export function ProjectTasks() {
 
   const effectiveAttemptId = attemptId === 'latest' ? undefined : attemptId;
   const isTaskView = !!taskId && !effectiveAttemptId;
-  const { data: attempt } = useTaskAttemptWithSession(effectiveAttemptId);
+  const attemptQuery = useTaskAttemptWithSession(effectiveAttemptId);
+  const attemptNotFound =
+    attemptQuery.error instanceof ApiError &&
+    attemptQuery.error.statusCode === 404;
+  const attemptNotFoundMessage =
+    attemptNotFound && attemptQuery.error instanceof Error
+      ? attemptQuery.error.message
+      : undefined;
+  const attempt = attemptNotFound ? undefined : attemptQuery.data;
+
+  useEffect(() => {
+    if (!attemptNotFound) return;
+    if (!projectId || !taskId || !effectiveAttemptId) return;
+    toast({
+      variant: 'destructive',
+      title: t('common:notFound.title', 'Not found'),
+      description: attemptNotFoundMessage,
+    });
+    navigateWithSearch(paths.task(projectId, taskId), { replace: true });
+  }, [
+    attemptNotFoundMessage,
+    attemptNotFound,
+    effectiveAttemptId,
+    navigateWithSearch,
+    projectId,
+    taskId,
+    t,
+  ]);
 
   const { data: branchStatus } = useBranchStatus(attempt?.id);
 
@@ -917,6 +946,12 @@ export function ProjectTasks() {
       <ClickedElementsProvider attempt={attempt}>
         <ReviewProvider attemptId={attempt?.id}>
           <ExecutionProcessesProvider attemptId={attempt?.id}>
+            <AttemptCompletionTasksResync
+              attemptId={attempt?.id}
+              taskId={selectedTask?.id}
+              taskStatus={selectedTask?.status}
+              resyncTasks={resyncTasks}
+            />
             <TasksLayout
               kanban={kanbanContent}
               attempt={attemptContent}

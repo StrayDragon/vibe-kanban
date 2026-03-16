@@ -9,6 +9,14 @@ type TasksState = {
   tasks: Record<string, TaskWithAttemptStatus>;
 };
 
+const taskStatusRank: Record<TaskStatus, number> = {
+  todo: 0,
+  inprogress: 1,
+  inreview: 2,
+  done: 3,
+  cancelled: 4,
+};
+
 export interface UseAllTasksResult {
   tasks: TaskWithAttemptStatus[];
   tasksById: Record<string, TaskWithAttemptStatus>;
@@ -51,6 +59,7 @@ export const useAllTasks = (
   const overrides = useOptimisticTasksStore((state) => state.overrides);
   const tombstones = useOptimisticTasksStore((state) => state.tombstones);
   const clearInsert = useOptimisticTasksStore((state) => state.clearInsert);
+  const setOverride = useOptimisticTasksStore((state) => state.setOverride);
   const clearOverride = useOptimisticTasksStore((state) => state.clearOverride);
   const clearTombstone = useOptimisticTasksStore(
     (state) => state.clearTombstone
@@ -152,11 +161,47 @@ export const useAllTasks = (
       const streamTask = streamTasksById[taskId];
       if (!streamTask) return;
 
-      const satisfied = Object.entries(entry.patch).every(([key, value]) => {
+      const patch = entry.patch;
+      const satisfied = Object.entries(patch).every(([key, value]) => {
         return (streamTask as Record<string, unknown>)[key] === value;
       });
       if (satisfied) {
         clearOverride(taskId);
+        return;
+      }
+
+      // If the stream skips over an optimistic status (e.g. todo -> inreview),
+      // a stale optimistic override would otherwise mask the authoritative task
+      // status indefinitely until a full refresh.
+      const patchStatus = patch.status;
+      if (
+        typeof patchStatus === 'string' &&
+        streamTask.status !== patchStatus
+      ) {
+        const streamRank = taskStatusRank[streamTask.status];
+        const patchRank = taskStatusRank[patchStatus as TaskStatus];
+        if (streamRank > patchRank) {
+          const updatedAtMs = Date.parse(streamTask.updated_at);
+          const skewToleranceMs = 5_000;
+          const baseUpdatedAtMs = entry.meta.baseUpdatedAtMs;
+          const hasBaseUpdatedAtMs =
+            typeof baseUpdatedAtMs === 'number' &&
+            Number.isFinite(baseUpdatedAtMs);
+          const serverLooksNewer =
+            Number.isFinite(updatedAtMs) &&
+            (hasBaseUpdatedAtMs
+              ? updatedAtMs > baseUpdatedAtMs
+              : updatedAtMs >= entry.meta.setAt - skewToleranceMs);
+          if (serverLooksNewer) {
+            const nextPatch = { ...patch };
+            delete nextPatch.status;
+            if (Object.keys(nextPatch).length === 0) {
+              clearOverride(taskId);
+            } else {
+              setOverride(taskId, nextPatch, { replace: true });
+            }
+          }
+        }
       }
     });
   }, [
@@ -165,6 +210,7 @@ export const useAllTasks = (
     clearTombstone,
     inserts,
     overrides,
+    setOverride,
     streamTasksById,
     tombstones,
   ]);

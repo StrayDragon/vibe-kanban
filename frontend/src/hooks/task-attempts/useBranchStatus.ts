@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { attemptsApi } from '@/lib/api';
+import { ApiError, attemptsApi } from '@/lib/api';
 import { useSsePollingInterval } from '@/hooks/utils/useSsePollingInterval';
 
 export const branchStatusKeys = {
@@ -15,6 +15,16 @@ export function useBranchStatus(attemptId?: string) {
     queryKey: branchStatusKeys.byAttempt(attemptId),
     queryFn: () => attemptsApi.getBranchStatus(attemptId!),
     enabled: !!attemptId,
-    refetchInterval,
+    retry: (failureCount, error) => {
+      if (error instanceof ApiError && error.statusCode === 404) return false;
+      return failureCount < 2;
+    },
+    refetchInterval: (query) => {
+      const err = query.state.error;
+      if (err instanceof ApiError && err.statusCode === 404) {
+        return false;
+      }
+      return refetchInterval;
+    },
   });
 }

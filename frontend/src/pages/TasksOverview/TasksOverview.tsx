@@ -40,6 +40,7 @@ import TaskPanel from '@/components/panels/TaskPanel';
 import { PreviewPanel } from '@/components/panels/PreviewPanel';
 import { DiffsPanel } from '@/components/panels/DiffsPanel';
 import TodoPanel from '@/components/tasks/TodoPanel';
+import { AttemptCompletionTasksResync } from '@/components/tasks/AttemptCompletionTasksResync';
 import { CreateAttemptDialog } from '@/components/dialogs/tasks/CreateAttemptDialog';
 import { ProjectFormDialog } from '@/components/dialogs/projects/ProjectFormDialog';
 
@@ -54,6 +55,7 @@ import {
   useBranchStatus,
   useNavigateWithSearch,
 } from '@/hooks';
+import { ApiError } from '@/lib/api';
 import { useLayoutMode } from '@/hooks/utils/useLayoutMode';
 import {
   GitOperationsProvider,
@@ -370,6 +372,7 @@ export function TasksOverview() {
     tasksById,
     isLoading: tasksLoading,
     error: streamError,
+    resync: resyncTasks,
   } = useAllTasks({ includeArchived });
 
   const handleCreateProject = useCallback(async () => {
@@ -501,7 +504,25 @@ export function TasksOverview() {
     !isAttemptsLoading &&
     !latestAttemptId &&
     !selectedMilestoneId;
-  const { data: attempt } = useTaskAttemptWithSession(effectiveAttemptId);
+  const attemptQuery = useTaskAttemptWithSession(effectiveAttemptId);
+  const attemptNotFound =
+    attemptQuery.error instanceof ApiError &&
+    attemptQuery.error.statusCode === 404;
+  const attempt = attemptNotFound ? undefined : attemptQuery.data;
+
+  useEffect(() => {
+    if (!attemptNotFound) return;
+    if (!projectId || !taskId || !effectiveAttemptId) return;
+    navigateWithSearch(paths.overviewTask(projectId, taskId), {
+      replace: true,
+    });
+  }, [
+    attemptNotFound,
+    effectiveAttemptId,
+    navigateWithSearch,
+    projectId,
+    taskId,
+  ]);
   const { data: branchStatus } = useBranchStatus(attempt?.id);
 
   const { mode, setMode } = useLayoutMode(searchParams, setSearchParams);
@@ -1172,6 +1193,12 @@ export function TasksOverview() {
       <ClickedElementsProvider attempt={attempt}>
         <ReviewProvider attemptId={attempt?.id}>
           <ExecutionProcessesProvider attemptId={attempt?.id}>
+            <AttemptCompletionTasksResync
+              attemptId={attempt?.id}
+              taskId={selectedTask?.id}
+              taskStatus={selectedTask?.status}
+              resyncTasks={resyncTasks}
+            />
             <TasksLayout
               kanban={listContent}
               attempt={attemptContent}

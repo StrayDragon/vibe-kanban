@@ -68,14 +68,25 @@ where
                 .get(axum::http::header::USER_AGENT)
                 .and_then(|value| value.to_str().ok());
             if status == StatusCode::NOT_FOUND {
-                tracing::warn!(
-                    model_name,
-                    model_id = %model_id,
-                    method = %request.method(),
-                    uri = %request.uri(),
-                    user_agent,
-                    "model not found"
-                );
+                if model_name == "Workspace" {
+                    tracing::debug!(
+                        model_name,
+                        model_id = %model_id,
+                        method = %request.method(),
+                        uri = %request.uri(),
+                        user_agent,
+                        "model not found"
+                    );
+                } else {
+                    tracing::warn!(
+                        model_name,
+                        model_id = %model_id,
+                        method = %request.method(),
+                        uri = %request.uri(),
+                        user_agent,
+                        "model not found"
+                    );
+                }
             } else {
                 tracing::error!(
                     model_name,
