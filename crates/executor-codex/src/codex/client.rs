@@ -921,14 +921,25 @@ mod tests {
             VkDynamicToolContext::new(std::env::temp_dir()),
         );
 
-        let raw = "你".repeat(4001);
-        client.record_recent_log_line(&raw).await;
+        let samples = vec![
+            "你".repeat(4001),
+            "あ".repeat(4001),
+            format!("a{}", "é".repeat(5000)),
+            format!("a{}", "🔥".repeat(2000)),
+            format!("a{}", "مرحبا".repeat(2000)),
+        ];
+
+        for raw in &samples {
+            client.record_recent_log_line(raw).await;
+        }
 
         let snapshot = client.recent_log_snapshot().await;
-        assert_eq!(snapshot.len(), 1);
-        assert!(snapshot[0].ends_with("…(truncated)"));
-        let expected_prefix = utils_core::text::truncate_to_char_boundary(&raw, MAX_LINE_BYTES);
-        assert!(snapshot[0].starts_with(expected_prefix));
+        assert_eq!(snapshot.len(), samples.len());
+        for (idx, raw) in samples.iter().enumerate() {
+            assert!(snapshot[idx].ends_with("…(truncated)"));
+            let expected_prefix = utils_core::text::truncate_to_char_boundary(raw, MAX_LINE_BYTES);
+            assert!(snapshot[idx].starts_with(expected_prefix));
+        }
     }
 
     #[tokio::test]

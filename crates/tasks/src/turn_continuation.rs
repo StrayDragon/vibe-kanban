@@ -7,6 +7,8 @@ pub enum VkNextParseResult {
     Invalid { raw: String },
 }
 
+const VK_NEXT_PREFIX: &str = "vk_next:";
+
 pub fn parse_vk_next_action(text: &str) -> Option<VkNextAction> {
     match parse_vk_next_action_detailed(text) {
         VkNextParseResult::Parsed(action) => Some(action),
@@ -24,14 +26,14 @@ pub fn parse_vk_next_action_detailed(text: &str) -> VkNextParseResult {
             .unwrap_or(trimmed);
 
         // Fast path: avoid allocating for most lines.
-        if trimmed.len() < "vk_next:".len() {
+        let Some(head) = trimmed.get(..VK_NEXT_PREFIX.len()) else {
             continue;
-        }
-        if !trimmed[.."vk_next:".len()].eq_ignore_ascii_case("vk_next:") {
+        };
+        if !head.eq_ignore_ascii_case(VK_NEXT_PREFIX) {
             continue;
         }
 
-        let rest = trimmed["vk_next:".len()..].trim();
+        let rest = trimmed[VK_NEXT_PREFIX.len()..].trim();
 
         let value = rest.split_whitespace().next().unwrap_or_default();
         return match value {
@@ -55,12 +57,13 @@ pub fn strip_vk_next_lines(text: &str) -> String {
             .or_else(|| trimmed.strip_prefix('*'))
             .map(|rest| rest.trim_start())
             .unwrap_or(trimmed);
-        if trimmed.len() >= "vk_next:".len()
-            && trimmed[.."vk_next:".len()].eq_ignore_ascii_case("vk_next:")
-        {
+        let Some(head) = trimmed.get(..VK_NEXT_PREFIX.len()) else {
+            out.push(line);
             continue;
+        };
+        if !head.eq_ignore_ascii_case(VK_NEXT_PREFIX) {
+            out.push(line);
         }
-        out.push(line);
     }
     out.join("\n").trim().to_string()
 }
@@ -147,5 +150,40 @@ mod tests {
     fn strip_vk_next_lines_removes_marker_lines() {
         let text = "Summary line\nVK_NEXT: continue\nMore details\n- VK_NEXT: review\n";
         assert_eq!(strip_vk_next_lines(text), "Summary line\nMore details");
+    }
+
+    #[test]
+    fn parse_vk_next_action_parses_case_insensitive_prefix() {
+        assert_eq!(
+            parse_vk_next_action("vk_next: continue"),
+            Some(VkNextAction::Continue)
+        );
+        assert_eq!(
+            parse_vk_next_action("Vk_NeXt: review"),
+            Some(VkNextAction::Review)
+        );
+        assert_eq!(strip_vk_next_lines("vk_next: continue"), "");
+    }
+
+    #[test]
+    fn vk_next_parsing_is_utf8_safe_for_multilingual_text() {
+        let samples = [
+            "我用的是 `openspec-explore`（探索模式：只调研/设计，不落地实现）。当前没有活动中的 OpenSpec change（`openspec list --json` 返回空）。",
+            "こんにちは世界",
+            "안녕하세요 세계",
+            "مرحبا بالعالم",
+            "שלום עולם",
+            "Здравствуйте мир",
+            "हैलो वर्ल्ड",
+            "😀😃😄😁",
+            "• VK_NEXT: continue (not supported marker style)",
+            "aéééééééééé", // UTF-8 boundary around 8 bytes is inside 'é'
+            "前缀 VK_NEXT: continue 后缀", // marker in the middle of the line
+        ];
+
+        for text in samples {
+            assert_eq!(parse_vk_next_action(text), None);
+            assert_eq!(strip_vk_next_lines(text), text.to_string());
+        }
     }
 }
