@@ -545,13 +545,16 @@ impl AppServerClient {
 
     async fn record_recent_log_line(&self, raw: &str) {
         const MAX_RECENT_LOG_LINES: usize = 500;
-        const MAX_LINE_CHARS: usize = 4000;
+        const MAX_LINE_BYTES: usize = 4000;
 
-        let mut line = raw.to_string();
-        if line.len() > MAX_LINE_CHARS {
-            line.truncate(MAX_LINE_CHARS);
-            line.push_str("…(truncated)");
-        }
+        let line = if raw.len() > MAX_LINE_BYTES {
+            let mut truncated =
+                utils_core::text::truncate_to_char_boundary(raw, MAX_LINE_BYTES).to_string();
+            truncated.push_str("…(truncated)");
+            truncated
+        } else {
+            raw.to_string()
+        };
 
         let mut guard = self.recent_log_lines.lock().await;
         guard.push_back(line);
@@ -906,6 +909,26 @@ mod tests {
         let response = wait_for_response(state).await;
         assert_eq!(response.id, RequestId::Integer(1));
         assert_eq!(response.result, Value::Null);
+    }
+
+    #[tokio::test]
+    async fn record_recent_log_line_truncates_on_utf8_boundary() {
+        const MAX_LINE_BYTES: usize = 4000;
+        let client = AppServerClient::new(
+            LogWriter::new(tokio::io::sink()),
+            None,
+            true,
+            VkDynamicToolContext::new(std::env::temp_dir()),
+        );
+
+        let raw = "你".repeat(4001);
+        client.record_recent_log_line(&raw).await;
+
+        let snapshot = client.recent_log_snapshot().await;
+        assert_eq!(snapshot.len(), 1);
+        assert!(snapshot[0].ends_with("…(truncated)"));
+        let expected_prefix = utils_core::text::truncate_to_char_boundary(&raw, MAX_LINE_BYTES);
+        assert!(snapshot[0].starts_with(expected_prefix));
     }
 
     #[tokio::test]
