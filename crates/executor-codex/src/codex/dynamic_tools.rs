@@ -62,6 +62,7 @@ impl VkDynamicToolRegistry {
                     description: "Get a human-readable summary of the current VK attempt."
                         .to_string(),
                     input_schema: schema_attempt_id_only(),
+                    defer_loading: false,
                 },
                 kind: VkDynamicToolKind::ReadOnly,
             },
@@ -71,6 +72,7 @@ impl VkDynamicToolRegistry {
                     description: "Tail recent executor protocol logs for the current VK attempt."
                         .to_string(),
                     input_schema: schema_tail_attempt_logs(),
+                    defer_loading: false,
                 },
                 kind: VkDynamicToolKind::ReadOnly,
             },
@@ -80,6 +82,7 @@ impl VkDynamicToolRegistry {
                     description: "Summarize git changes in the current VK attempt workspace."
                         .to_string(),
                     input_schema: schema_get_attempt_changes(),
+                    defer_loading: false,
                 },
                 kind: VkDynamicToolKind::ReadOnly,
             },
@@ -91,6 +94,7 @@ impl VkDynamicToolRegistry {
                 name: VK_TOOL_TEST_MUTATING.to_string(),
                 description: "Test-only mutating tool (requires approval).".to_string(),
                 input_schema: schema_attempt_id_only(),
+                defer_loading: false,
             },
             kind: VkDynamicToolKind::Mutating,
         });

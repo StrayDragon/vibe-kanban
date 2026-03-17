@@ -22,5 +22,5 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 derivative = "2.2.0"
 tracing = { workspace = true }
 
-codex-protocol = { git = "https://github.com/openai/codex.git", package = "codex-protocol", rev = "b9904c0ae4ecb773549efd6ea3fb05229402fdb9" }
-codex-app-server-protocol = { git = "https://github.com/openai/codex.git", package = "codex-app-server-protocol", rev = "b9904c0ae4ecb773549efd6ea3fb05229402fdb9" }
+codex-protocol = { git = "https://github.com/openai/codex.git", package = "codex-protocol", rev = "f028679abb30051cec2434e624cd99975986b41b" }
+codex-app-server-protocol = { git = "https://github.com/openai/codex.git", package = "codex-app-server-protocol", rev = "f028679abb30051cec2434e624cd99975986b41b" }

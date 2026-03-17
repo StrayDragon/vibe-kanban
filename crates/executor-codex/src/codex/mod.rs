@@ -313,6 +313,7 @@ impl Codex {
             service_tier: None,
             cwd: Some(cwd.to_string_lossy().to_string()),
             approval_policy,
+            approvals_reviewer: None,
             sandbox,
             config: self.build_config_overrides(),
             service_name: None,
@@ -374,6 +375,18 @@ impl Codex {
             false,
         )
         .await;
+        if compat.status == compatibility::CodexProtocolCompatibilityStatus::Compatible
+            && compat.message.is_some()
+        {
+            tracing::warn!(
+                expected_v2_schema_sha256 = %compat.expected_v2_schema_sha256,
+                runtime_v2_schema_sha256 = ?compat.runtime_v2_schema_sha256,
+                codex_cli_version = ?compat.codex_cli_version,
+                base_command = %compat.base_command,
+                message = ?compat.message,
+                "proceeding with Codex despite protocol fingerprint drift"
+            );
+        }
         if matches!(
             compat.status,
             compatibility::CodexProtocolCompatibilityStatus::Incompatible
@@ -538,10 +551,12 @@ impl Codex {
                         service_tier: overrides.service_tier,
                         cwd: overrides.cwd,
                         approval_policy: overrides.approval_policy,
+                        approvals_reviewer: overrides.approvals_reviewer,
                         sandbox: overrides.sandbox,
                         config: overrides.config,
                         base_instructions: overrides.base_instructions,
                         developer_instructions: overrides.developer_instructions,
+                        ephemeral: overrides.ephemeral.unwrap_or(false),
                         persist_extended_history: overrides.persist_extended_history,
                     })
                     .await?;

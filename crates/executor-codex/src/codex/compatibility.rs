@@ -15,6 +15,7 @@ use ts_rs::TS;
 
 const V2_SCHEMA_BUNDLE_FILENAME: &str = "codex_app_server_protocol.v2.schemas.json";
 const EXPECTED_V2_SCHEMA_SHA256: &str = env!("VK_CODEX_EXPECTED_V2_SCHEMA_SHA256");
+const EXPECTED_CODEX_CLI_VERSION: Option<&str> = option_env!("VK_CODEX_EXPECTED_CODEX_CLI_VERSION");
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -176,14 +177,8 @@ async fn compute_compatibility(
     let runtime_v2_schema_sha256 =
         run_schema_fingerprint(program, base_args, additional_params).await?;
 
-    let status = if runtime_v2_schema_sha256 == EXPECTED_V2_SCHEMA_SHA256 {
-        CodexProtocolCompatibilityStatus::Compatible
-    } else {
-        CodexProtocolCompatibilityStatus::Incompatible
-    };
-
     let mut compat = CodexProtocolCompatibility {
-        status,
+        status: CodexProtocolCompatibilityStatus::Compatible,
         expected_v2_schema_sha256: EXPECTED_V2_SCHEMA_SHA256.to_string(),
         runtime_v2_schema_sha256: Some(runtime_v2_schema_sha256),
         codex_cli_version,
@@ -191,8 +186,20 @@ async fn compute_compatibility(
         message: None,
     };
 
-    if compat.status == CodexProtocolCompatibilityStatus::Incompatible {
-        compat.message = Some(compatibility_error_message(&compat));
+    let runtime = compat
+        .runtime_v2_schema_sha256
+        .as_deref()
+        .unwrap_or_default();
+    if runtime != EXPECTED_V2_SCHEMA_SHA256 {
+        if should_allow_patch_drift(
+            EXPECTED_CODEX_CLI_VERSION,
+            compat.codex_cli_version.as_deref(),
+        ) {
+            compat.message = Some(compatibility_patch_drift_warning_message(&compat));
+        } else {
+            compat.status = CodexProtocolCompatibilityStatus::Incompatible;
+            compat.message = Some(compatibility_error_message(&compat));
+        }
     }
 
     Ok(compat)
@@ -294,6 +301,23 @@ pub fn compatibility_error_message(compat: &CodexProtocolCompatibility) -> Strin
     if let Some(version) = compat.codex_cli_version.as_deref() {
         lines.push(format!("Detected codex-cli version: {version}"));
     }
+    if let Some(version) = EXPECTED_CODEX_CLI_VERSION {
+        lines.push(format!("Expected codex-cli version: {version}"));
+        if let Some(runtime) = compat.codex_cli_version.as_deref()
+            && let Some(ordering) = compare_semver_core(runtime, version)
+        {
+            match ordering {
+                std::cmp::Ordering::Less => lines.push(
+                    "Detected codex-cli is older than expected (upgrade codex-cli).".to_string(),
+                ),
+                std::cmp::Ordering::Greater => lines.push(
+                    "Detected codex-cli is newer than expected (upgrade Vibe Kanban or downgrade codex-cli)."
+                        .to_string(),
+                ),
+                std::cmp::Ordering::Equal => {}
+            }
+        }
+    }
     if let Some(runtime) = compat.runtime_v2_schema_sha256.as_deref() {
         lines.push(format!("Runtime protocol fingerprint: {runtime}"));
     }
@@ -318,6 +342,9 @@ fn unknown_compatibility_error_message(
     lines.push(format!("Base command: {}", compat.base_command));
     if let Some(version) = compat.codex_cli_version.as_deref() {
         lines.push(format!("Detected codex-cli version: {version}"));
+    }
+    if let Some(version) = EXPECTED_CODEX_CLI_VERSION {
+        lines.push(format!("Expected codex-cli version: {version}"));
     }
     if let Some(runtime) = compat.runtime_v2_schema_sha256.as_deref() {
         lines.push(format!("Runtime protocol fingerprint: {runtime}"));
@@ -353,6 +380,85 @@ pub fn compatibility_blocking_error_message(compat: &CodexProtocolCompatibility)
 
 pub fn v2_schema_bundle_path(dir: &Path) -> std::path::PathBuf {
     dir.join(V2_SCHEMA_BUNDLE_FILENAME)
+}
+
+fn should_allow_patch_drift(expected: Option<&str>, runtime: Option<&str>) -> bool {
+    let Some(expected) = expected else {
+        return false;
+    };
+    let Some(runtime) = runtime else {
+        return false;
+    };
+
+    // Pre-release versions are allowed to drift rapidly and may not be
+    // semver-compatible with the stable channel. Stay strict unless the
+    // fingerprints match.
+    if expected.contains('-') || runtime.contains('-') {
+        return false;
+    }
+
+    let Some(expected_mm) = semver_major_minor(expected) else {
+        return false;
+    };
+    let Some(runtime_mm) = semver_major_minor(runtime) else {
+        return false;
+    };
+
+    expected_mm == runtime_mm
+}
+
+fn semver_major_minor(version: &str) -> Option<(u64, u64)> {
+    let core = version
+        .split(|c| c == '-' || c == '+')
+        .next()
+        .unwrap_or(version);
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse::<u64>().ok()?;
+    let minor = parts.next()?.parse::<u64>().ok()?;
+    let _patch = parts.next()?.parse::<u64>().ok()?;
+    Some((major, minor))
+}
+
+fn compare_semver_core(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    let parse = |v: &str| -> Option<(u64, u64, u64)> {
+        let core = v.split(|c| c == '-' || c == '+').next().unwrap_or(v);
+        let mut parts = core.split('.');
+        let major = parts.next()?.parse::<u64>().ok()?;
+        let minor = parts.next()?.parse::<u64>().ok()?;
+        let patch = parts.next()?.parse::<u64>().ok()?;
+        Some((major, minor, patch))
+    };
+
+    let a = parse(a)?;
+    let b = parse(b)?;
+    Some(a.cmp(&b))
+}
+
+fn compatibility_patch_drift_warning_message(compat: &CodexProtocolCompatibility) -> String {
+    let mut lines = Vec::new();
+    lines.push(
+        "Codex protocol fingerprint differs from this Vibe Kanban build, but continuing because the codex-cli MAJOR.MINOR matches."
+            .to_string(),
+    );
+    lines.push(format!("Base command: {}", compat.base_command));
+    if let Some(version) = compat.codex_cli_version.as_deref() {
+        lines.push(format!("Detected codex-cli version: {version}"));
+    }
+    if let Some(version) = EXPECTED_CODEX_CLI_VERSION {
+        lines.push(format!("Expected codex-cli version: {version}"));
+    }
+    if let Some(runtime) = compat.runtime_v2_schema_sha256.as_deref() {
+        lines.push(format!("Runtime protocol fingerprint: {runtime}"));
+    }
+    lines.push(format!(
+        "Expected protocol fingerprint: {}",
+        compat.expected_v2_schema_sha256
+    ));
+    lines.push(
+        "Note: if you encounter protocol decode errors, align Vibe Kanban and codex-cli versions."
+            .to_string(),
+    );
+    lines.join("\n")
 }
 
 fn canonicalize_json(value: Value) -> Value {
@@ -469,6 +575,14 @@ mod tests {
             extract_first_semver("codex-cli 0.114.0"),
             Some("0.114.0".to_string())
         );
+    }
+
+    #[test]
+    fn should_allow_patch_drift_when_major_minor_match() {
+        assert!(should_allow_patch_drift(Some("0.115.0"), Some("0.115.1")));
+        assert!(!should_allow_patch_drift(Some("0.115.0"), Some("0.115.0-alpha.1")));
+        assert!(!should_allow_patch_drift(Some("0.115.0"), Some("0.116.0")));
+        assert!(!should_allow_patch_drift(Some("0.115.0"), Some("1.115.0")));
     }
 
     #[cfg(unix)]
