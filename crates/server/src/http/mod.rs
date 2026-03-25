@@ -188,6 +188,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn config_status_endpoint_returns_runtime_metadata() {
+        let (_env_guard, deployment) = setup_deployment().await;
+        let expected_dir = deployment
+            .config_status()
+            .read()
+            .await
+            .config_dir
+            .to_string_lossy()
+            .to_string();
+
+        let app = super::router(deployment);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/config/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json.get("success").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            json.pointer("/data/config_dir")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
+            expected_dir
+        );
+        assert!(
+            json.pointer("/data/loaded_at_unix_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or_default()
+                > 0
+        );
+    }
+
+    #[tokio::test]
+    async fn config_reload_failure_sets_last_error_and_keeps_config() {
+        let (_env_guard, deployment) = setup_deployment().await;
+        let config_path = deployment.config_status().read().await.config_path.clone();
+
+        let git_branch_prefix_before = deployment.config().read().await.git_branch_prefix.clone();
+        let loaded_at_before = deployment.config_status().read().await.loaded_at;
+
+        if let Some(parent) = config_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&config_path, "not: [valid").unwrap();
+
+        let app = super::router(deployment.clone());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/config/reload")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(deployment.config_status().read().await.last_error.is_some());
+        assert_eq!(deployment.config_status().read().await.loaded_at, loaded_at_before);
+        assert_eq!(
+            deployment.config().read().await.git_branch_prefix,
+            git_branch_prefix_before
+        );
+    }
+
+    #[tokio::test]
     async fn events_require_token_and_accept_query_param() {
         let (_env_guard, deployment) = setup_deployment().await;
         set_token_boundary(&deployment, "sekrit", false).await;

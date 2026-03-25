@@ -13,6 +13,7 @@ pub struct TestEnvGuard {
     prev_database_url: Option<String>,
     prev_asset_dir: Option<String>,
     prev_disable_background_tasks: Option<String>,
+    prev_vk_config_dir: Option<String>,
 }
 
 impl TestEnvGuard {
@@ -21,6 +22,10 @@ impl TestEnvGuard {
         let prev_database_url = std::env::var("DATABASE_URL").ok();
         let prev_asset_dir = std::env::var("VIBE_ASSET_DIR").ok();
         let prev_disable_background_tasks = std::env::var("VIBE_DISABLE_BACKGROUND_TASKS").ok();
+        let prev_vk_config_dir = std::env::var("VK_CONFIG_DIR").ok();
+
+        let vk_config_dir = temp_root.join("vk-config");
+        std::fs::create_dir_all(&vk_config_dir).unwrap();
 
         // SAFETY: tests using TestEnvGuard are serialized by test_lock.
         unsafe {
@@ -29,6 +34,7 @@ impl TestEnvGuard {
             // Disable background workers (event outbox loop, orphan cleanup, etc.) to avoid
             // cross-task SQLite write contention in tests.
             std::env::set_var("VIBE_DISABLE_BACKGROUND_TASKS", "1");
+            std::env::set_var("VK_CONFIG_DIR", &vk_config_dir);
         }
 
         Self {
@@ -36,6 +42,7 @@ impl TestEnvGuard {
             prev_database_url,
             prev_asset_dir,
             prev_disable_background_tasks,
+            prev_vk_config_dir,
         }
     }
 }
@@ -55,6 +62,10 @@ impl Drop for TestEnvGuard {
             match &self.prev_disable_background_tasks {
                 Some(value) => std::env::set_var("VIBE_DISABLE_BACKGROUND_TASKS", value),
                 None => std::env::remove_var("VIBE_DISABLE_BACKGROUND_TASKS"),
+            }
+            match &self.prev_vk_config_dir {
+                Some(value) => std::env::set_var("VK_CONFIG_DIR", value),
+                None => std::env::remove_var("VK_CONFIG_DIR"),
             }
         }
     }

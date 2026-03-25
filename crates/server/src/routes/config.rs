@@ -34,6 +34,8 @@ use crate::{DeploymentImpl, error::ApiError};
 pub fn router() -> Router<DeploymentImpl> {
     Router::new()
         .route("/info", get(get_user_system_info))
+        .route("/config/status", get(get_config_status))
+        .route("/config/reload", post(reload_config))
         .route("/config", put(update_config))
         .route("/sounds/{sound}", get(get_sound))
         .route("/mcp-config", get(get_mcp_servers).post(update_mcp_servers))
@@ -117,6 +119,61 @@ async fn get_user_system_info(
     };
 
     ResponseJson(ApiResponse::success(user_system_info))
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+pub struct ConfigStatusResponse {
+    pub config_dir: String,
+    pub config_path: String,
+    pub secret_env_path: String,
+    pub loaded_at_unix_ms: u64,
+    pub last_error: Option<String>,
+}
+
+fn to_unix_ms(time: std::time::SystemTime) -> u64 {
+    time.duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
+#[axum::debug_handler]
+async fn get_config_status(
+    State(deployment): State<DeploymentImpl>,
+) -> ResponseJson<ApiResponse<ConfigStatusResponse>> {
+    let status = deployment.config_status().read().await.clone();
+    let response = ConfigStatusResponse {
+        config_dir: status.config_dir.to_string_lossy().to_string(),
+        config_path: status.config_path.to_string_lossy().to_string(),
+        secret_env_path: status.secret_env_path.to_string_lossy().to_string(),
+        loaded_at_unix_ms: to_unix_ms(status.loaded_at),
+        last_error: status.last_error,
+    };
+
+    ResponseJson(ApiResponse::success(response))
+}
+
+#[axum::debug_handler]
+async fn reload_config(
+    State(deployment): State<DeploymentImpl>,
+) -> Result<ResponseJson<ApiResponse<ConfigStatusResponse>>, ApiError> {
+    if let Err(err) = deployment.reload_user_config().await {
+        return Err(ApiError::BadRequest(format!(
+            "Config reload failed: {err}"
+        )));
+    }
+
+    let status = deployment.config_status().read().await.clone();
+    let response = ConfigStatusResponse {
+        config_dir: status.config_dir.to_string_lossy().to_string(),
+        config_path: status.config_path.to_string_lossy().to_string(),
+        secret_env_path: status.secret_env_path.to_string_lossy().to_string(),
+        loaded_at_unix_ms: to_unix_ms(status.loaded_at),
+        last_error: status.last_error,
+    };
+
+    Ok(ResponseJson(ApiResponse::success(response)))
 }
 
 async fn update_config(
