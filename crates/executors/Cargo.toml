@@ -40,18 +40,7 @@ executor-qwen = { path = "../executor-qwen", optional = true }
 tempfile = "3.10"
 
 [features]
-default = [
-  "amp",
-  "claude",
-  "codex",
-  "copilot",
-  "cursor",
-  "droid",
-  "fake-agent",
-  "gemini",
-  "opencode",
-  "qwen",
-]
+default = ["claude", "codex"]
 
 amp = ["dep:executor-amp"]
 claude = ["dep:executor-claude"]

@@ -21,6 +21,7 @@ use db::models::{
     workspace_repo::CreateWorkspaceRepo,
 };
 use events::EventError;
+use executors::profile::ExecutorConfigs;
 use executors_protocol::ExecutorProfileId;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
 use logs_axum::SequencedLogMsgAxumExt;
@@ -199,6 +200,10 @@ pub async fn create_task_and_start(
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<CreateAndStartTaskRequest>,
 ) -> Result<ResponseJson<ApiResponse<TaskWithAttemptStatus>>, ApiError> {
+    ExecutorConfigs::get_cached()
+        .require_coding_agent(&payload.executor_profile_id)
+        .map_err(|err| ApiError::BadRequest(err.to_string()))?;
+
     let runtime = DeploymentTaskRuntime::new(deployment.container());
     let repos: Vec<CreateWorkspaceRepo> = payload
         .repos

@@ -529,6 +529,49 @@ impl ExecutorConfigs {
             .cloned()
     }
 
+    pub fn require_coding_agent(
+        &self,
+        executor_profile_id: &ExecutorProfileId,
+    ) -> Result<CodingAgent, ProfileError> {
+        let Some(executor) = self.executors.get(&executor_profile_id.executor) else {
+            let mut supported = self
+                .executors
+                .keys()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            supported.sort();
+            return Err(ProfileError::Validation(format!(
+                "Unsupported executor '{}'. Supported executors: {}",
+                executor_profile_id.executor,
+                supported.join(", ")
+            )));
+        };
+
+        let variant = executor_profile_id
+            .variant
+            .clone()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| "DEFAULT".to_string());
+        let variant = canonical_variant_key(variant);
+
+        let Some(agent) = executor.get_variant(&variant) else {
+            let mut variants = executor
+                .configurations
+                .keys()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            variants.sort();
+            return Err(ProfileError::Validation(format!(
+                "Unsupported executor profile '{}:{}'. Available variants: {}",
+                executor_profile_id.executor,
+                variant,
+                variants.join(", ")
+            )));
+        };
+
+        Ok(agent.clone())
+    }
+
     pub fn get_coding_agent_or_default(
         &self,
         executor_profile_id: &ExecutorProfileId,
@@ -706,5 +749,36 @@ mod tests {
             err,
             ProfileError::CannotDeleteBuiltInConfig { .. }
         ));
+    }
+
+    #[test]
+    fn require_coding_agent_errors_for_unsupported_executor() {
+        let configs = ExecutorConfigs::from_defaults();
+        let id = ExecutorProfileId::new(BaseCodingAgent::Gemini);
+
+        let err = configs.require_coding_agent(&id).unwrap_err();
+        match err {
+            ProfileError::Validation(message) => {
+                assert!(message.contains("Unsupported executor"));
+                assert!(message.contains("CLAUDE_CODE"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn require_coding_agent_errors_for_unsupported_variant() {
+        let configs = ExecutorConfigs::from_defaults();
+        let id =
+            ExecutorProfileId::with_variant(BaseCodingAgent::ClaudeCode, "missing".to_string());
+
+        let err = configs.require_coding_agent(&id).unwrap_err();
+        match err {
+            ProfileError::Validation(message) => {
+                assert!(message.contains("Unsupported executor profile"));
+                assert!(message.contains("DEFAULT"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 }

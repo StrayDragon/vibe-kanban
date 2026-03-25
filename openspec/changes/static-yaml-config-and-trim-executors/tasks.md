@@ -21,10 +21,10 @@
 
 ## 4. Executors 收敛（默认仅 Claude Code + Codex）
 
-- [ ] 4.1 将 `crates/executors` 默认 features 收敛到 `claude` + `codex`，验证：`cargo check -p executors`
-- [ ] 4.2 更新默认 profiles（只包含受支持 executors）与配置校验（引用不可用 executor 给出清晰错误），验证：`cargo test -p executors`
+- [x] 4.1 将 `crates/executors` 默认 features 收敛到 `claude` + `codex`，验证：`cargo check -p executors`
+- [x] 4.2 更新默认 profiles（只包含受支持 executors）与配置校验（引用不可用 executor 给出清晰错误），验证：`cargo test -p executors`
 - [ ] 4.3 将 profiles/overrides 的 source-of-truth 迁移到 `config.yaml` 并移除 `profiles.json` 读写路径（保留 `GET /api/profiles` 用于 UI），验证：`pnpm run backend:check` +（`pnpm run dev`）`curl -s http://localhost:<BACKEND_PORT>/api/profiles`
-- [ ] 4.4 将 Fake agent executor 变为非默认/可选（feature gate），验证：`cargo check -p executors`（默认）与 `cargo check -p executors --features fake-agent`
+- [x] 4.4 将 Fake agent executor 变为非默认/可选（feature gate），验证：`cargo check -p executors`（默认）与 `cargo check -p executors --features fake-agent`
 
 ## 5. Projects / Repos 静态化（YAML）与 DB-backed settings 移除
 

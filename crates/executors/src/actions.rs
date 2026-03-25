@@ -17,6 +17,14 @@ use crate::{
     profile::ExecutorConfigs,
 };
 
+fn resolve_coding_agent(
+    executor_profile_id: &executors_protocol::ExecutorProfileId,
+) -> Result<CodingAgent, ExecutorError> {
+    ExecutorConfigs::get_cached()
+        .require_coding_agent(executor_profile_id)
+        .map_err(|err| ExecutorError::UnknownExecutorType(err.to_string()))
+}
+
 #[async_trait]
 pub trait Executable {
     async fn spawn(
@@ -62,8 +70,7 @@ impl Executable for CodingAgentInitialRequest {
             None => current_dir.to_path_buf(),
         };
 
-        let mut agent =
-            ExecutorConfigs::get_cached().get_coding_agent_or_default(&self.executor_profile_id);
+        let mut agent = resolve_coding_agent(&self.executor_profile_id)?;
         agent.use_approvals(approvals);
 
         match &agent {
@@ -96,8 +103,7 @@ impl Executable for CodingAgentFollowUpRequest {
             None => current_dir.to_path_buf(),
         };
 
-        let mut agent =
-            ExecutorConfigs::get_cached().get_coding_agent_or_default(&self.executor_profile_id);
+        let mut agent = resolve_coding_agent(&self.executor_profile_id)?;
         agent.use_approvals(approvals);
 
         match &agent {

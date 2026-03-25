@@ -474,7 +474,7 @@ export enum AgentCommandStatus { CHECKING = "CHECKING", READY = "READY" }
 
 export enum BaseCodingAgent { CLAUDE_CODE = "CLAUDE_CODE", AMP = "AMP", GEMINI = "GEMINI", CODEX = "CODEX", FAKE_AGENT = "FAKE_AGENT", OPENCODE = "OPENCODE", CURSOR_AGENT = "CURSOR_AGENT", QWEN_CODE = "QWEN_CODE", COPILOT = "COPILOT", DROID = "DROID" }
 
-export type CodingAgent = { "CLAUDE_CODE": ClaudeCode } | { "AMP": Amp } | { "GEMINI": Gemini } | { "CODEX": Codex } | { "FAKE_AGENT": FakeAgent } | { "OPENCODE": Opencode } | { "CURSOR_AGENT": CursorAgent } | { "QWEN_CODE": QwenCode } | { "COPILOT": Copilot } | { "DROID": Droid };
+export type CodingAgent = { "CLAUDE_CODE": ClaudeCode } | { "CODEX": Codex };
 
 export type AvailabilityInfo = { "type": "LOGIN_DETECTED", last_auth_timestamp: bigint, } | { "type": "INSTALLATION_FOUND" } | { "type": "NOT_FOUND" };
 
@@ -498,17 +498,13 @@ executor: BaseCodingAgent,
  */
 variant: string | null, };
 
-export type ExecutorConfig = { [key in string]?: { "CLAUDE_CODE": ClaudeCode } | { "AMP": Amp } | { "GEMINI": Gemini } | { "CODEX": Codex } | { "FAKE_AGENT": FakeAgent } | { "OPENCODE": Opencode } | { "CURSOR_AGENT": CursorAgent } | { "QWEN_CODE": QwenCode } | { "COPILOT": Copilot } | { "DROID": Droid } };
+export type ExecutorConfig = { [key in string]?: { "CLAUDE_CODE": ClaudeCode } | { "CODEX": Codex } };
 
 export type ExecutorConfigs = { executors: { [key in BaseCodingAgent]?: ExecutorConfig }, };
 
 export enum BaseAgentCapability { SESSION_FORK = "SESSION_FORK", SETUP_HELPER = "SETUP_HELPER" }
 
 export type ClaudeCode = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, claude_code_router?: boolean | null, plan?: boolean | null, approvals?: boolean | null, model?: string | null, dangerously_skip_permissions?: boolean | null, disable_api_key?: boolean | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
-
-export type Gemini = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, model?: string | null, yolo?: boolean | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
-
-export type Amp = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, dangerously_allow_all?: boolean | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
 
 export type Codex = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, sandbox?: SandboxMode | null, ask_for_approval?: AskForApproval | null, oss?: boolean | null, model?: string | null, model_reasoning_effort?: ReasoningEffort | null, model_reasoning_summary?: ReasoningSummary | null, model_reasoning_summary_format?: ReasoningSummaryFormat | null, profile?: string | null, base_instructions?: string | null, include_apply_patch_tool?: boolean | null, enable_dynamic_tools?: boolean | null, model_provider?: string | null, compact_prompt?: string | null, developer_instructions?: string | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
 
@@ -525,28 +521,6 @@ export type ReasoningSummaryFormat = "none" | "experimental";
 export type CodexProtocolCompatibilityStatus = "compatible" | "incompatible" | "not_installed" | "unknown";
 
 export type CodexProtocolCompatibility = { status: CodexProtocolCompatibilityStatus, expected_v2_schema_sha256: string, runtime_v2_schema_sha256: string | null, codex_cli_version: string | null, base_command: string, message: string | null, };
-
-export type FakeAgent = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, seed?: bigint | null, cadence_ms: bigint, message_chunk_min: number, message_chunk_max: number, tool_events: FakeToolEvents, write_fake_files: boolean, include_reasoning: boolean, scenario_path?: string | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
-
-export type FakeToolEvents = { exec_command: boolean, apply_patch: boolean, mcp: boolean, web_search: boolean, approvals: boolean, errors: boolean, };
-
-export type CursorAgent = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, force?: boolean | null, model?: string | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
-
-export type Copilot = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, model?: string | null, allow_all_tools?: boolean | null, allow_tool?: string | null, deny_tool?: string | null, add_dir?: Array<string> | null, disable_mcp_server?: Array<string> | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
-
-export type Opencode = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, model?: string | null, mode?: string | null, 
-/**
- * Auto-approve agent actions
- */
-auto_approve: boolean, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
-
-export type QwenCode = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, yolo?: boolean | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
-
-export type Droid = { append_prompt: AppendPrompt, auto_retry: AutoRetryConfig, autonomy: Autonomy, model?: string | null, reasoning_effort?: DroidReasoningEffort | null, base_command_override?: string | null, additional_params?: Array<string> | null, env?: { [key in string]?: string } | null, };
-
-export type Autonomy = "normal" | "low" | "medium" | "high" | "skip-permissions-unsafe";
-
-export type DroidReasoningEffort = "none" | "dynamic" | "off" | "low" | "medium" | "high";
 
 export type AutoRetryConfig = { error_patterns: Array<string>, delay_seconds: number, max_attempts: number, };
 

@@ -51,7 +51,7 @@ use utils_core::{
 };
 use uuid::Uuid;
 
-use super::{codex_setup, cursor_setup, dto::*, gh_cli_setup};
+use super::{codex_setup, dto::*, gh_cli_setup};
 use crate::{
     DeploymentImpl, error::ApiError, routes::task_attempts::gh_cli_setup::GhCliSetupError,
     task_runtime::DeploymentTaskRuntime,
@@ -999,6 +999,10 @@ pub async fn create_task_attempt(
         ));
     }
 
+    ExecutorConfigs::get_cached()
+        .require_coding_agent(&payload.executor_profile_id)
+        .map_err(|err| ApiError::BadRequest(err.to_string()))?;
+
     let key = crate::routes::idempotency::idempotency_key(&headers);
     let hash = crate::routes::idempotency::request_hash(&payload)?;
 
@@ -1143,11 +1147,10 @@ pub async fn run_agent_setup(
 ) -> Result<ResponseJson<ApiResponse<RunAgentSetupResponse>>, ApiError> {
     let executor_profile_id = payload.executor_profile_id;
     let config = ExecutorConfigs::get_cached();
-    let coding_agent = config.get_coding_agent_or_default(&executor_profile_id);
+    let coding_agent = config
+        .require_coding_agent(&executor_profile_id)
+        .map_err(|err| ApiError::BadRequest(err.to_string()))?;
     match coding_agent {
-        CodingAgent::CursorAgent(_) => {
-            cursor_setup::run_cursor_setup(&deployment, &workspace).await?;
-        }
         CodingAgent::Codex(codex) => {
             codex_setup::run_codex_setup(&deployment, &workspace, &codex).await?;
         }

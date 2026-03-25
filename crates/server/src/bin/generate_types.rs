@@ -215,8 +215,6 @@ fn generate_types_content() -> String {
         executors::profile::ExecutorConfigs::decl(),
         executors::executors::BaseAgentCapability::decl(),
         executors::executors::claude::ClaudeCode::decl(),
-        executors::executors::gemini::Gemini::decl(),
-        executors::executors::amp::Amp::decl(),
         executors::executors::codex::Codex::decl(),
         executors::executors::codex::SandboxMode::decl(),
         executors::executors::codex::AskForApproval::decl(),
@@ -225,15 +223,6 @@ fn generate_types_content() -> String {
         executors::executors::codex::ReasoningSummaryFormat::decl(),
         executors::executors::codex::compatibility::CodexProtocolCompatibilityStatus::decl(),
         executors::executors::codex::compatibility::CodexProtocolCompatibility::decl(),
-        executors::executors::fake_agent::FakeAgent::decl(),
-        executors::executors::fake_agent::FakeToolEvents::decl(),
-        executors::executors::cursor::CursorAgent::decl(),
-        executors::executors::copilot::Copilot::decl(),
-        executors::executors::opencode::Opencode::decl(),
-        executors::executors::qwen::QwenCode::decl(),
-        executors::executors::droid::Droid::decl(),
-        executors::executors::droid::Autonomy::decl(),
-        executors::executors::droid::ReasoningEffortLevel::decl(),
         executors::auto_retry::AutoRetryConfig::decl(),
         executors::executors::AppendPrompt::decl(),
         executors_protocol::actions::coding_agent_initial::CodingAgentInitialRequest::decl(),
@@ -301,44 +290,12 @@ fn generate_schemas() -> Result<HashMap<&'static str, String>, serde_json::Error
     println!("Generating JSON schemas…");
     let schemas: HashMap<&str, String> = HashMap::from([
         (
-            "amp",
-            generate_json_schema::<executors::executors::amp::Amp>()?,
-        ),
-        (
             "claude_code",
             generate_json_schema::<executors::executors::claude::ClaudeCode>()?,
         ),
         (
-            "gemini",
-            generate_json_schema::<executors::executors::gemini::Gemini>()?,
-        ),
-        (
             "codex",
             generate_json_schema::<executors::executors::codex::Codex>()?,
-        ),
-        (
-            "fake_agent",
-            generate_json_schema::<executors::executors::fake_agent::FakeAgent>()?,
-        ),
-        (
-            "cursor_agent",
-            generate_json_schema::<executors::executors::cursor::CursorAgent>()?,
-        ),
-        (
-            "opencode",
-            generate_json_schema::<executors::executors::opencode::Opencode>()?,
-        ),
-        (
-            "qwen_code",
-            generate_json_schema::<executors::executors::qwen::QwenCode>()?,
-        ),
-        (
-            "copilot",
-            generate_json_schema::<executors::executors::copilot::Copilot>()?,
-        ),
-        (
-            "droid",
-            generate_json_schema::<executors::executors::droid::Droid>()?,
         ),
     ]);
     println!(
