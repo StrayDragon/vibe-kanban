@@ -1,4 +1,4 @@
-use db::models::{project::Project, task::Task};
+use db::models::task::Task;
 
 const DEFAULT_AUTO_ORCHESTRATION_PROMPT: &str =
     include_str!("../../../docs/auto-orchestration-prompt.md");
@@ -11,7 +11,7 @@ pub struct PromptRepoContext {
 
 pub fn render_auto_orchestration_prompt(
     task: &Task,
-    project: &Project,
+    project_name: &str,
     repos: &[PromptRepoContext],
     attempt: Option<i32>,
 ) -> String {
@@ -44,7 +44,7 @@ pub fn render_auto_orchestration_prompt(
         .replace("{task_id}", &task.id.to_string())
         .replace("{task_title}", task.title.trim())
         .replace("{task_status}", &task.status.to_string())
-        .replace("{project_name}", project.name.trim())
+        .replace("{project_name}", project_name.trim())
         .replace("{task_description}", description)
         .replace("{repository_context}", &repository_context)
         .replace("{attempt_section}", &attempt_section)
@@ -54,33 +54,12 @@ pub fn render_auto_orchestration_prompt(
 mod tests {
     use chrono::Utc;
     use db::{
-        models::{project::Project, task::Task},
-        types::{ProjectMcpExecutorPolicyMode, TaskCreatedByKind, TaskKind, TaskStatus},
+        models::task::Task,
+        types::{TaskCreatedByKind, TaskKind, TaskStatus},
     };
     use uuid::Uuid;
 
     use super::{PromptRepoContext, render_auto_orchestration_prompt};
-
-    fn sample_project() -> Project {
-        Project {
-            id: Uuid::new_v4(),
-            name: "Demo Project".to_string(),
-            dev_script: None,
-            dev_script_working_dir: None,
-            default_agent_working_dir: None,
-            git_no_verify_override: None,
-            scheduler_max_concurrent: 2,
-            scheduler_max_retries: 3,
-            default_continuation_turns: 0,
-            mcp_auto_executor_policy_mode: ProjectMcpExecutorPolicyMode::InheritAll,
-            mcp_auto_executor_policy_allow_list: Vec::new(),
-            after_prepare_hook: None,
-            before_cleanup_hook: None,
-            remote_project_id: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        }
-    }
 
     fn sample_task() -> Task {
         Task {
@@ -107,7 +86,7 @@ mod tests {
     fn render_first_run_prompt_includes_task_context() {
         let prompt = render_auto_orchestration_prompt(
             &sample_task(),
-            &sample_project(),
+            "Demo Project",
             &[PromptRepoContext {
                 display_name: "repo-a".to_string(),
                 target_branch: "main".to_string(),
@@ -124,7 +103,7 @@ mod tests {
     #[test]
     fn render_retry_prompt_includes_attempt_section() {
         let prompt =
-            render_auto_orchestration_prompt(&sample_task(), &sample_project(), &[], Some(2));
+            render_auto_orchestration_prompt(&sample_task(), "Demo Project", &[], Some(2));
 
         assert!(prompt.contains("retry/continuation attempt #2"));
         assert!(prompt.contains("Resume from the current workspace state"));

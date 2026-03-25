@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::Path, time::Duration};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use app_runtime::Deployment;
@@ -8,7 +12,7 @@ use db::{
     models::{
         event_outbox::EventOutbox,
         milestone::Milestone,
-        project::Project,
+        repo::Repo,
         task::{TaskStatus, TaskWithAttemptStatus},
         task_dispatch_state::{TaskDispatchState, UpsertTaskDispatchState},
         task_orchestration_state::TaskOrchestrationState,
@@ -69,23 +73,29 @@ async fn run_loop(deployment: DeploymentImpl, shutdown: CancellationToken) -> Re
 }
 
 async fn poll_once(deployment: &DeploymentImpl) -> Result<()> {
-    let projects = Project::find_all(&deployment.db().pool)
-        .await
-        .context("failed to load projects for auto orchestration")?;
+    let projects = deployment.config().read().await.projects.clone();
 
     for project in projects {
-        reconcile_project(deployment, &project)
+        let Some(project_id) = project.id else {
+            continue;
+        };
+
+        reconcile_project(deployment, project_id, &project)
             .await
-            .with_context(|| format!("failed to reconcile project {}", project.id))?;
+            .with_context(|| format!("failed to reconcile project {}", project_id))?;
     }
 
     Ok(())
 }
 
-async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Result<()> {
+async fn reconcile_project(
+    deployment: &DeploymentImpl,
+    project_id: Uuid,
+    project: &config::ProjectConfig,
+) -> Result<()> {
     let mut tasks = db::models::task::Task::find_by_project_id_with_attempt_status(
         &deployment.db().pool,
-        project.id,
+        project_id,
     )
     .await?;
     tasks.sort_by_key(|task| task.created_at);
@@ -97,7 +107,7 @@ async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Re
     let mut available_slots = (project.scheduler_max_concurrent - active_runs).max(0);
 
     for task in &tasks {
-        reconcile_task_state(deployment, project, task).await?;
+        reconcile_task_state(deployment, project_id, project, task).await?;
     }
 
     if available_slots <= 0 {
@@ -107,7 +117,7 @@ async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Re
     let tasks_by_id: HashMap<Uuid, TaskWithAttemptStatus> =
         tasks.into_iter().map(|task| (task.id, task)).collect();
 
-    let mut milestones = Milestone::find_by_project_id(&deployment.db().pool, project.id)
+    let mut milestones = Milestone::find_by_project_id(&deployment.db().pool, project_id)
         .await
         .context("failed to load milestones for milestone orchestration")?;
     milestones.retain(milestone_dispatch_enabled);
@@ -140,7 +150,7 @@ async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Re
             if milestone.run_next_step_requested_at.is_some() {
                 warn!(
                     milestone_id = %milestone.id,
-                    project_id = %project.id,
+                    project_id = %project_id,
                     "run next step requested but no eligible node; clearing request"
                 );
                 if let Err(err) =
@@ -149,7 +159,7 @@ async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Re
                 {
                     warn!(
                         milestone_id = %milestone.id,
-                        project_id = %project.id,
+                        project_id = %project_id,
                         error = %err,
                         "failed to clear run next step request"
                     );
@@ -158,7 +168,7 @@ async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Re
             continue;
         };
 
-        match dispatch_task(deployment, project, task).await {
+        match dispatch_task(deployment, project_id, project, task).await {
             Ok(DispatchOutcome::Started) => {
                 available_slots -= 1;
                 if milestone.run_next_step_requested_at.is_some()
@@ -168,7 +178,7 @@ async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Re
                 {
                     warn!(
                         milestone_id = %milestone.id,
-                        project_id = %project.id,
+                        project_id = %project_id,
                         error = %err,
                         "failed to clear run next step request after dispatch"
                     );
@@ -182,7 +192,7 @@ async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Re
                 {
                     warn!(
                         milestone_id = %milestone.id,
-                        project_id = %project.id,
+                        project_id = %project_id,
                         error = %err,
                         "failed to clear run next step request after block"
                     );
@@ -193,7 +203,7 @@ async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Re
                 warn!(
                     task_id = %task.id,
                     milestone_id = %milestone.id,
-                    project_id = %project.id,
+                    project_id = %project_id,
                     error = %err,
                     "milestone dispatch failed"
                 );
@@ -206,7 +216,8 @@ async fn reconcile_project(deployment: &DeploymentImpl, project: &Project) -> Re
 
 async fn reconcile_task_state(
     deployment: &DeploymentImpl,
-    project: &Project,
+    project_id: Uuid,
+    project: &config::ProjectConfig,
     task: &TaskWithAttemptStatus,
 ) -> Result<()> {
     if task.dispatch_state.is_none() && !task.has_in_progress_attempt {
@@ -288,7 +299,7 @@ async fn reconcile_task_state(
 
                 match serde_json::to_value(TaskOrchestrationTransitionEventPayload {
                     task_id: task.id,
-                    project_id: project.id,
+                    project_id,
                     reason_code: db::types::TaskControlTransferReasonCode::AwaitingHumanReview,
                     detail: transfer.last_control_transfer_detail.clone(),
                 }) {
@@ -304,7 +315,7 @@ async fn reconcile_task_state(
                         {
                             warn!(
                                 task_id = %task.id,
-                                project_id = %project.id,
+                                project_id = %project_id,
                                 error = %err,
                                 "failed to enqueue orchestration transition event"
                             );
@@ -313,7 +324,7 @@ async fn reconcile_task_state(
                     Err(err) => {
                         warn!(
                             task_id = %task.id,
-                            project_id = %project.id,
+                            project_id = %project_id,
                             error = %err,
                             "failed to serialize orchestration transition payload"
                         );
@@ -382,7 +393,7 @@ enum DispatchOutcome {
 
 async fn upsert_blocked_state(
     deployment: &DeploymentImpl,
-    project: &Project,
+    project: &config::ProjectConfig,
     task: &TaskWithAttemptStatus,
     retry_count: i32,
     reason: impl Into<String>,
@@ -409,7 +420,8 @@ async fn upsert_blocked_state(
 
 async fn dispatch_task(
     deployment: &DeploymentImpl,
-    project: &Project,
+    project_id: Uuid,
+    project: &config::ProjectConfig,
     task: &TaskWithAttemptStatus,
 ) -> Result<DispatchOutcome> {
     let executor_profile_id = {
@@ -461,7 +473,7 @@ async fn dispatch_task(
         resolved_repos.into_iter().map(|repo| repo.create).collect();
     let prompt = render_auto_orchestration_prompt(
         &task.task,
-        project,
+        &project.name,
         &prompt_repos,
         (current_retry_count > 0).then_some(current_retry_count + 1),
     );
@@ -514,7 +526,7 @@ async fn dispatch_task(
             .await?;
             info!(
                 task_id = %task.id,
-                project_id = %project.id,
+                project_id = %project_id,
                 "scheduler dispatched task"
             );
             Ok(DispatchOutcome::Started)
@@ -573,12 +585,25 @@ async fn dispatch_task(
 
 async fn resolve_workspace_repos(
     deployment: &DeploymentImpl,
-    project: &Project,
+    project: &config::ProjectConfig,
 ) -> Result<Vec<ResolvedWorkspaceRepo>> {
-    let repos = deployment
-        .project()
-        .get_repositories(&deployment.db().pool, project.id)
-        .await?;
+    let repos = project
+        .repos
+        .iter()
+        .map(|repo| {
+            let path = PathBuf::from(repo.path.clone());
+            let display_name = repo
+                .display_name
+                .clone()
+                .or_else(|| {
+                    path.file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                })
+                .unwrap_or_else(|| "repo".to_string());
+
+            (path, display_name)
+        })
+        .collect::<Vec<_>>();
     let preferred_branch = {
         let config = deployment.config().read().await;
         config
@@ -589,7 +614,8 @@ async fn resolve_workspace_repos(
     };
 
     let mut workspace_repos = Vec::with_capacity(repos.len());
-    for repo in repos {
+    for (path, display_name) in repos {
+        let repo = Repo::find_or_create(&deployment.db().pool, &path, &display_name).await?;
         let target_branch = resolve_target_branch(deployment.git(), &repo.path, &preferred_branch)
             .with_context(|| {
                 format!(

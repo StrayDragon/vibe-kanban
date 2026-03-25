@@ -1,4 +1,8 @@
-use db::models::{task::TaskUpdateParams, task_orchestration_state::TaskOrchestrationState};
+use db::models::{
+    repo::Repo,
+    task::TaskUpdateParams,
+    task_orchestration_state::TaskOrchestrationState,
+};
 use rmcp::{tool, tool_router};
 
 use super::*;
@@ -88,17 +92,20 @@ Avoid: Guessing UUIDs."#,
         annotations(read_only_hint = true)
     )]
     async fn list_projects(&self) -> Result<Json<ListProjectsResponse>, ErrorData> {
-        let projects = Project::find_all(&self.deployment.db().pool)
-            .await
-            .map_err(|e| {
-                ErrorData::internal_error(
-                    "Failed to list projects",
-                    Some(json!({ "error": e.to_string() })),
-                )
-            })?;
-        let summaries = projects
-            .into_iter()
-            .map(ProjectSummary::from_project)
+        let now = chrono::Utc::now().to_rfc3339();
+        let config = self.deployment.config().read().await;
+        let summaries = config
+            .projects
+            .iter()
+            .filter_map(|project| {
+                let id = project.id?;
+                Some(ProjectSummary {
+                    id: id.to_string(),
+                    name: project.name.clone(),
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                })
+            })
             .collect::<Vec<_>>();
         Ok(Json(ListProjectsResponse {
             count: summaries.len(),
@@ -119,21 +126,54 @@ Avoid: Passing a task_id/attempt_id instead of project_id."#,
         &self,
         Parameters(ListReposRequest { project_id }): Parameters<ListReposRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let repos = ProjectRepo::find_repos_for_project(&self.deployment.db().pool, project_id)
-            .await
-            .map_err(|e| {
-                ErrorData::internal_error(
-                    "Failed to list repos",
-                    Some(json!({ "error": e.to_string(), "project_id": project_id })),
-                )
-            })?;
-        let summaries = repos
-            .into_iter()
-            .map(|r| McpRepoSummary {
-                id: r.id.to_string(),
-                name: r.name,
-            })
-            .collect::<Vec<_>>();
+        let project_config = {
+            let config = self.deployment.config().read().await;
+            config
+                .projects
+                .iter()
+                .find(|project| project.id == Some(project_id))
+                .cloned()
+        };
+
+        let Some(project_config) = project_config else {
+            return Err(ErrorData::invalid_params(
+                "Project not found",
+                Some(json!({ "project_id": project_id })),
+            ));
+        };
+
+        let mut summaries = Vec::with_capacity(project_config.repos.len());
+        for repo in &project_config.repos {
+            let path = std::path::PathBuf::from(repo.path.clone());
+            let display_name = repo
+                .display_name
+                .clone()
+                .or_else(|| {
+                    path.file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                })
+                .unwrap_or_else(|| "repo".to_string());
+
+            let entity = Repo::find_or_create(&self.deployment.db().pool, &path, &display_name)
+                .await
+                .map_err(|e| {
+                    ErrorData::internal_error(
+                        "Failed to ensure repo exists",
+                        Some(json!({
+                            "error": e.to_string(),
+                            "project_id": project_id,
+                            "repo_path": repo.path,
+                        })),
+                    )
+                })?;
+
+            summaries.push(McpRepoSummary {
+                id: entity.id.to_string(),
+                name: entity.display_name,
+            });
+        }
+
+        summaries.sort_by(|left, right| left.name.cmp(&right.name));
         Self::success(&ListReposResponse {
             count: summaries.len(),
             repos: summaries,
@@ -1471,47 +1511,28 @@ Avoid: Empty repos; guessing executor (use list_executors)."#,
                 )
             })?
         {
-            let project = Project::find_by_id(pool, task.project_id)
-                .await
-                .map_err(|e| {
-                    ErrorData::internal_error(
-                        "Failed to load project",
-                        Some(json!({
-                            "error": e.to_string(),
-                            "project_id": task.project_id,
-                            "task_id": task_id,
-                        })),
-                    )
-                })?
-                .ok_or_else(|| {
-                    ErrorData::internal_error(
-                        "Task references missing project",
-                        Some(json!({ "project_id": task.project_id, "task_id": task_id })),
-                    )
-                })?;
+            let project_config = {
+                let config = self.deployment.config().read().await;
+                config
+                    .projects
+                    .iter()
+                    .find(|project| project.id == Some(task.project_id))
+                    .cloned()
+            };
 
-            let allowed = match project.mcp_auto_executor_policy_mode {
-                db::types::ProjectMcpExecutorPolicyMode::InheritAll => true,
-                db::types::ProjectMcpExecutorPolicyMode::AllowList => {
-                    let requested_variant = executor_profile_id
-                        .variant
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|v| !v.is_empty());
+            let allowed = match project_config.as_ref() {
+                None => true,
+                Some(project) => match project.mcp_auto_executor_policy_mode {
+                    config::ProjectMcpExecutorPolicyMode::InheritAll => true,
+                    config::ProjectMcpExecutorPolicyMode::AllowList => {
+                        let requested_variant = executor_profile_id
+                            .variant
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|v| !v.is_empty());
 
-                    project
-                        .mcp_auto_executor_policy_allow_list
-                        .iter()
-                        .any(|entry| {
-                            let exec_raw = entry.executor.trim();
-                            if exec_raw.is_empty() {
-                                return false;
-                            }
-                            let normalized = exec_raw.replace('-', "_").to_ascii_uppercase();
-                            let Ok(entry_exec) = BaseCodingAgent::from_str(&normalized) else {
-                                return false;
-                            };
-                            if entry_exec != executor_profile_id.executor {
+                        project.mcp_auto_executor_policy_allow_list.iter().any(|entry| {
+                            if entry.executor != executor_profile_id.executor {
                                 return false;
                             }
 
@@ -1523,10 +1544,17 @@ Avoid: Empty repos; guessing executor (use list_executors)."#,
 
                             entry_variant == requested_variant
                         })
-                }
+                    }
+                },
             };
 
             if !allowed {
+                let project_config = project_config.expect("validated Some when not allowed");
+                let policy_mode = match project_config.mcp_auto_executor_policy_mode {
+                    config::ProjectMcpExecutorPolicyMode::InheritAll => "inherit_all",
+                    config::ProjectMcpExecutorPolicyMode::AllowList => "allow_list",
+                };
+
                 let detail = format!(
                     "executor={} variant={}",
                     executor_profile_id.executor,
@@ -1596,8 +1624,8 @@ Avoid: Empty repos; guessing executor (use list_executors)."#,
                         "project_id": task.project_id,
                         "requested_executor": executor_profile_id.executor.to_string(),
                         "requested_variant": executor_profile_id.variant,
-                        "policy_mode": project.mcp_auto_executor_policy_mode.to_string(),
-                        "allow_list_len": project.mcp_auto_executor_policy_allow_list.len(),
+                        "policy_mode": policy_mode,
+                        "allow_list_len": project_config.mcp_auto_executor_policy_allow_list.len(),
                         "diagnostic_detail": detail,
                     })),
                     Some(
@@ -1689,30 +1717,16 @@ Avoid: Empty repos; guessing executor (use list_executors)."#,
                     ));
                 }
 
-                let project = Project::find_by_id(pool, task.project_id)
-                    .await
-                    .map_err(|e| {
-                        ErrorData::internal_error(
-                            "Failed to load project",
-                            Some(json!({
-                                "error": e.to_string(),
-                                "project_id": task.project_id,
-                                "task_id": task_id,
-                            })),
-                        )
-                    })?
-                    .ok_or_else(|| {
-                        ErrorData::internal_error(
-                            "Task references missing project",
-                            Some(json!({ "project_id": task.project_id, "task_id": task_id })),
-                        )
-                    })?;
-
-                let agent_working_dir = project
-                    .default_agent_working_dir
-                    .as_ref()
-                    .filter(|dir| !dir.is_empty())
-                    .cloned();
+                let agent_working_dir = {
+                    let config = self.deployment.config().read().await;
+                    config
+                        .projects
+                        .iter()
+                        .find(|project| project.id == Some(task.project_id))
+                        .and_then(|project| project.default_agent_working_dir.clone())
+                        .map(|dir| dir.trim().to_string())
+                        .filter(|dir| !dir.is_empty())
+                };
 
                 let attempt_id = Uuid::new_v4();
                 let git_branch_name = self
@@ -2210,25 +2224,6 @@ Avoid: Providing both attempt_id and session_id; missing prompt."#,
                     })),
                 )
             })? {
-                let project = Project::find_by_id(pool, task.project_id)
-                    .await
-                    .map_err(|e| {
-                        ErrorData::internal_error(
-                            "Failed to load project",
-                            Some(json!({
-                                "error": e.to_string(),
-                                "project_id": task.project_id,
-                                "task_id": task.id,
-                            })),
-                        )
-                    })?
-                    .ok_or_else(|| {
-                        ErrorData::internal_error(
-                            "Task references missing project",
-                            Some(json!({ "project_id": task.project_id, "task_id": task.id })),
-                        )
-                    })?;
-
                 let initial_executor_profile_id =
                     ExecutionProcess::latest_executor_profile_for_session(pool, session.id)
                         .await
@@ -2248,28 +2243,28 @@ Avoid: Providing both attempt_id and session_id; missing prompt."#,
                     variant: variant.clone(),
                 };
 
-                let allowed = match project.mcp_auto_executor_policy_mode {
-                    db::types::ProjectMcpExecutorPolicyMode::InheritAll => true,
-                    db::types::ProjectMcpExecutorPolicyMode::AllowList => {
-                        let requested_variant = executor_profile_id
-                            .variant
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|v| !v.is_empty());
+                let project_config = {
+                    let config = self.deployment.config().read().await;
+                    config
+                        .projects
+                        .iter()
+                        .find(|project| project.id == Some(task.project_id))
+                        .cloned()
+                };
 
-                        project
-                            .mcp_auto_executor_policy_allow_list
-                            .iter()
-                            .any(|entry| {
-                                let exec_raw = entry.executor.trim();
-                                if exec_raw.is_empty() {
-                                    return false;
-                                }
-                                let normalized = exec_raw.replace('-', "_").to_ascii_uppercase();
-                                let Ok(entry_exec) = BaseCodingAgent::from_str(&normalized) else {
-                                    return false;
-                                };
-                                if entry_exec != executor_profile_id.executor {
+                let allowed = match project_config.as_ref() {
+                    None => true,
+                    Some(project) => match project.mcp_auto_executor_policy_mode {
+                        config::ProjectMcpExecutorPolicyMode::InheritAll => true,
+                        config::ProjectMcpExecutorPolicyMode::AllowList => {
+                            let requested_variant = executor_profile_id
+                                .variant
+                                .as_deref()
+                                .map(str::trim)
+                                .filter(|v| !v.is_empty());
+
+                            project.mcp_auto_executor_policy_allow_list.iter().any(|entry| {
+                                if entry.executor != executor_profile_id.executor {
                                     return false;
                                 }
 
@@ -2281,10 +2276,17 @@ Avoid: Providing both attempt_id and session_id; missing prompt."#,
 
                                 entry_variant == requested_variant
                             })
-                    }
+                        }
+                    },
                 };
 
                 if !allowed {
+                    let project_config = project_config.expect("validated Some when not allowed");
+                    let policy_mode = match project_config.mcp_auto_executor_policy_mode {
+                        config::ProjectMcpExecutorPolicyMode::InheritAll => "inherit_all",
+                        config::ProjectMcpExecutorPolicyMode::AllowList => "allow_list",
+                    };
+
                     let detail = format!(
                         "executor={} variant={}",
                         executor_profile_id.executor,
@@ -2359,8 +2361,8 @@ Avoid: Providing both attempt_id and session_id; missing prompt."#,
                             "project_id": task.project_id,
                             "requested_executor": executor_profile_id.executor.to_string(),
                             "requested_variant": executor_profile_id.variant,
-                            "policy_mode": project.mcp_auto_executor_policy_mode.to_string(),
-                            "allow_list_len": project.mcp_auto_executor_policy_allow_list.len(),
+                            "policy_mode": policy_mode,
+                            "allow_list_len": project_config.mcp_auto_executor_policy_allow_list.len(),
                             "diagnostic_detail": detail,
                         })),
                         Some(

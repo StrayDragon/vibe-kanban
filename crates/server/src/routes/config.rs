@@ -161,6 +161,8 @@ async fn reload_config(
         return Err(ApiError::BadRequest(format!("Config reload failed: {err}")));
     }
 
+    deployment.sync_config_projects_to_db().await?;
+
     let status = deployment.config_status().read().await.clone();
     let response = ConfigStatusResponse {
         config_dir: status.config_dir.to_string_lossy().to_string(),

@@ -122,11 +122,24 @@ async fn main() -> Result<(), VibeKanbanError> {
     // Pre-warm file search cache for most active projects
     let deployment_for_cache = deployment.clone();
     tokio::spawn(async move {
-        if let Err(e) = deployment_for_cache
-            .file_search_cache()
-            .warm_most_active(&deployment_for_cache.db().pool, 3)
-            .await
-        {
+        let mut repo_paths = {
+            let config = deployment_for_cache.config().read().await;
+            config
+                .projects
+                .iter()
+                .flat_map(|project| project.repos.iter())
+                .map(|repo| std::path::PathBuf::from(repo.path.clone()))
+                .collect::<Vec<_>>()
+        };
+
+        repo_paths.sort();
+        repo_paths.dedup();
+
+        if repo_paths.is_empty() {
+            return;
+        }
+
+        if let Err(e) = deployment_for_cache.file_search_cache().warm_repos(repo_paths).await {
             tracing::warn!("Failed to warm file search cache: {}", e);
         }
     });

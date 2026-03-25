@@ -395,6 +395,8 @@ impl Deployment for AppRuntime {
             shutdown_token,
         };
 
+        deployment.sync_config_projects_to_db().await?;
+
         Ok(deployment)
     }
 
@@ -552,6 +554,33 @@ impl AppRuntime {
                 Err(err)
             }
         }
+    }
+
+    pub async fn sync_config_projects_to_db(&self) -> Result<(), DbErr> {
+        let config = self.config.read().await;
+
+        for project in &config.projects {
+            let Some(project_id) = project.id else {
+                continue;
+            };
+
+            let existing = Project::find_by_id(&self.db.pool, project_id).await?;
+            if existing.is_some() {
+                continue;
+            }
+
+            Project::create(
+                &self.db.pool,
+                &CreateProject {
+                    name: project.name.clone(),
+                    repositories: Vec::new(),
+                },
+                project_id,
+            )
+            .await?;
+        }
+
+        Ok(())
     }
 
     fn build_core_services() -> CoreServices {
