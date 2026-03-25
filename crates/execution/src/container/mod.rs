@@ -1298,13 +1298,35 @@ pub trait ContainerService {
             // Spawn normalizer on populated store
             match executor_action.typ() {
                 ExecutorActionType::CodingAgentInitialRequest(request) => {
-                    let executor = ExecutorConfigs::get_cached()
-                        .get_coding_agent_or_default(&request.executor_profile_id);
+                    let executor = match ExecutorConfigs::get_cached()
+                        .require_coding_agent(&request.executor_profile_id)
+                    {
+                        Ok(executor) => executor,
+                        Err(err) => {
+                            tracing::warn!(
+                                "Skip log normalization for unsupported executor profile {}: {}",
+                                request.executor_profile_id,
+                                err
+                            );
+                            return None;
+                        }
+                    };
                     executor.normalize_logs(temp_store.clone(), &current_dir);
                 }
                 ExecutorActionType::CodingAgentFollowUpRequest(request) => {
-                    let executor = ExecutorConfigs::get_cached()
-                        .get_coding_agent_or_default(&request.executor_profile_id);
+                    let executor = match ExecutorConfigs::get_cached()
+                        .require_coding_agent(&request.executor_profile_id)
+                    {
+                        Ok(executor) => executor,
+                        Err(err) => {
+                            tracing::warn!(
+                                "Skip log normalization for unsupported executor profile {}: {}",
+                                request.executor_profile_id,
+                                err
+                            );
+                            return None;
+                        }
+                    };
                     executor.normalize_logs(temp_store.clone(), &current_dir);
                 }
                 _ => {

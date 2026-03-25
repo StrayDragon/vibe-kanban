@@ -51,7 +51,6 @@ mod tests {
         http::{Request, StatusCode, header},
     };
     use config::AccessControlMode;
-    use executors::profile::ExecutorConfigs;
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -566,7 +565,6 @@ mod tests {
 
         let asset_dir = std::env::var("VIBE_ASSET_DIR").expect("VIBE_ASSET_DIR");
         let asset_dir = std::path::PathBuf::from(asset_dir);
-        let profiles_path = asset_dir.join("profiles.json");
 
         let fake_codex = asset_dir.join("fake-codex");
         std::fs::write(
@@ -614,20 +612,20 @@ exit 1
         perms.set_mode(0o755);
         std::fs::set_permissions(&fake_codex, perms).expect("chmod");
 
-        let overrides = serde_json::json!({
-            "executors": {
-                "CODEX": {
-                    "DEFAULT": {
-                        "CODEX": {
-                            "base_command_override": fake_codex.to_string_lossy(),
-                        }
-                    }
-                }
-            }
-        });
-        std::fs::write(&profiles_path, format!("{}\n", overrides))
-            .expect("write profiles override");
-        ExecutorConfigs::reload();
+        let vk_config_dir = std::env::var("VK_CONFIG_DIR").expect("VK_CONFIG_DIR");
+        let config_path = std::path::PathBuf::from(vk_config_dir).join("config.yaml");
+        let fake_codex_path = fake_codex
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let config_yaml = format!(
+            "executor_profiles:\n  executors:\n    CODEX:\n      DEFAULT:\n        CODEX:\n          base_command_override: \"{fake_codex_path}\"\n"
+        );
+        std::fs::write(&config_path, config_yaml).expect("write config.yaml");
+        deployment
+            .reload_user_config()
+            .await
+            .expect("reload config");
 
         let app = super::router(deployment);
 

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Error;
+use executors::profile::ExecutorConfigs;
 use executors_protocol::{BaseCodingAgent, ExecutorProfileId};
 use serde::{Deserialize, Serialize};
 use strum_macros::EnumString;
@@ -237,6 +238,112 @@ impl Default for AccessControlConfig {
     }
 }
 
+fn default_scheduler_max_concurrent() -> i32 {
+    1
+}
+
+fn default_scheduler_max_retries() -> i32 {
+    3
+}
+
+fn default_default_continuation_turns() -> i32 {
+    0
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS, Default, schemars::JsonSchema)]
+#[ts(use_ts_enum)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceLifecycleHookFailurePolicy {
+    BlockStart,
+    #[default]
+    WarnOnly,
+    BlockCleanup,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS, schemars::JsonSchema)]
+#[ts(use_ts_enum)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceLifecycleHookRunMode {
+    OncePerWorkspace,
+    EveryPrepare,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
+pub struct WorkspaceLifecycleHookConfig {
+    #[schemars(description = "Hook 命令（单一命令，不支持 shell 操作符拼接）。")]
+    pub command: String,
+    #[schemars(description = "工作目录（相对 workspace root）。")]
+    pub working_dir: Option<String>,
+    #[serde(default)]
+    pub failure_policy: WorkspaceLifecycleHookFailurePolicy,
+    #[schemars(description = "执行模式（after_prepare 必填；before_cleanup 不支持）。")]
+    pub run_mode: Option<WorkspaceLifecycleHookRunMode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
+pub struct ProjectRepoConfig {
+    #[schemars(description = "Git 仓库绝对路径。")]
+    pub path: String,
+    #[schemars(description = "显示名称（可选，仅用于 UI 展示）。")]
+    pub display_name: Option<String>,
+    #[schemars(description = "可选：在 coding agent 前运行的 setup 脚本（单一命令）。")]
+    pub setup_script: Option<String>,
+    #[schemars(description = "可选：在 workspace 清理前运行的 cleanup 脚本（单一命令）。")]
+    pub cleanup_script: Option<String>,
+    #[schemars(description = "可选：复制文件规则（legacy 字段；建议逐步移除）。")]
+    pub copy_files: Option<String>,
+    #[serde(default)]
+    #[schemars(
+        description = "当项目包含多个 repos 且这些 repos 有 setup_script 时，是否并行执行。"
+    )]
+    pub parallel_setup_script: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, Default, schemars::JsonSchema)]
+#[ts(use_ts_enum)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectMcpExecutorPolicyMode {
+    #[default]
+    InheritAll,
+    AllowList,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
+pub struct ProjectConfig {
+    #[schemars(description = "项目稳定 id（UUID，必须显式写入，且全局唯一）。")]
+    pub id: Option<uuid::Uuid>,
+    #[schemars(description = "项目名称（用于 UI 展示）。")]
+    pub name: String,
+    #[schemars(description = "项目 repos（至少一个）。")]
+    #[serde(default)]
+    pub repos: Vec<ProjectRepoConfig>,
+    #[schemars(description = "可选：项目 dev server 脚本（单一命令）。")]
+    pub dev_script: Option<String>,
+    #[schemars(description = "可选：dev script 工作目录（相对 workspace root）。")]
+    pub dev_script_working_dir: Option<String>,
+    #[schemars(description = "可选：默认 agent 工作目录（相对 workspace root）。")]
+    pub default_agent_working_dir: Option<String>,
+    #[schemars(
+        description = "项目级 git hooks 跳过策略。\n\n- null/未设置：继承全局 `git_no_verify`\n- true/false：覆盖全局设置"
+    )]
+    pub git_no_verify_override: Option<bool>,
+    #[serde(default = "default_scheduler_max_concurrent")]
+    pub scheduler_max_concurrent: i32,
+    #[serde(default = "default_scheduler_max_retries")]
+    pub scheduler_max_retries: i32,
+    #[serde(default = "default_default_continuation_turns")]
+    pub default_continuation_turns: i32,
+    #[serde(default)]
+    pub mcp_auto_executor_policy_mode: ProjectMcpExecutorPolicyMode,
+    #[serde(default)]
+    #[schemars(
+        description = "当 mode=allow_list 时生效：允许的 executor profiles（executor + variant）。"
+    )]
+    pub mcp_auto_executor_policy_allow_list: Vec<ExecutorProfileId>,
+    pub after_prepare_hook: Option<WorkspaceLifecycleHookConfig>,
+    pub before_cleanup_hook: Option<WorkspaceLifecycleHookConfig>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(default)]
 pub struct Config {
@@ -247,6 +354,12 @@ pub struct Config {
     #[serde(alias = "executorProfile")]
     #[schemars(description = "默认 executor profile（executor + 可选 variant）。")]
     pub executor_profile: ExecutorProfileId,
+    #[serde(default)]
+    #[serde(alias = "executorProfiles")]
+    #[schemars(
+        description = "Executor profiles 覆盖（可选，按需配置）。\n\n该字段会与内置 defaults 合并后作为运行时可用 profiles。\n当某个 executor/variant 在本次构建中不可用时，引用会导致配置校验失败。"
+    )]
+    pub executor_profiles: Option<ExecutorConfigs>,
     #[serde(alias = "disclaimerAcknowledged")]
     pub disclaimer_acknowledged: bool,
     #[serde(alias = "onboardingAcknowledged")]
@@ -331,6 +444,7 @@ impl Default for Config {
             config_version: CURRENT_CONFIG_VERSION.to_string(),
             theme: ThemeMode::System,
             executor_profile: default_executor_profile(),
+            executor_profiles: None,
             disclaimer_acknowledged: false,
             onboarding_acknowledged: false,
             notifications: NotificationConfig::default(),

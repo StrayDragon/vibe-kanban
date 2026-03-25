@@ -179,7 +179,17 @@ pub fn try_load_config_from_file(config_path: &PathBuf) -> Result<Config, Config
     let mut value = serde_yaml::from_str::<serde_yaml::Value>(&raw)?;
     resolve_yaml_templates(&mut value, &TemplateEnv { secret })?;
     let config = serde_yaml::from_value::<Config>(value)?;
-    Ok(config.normalized())
+    let config = config.normalized();
+
+    let profiles = executors::profile::ExecutorConfigs::from_defaults_merged_with_overrides(
+        config.executor_profiles.as_ref(),
+    )
+    .map_err(|err| ConfigError::ValidationError(err.to_string()))?;
+    profiles
+        .require_coding_agent(&config.executor_profile)
+        .map_err(|err| ConfigError::ValidationError(err.to_string()))?;
+
+    Ok(config)
 }
 
 pub fn reload_config_keep_last_known_good(

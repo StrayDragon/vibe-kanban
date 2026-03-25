@@ -999,7 +999,17 @@ impl LocalContainerService {
             _ => return Ok(false),
         };
 
-        let agent = ExecutorConfigs::get_cached().get_coding_agent_or_default(&executor_profile_id);
+        let agent = match ExecutorConfigs::get_cached().require_coding_agent(&executor_profile_id) {
+            Ok(agent) => agent,
+            Err(err) => {
+                tracing::warn!(
+                    "Skip auto-retry for unsupported executor profile {}: {}",
+                    executor_profile_id,
+                    err
+                );
+                return Ok(false);
+            }
+        };
         let auto_retry = agent.auto_retry_config().clone();
 
         if !auto_retry.is_enabled() || auto_retry.delay_seconds == 0 {

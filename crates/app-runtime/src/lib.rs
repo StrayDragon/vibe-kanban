@@ -483,7 +483,14 @@ impl AppRuntime {
             }
         };
 
-        let profiles = ExecutorConfigs::get_cached();
+        let profiles = ExecutorConfigs::from_defaults_merged_with_overrides(
+            raw_config.executor_profiles.as_ref(),
+        )
+        .unwrap_or_else(|err| {
+            tracing::warn!("Failed to apply executor profile overrides: {}", err);
+            ExecutorConfigs::from_defaults()
+        });
+        ExecutorConfigs::set_cached(profiles.clone());
         executors_core::agent_command::agent_command_resolver().warm_cache();
         if !raw_config.onboarding_acknowledged
             && let Ok(recommended_executor) = profiles.get_recommended_executor_profile().await
@@ -524,6 +531,12 @@ impl AppRuntime {
 
         match config::try_load_config_from_file(&config_path) {
             Ok(new_config) => {
+                let profiles = ExecutorConfigs::from_defaults_merged_with_overrides(
+                    new_config.executor_profiles.as_ref(),
+                )
+                .map_err(|err| ConfigError::ValidationError(err.to_string()))?;
+                ExecutorConfigs::set_cached(profiles);
+
                 let mut config = self.config.write().await;
                 *config = new_config;
                 drop(config);

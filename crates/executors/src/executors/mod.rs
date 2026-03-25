@@ -67,7 +67,7 @@ pub mod qwen {
     pub use executor_qwen::qwen::*;
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS, Display)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS, Display, schemars::JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum CodingAgent {
