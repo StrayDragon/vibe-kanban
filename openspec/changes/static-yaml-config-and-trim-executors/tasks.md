@@ -15,9 +15,9 @@
 
 ## 3. YAML JSON Schema（YAML LSP）
 
-- [ ] 3.1 从 Rust config types 生成 `config.schema.json` 并写入配置目录（原子写入），验证：启动后文件存在 + `pnpm run backend:check`
-- [ ] 3.2 为关键字段补充 schema 描述（包含 `project git_no_verify` override precedence），验证：生成的 `config.schema.json` 中包含相关 `description`
-- [ ] 3.3 更新文档/提示，支持 `config.yaml` 使用 `# yaml-language-server: $schema=./config.schema.json`，验证：`rg \"yaml-language-server\" -n`
+- [x] 3.1 从 Rust config types 生成 `config.schema.json` 并写入配置目录（原子写入），验证：启动后文件存在 + `pnpm run backend:check`
+- [x] 3.2 为关键字段补充 schema 描述（包含 `project git_no_verify` override precedence），验证：生成的 `config.schema.json` 中包含相关 `description`
+- [x] 3.3 更新文档/提示，支持 `config.yaml` 使用 `# yaml-language-server: $schema=./config.schema.json`，验证：`rg \"yaml-language-server\" -n`
 
 ## 4. Executors 收敛（默认仅 Claude Code + Codex）
 

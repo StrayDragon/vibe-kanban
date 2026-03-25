@@ -66,7 +66,10 @@ pub fn cache_dir() -> std::path::PathBuf {
 pub fn vk_config_dir() -> std::path::PathBuf {
     fn ensure_dir_exists(path: std::path::PathBuf) -> std::path::PathBuf {
         if let Err(err) = std::fs::create_dir_all(&path) {
-            panic!("Failed to create VK config directory '{}': {err}", path.display());
+            panic!(
+                "Failed to create VK config directory '{}': {err}",
+                path.display()
+            );
         }
         path
     }

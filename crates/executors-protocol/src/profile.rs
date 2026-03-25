@@ -5,7 +5,7 @@ use ts_rs::TS;
 
 use crate::agent::BaseCodingAgent;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, TS, schemars::JsonSchema)]
 pub struct ExecutorProfileId {
     /// The executor type (e.g., "CLAUDE_CODE", "AMP")
     pub executor: BaseCodingAgent,

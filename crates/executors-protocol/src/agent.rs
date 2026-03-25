@@ -3,7 +3,9 @@ use std::{fmt, str::FromStr};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, TS)]
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, TS, schemars::JsonSchema,
+)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[ts(use_ts_enum)]
 pub enum BaseCodingAgent {

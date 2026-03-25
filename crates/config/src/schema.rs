@@ -32,7 +32,7 @@ fn default_diff_preview_guard() -> DiffPreviewGuardPreset {
     DiffPreviewGuardPreset::Balanced
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, TS, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, TS, Default, schemars::JsonSchema)]
 #[ts(use_ts_enum)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DiffPreviewGuardPreset {
@@ -43,13 +43,13 @@ pub enum DiffPreviewGuardPreset {
     Off,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, TS, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, TS, Default, schemars::JsonSchema)]
 pub struct ShowcaseState {
     #[serde(default)]
     pub seen_features: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, EnumString, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, EnumString, Default, schemars::JsonSchema)]
 #[ts(use_ts_enum)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
@@ -60,7 +60,7 @@ pub enum ThemeMode {
     System,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, TS, Default)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, TS, Default, schemars::JsonSchema)]
 #[ts(export)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum UiLanguage {
@@ -70,14 +70,17 @@ pub enum UiLanguage {
     ZhHans, // Force Simplified Chinese
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(default)]
 pub struct NotificationConfig {
     #[serde(alias = "soundEnabled")]
+    #[schemars(description = "是否启用声音提示。")]
     pub sound_enabled: bool,
     #[serde(alias = "pushEnabled")]
+    #[schemars(description = "是否启用桌面推送通知。")]
     pub push_enabled: bool,
     #[serde(alias = "soundFile")]
+    #[schemars(description = "声音文件预设。")]
     pub sound_file: SoundFile,
 }
 
@@ -91,16 +94,21 @@ impl Default for NotificationConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(default)]
 pub struct GitHubConfig {
+    #[schemars(description = "GitHub PAT（推荐通过 secret.env 并使用 ${GITHUB_PAT} 注入）。")]
     pub pat: Option<String>,
     #[serde(alias = "oauthToken")]
+    #[schemars(description = "GitHub OAuth Token（推荐通过 secret.env 注入）。")]
     pub oauth_token: Option<String>,
+    #[schemars(description = "GitHub 用户名（可选）。")]
     pub username: Option<String>,
     #[serde(alias = "primaryEmail")]
+    #[schemars(description = "GitHub 主邮箱（可选）。")]
     pub primary_email: Option<String>,
     #[serde(alias = "defaultPrBase")]
+    #[schemars(description = "默认 PR base 分支（默认 main）。")]
     pub default_pr_base: Option<String>,
 }
 
@@ -125,7 +133,7 @@ impl GitHubConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, EnumString)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, EnumString, schemars::JsonSchema)]
 #[ts(use_ts_enum)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
@@ -198,7 +206,7 @@ impl SoundFile {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, Default, schemars::JsonSchema)]
 #[ts(use_ts_enum)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AccessControlMode {
@@ -207,12 +215,15 @@ pub enum AccessControlMode {
     Token,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(default)]
 pub struct AccessControlConfig {
+    #[schemars(description = "访问控制模式。DISABLED 表示不启用；TOKEN 表示要求提供 token。")]
     pub mode: AccessControlMode,
+    #[schemars(description = "访问 token（当 mode=TOKEN 时必填；推荐通过 secret.env 注入）。")]
     pub token: Option<String>,
     #[serde(alias = "allowLocalhostBypass")]
+    #[schemars(description = "是否允许 localhost 绕过 token 校验（仅当 mode=TOKEN 时有意义）。")]
     pub allow_localhost_bypass: bool,
 }
 
@@ -226,13 +237,15 @@ impl Default for AccessControlConfig {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(default)]
 pub struct Config {
     #[serde(alias = "configVersion")]
+    #[schemars(description = "配置版本号（通常无需手动修改；启动时会归一化为当前版本）。")]
     pub config_version: String,
     pub theme: ThemeMode,
     #[serde(alias = "executorProfile")]
+    #[schemars(description = "默认 executor profile（executor + 可选 variant）。")]
     pub executor_profile: ExecutorProfileId,
     #[serde(alias = "disclaimerAcknowledged")]
     pub disclaimer_acknowledged: bool,
@@ -251,6 +264,9 @@ pub struct Config {
     #[serde(alias = "gitBranchPrefix")]
     pub git_branch_prefix: String,
     #[serde(alias = "gitNoVerify")]
+    #[schemars(
+        description = "全局 git hooks 跳过策略（默认值）。当 projects 中存在 git_no_verify_override=true/false 时，项目级优先；null/未设置则继承此全局值。"
+    )]
     pub git_no_verify: bool,
     pub showcases: ShowcaseState,
     #[serde(alias = "prAutoDescriptionEnabled")]

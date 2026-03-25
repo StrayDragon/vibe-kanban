@@ -8,9 +8,7 @@ mod notification;
 use anyhow::Error as AnyhowError;
 use async_trait::async_trait;
 use axum::response::sse::Event;
-use config::{
-    Config, ConfigError, cache_budget::cache_budgets,
-};
+use config::{Config, ConfigError, cache_budget::cache_budgets};
 use db::{
     DBService, DbErr,
     models::{
@@ -458,14 +456,23 @@ impl Deployment for AppRuntime {
 }
 
 impl AppRuntime {
-    async fn load_runtime_config(
-    ) -> Result<(Arc<RwLock<Config>>, Arc<RwLock<RuntimeConfigStatus>>), DeploymentError> {
+    async fn load_runtime_config()
+    -> Result<(Arc<RwLock<Config>>, Arc<RwLock<RuntimeConfigStatus>>), DeploymentError> {
         let config_path = utils_core::vk_config_yaml_path();
         let config_dir = config_path
             .parent()
             .map(std::path::PathBuf::from)
             .unwrap_or_else(utils_core::vk_config_dir);
         let secret_env_path = config_dir.join("secret.env");
+        let schema_path = config_dir.join("config.schema.json");
+
+        if let Err(err) = config::write_config_schema_json(&schema_path) {
+            tracing::warn!(
+                "Failed to write config schema '{}': {}",
+                schema_path.display(),
+                err
+            );
+        }
 
         let loaded_at = SystemTime::now();
         let (mut raw_config, last_error) = match config::try_load_config_from_file(&config_path) {

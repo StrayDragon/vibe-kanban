@@ -6,4 +6,4 @@ edition = "2024"
 [dependencies]
 serde = { workspace = true }
 ts-rs = { workspace = true }
-
+schemars = { workspace = true }

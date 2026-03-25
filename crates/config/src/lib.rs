@@ -5,12 +5,14 @@ use thiserror::Error;
 pub mod cache_budget;
 pub mod editor;
 mod schema;
+mod yaml_schema;
 
 pub use editor::{EditorConfig, EditorOpenError, EditorType};
 pub use schema::{
     AccessControlConfig, AccessControlMode, CURRENT_CONFIG_VERSION, Config, DiffPreviewGuardPreset,
     GitHubConfig, NotificationConfig, ShowcaseState, SoundFile, ThemeMode, UiLanguage,
 };
+pub use yaml_schema::{ConfigSchemaError, generate_config_schema_json, write_config_schema_json};
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -22,7 +24,9 @@ pub enum ConfigError {
     ValidationError(String),
 }
 
-fn load_secret_env(secret_env_path: &std::path::Path) -> Result<HashMap<String, String>, ConfigError> {
+fn load_secret_env(
+    secret_env_path: &std::path::Path,
+) -> Result<HashMap<String, String>, ConfigError> {
     let raw = match std::fs::read_to_string(secret_env_path) {
         Ok(raw) => raw,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
@@ -129,11 +133,14 @@ fn resolve_templates_in_string(input: &str, env: &TemplateEnv) -> Result<String,
     Ok(output)
 }
 
-fn resolve_yaml_templates(value: &mut serde_yaml::Value, env: &TemplateEnv) -> Result<(), ConfigError> {
+fn resolve_yaml_templates(
+    value: &mut serde_yaml::Value,
+    env: &TemplateEnv,
+) -> Result<(), ConfigError> {
     match value {
-        serde_yaml::Value::Null
-        | serde_yaml::Value::Bool(_)
-        | serde_yaml::Value::Number(_) => Ok(()),
+        serde_yaml::Value::Null | serde_yaml::Value::Bool(_) | serde_yaml::Value::Number(_) => {
+            Ok(())
+        }
         serde_yaml::Value::String(s) => {
             let resolved = resolve_templates_in_string(s, env)?;
             *s = resolved;

@@ -32,20 +32,26 @@ pub enum EditorOpenError {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(default)]
 pub struct EditorConfig {
     #[serde(alias = "editorType")]
+    #[schemars(description = "默认打开项目/文件使用的编辑器类型。")]
     editor_type: EditorType,
     #[serde(alias = "customCommand")]
+    #[schemars(description = "当 editor_type=CUSTOM 时使用的命令（例如 code/cursor/idea）。")]
     custom_command: Option<String>,
     #[serde(default, alias = "remoteSshHost")]
+    #[schemars(
+        description = "远程开发模式：SSH host（用于 VSCode/Cursor/Windsurf 的 remote URL）。"
+    )]
     remote_ssh_host: Option<String>,
     #[serde(default, alias = "remoteSshUser")]
+    #[schemars(description = "远程开发模式：SSH user（可选）。")]
     remote_ssh_user: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, EnumString, EnumIter)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, EnumString, EnumIter, schemars::JsonSchema)]
 #[ts(use_ts_enum)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]

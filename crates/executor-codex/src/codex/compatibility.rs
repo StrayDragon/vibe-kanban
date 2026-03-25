@@ -580,7 +580,10 @@ mod tests {
     #[test]
     fn should_allow_patch_drift_when_major_minor_match() {
         assert!(should_allow_patch_drift(Some("0.115.0"), Some("0.115.1")));
-        assert!(!should_allow_patch_drift(Some("0.115.0"), Some("0.115.0-alpha.1")));
+        assert!(!should_allow_patch_drift(
+            Some("0.115.0"),
+            Some("0.115.0-alpha.1")
+        ));
         assert!(!should_allow_patch_drift(Some("0.115.0"), Some("0.116.0")));
         assert!(!should_allow_patch_drift(Some("0.115.0"), Some("1.115.0")));
     }

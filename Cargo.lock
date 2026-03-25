@@ -977,6 +977,7 @@ dependencies = [
  "executors-protocol",
  "once_cell",
  "rust-embed",
+ "schemars 1.0.4",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -2140,6 +2141,7 @@ dependencies = [
 name = "executors-protocol"
 version = "0.0.143"
 dependencies = [
+ "schemars 1.0.4",
  "serde",
  "ts-rs 11.0.1",
 ]
