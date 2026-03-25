@@ -214,6 +214,15 @@ pub async fn create_task_and_start(
         })
         .collect();
 
+    let agent_working_dir = deployment
+        .config()
+        .read()
+        .await
+        .projects
+        .iter()
+        .find(|project| project.id == Some(payload.task.project_id))
+        .and_then(|project| project.default_agent_working_dir.clone());
+
     let task = orchestration::create_task_and_start(
         &runtime,
         &deployment.db().pool,
@@ -221,6 +230,7 @@ pub async fn create_task_and_start(
             task: payload.task,
             executor_profile_id: payload.executor_profile_id,
             repos,
+            agent_working_dir,
         },
     )
     .await?;

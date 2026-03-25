@@ -491,6 +491,7 @@ async fn dispatch_task(
             executor_profile_id,
             repos,
             prompt_override: Some(prompt),
+            agent_working_dir: project.default_agent_working_dir.clone(),
         },
     )
     .await

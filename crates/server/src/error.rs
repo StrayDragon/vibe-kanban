@@ -294,7 +294,6 @@ impl From<TasksError> for ApiError {
     fn from(err: TasksError) -> Self {
         match err {
             TasksError::Database(err) => ApiError::Database(err),
-            TasksError::Project(err) => ApiError::Project(err),
             TasksError::Workspace(err) => ApiError::Workspace(err),
             TasksError::Conflict(msg) => ApiError::Conflict(msg),
             TasksError::NotFound(msg) => ApiError::NotFound(msg),

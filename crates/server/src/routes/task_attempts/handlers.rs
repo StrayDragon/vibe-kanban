@@ -18,8 +18,7 @@ use db::{
     models::{
         execution_process::{ExecutionProcess, ExecutionProcessRunReason, ExecutionProcessStatus},
         merge::{Merge, MergeStatus, PrMerge, PullRequestInfo},
-        project::Project,
-        project_repo::ProjectRepo,
+        project_repo::ProjectRepoWithName,
         repo::{Repo, RepoError},
         session::{CreateSession, Session},
         task::{Task, TaskRelationships, TaskStatus},
@@ -1029,6 +1028,17 @@ pub async fn create_task_attempt(
             };
 
             let runtime = DeploymentTaskRuntime::new(deployment.container());
+            let task = Task::find_by_id(&deployment.db().pool, payload.task_id)
+                .await?
+                .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+            let agent_working_dir = deployment
+                .config()
+                .read()
+                .await
+                .projects
+                .iter()
+                .find(|project| project.id == Some(task.project_id))
+                .and_then(|project| project.default_agent_working_dir.clone());
             let workspace = orchestration::create_task_attempt(
                 &runtime,
                 &deployment.db().pool,
@@ -1044,6 +1054,7 @@ pub async fn create_task_attempt(
                         })
                         .collect(),
                     prompt_override,
+                    agent_working_dir,
                 },
             )
             .await?;
@@ -1207,10 +1218,15 @@ pub async fn merge_task_attempt(
     }
 
     let global_no_verify = deployment.config().read().await.git_no_verify;
-    let no_verify = match Project::find_by_id(pool, task.project_id).await? {
-        Some(project) => project.effective_git_no_verify(global_no_verify),
-        None => global_no_verify,
-    };
+    let no_verify = deployment
+        .config()
+        .read()
+        .await
+        .projects
+        .iter()
+        .find(|project| project.id == Some(task.project_id))
+        .and_then(|project| project.git_no_verify_override)
+        .unwrap_or(global_no_verify);
     let git = deployment.git().clone();
     let repo_path = repo.path.clone();
     let workspace_branch = workspace.branch.clone();
@@ -1948,20 +1964,25 @@ pub async fn start_dev_server(
         .await?
         .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
 
-    // Get parent project
-    let project = task
-        .parent_project(&deployment.db().pool)
-        .await?
-        .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+    let project_id = task.project_id;
+    let project = deployment
+        .config()
+        .read()
+        .await
+        .projects
+        .iter()
+        .find(|project| project.id == Some(project_id))
+        .cloned()
+        .ok_or_else(|| ApiError::NotFound("Project not found".to_string()))?;
 
     // Stop any existing dev servers for this project
     let existing_dev_servers =
-        match ExecutionProcess::find_running_dev_servers_by_project(pool, project.id).await {
+        match ExecutionProcess::find_running_dev_servers_by_project(pool, project_id).await {
             Ok(servers) => servers,
             Err(e) => {
                 tracing::error!(
                     "Failed to find running dev servers for project {}: {}",
-                    project.id,
+                    project_id,
                     e
                 );
                 return Err(ApiError::Workspace(WorkspaceError::ValidationError(
@@ -1974,7 +1995,7 @@ pub async fn start_dev_server(
         tracing::info!(
             "Stopping existing dev server {} for project {}",
             dev_server.id,
-            project.id
+            project_id
         );
 
         if let Err(e) = deployment
@@ -2007,7 +2028,7 @@ pub async fn start_dev_server(
     )?;
 
     tracing::info!(
-        project_id = %project.id,
+        project_id = %project_id,
         workspace_id = %workspace.id,
         has_working_dir = %working_dir.is_some(),
         "Audit: starting dev server script execution"
@@ -2140,17 +2161,38 @@ pub async fn run_setup_script(
         .ensure_container_exists(&workspace)
         .await?;
 
-    // Get parent task and project
+    // Get parent task
     let task = workspace
         .parent_task(pool)
         .await?
         .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
 
-    let project = task
-        .parent_project(pool)
-        .await?
+    let project_id = task.project_id;
+    let config = deployment.config().read().await;
+    let project = config
+        .projects
+        .iter()
+        .find(|project| project.id == Some(project_id))
         .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
-    let project_repos = ProjectRepo::find_by_project_id_with_names(pool, project.id).await?;
+
+    let workspace_repos = WorkspaceRepo::find_repos_for_workspace(pool, workspace.id).await?;
+    let mut project_repos = Vec::with_capacity(workspace_repos.len());
+    for repo in workspace_repos {
+        let repo_path = repo.path.to_string_lossy().to_string();
+        let repo_config = project.repos.iter().find(|candidate| candidate.path == repo_path);
+        project_repos.push(ProjectRepoWithName {
+            id: repo.id,
+            project_id,
+            repo_id: repo.id,
+            repo_name: repo.name.clone(),
+            setup_script: repo_config.and_then(|repo| repo.setup_script.clone()),
+            cleanup_script: repo_config.and_then(|repo| repo.cleanup_script.clone()),
+            copy_files: repo_config.and_then(|repo| repo.copy_files.clone()),
+            parallel_setup_script: repo_config
+                .map(|repo| repo.parallel_setup_script)
+                .unwrap_or(false),
+        });
+    }
     let executor_action = match deployment
         .container()
         .setup_actions_for_repos(&project_repos)
@@ -2228,17 +2270,38 @@ pub async fn run_cleanup_script(
         .ensure_container_exists(&workspace)
         .await?;
 
-    // Get parent task and project
+    // Get parent task
     let task = workspace
         .parent_task(pool)
         .await?
         .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
 
-    let project = task
-        .parent_project(pool)
-        .await?
+    let project_id = task.project_id;
+    let config = deployment.config().read().await;
+    let project = config
+        .projects
+        .iter()
+        .find(|project| project.id == Some(project_id))
         .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
-    let project_repos = ProjectRepo::find_by_project_id_with_names(pool, project.id).await?;
+
+    let workspace_repos = WorkspaceRepo::find_repos_for_workspace(pool, workspace.id).await?;
+    let mut project_repos = Vec::with_capacity(workspace_repos.len());
+    for repo in workspace_repos {
+        let repo_path = repo.path.to_string_lossy().to_string();
+        let repo_config = project.repos.iter().find(|candidate| candidate.path == repo_path);
+        project_repos.push(ProjectRepoWithName {
+            id: repo.id,
+            project_id,
+            repo_id: repo.id,
+            repo_name: repo.name.clone(),
+            setup_script: repo_config.and_then(|repo| repo.setup_script.clone()),
+            cleanup_script: repo_config.and_then(|repo| repo.cleanup_script.clone()),
+            copy_files: repo_config.and_then(|repo| repo.copy_files.clone()),
+            parallel_setup_script: repo_config
+                .map(|repo| repo.parallel_setup_script)
+                .unwrap_or(false),
+        });
+    }
     let executor_action = match deployment
         .container()
         .cleanup_actions_for_repos(&project_repos)

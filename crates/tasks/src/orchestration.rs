@@ -7,7 +7,6 @@ use db::{
         milestone::{
             Milestone, MilestoneError, MilestoneGraph, MilestoneNode, MilestoneNodeBaseStrategy,
         },
-        project::{Project, ProjectError},
         task::{CreateTask, Task, TaskKind, TaskStatus, TaskWithAttemptStatus},
         workspace::{CreateWorkspace, Workspace, WorkspaceError},
         workspace_repo::{CreateWorkspaceRepo, WorkspaceRepo},
@@ -24,6 +23,7 @@ pub struct CreateAndStartTaskInput {
     pub task: CreateTask,
     pub executor_profile_id: ExecutorProfileId,
     pub repos: Vec<CreateWorkspaceRepo>,
+    pub agent_working_dir: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -32,14 +32,13 @@ pub struct CreateTaskAttemptInput {
     pub executor_profile_id: ExecutorProfileId,
     pub repos: Vec<CreateWorkspaceRepo>,
     pub prompt_override: Option<String>,
+    pub agent_working_dir: Option<String>,
 }
 
 #[derive(Debug, Error)]
 pub enum TasksError {
     #[error(transparent)]
     Database(#[from] DbErr),
-    #[error(transparent)]
-    Project(#[from] ProjectError),
     #[error(transparent)]
     Workspace(#[from] WorkspaceError),
     #[error("{0}")]
@@ -108,15 +107,11 @@ pub async fn create_task_and_start<R: TaskRuntime + Sync>(
         TaskImage::associate_many_dedup(&tx, task.id, image_ids).await?;
     }
 
-    let project = Project::find_by_id(&tx, task.project_id)
-        .await?
-        .ok_or(ProjectError::ProjectNotFound)?;
-
-    let agent_working_dir = project
-        .default_agent_working_dir
-        .as_ref()
-        .filter(|dir| !dir.is_empty())
-        .cloned();
+    let agent_working_dir = input
+        .agent_working_dir
+        .clone()
+        .map(|dir| dir.trim().to_string())
+        .filter(|dir| !dir.is_empty());
 
     let workspace = Workspace::create(
         &tx,
@@ -172,16 +167,11 @@ pub async fn create_task_attempt<R: TaskRuntime + Sync>(
         resolve_attempt_plan(db, &task, input.executor_profile_id.clone(), &input.repos).await?;
 
     let original_task_status = task.status.clone();
-    let project = task
-        .parent_project(db)
-        .await?
-        .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
-
-    let agent_working_dir = project
-        .default_agent_working_dir
-        .as_ref()
-        .filter(|dir| !dir.is_empty())
-        .cloned();
+    let agent_working_dir = input
+        .agent_working_dir
+        .clone()
+        .map(|dir| dir.trim().to_string())
+        .filter(|dir| !dir.is_empty());
 
     let attempt_id = Uuid::new_v4();
     let git_branch_name = runtime

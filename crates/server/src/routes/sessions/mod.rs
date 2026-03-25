@@ -15,10 +15,11 @@ use db::{
     models::{
         coding_agent_turn::CodingAgentTurn,
         execution_process::{ExecutionProcess, ExecutionProcessRunReason},
-        project_repo::ProjectRepo,
+        project_repo::ProjectRepoWithName,
         scratch::{Scratch, ScratchType},
         session::{CreateSession, Session},
         workspace::{Workspace, WorkspaceError},
+        workspace_repo::WorkspaceRepo,
     },
 };
 use execution::container::ContainerService;
@@ -265,11 +266,7 @@ pub async fn follow_up(
                 }
             };
 
-            // Get parent project
-            let project = task
-                .parent_project(pool)
-                .await?
-                .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+            let project_id = task.project_id;
 
             // If retry settings provided, perform replace-logic before proceeding
             if let Some(proc_id) = payload.retry_process_id {
@@ -312,8 +309,33 @@ pub async fn follow_up(
 
             let prompt = payload.prompt.clone();
 
-            let project_repos =
-                ProjectRepo::find_by_project_id_with_names(pool, project.id).await?;
+            let config = deployment.config().read().await;
+            let project_config = config
+                .projects
+                .iter()
+                .find(|project| project.id == Some(project_id));
+            let workspace_repos =
+                WorkspaceRepo::find_repos_for_workspace(pool, workspace.id).await?;
+
+            let mut project_repos = Vec::with_capacity(workspace_repos.len());
+            for repo in workspace_repos {
+                let repo_path = repo.path.to_string_lossy().to_string();
+                let repo_config = project_config.and_then(|project| {
+                    project.repos.iter().find(|candidate| candidate.path == repo_path)
+                });
+                project_repos.push(ProjectRepoWithName {
+                    id: repo.id,
+                    project_id,
+                    repo_id: repo.id,
+                    repo_name: repo.name.clone(),
+                    setup_script: repo_config.and_then(|repo| repo.setup_script.clone()),
+                    cleanup_script: repo_config.and_then(|repo| repo.cleanup_script.clone()),
+                    copy_files: repo_config.and_then(|repo| repo.copy_files.clone()),
+                    parallel_setup_script: repo_config
+                        .map(|repo| repo.parallel_setup_script)
+                        .unwrap_or(false),
+                });
+            }
             let cleanup_action = deployment
                 .container()
                 .cleanup_actions_for_repos(&project_repos);
