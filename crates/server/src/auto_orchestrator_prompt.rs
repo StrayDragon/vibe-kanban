@@ -102,8 +102,7 @@ mod tests {
 
     #[test]
     fn render_retry_prompt_includes_attempt_section() {
-        let prompt =
-            render_auto_orchestration_prompt(&sample_task(), "Demo Project", &[], Some(2));
+        let prompt = render_auto_orchestration_prompt(&sample_task(), "Demo Project", &[], Some(2));
 
         assert!(prompt.contains("retry/continuation attempt #2"));
         assert!(prompt.contains("Resume from the current workspace state"));

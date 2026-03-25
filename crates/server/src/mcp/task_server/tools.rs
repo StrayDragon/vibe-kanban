@@ -1,7 +1,5 @@
 use db::models::{
-    repo::Repo,
-    task::TaskUpdateParams,
-    task_orchestration_state::TaskOrchestrationState,
+    repo::Repo, task::TaskUpdateParams, task_orchestration_state::TaskOrchestrationState,
 };
 use rmcp::{tool, tool_router};
 
@@ -1531,19 +1529,22 @@ Avoid: Empty repos; guessing executor (use list_executors)."#,
                             .map(str::trim)
                             .filter(|v| !v.is_empty());
 
-                        project.mcp_auto_executor_policy_allow_list.iter().any(|entry| {
-                            if entry.executor != executor_profile_id.executor {
-                                return false;
-                            }
+                        project
+                            .mcp_auto_executor_policy_allow_list
+                            .iter()
+                            .any(|entry| {
+                                if entry.executor != executor_profile_id.executor {
+                                    return false;
+                                }
 
-                            let entry_variant = entry
-                                .variant
-                                .as_deref()
-                                .map(str::trim)
-                                .filter(|v| !v.is_empty());
+                                let entry_variant = entry
+                                    .variant
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|v| !v.is_empty());
 
-                            entry_variant == requested_variant
-                        })
+                                entry_variant == requested_variant
+                            })
                     }
                 },
             };
@@ -2263,19 +2264,22 @@ Avoid: Providing both attempt_id and session_id; missing prompt."#,
                                 .map(str::trim)
                                 .filter(|v| !v.is_empty());
 
-                            project.mcp_auto_executor_policy_allow_list.iter().any(|entry| {
-                                if entry.executor != executor_profile_id.executor {
-                                    return false;
-                                }
+                            project
+                                .mcp_auto_executor_policy_allow_list
+                                .iter()
+                                .any(|entry| {
+                                    if entry.executor != executor_profile_id.executor {
+                                        return false;
+                                    }
 
-                                let entry_variant = entry
-                                    .variant
-                                    .as_deref()
-                                    .map(str::trim)
-                                    .filter(|v| !v.is_empty());
+                                    let entry_variant = entry
+                                        .variant
+                                        .as_deref()
+                                        .map(str::trim)
+                                        .filter(|v| !v.is_empty());
 
-                                entry_variant == requested_variant
-                            })
+                                    entry_variant == requested_variant
+                                })
                         }
                     },
                 };

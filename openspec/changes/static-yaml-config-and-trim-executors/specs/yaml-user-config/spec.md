@@ -26,22 +26,23 @@ The system SHALL load `config.yaml` from the config directory and SHALL attempt 
 The system SHALL resolve environment placeholders in YAML string values using the following precedence: `secret.env` > process/system environment.
 
 Supported placeholders:
-- `${NAME}`
-- `${NAME:-default}`
+- `{{env.NAME}}`
+- `{{env.NAME:-default}}`
+- `{{secret.NAME}}`
 
 #### Scenario: secret.env overrides system env
 - **WHEN** `secret.env` contains `OPENAI_API_KEY=from_secret`
 - **AND** the process/system environment contains `OPENAI_API_KEY=from_system`
-- **AND** `config.yaml` contains `openai.api_key: "${OPENAI_API_KEY}"`
+- **AND** `config.yaml` contains `openai.api_key: "{{env.OPENAI_API_KEY}}"`
 - **THEN** the resolved value is `from_secret`
 
 #### Scenario: Default value is used when var is missing
-- **WHEN** `config.yaml` contains `openai.api_key: "${OPENAI_API_KEY:-fallback}"`
+- **WHEN** `config.yaml` contains `openai.api_key: "{{env.OPENAI_API_KEY:-fallback}}"`
 - **AND** neither `secret.env` nor the process/system environment defines `OPENAI_API_KEY`
 - **THEN** the resolved value is `fallback`
 
 #### Scenario: Missing var without default fails
-- **WHEN** `config.yaml` contains `openai.api_key: "${OPENAI_API_KEY}"`
+- **WHEN** `config.yaml` contains `openai.api_key: "{{env.OPENAI_API_KEY}}"`
 - **AND** neither `secret.env` nor the process/system environment defines `OPENAI_API_KEY`
 - **THEN** config validation fails with an error that references `OPENAI_API_KEY`
 - **AND** the system records the error for status/diagnostics

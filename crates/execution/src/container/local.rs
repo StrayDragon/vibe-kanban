@@ -21,8 +21,7 @@ use db::{
         execution_process_logs::ExecutionProcessLogs,
         execution_process_repo_state::ExecutionProcessRepoState,
         milestone::Milestone,
-        project::{Project, WorkspaceLifecycleHookConfig},
-        project_repo::ProjectRepo,
+        project::WorkspaceLifecycleHookConfig,
         repo::Repo,
         scratch::{DraftFollowUpData, Scratch, ScratchType},
         task::{Task, TaskStatus},
@@ -109,6 +108,14 @@ impl FinalizationTracker {
     }
 }
 
+#[derive(Debug, Clone)]
+struct WorkspaceHookProject {
+    id: Uuid,
+    name: String,
+    after_prepare_hook: Option<WorkspaceLifecycleHookConfig>,
+    before_cleanup_hook: Option<WorkspaceLifecycleHookConfig>,
+}
+
 const WORKSPACE_EXPIRED_TTL_ENV: &str = "VK_WORKSPACE_EXPIRED_TTL_SECS";
 const WORKSPACE_CLEANUP_INTERVAL_ENV: &str = "VK_WORKSPACE_CLEANUP_INTERVAL_SECS";
 const DISABLE_WORKSPACE_EXPIRED_CLEANUP_ENV: &str = "DISABLE_WORKSPACE_EXPIRED_CLEANUP";
@@ -146,6 +153,34 @@ fn should_run_after_prepare_hook(
     match hook.run_mode {
         Some(WorkspaceLifecycleHookRunMode::EveryPrepare) => true,
         _ => workspace.after_prepare_hook_status != Some(WorkspaceLifecycleHookStatus::Succeeded),
+    }
+}
+
+fn hook_config_from_yaml(
+    hook: &config::WorkspaceLifecycleHookConfig,
+) -> WorkspaceLifecycleHookConfig {
+    WorkspaceLifecycleHookConfig {
+        command: hook.command.clone(),
+        working_dir: hook.working_dir.clone(),
+        failure_policy: match hook.failure_policy {
+            config::WorkspaceLifecycleHookFailurePolicy::BlockStart => {
+                WorkspaceLifecycleHookFailurePolicy::BlockStart
+            }
+            config::WorkspaceLifecycleHookFailurePolicy::WarnOnly => {
+                WorkspaceLifecycleHookFailurePolicy::WarnOnly
+            }
+            config::WorkspaceLifecycleHookFailurePolicy::BlockCleanup => {
+                WorkspaceLifecycleHookFailurePolicy::BlockCleanup
+            }
+        },
+        run_mode: hook.run_mode.as_ref().map(|mode| match mode {
+            config::WorkspaceLifecycleHookRunMode::OncePerWorkspace => {
+                WorkspaceLifecycleHookRunMode::OncePerWorkspace
+            }
+            config::WorkspaceLifecycleHookRunMode::EveryPrepare => {
+                WorkspaceLifecycleHookRunMode::EveryPrepare
+            }
+        }),
     }
 }
 
@@ -314,8 +349,9 @@ impl LocalContainerService {
 
     async fn load_workspace_hook_context(
         db: &DBService,
+        config: &Arc<RwLock<Config>>,
         workspace: &Workspace,
-    ) -> Result<(Workspace, Task, Project, PathBuf), ContainerError> {
+    ) -> Result<(Workspace, Task, WorkspaceHookProject, PathBuf), ContainerError> {
         let fresh_workspace = Workspace::find_by_id(&db.pool, workspace.id)
             .await?
             .ok_or_else(|| anyhow!("Workspace not found"))?;
@@ -323,10 +359,46 @@ impl LocalContainerService {
             .parent_task(&db.pool)
             .await?
             .ok_or_else(|| anyhow!("Task not found for workspace"))?;
-        let project = task
-            .parent_project(&db.pool)
-            .await?
-            .ok_or_else(|| anyhow!("Project not found for workspace task"))?;
+
+        let project_id = task.project_id;
+        let config_project = {
+            let config = config.read().await;
+            config
+                .projects
+                .iter()
+                .find(|project| project.id == Some(project_id))
+                .cloned()
+        };
+
+        let (project_name, after_prepare_hook, before_cleanup_hook) =
+            if let Some(project) = config_project {
+                (
+                    project.name,
+                    project
+                        .after_prepare_hook
+                        .as_ref()
+                        .map(hook_config_from_yaml),
+                    project
+                        .before_cleanup_hook
+                        .as_ref()
+                        .map(hook_config_from_yaml),
+                )
+            } else if let Some(project) = task.parent_project(&db.pool).await? {
+                (
+                    project.name,
+                    project.after_prepare_hook,
+                    project.before_cleanup_hook,
+                )
+            } else {
+                ("Unknown project".to_string(), None, None)
+            };
+
+        let project = WorkspaceHookProject {
+            id: project_id,
+            name: project_name,
+            after_prepare_hook,
+            before_cleanup_hook,
+        };
         let workspace_dir = Self::workspace_dir_for(db, &fresh_workspace).await?;
         Ok((fresh_workspace, task, project, workspace_dir))
     }
@@ -335,7 +407,7 @@ impl LocalContainerService {
         db: &DBService,
         workspace: &Workspace,
         task: &Task,
-        project: &Project,
+        project: &WorkspaceHookProject,
         workspace_dir: &Path,
         phase: WorkspaceLifecycleHookPhase,
         hook: &WorkspaceLifecycleHookConfig,
@@ -428,10 +500,11 @@ impl LocalContainerService {
 
     async fn maybe_run_after_prepare_hook(
         db: &DBService,
+        config: &Arc<RwLock<Config>>,
         workspace: &Workspace,
     ) -> Result<(), ContainerError> {
         let (fresh_workspace, task, project, workspace_dir) =
-            Self::load_workspace_hook_context(db, workspace).await?;
+            Self::load_workspace_hook_context(db, config, workspace).await?;
         let Some(hook) = project.after_prepare_hook.as_ref() else {
             return Ok(());
         };
@@ -464,10 +537,11 @@ impl LocalContainerService {
 
     pub async fn cleanup_workspace(
         db: &DBService,
+        config: &Arc<RwLock<Config>>,
         workspace: &Workspace,
     ) -> Result<(), ContainerError> {
         let (fresh_workspace, task, project, workspace_dir) =
-            Self::load_workspace_hook_context(db, workspace).await?;
+            Self::load_workspace_hook_context(db, config, workspace).await?;
 
         if let Some(hook) = project.before_cleanup_hook.as_ref()
             && let Some(summary) = Self::execute_workspace_hook(
@@ -525,7 +599,10 @@ impl LocalContainerService {
         Ok(())
     }
 
-    pub async fn cleanup_expired_workspaces(db: &DBService) -> Result<(), ContainerError> {
+    pub async fn cleanup_expired_workspaces(
+        db: &DBService,
+        config: &Arc<RwLock<Config>>,
+    ) -> Result<(), ContainerError> {
         if std::env::var(DISABLE_WORKSPACE_EXPIRED_CLEANUP_ENV).is_ok() {
             tracing::debug!(
                 "Expired workspace cleanup disabled via {}",
@@ -551,7 +628,7 @@ impl LocalContainerService {
             expired_workspaces.len()
         );
         for workspace in &expired_workspaces {
-            if let Err(err) = Self::cleanup_workspace(db, workspace).await {
+            if let Err(err) = Self::cleanup_workspace(db, config, workspace).await {
                 tracing::warn!(workspace_id = %workspace.id, error = %err, "expired workspace cleanup failed");
             }
         }
@@ -560,6 +637,7 @@ impl LocalContainerService {
 
     pub async fn spawn_workspace_cleanup(&self) {
         let db = self.db.clone();
+        let config = self.config.clone();
         let shutdown_token = self.shutdown_token.clone();
         let interval_secs = read_env_u64(
             WORKSPACE_CLEANUP_INTERVAL_ENV,
@@ -585,7 +663,7 @@ impl LocalContainerService {
                     _ = cleanup_interval.tick() => {}
                 }
                 tracing::info!("Starting periodic workspace cleanup...");
-                Self::cleanup_expired_workspaces(&db)
+                Self::cleanup_expired_workspaces(&db, &config)
                     .await
                     .unwrap_or_else(|e| {
                         tracing::error!("Failed to clean up expired workspaces: {}", e)
@@ -882,8 +960,12 @@ impl LocalContainerService {
         )
         .await?;
 
-        let project_repos =
-            ProjectRepo::find_by_project_id_with_names(&self.db.pool, ctx.project.id).await?;
+        let project_repos = super::resolve_project_repos_with_names(
+            &self.db.pool,
+            &self.config,
+            ctx.task.project_id,
+        )
+        .await?;
         let cleanup_action = self.cleanup_actions_for_repos(&project_repos);
 
         let working_dir = ctx
@@ -1539,12 +1621,43 @@ impl LocalContainerService {
         workspace_dir: &Path,
         workspace: &Workspace,
     ) -> Result<(), ContainerError> {
-        let repos = WorkspaceRepo::find_repos_with_copy_files(&self.db.pool, workspace.id).await?;
+        let task = workspace
+            .parent_task(&self.db.pool)
+            .await?
+            .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
+        let project_config = {
+            let config = self.config.read().await;
+            config
+                .projects
+                .iter()
+                .find(|project| project.id == Some(task.project_id))
+                .cloned()
+        };
 
-        for repo in &repos {
-            if let Some(copy_files) = &repo.copy_files
-                && !copy_files.trim().is_empty()
-            {
+        if let Some(project_config) = project_config {
+            let mut copy_files_by_path: HashMap<String, String> = HashMap::new();
+            for repo in &project_config.repos {
+                let Some(copy_files) = repo
+                    .copy_files
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    continue;
+                };
+                copy_files_by_path.insert(repo.path.clone(), copy_files.to_string());
+            }
+
+            let repos = WorkspaceRepo::find_repos_for_workspace(&self.db.pool, workspace.id)
+                .await
+                .unwrap_or_default();
+
+            for repo in &repos {
+                let repo_path = repo.path.to_string_lossy().to_string();
+                let Some(copy_files) = copy_files_by_path.get(&repo_path) else {
+                    continue;
+                };
+
                 let worktree_path = workspace_dir.join(&repo.name);
                 self.copy_project_files(&repo.path, &worktree_path, copy_files)
                     .await
@@ -1555,6 +1668,26 @@ impl LocalContainerService {
                             e
                         );
                     });
+            }
+        } else {
+            let repos =
+                WorkspaceRepo::find_repos_with_copy_files(&self.db.pool, workspace.id).await?;
+
+            for repo in &repos {
+                if let Some(copy_files) = &repo.copy_files
+                    && !copy_files.trim().is_empty()
+                {
+                    let worktree_path = workspace_dir.join(&repo.name);
+                    self.copy_project_files(&repo.path, &worktree_path, copy_files)
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(
+                                "Failed to copy project files for repo '{}': {}",
+                                repo.name,
+                                e
+                            );
+                        });
+                }
             }
         }
 
@@ -1651,8 +1784,12 @@ impl LocalContainerService {
         )
         .await?;
 
-        let project_repos =
-            ProjectRepo::find_by_project_id_with_names(&self.db.pool, ctx.project.id).await?;
+        let project_repos = super::resolve_project_repos_with_names(
+            &self.db.pool,
+            &self.config,
+            ctx.task.project_id,
+        )
+        .await?;
         let cleanup_action = self.cleanup_actions_for_repos(&project_repos);
 
         let working_dir = ctx
@@ -1722,8 +1859,12 @@ impl LocalContainerService {
         )
         .await?;
 
-        let project_repos =
-            ProjectRepo::find_by_project_id_with_names(&self.db.pool, ctx.project.id).await?;
+        let project_repos = super::resolve_project_repos_with_names(
+            &self.db.pool,
+            &self.config,
+            ctx.task.project_id,
+        )
+        .await?;
         let cleanup_action = self.cleanup_actions_for_repos(&project_repos);
 
         let working_dir = ctx
@@ -1820,10 +1961,20 @@ impl LocalContainerService {
             return Ok(false);
         }
 
+        let project_default_continuation_turns = {
+            let config = self.config.read().await;
+            config
+                .projects
+                .iter()
+                .find(|project| project.id == Some(ctx.task.project_id))
+                .map(|project| project.default_continuation_turns)
+                .unwrap_or(ctx.project.default_continuation_turns)
+        };
+
         let effective_budget = ctx
             .task
             .continuation_turns_override
-            .unwrap_or(ctx.project.default_continuation_turns)
+            .unwrap_or(project_default_continuation_turns)
             .max(0);
         if effective_budget <= 0 {
             let _ = TaskOrchestrationState::record_continuation_stop_reason(
@@ -2014,6 +2165,10 @@ impl ContainerService for LocalContainerService {
         &self.msg_stores
     }
 
+    fn config(&self) -> &Arc<RwLock<Config>> {
+        &self.config
+    }
+
     fn db(&self) -> &DBService {
         &self.db
     }
@@ -2086,7 +2241,7 @@ impl ContainerService for LocalContainerService {
         )
         .await?;
 
-        Self::maybe_run_after_prepare_hook(&self.db, workspace).await?;
+        Self::maybe_run_after_prepare_hook(&self.db, &self.config, workspace).await?;
 
         Ok(created_workspace
             .workspace_dir
@@ -2096,7 +2251,7 @@ impl ContainerService for LocalContainerService {
 
     async fn delete(&self, workspace: &Workspace) -> Result<(), ContainerError> {
         self.try_stop(workspace, true).await;
-        Self::cleanup_workspace(&self.db, workspace).await?;
+        Self::cleanup_workspace(&self.db, &self.config, workspace).await?;
         Ok(())
     }
 
@@ -2156,7 +2311,7 @@ impl ContainerService for LocalContainerService {
             .await?;
 
         Self::create_workspace_config_files(&workspace_dir, &repositories).await?;
-        Self::maybe_run_after_prepare_hook(&self.db, workspace).await?;
+        Self::maybe_run_after_prepare_hook(&self.db, &self.config, workspace).await?;
 
         Ok(workspace_dir.to_string_lossy().to_string())
     }
@@ -2226,13 +2381,26 @@ impl ContainerService for LocalContainerService {
             .ok_or(ContainerError::Other(anyhow!(
                 "Task not found for workspace"
             )))?;
-        let project = task
-            .parent_project(&self.db.pool)
-            .await?
-            .ok_or(ContainerError::Other(anyhow!("Project not found for task")))?;
+        let project_id = task.project_id;
+        let config_project_name = {
+            let config = self.config.read().await;
+            config
+                .projects
+                .iter()
+                .find(|project| project.id == Some(project_id))
+                .map(|project| project.name.clone())
+        };
+        let project_name = if let Some(name) = config_project_name {
+            name
+        } else {
+            task.parent_project(&self.db.pool)
+                .await?
+                .map(|project| project.name)
+                .unwrap_or_else(|| "Unknown project".to_string())
+        };
 
-        env.insert("VK_PROJECT_NAME", &project.name);
-        env.insert("VK_PROJECT_ID", project.id.to_string());
+        env.insert("VK_PROJECT_NAME", &project_name);
+        env.insert("VK_PROJECT_ID", project_id.to_string());
         env.insert("VK_TASK_ID", task.id.to_string());
         env.insert("VK_WORKSPACE_ID", workspace.id.to_string());
         env.insert("VK_WORKSPACE_BRANCH", &workspace.branch);
@@ -2655,8 +2823,19 @@ impl ContainerService for LocalContainerService {
             return Ok(false);
         }
 
-        let global_no_verify = self.config.read().await.git_no_verify;
-        let no_verify = ctx.project.effective_git_no_verify(global_no_verify);
+        let (global_no_verify, project_override) = {
+            let config = self.config.read().await;
+            let global_no_verify = config.git_no_verify;
+            let project_override = config
+                .projects
+                .iter()
+                .find(|project| project.id == Some(ctx.task.project_id))
+                .and_then(|project| project.git_no_verify_override);
+            (global_no_verify, project_override)
+        };
+        let no_verify = project_override
+            .or(ctx.project.git_no_verify_override)
+            .unwrap_or(global_no_verify);
         Ok(self
             .commit_repos(repos_with_changes, &message, no_verify)
             .await)

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use app_runtime::{Deployment, DeploymentError};
 use axum::{
-    Json, Router,
+    Router,
     body::Body,
     extract::{Path, Query, State},
     http,
@@ -18,13 +18,12 @@ use executors::{
     agent_command::{AgentCommandResolution, agent_command_resolver},
     executors::{AvailabilityInfo, BaseAgentCapability, CodingAgent, StandardCodingAgentExecutor},
     llman,
-    mcp_config::{McpConfig, read_agent_config, write_agent_config},
+    mcp_config::{McpConfig, read_agent_config},
     profile::ExecutorConfigs,
 };
 use executors_protocol::{BaseCodingAgent, ExecutorProfileId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::fs;
 use ts_rs::TS;
 use utils_core::response::ApiResponse;
 
@@ -99,6 +98,8 @@ async fn get_user_system_info(
     let config = deployment.config().read().await;
     let mut redacted_config = config.clone();
     redacted_config.access_control.token = None;
+    redacted_config.github.pat = None;
+    redacted_config.github.oauth_token = None;
 
     let user_system_info = UserSystemInfo {
         config: redacted_config,
@@ -213,11 +214,6 @@ pub struct GetMcpServerResponse {
     config_path: String,
 }
 
-#[derive(TS, Debug, Serialize, Deserialize)]
-pub struct UpdateMcpServersBody {
-    servers: HashMap<String, Value>,
-}
-
 async fn get_mcp_servers(
     State(_deployment): State<DeploymentImpl>,
     Query(query): Query<McpServerQuery>,
@@ -254,76 +250,8 @@ async fn get_mcp_servers(
     })))
 }
 
-async fn update_mcp_servers(
-    State(_deployment): State<DeploymentImpl>,
-    Query(query): Query<McpServerQuery>,
-    Json(payload): Json<UpdateMcpServersBody>,
-) -> Result<ResponseJson<ApiResponse<String>>, ApiError> {
-    let profiles = ExecutorConfigs::get_cached();
-    let agent = profiles
-        .get_coding_agent(&ExecutorProfileId::new(query.executor))
-        .ok_or(ConfigError::ValidationError(
-            "Executor not found".to_string(),
-        ))?;
-
-    if !agent.supports_mcp() {
-        return Err(ApiError::BadRequest(
-            "This executor does not support MCP servers".to_string(),
-        ));
-    }
-
-    // Resolve supplied config path or agent default
-    let config_path = match agent.default_mcp_config_path() {
-        Some(path) => path.to_path_buf(),
-        None => {
-            return Err(ApiError::BadRequest(
-                "Could not determine config file path".to_string(),
-            ));
-        }
-    };
-
-    let mcpc = agent.get_mcp_config();
-    match update_mcp_servers_in_config(&config_path, &mcpc, payload.servers).await {
-        Ok(message) => Ok(ResponseJson(ApiResponse::success(message))),
-        Err(e) => Err(ApiError::Internal(format!(
-            "Failed to update MCP servers: {e}"
-        ))),
-    }
-}
-
-async fn update_mcp_servers_in_config(
-    config_path: &std::path::Path,
-    mcpc: &McpConfig,
-    new_servers: HashMap<String, Value>,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    // Ensure parent directory exists
-    if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent).await?;
-    }
-    // Read existing config (JSON or TOML depending on agent)
-    let mut config = read_agent_config(config_path, mcpc).await?;
-
-    // Get the current server count for comparison
-    let old_servers = get_mcp_servers_from_config_path(&config, &mcpc.servers_path).len();
-
-    // Set the MCP servers using the correct attribute path
-    set_mcp_servers_in_config_path(&mut config, &mcpc.servers_path, &new_servers)?;
-
-    // Write the updated config back to file (JSON or TOML depending on agent)
-    write_agent_config(config_path, mcpc, &config).await?;
-
-    let new_count = new_servers.len();
-    let message = match (old_servers, new_count) {
-        (0, 0) => "No MCP servers configured".to_string(),
-        (0, n) => format!("Added {} MCP server(s)", n),
-        (old, new) if old == new => format!("Updated MCP server configuration ({} server(s))", new),
-        (old, new) => format!(
-            "Updated MCP server configuration (was {}, now {})",
-            old, new
-        ),
-    };
-
-    Ok(message)
+async fn update_mcp_servers() -> (http::StatusCode, ResponseJson<ApiResponse<()>>) {
+    settings_write_disabled()
 }
 
 /// Helper function to get MCP servers from config using a path
@@ -343,67 +271,6 @@ fn get_mcp_servers_from_config_path(raw_config: &Value, path: &[String]) -> Hash
             .collect(),
         None => HashMap::new(),
     }
-}
-
-/// Helper function to set MCP servers in config using a path
-fn set_mcp_servers_in_config_path(
-    raw_config: &mut Value,
-    path: &[String],
-    servers: &HashMap<String, Value>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if path.is_empty() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "MCP servers path is empty",
-        )
-        .into());
-    }
-
-    // Ensure config is an object
-    if !raw_config.is_object() {
-        *raw_config = serde_json::json!({});
-    }
-
-    let mut current = raw_config;
-    // Navigate/create the nested structure (all parts except the last)
-    for part in &path[..path.len() - 1] {
-        if !current.is_object() {
-            *current = serde_json::json!({});
-        }
-
-        let obj = current.as_object_mut().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "MCP servers path traverses a non-object",
-            )
-        })?;
-
-        let entry = obj
-            .entry(part.to_string())
-            .or_insert_with(|| serde_json::json!({}));
-        if !entry.is_object() {
-            *entry = serde_json::json!({});
-        }
-        current = entry;
-    }
-
-    // Set the final attribute
-    if !current.is_object() {
-        *current = serde_json::json!({});
-    }
-
-    let final_attr = path
-        .last()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "empty path"))?;
-    let obj = current.as_object_mut().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "MCP servers path traverses a non-object",
-        )
-    })?;
-    obj.insert(final_attr.to_string(), serde_json::to_value(servers)?);
-
-    Ok(())
 }
 
 #[derive(Debug, Serialize, Deserialize)]

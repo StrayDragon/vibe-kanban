@@ -5501,6 +5501,7 @@ dependencies = [
  "executors-protocol",
  "futures-util",
  "ignore",
+ "json-patch",
  "logs-axum",
  "logs-protocol",
  "logs-store",

@@ -321,7 +321,10 @@ pub async fn follow_up(
             for repo in workspace_repos {
                 let repo_path = repo.path.to_string_lossy().to_string();
                 let repo_config = project_config.and_then(|project| {
-                    project.repos.iter().find(|candidate| candidate.path == repo_path)
+                    project
+                        .repos
+                        .iter()
+                        .find(|candidate| candidate.path == repo_path)
                 });
                 project_repos.push(ProjectRepoWithName {
                     id: repo.id,

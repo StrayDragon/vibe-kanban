@@ -139,7 +139,11 @@ async fn main() -> Result<(), VibeKanbanError> {
             return;
         }
 
-        if let Err(e) = deployment_for_cache.file_search_cache().warm_repos(repo_paths).await {
+        if let Err(e) = deployment_for_cache
+            .file_search_cache()
+            .warm_repos(repo_paths)
+            .await
+        {
             tracing::warn!("Failed to warm file search cache: {}", e);
         }
     });

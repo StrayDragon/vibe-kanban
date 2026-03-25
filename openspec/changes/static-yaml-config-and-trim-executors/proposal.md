@@ -9,12 +9,12 @@ VK 的配置与“设置”目前分散在多种持久化机制中（JSON 资产
 - **BREAKING**: 引入以 OS 用户配置目录为根（例如 Linux/macOS: `~/.config/vk/`）的 file-first 配置模型，以 YAML 作为唯一事实来源。
 - **BREAKING**: 停止将“设置”持久化到数据库。project/repo 配置与 executor/profile 配置迁移到 YAML。数据库仍用于运行时数据（tasks/attempts/logs），但 settings 不再 DB-backed，也不再进行 settings 相关 DB 迁移。
 - 增加 `config.yaml`（YAML）作为主配置文件，并在同一配置目录下自动加载 `secret.env`（dotenv）作为 overlay。
-- 增加对 YAML 值的环境变量模板解析（例如 `${OPENAI_API_KEY}`），且 **`secret.env` 优先级高于进程/系统环境变量**。
+- 增加对 YAML 值的模板解析（例如 `{{env.OPENAI_API_KEY}}` / `{{secret.OPENAI_API_KEY}}`），且 **`secret.env` 优先级高于进程/系统环境变量**。
 - 后端支持无需重启的配置 reload（文件监听和/或显式 reload endpoint），并在配置无效时具备安全回退策略。
 - 为 YAML 配置生成 JSON Schema（用于编辑器校验/hover/补全），并放在同一配置目录下。
 - **BREAKING**: 现有 DB 中的 project/repo settings 将被忽略（不再作为配置来源）。如需保留，可使用一次性导出将其写入 `config.yaml`。
 - **BREAKING**: 如本次重构需要调整 DB schema，将不提供旧 settings 形态的自动迁移；升级时可能需要用户重置本地 DB。
-- secrets 推荐放在 `secret.env` 并通过 `${NAME}` 引用；允许直接写入 `config.yaml`（但不推荐）。
+- secrets 推荐放在 `secret.env` 并通过 `{{secret.NAME}}` 引用；允许直接写入 `config.yaml`（但不推荐）。
 - **BREAKING**: 不再通过 Settings API 写入配置（例如更新 config/profiles/projects）。配置修改以编辑 `config.yaml` 为主，并通过 reload 生效。
 - **BREAKING**: 将默认支持的 executors 收敛到两条主力路径：**Claude Code** 与 **Codex**。其他 executors 改为按需启用（Cargo feature）或从默认分发与文档中移除。
 

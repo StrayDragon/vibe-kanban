@@ -75,17 +75,6 @@ pub struct ProjectSummary {
     pub updated_at: String,
 }
 
-impl ProjectSummary {
-    pub(super) fn from_project(project: Project) -> Self {
-        Self {
-            id: project.id.to_string(),
-            name: project.name,
-            created_at: project.created_at.to_rfc3339(),
-            updated_at: project.updated_at.to_rfc3339(),
-        }
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ListProjectsResponse {
     #[schemars(description = "Project summaries")]

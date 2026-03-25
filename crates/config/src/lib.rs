@@ -10,8 +10,8 @@ mod yaml_schema;
 pub use editor::{EditorConfig, EditorOpenError, EditorType};
 pub use schema::{
     AccessControlConfig, AccessControlMode, CURRENT_CONFIG_VERSION, Config, DiffPreviewGuardPreset,
-    GitHubConfig, NotificationConfig, ShowcaseState, SoundFile, ThemeMode, UiLanguage,
-    ProjectConfig, ProjectMcpExecutorPolicyMode, ProjectRepoConfig,
+    GitHubConfig, NotificationConfig, ProjectConfig, ProjectMcpExecutorPolicyMode,
+    ProjectRepoConfig, ShowcaseState, SoundFile, ThemeMode, UiLanguage,
     WorkspaceLifecycleHookConfig, WorkspaceLifecycleHookFailurePolicy,
     WorkspaceLifecycleHookRunMode,
 };
@@ -77,46 +77,74 @@ struct TemplateEnv {
 }
 
 impl TemplateEnv {
-    fn lookup(&self, name: &str) -> Option<String> {
-        if let Some(value) = self.secret.get(name) {
-            return Some(value.to_string());
-        }
-        std::env::var(name).ok()
+    fn lookup_secret(&self, name: &str) -> Option<String> {
+        self.secret.get(name).cloned()
+    }
+
+    fn lookup_env(&self, name: &str) -> Option<String> {
+        self.secret
+            .get(name)
+            .cloned()
+            .or_else(|| std::env::var(name).ok())
     }
 }
 
 fn resolve_templates_in_string(input: &str, env: &TemplateEnv) -> Result<String, ConfigError> {
-    if !input.contains("${") {
+    if !input.contains("{{") {
         return Ok(input.to_string());
     }
 
     let mut output = String::with_capacity(input.len());
     let mut cursor = 0;
-    while let Some(start_rel) = input[cursor..].find("${") {
+    while let Some(start_rel) = input[cursor..].find("{{") {
         let start = cursor + start_rel;
         output.push_str(&input[cursor..start]);
 
         let after = start + 2;
-        let Some(end_rel) = input[after..].find('}') else {
+        let Some(end_rel) = input[after..].find("}}") else {
             return Err(ConfigError::ValidationError(
-                "Invalid template: missing '}'".to_string(),
+                "Invalid template: missing '}}'".to_string(),
             ));
         };
         let end = after + end_rel;
         let inner = &input[after..end];
 
-        let (name, default) = match inner.split_once(":-") {
-            Some((name, default)) => (name.trim(), Some(default)),
+        let (expr, default) = match inner.split_once(":-") {
+            Some((expr, default)) => (expr.trim(), Some(default)),
             None => (inner.trim(), None),
         };
 
+        if expr.is_empty() {
+            return Err(ConfigError::ValidationError(
+                "Invalid template: empty expression".to_string(),
+            ));
+        }
+
+        let Some((namespace, name)) = expr.split_once('.') else {
+            return Err(ConfigError::ValidationError(format!(
+                "Invalid template: expected <namespace>.<name>, got '{expr}'"
+            )));
+        };
+        let namespace = namespace.trim();
+        let name = name.trim();
         if name.is_empty() {
             return Err(ConfigError::ValidationError(
                 "Invalid template: empty variable name".to_string(),
             ));
         }
 
-        let resolved = match env.lookup(name) {
+        let resolved = match namespace {
+            // env placeholders use secret.env precedence over system env.
+            "env" => env.lookup_env(name),
+            "secret" => env.lookup_secret(name),
+            _ => {
+                return Err(ConfigError::ValidationError(format!(
+                    "Invalid template: unknown namespace '{namespace}' (expected 'env' or 'secret')"
+                )));
+            }
+        };
+
+        let resolved = match resolved {
             Some(value) => value,
             None => match default {
                 Some(default) => default.to_string(),
@@ -129,7 +157,7 @@ fn resolve_templates_in_string(input: &str, env: &TemplateEnv) -> Result<String,
         };
 
         output.push_str(&resolved);
-        cursor = end + 1;
+        cursor = end + 2;
     }
 
     output.push_str(&input[cursor..]);
@@ -220,17 +248,6 @@ pub async fn load_config_from_file(config_path: &PathBuf) -> Config {
     }
 }
 
-/// Saves the config to the given path
-pub async fn save_config_to_file(
-    config: &Config,
-    config_path: &PathBuf,
-) -> Result<(), ConfigError> {
-    let normalized = config.clone().normalized();
-    let raw_config = serde_yaml::to_string(&normalized)?;
-    std::fs::write(config_path, raw_config)?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::{Mutex, OnceLock};
@@ -267,7 +284,7 @@ mod tests {
             &config_path,
             r#"
 github:
-  pat: "${GITHUB_PAT}"
+  pat: "{{env.GITHUB_PAT}}"
 "#,
         );
         write_file(&secret_path, "GITHUB_PAT=from_secret\n");
@@ -297,7 +314,7 @@ github:
             &config_path,
             r#"
 github:
-  pat: "${GITHUB_PAT:-fallback}"
+  pat: "{{env.GITHUB_PAT:-fallback}}"
 "#,
         );
 
@@ -326,7 +343,7 @@ github:
             &config_path,
             r#"
 github:
-  pat: "${GITHUB_PAT}"
+  pat: "{{env.GITHUB_PAT}}"
 "#,
         );
 
@@ -362,7 +379,7 @@ github:
             &config_path,
             r#"
 github:
-  pat: "${GITHUB_PAT}"
+  pat: "{{env.GITHUB_PAT}}"
 "#,
         );
 

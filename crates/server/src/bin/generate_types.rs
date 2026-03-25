@@ -123,7 +123,6 @@ fn generate_types_content() -> String {
         server::routes::config::UserSystemInfo::decl(),
         server::routes::config::Environment::decl(),
         server::routes::config::McpServerQuery::decl(),
-        server::routes::config::UpdateMcpServersBody::decl(),
         server::routes::config::GetMcpServerResponse::decl(),
         server::routes::config::CheckEditorAvailabilityQuery::decl(),
         server::routes::config::CheckEditorAvailabilityResponse::decl(),

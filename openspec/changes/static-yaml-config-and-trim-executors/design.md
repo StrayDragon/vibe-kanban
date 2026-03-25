@@ -62,10 +62,10 @@ config_version: v11
 
 access_control:
   mode: TOKEN
-  token: ${VK_ACCESS_TOKEN}
+  token: "{{secret.VK_ACCESS_TOKEN}}"
 
 github:
-  pat: ${GITHUB_PAT}
+  pat: "{{secret.GITHUB_PAT}}"
 
 executors:
   default_profile: CLAUDE_CODE/DEFAULT
@@ -92,7 +92,7 @@ OPENAI_API_KEY=...
 
 说明：
 - schema 以 Rust types 为准；示例只用于传达边界与工作流。
-- secrets 推荐通过 `${NAME}` 从 `secret.env` 注入；不建议把 token 直接写进 `config.yaml`。
+- secrets 推荐通过 `{{secret.NAME}}` 从 `secret.env` 注入；不建议把 token 直接写进 `config.yaml`。
 
 **Alternatives considered:**
 - 多个 YAML 文件（`projects.yaml`、`profiles.yaml`…）：更模块化，但会增加协调成本与“局部 reload”复杂度。
@@ -103,8 +103,9 @@ OPENAI_API_KEY=...
 **Decision:** 先将 YAML 解析为未类型化的 `serde_yaml::Value`，遍历并仅对标量字符串做模板替换，再反序列化为 Rust typed structs。
 
 **Template rules (initial):**
-- 支持的模式：`${NAME}` 与 `${NAME:-default}`
-- 解析顺序：优先 `secret.env` 映射，其次 `std::env`
+- 支持的模式：
+  - `{{env.NAME}}` / `{{env.NAME:-default}}`（按 `secret.env` > system env 的顺序解析）
+  - `{{secret.NAME}}`（仅从 `secret.env` 解析）
 - 缺失且无默认值的变量视为 **错误**（config invalid）
 - 仅对 YAML **字符串值**（不包含 key）做替换，避免意外的类型转换与语义漂移
 

@@ -2179,7 +2179,10 @@ pub async fn run_setup_script(
     let mut project_repos = Vec::with_capacity(workspace_repos.len());
     for repo in workspace_repos {
         let repo_path = repo.path.to_string_lossy().to_string();
-        let repo_config = project.repos.iter().find(|candidate| candidate.path == repo_path);
+        let repo_config = project
+            .repos
+            .iter()
+            .find(|candidate| candidate.path == repo_path);
         project_repos.push(ProjectRepoWithName {
             id: repo.id,
             project_id,
@@ -2288,7 +2291,10 @@ pub async fn run_cleanup_script(
     let mut project_repos = Vec::with_capacity(workspace_repos.len());
     for repo in workspace_repos {
         let repo_path = repo.path.to_string_lossy().to_string();
-        let repo_config = project.repos.iter().find(|candidate| candidate.path == repo_path);
+        let repo_config = project
+            .repos
+            .iter()
+            .find(|candidate| candidate.path == repo_path);
         project_repos.push(ProjectRepoWithName {
             id: repo.id,
             project_id,

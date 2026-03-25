@@ -98,6 +98,65 @@ pub fn log_backfill_completion_cache_len() -> u64 {
 
 const DEFAULT_LOG_BACKFILL_CONCURRENCY: usize = 4;
 
+pub(super) async fn find_config_project_by_id(
+    config: &Arc<RwLock<config::Config>>,
+    project_id: Uuid,
+) -> Option<config::ProjectConfig> {
+    let config = config.read().await;
+    config
+        .projects
+        .iter()
+        .find(|project| project.id == Some(project_id))
+        .cloned()
+}
+
+fn repo_display_name_from_path(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "repo".to_string())
+}
+
+async fn resolve_project_repos_from_config(
+    db: &db::DbPool,
+    project_id: Uuid,
+    project: &config::ProjectConfig,
+) -> Result<Vec<ProjectRepoWithName>, DbErr> {
+    let mut repos = Vec::with_capacity(project.repos.len());
+    for repo in &project.repos {
+        let path = PathBuf::from(repo.path.clone());
+        let display_name = repo
+            .display_name
+            .clone()
+            .unwrap_or_else(|| repo_display_name_from_path(&path));
+        let repo_entity = Repo::find_or_create(db, &path, &display_name).await?;
+
+        repos.push(ProjectRepoWithName {
+            id: Uuid::new_v4(),
+            project_id,
+            repo_id: repo_entity.id,
+            repo_name: repo_entity.name,
+            setup_script: repo.setup_script.clone(),
+            cleanup_script: repo.cleanup_script.clone(),
+            copy_files: repo.copy_files.clone(),
+            parallel_setup_script: repo.parallel_setup_script,
+        });
+    }
+
+    Ok(repos)
+}
+
+pub(super) async fn resolve_project_repos_with_names(
+    db: &db::DbPool,
+    config: &Arc<RwLock<config::Config>>,
+    project_id: Uuid,
+) -> Result<Vec<ProjectRepoWithName>, DbErr> {
+    if let Some(project_config) = find_config_project_by_id(config, project_id).await {
+        return resolve_project_repos_from_config(db, project_id, &project_config).await;
+    }
+
+    ProjectRepo::find_by_project_id_with_names(db, project_id).await
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LogPersistenceMode {
     LogEntriesOnly,
@@ -272,6 +331,8 @@ pub enum ContainerError {
 pub trait ContainerService {
     fn msg_stores(&self) -> &Arc<RwLock<HashMap<Uuid, Arc<MsgStore>>>>;
 
+    fn config(&self) -> &Arc<RwLock<config::Config>>;
+
     fn db(&self) -> &DBService;
 
     fn git(&self) -> &GitService;
@@ -281,6 +342,13 @@ pub trait ContainerService {
     fn notification_service(&self) -> &SharedNotifier;
 
     fn workspace_to_current_dir(&self, workspace: &Workspace) -> PathBuf;
+
+    async fn project_repos_with_names(
+        &self,
+        project_id: Uuid,
+    ) -> Result<Vec<ProjectRepoWithName>, ContainerError> {
+        Ok(resolve_project_repos_with_names(&self.db().pool, self.config(), project_id).await?)
+    }
 
     async fn create(&self, workspace: &Workspace) -> Result<ContainerRef, ContainerError>;
 
@@ -1783,23 +1851,48 @@ pub trait ContainerService {
             .await?
             .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
 
-        // Get parent project
-        let project = task
-            .parent_project(&self.db().pool)
-            .await?
-            .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
-
+        let project_config = find_config_project_by_id(self.config(), task.project_id).await;
         let project_repos =
-            ProjectRepo::find_by_project_id_with_names(&self.db().pool, project.id).await?;
+            resolve_project_repos_with_names(&self.db().pool, self.config(), task.project_id)
+                .await?;
 
         let workspace = Workspace::find_by_id(&self.db().pool, workspace.id)
             .await?
             .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))?;
 
-        if let Some(hook) = project.after_prepare_hook.as_ref()
-            && hook.failure_policy == db::types::WorkspaceLifecycleHookFailurePolicy::BlockStart
-            && workspace.after_prepare_hook_status
-                == Some(db::types::WorkspaceLifecycleHookStatus::Failed)
+        let after_prepare_failure_policy = match project_config.as_ref() {
+            Some(project) => {
+                project
+                    .after_prepare_hook
+                    .as_ref()
+                    .map(|hook| match hook.failure_policy {
+                        config::WorkspaceLifecycleHookFailurePolicy::BlockStart => {
+                            db::types::WorkspaceLifecycleHookFailurePolicy::BlockStart
+                        }
+                        config::WorkspaceLifecycleHookFailurePolicy::WarnOnly => {
+                            db::types::WorkspaceLifecycleHookFailurePolicy::WarnOnly
+                        }
+                        config::WorkspaceLifecycleHookFailurePolicy::BlockCleanup => {
+                            db::types::WorkspaceLifecycleHookFailurePolicy::BlockCleanup
+                        }
+                    })
+            }
+            None => task
+                .parent_project(&self.db().pool)
+                .await?
+                .and_then(|project| {
+                    project
+                        .after_prepare_hook
+                        .as_ref()
+                        .map(|hook| hook.failure_policy.clone())
+                }),
+        };
+
+        if matches!(
+            after_prepare_failure_policy,
+            Some(db::types::WorkspaceLifecycleHookFailurePolicy::BlockStart)
+        ) && workspace.after_prepare_hook_status
+            == Some(db::types::WorkspaceLifecycleHookStatus::Failed)
         {
             let detail = workspace
                 .after_prepare_hook_error_summary

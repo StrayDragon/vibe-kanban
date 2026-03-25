@@ -9,10 +9,8 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::StatusCode,
-    middleware::from_fn_with_state,
-    middleware::Next,
-    response::Response,
-    response::{IntoResponse, Json as ResponseJson},
+    middleware::{Next, from_fn_with_state},
+    response::{IntoResponse, Json as ResponseJson, Response},
     routing::{get, post},
 };
 use chrono::Utc;
@@ -21,8 +19,10 @@ use db::models::{
     project_repo::ProjectRepo,
     repo::Repo,
 };
-use futures_util::{SinkExt, StreamExt, TryStreamExt};
+use futures_util::{SinkExt, StreamExt};
 use logs_axum::SequencedLogMsgAxumExt;
+use logs_protocol::LogMsg;
+use logs_store::SequencedLogMsg;
 use repos::file_search_cache::SearchQuery;
 use utils_core::response::ApiResponse;
 use uuid::Uuid;
@@ -76,15 +76,15 @@ async fn handle_projects_ws(
     after_seq: Option<u64>,
 ) -> anyhow::Result<()> {
     let shutdown = deployment.shutdown_token();
-    let mut stream = deployment
-        .events()
-        .stream_projects_raw(after_seq)
-        .await?
-        .map_ok(|msg| msg.to_ws_message_unchecked());
-
     let (mut sender, mut receiver) = socket.split();
     let mut ping = tokio::time::interval(WS_PING_INTERVAL);
     ping.tick().await;
+    let mut reload_poll = tokio::time::interval(Duration::from_secs(2));
+    reload_poll.tick().await;
+
+    let mut last_loaded_at = deployment.config_status().read().await.loaded_at;
+    let mut last_seq = after_seq.unwrap_or(0);
+    send_projects_snapshot(&mut sender, &deployment, &mut last_seq).await?;
 
     loop {
         tokio::select! {
@@ -96,18 +96,13 @@ async fn handle_projects_ws(
                     break;
                 }
             }
-            item = stream.next() => {
-                match item {
-                    Some(Ok(msg)) => {
-                        if sender.send(msg).await.is_err() {
-                            break;
-                        }
+            _ = reload_poll.tick() => {
+                let loaded_at = deployment.config_status().read().await.loaded_at;
+                if loaded_at != last_loaded_at {
+                    last_loaded_at = loaded_at;
+                    if send_projects_snapshot(&mut sender, &deployment, &mut last_seq).await.is_err() {
+                        break;
                     }
-                    Some(Err(e)) => {
-                        tracing::error!("stream error: {}", e);
-                        continue;
-                    }
-                    None => break,
                 }
             }
             msg = receiver.next() => {
@@ -119,6 +114,81 @@ async fn handle_projects_ws(
     }
 
     let _ = sender.close().await;
+    Ok(())
+}
+
+fn next_ws_seq(last_seq: &mut u64) -> u64 {
+    fn now_millis() -> u64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u64::MAX as u128) as u64
+    }
+
+    let now = now_millis();
+    let next = last_seq.saturating_add(1).max(now);
+    *last_seq = next;
+    next
+}
+
+async fn send_projects_snapshot(
+    sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    deployment: &DeploymentImpl,
+    last_seq: &mut u64,
+) -> anyhow::Result<()> {
+    let now = Utc::now();
+    let projects = {
+        let config = deployment.config().read().await;
+        config
+            .projects
+            .iter()
+            .filter_map(|project| project_from_config(project, now))
+            .collect::<Vec<_>>()
+    };
+
+    let projects_map: serde_json::Map<String, serde_json::Value> = projects
+        .into_iter()
+        .filter_map(|project| {
+            let project_id = project.id;
+            match serde_json::to_value(project) {
+                Ok(value) => Some((project_id.to_string(), value)),
+                Err(err) => {
+                    tracing::error!(
+                        project_id = %project_id,
+                        error = %err,
+                        "failed to serialize project for projects snapshot"
+                    );
+                    None
+                }
+            }
+        })
+        .collect();
+
+    let patch = serde_json::json!([
+        {
+            "op": "replace",
+            "path": "/projects",
+            "value": projects_map
+        }
+    ]);
+
+    let patch = match serde_json::from_value(patch) {
+        Ok(patch) => patch,
+        Err(err) => {
+            tracing::error!(error = %err, "failed to build projects snapshot patch");
+            json_patch::Patch(vec![])
+        }
+    };
+
+    let seq = next_ws_seq(last_seq);
+    let msg = SequencedLogMsg {
+        seq,
+        msg: LogMsg::JsonPatch(patch),
+    };
+    sender.send(msg.to_ws_message_unchecked()).await?;
     Ok(())
 }
 
@@ -289,12 +359,9 @@ pub async fn get_project_repositories(
             })
             .unwrap_or_else(|| "repo".to_string());
 
-        let repo_entity = db::models::repo::Repo::find_or_create(
-            &deployment.db().pool,
-            &path,
-            &display_name,
-        )
-        .await?;
+        let repo_entity =
+            db::models::repo::Repo::find_or_create(&deployment.db().pool, &path, &display_name)
+                .await?;
         repositories.push(repo_entity);
     }
     Ok(ResponseJson(ApiResponse::success(repositories)))
@@ -329,9 +396,7 @@ pub async fn get_project_repository(
         .repos
         .iter()
         .find(|candidate| candidate.path == repo_path)
-        .ok_or_else(|| {
-            ApiError::NotFound("Repository not found in project".to_string())
-        })?;
+        .ok_or_else(|| ApiError::NotFound("Repository not found in project".to_string()))?;
 
     Ok(ResponseJson(ApiResponse::success(ProjectRepo {
         id: repo_id,
@@ -391,8 +456,12 @@ fn project_from_config(
     let id = project.id?;
 
     let mcp_auto_executor_policy_mode = match project.mcp_auto_executor_policy_mode {
-        config::ProjectMcpExecutorPolicyMode::InheritAll => db::types::ProjectMcpExecutorPolicyMode::InheritAll,
-        config::ProjectMcpExecutorPolicyMode::AllowList => db::types::ProjectMcpExecutorPolicyMode::AllowList,
+        config::ProjectMcpExecutorPolicyMode::InheritAll => {
+            db::types::ProjectMcpExecutorPolicyMode::InheritAll
+        }
+        config::ProjectMcpExecutorPolicyMode::AllowList => {
+            db::types::ProjectMcpExecutorPolicyMode::AllowList
+        }
     };
 
     let mcp_auto_executor_policy_allow_list = project
@@ -409,13 +478,23 @@ fn project_from_config(
             command: hook.command.clone(),
             working_dir: hook.working_dir.clone(),
             failure_policy: match hook.failure_policy {
-                config::WorkspaceLifecycleHookFailurePolicy::BlockStart => db::types::WorkspaceLifecycleHookFailurePolicy::BlockStart,
-                config::WorkspaceLifecycleHookFailurePolicy::WarnOnly => db::types::WorkspaceLifecycleHookFailurePolicy::WarnOnly,
-                config::WorkspaceLifecycleHookFailurePolicy::BlockCleanup => db::types::WorkspaceLifecycleHookFailurePolicy::BlockCleanup,
+                config::WorkspaceLifecycleHookFailurePolicy::BlockStart => {
+                    db::types::WorkspaceLifecycleHookFailurePolicy::BlockStart
+                }
+                config::WorkspaceLifecycleHookFailurePolicy::WarnOnly => {
+                    db::types::WorkspaceLifecycleHookFailurePolicy::WarnOnly
+                }
+                config::WorkspaceLifecycleHookFailurePolicy::BlockCleanup => {
+                    db::types::WorkspaceLifecycleHookFailurePolicy::BlockCleanup
+                }
             },
             run_mode: hook.run_mode.as_ref().map(|mode| match mode {
-                config::WorkspaceLifecycleHookRunMode::OncePerWorkspace => db::types::WorkspaceLifecycleHookRunMode::OncePerWorkspace,
-                config::WorkspaceLifecycleHookRunMode::EveryPrepare => db::types::WorkspaceLifecycleHookRunMode::EveryPrepare,
+                config::WorkspaceLifecycleHookRunMode::OncePerWorkspace => {
+                    db::types::WorkspaceLifecycleHookRunMode::OncePerWorkspace
+                }
+                config::WorkspaceLifecycleHookRunMode::EveryPrepare => {
+                    db::types::WorkspaceLifecycleHookRunMode::EveryPrepare
+                }
             }),
         }
     });
@@ -425,9 +504,15 @@ fn project_from_config(
             command: hook.command.clone(),
             working_dir: hook.working_dir.clone(),
             failure_policy: match hook.failure_policy {
-                config::WorkspaceLifecycleHookFailurePolicy::BlockStart => db::types::WorkspaceLifecycleHookFailurePolicy::BlockStart,
-                config::WorkspaceLifecycleHookFailurePolicy::WarnOnly => db::types::WorkspaceLifecycleHookFailurePolicy::WarnOnly,
-                config::WorkspaceLifecycleHookFailurePolicy::BlockCleanup => db::types::WorkspaceLifecycleHookFailurePolicy::BlockCleanup,
+                config::WorkspaceLifecycleHookFailurePolicy::BlockStart => {
+                    db::types::WorkspaceLifecycleHookFailurePolicy::BlockStart
+                }
+                config::WorkspaceLifecycleHookFailurePolicy::WarnOnly => {
+                    db::types::WorkspaceLifecycleHookFailurePolicy::WarnOnly
+                }
+                config::WorkspaceLifecycleHookFailurePolicy::BlockCleanup => {
+                    db::types::WorkspaceLifecycleHookFailurePolicy::BlockCleanup
+                }
             },
             run_mode: None,
         }

@@ -101,10 +101,14 @@ impl Default for NotificationConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(default)]
 pub struct GitHubConfig {
-    #[schemars(description = "GitHub PAT（推荐通过 secret.env 并使用 ${GITHUB_PAT} 注入）。")]
+    #[schemars(
+        description = "GitHub PAT（推荐通过 secret.env 注入，例如在 config.yaml 中使用 `{{secret.GITHUB_PAT}}`）。"
+    )]
     pub pat: Option<String>,
     #[serde(alias = "oauthToken")]
-    #[schemars(description = "GitHub OAuth Token（推荐通过 secret.env 注入）。")]
+    #[schemars(
+        description = "GitHub OAuth Token（推荐通过 secret.env 注入，例如 `{{secret.GITHUB_OAUTH_TOKEN}}`）。"
+    )]
     pub oauth_token: Option<String>,
     #[schemars(description = "GitHub 用户名（可选）。")]
     pub username: Option<String>,
@@ -224,7 +228,9 @@ pub enum AccessControlMode {
 pub struct AccessControlConfig {
     #[schemars(description = "访问控制模式。DISABLED 表示不启用；TOKEN 表示要求提供 token。")]
     pub mode: AccessControlMode,
-    #[schemars(description = "访问 token（当 mode=TOKEN 时必填；推荐通过 secret.env 注入）。")]
+    #[schemars(
+        description = "访问 token（当 mode=TOKEN 时必填；推荐通过 secret.env 注入，例如 `{{secret.VK_ACCESS_TOKEN}}`）。"
+    )]
     pub token: Option<String>,
     #[serde(alias = "allowLocalhostBypass")]
     #[schemars(description = "是否允许 localhost 绕过 token 校验（仅当 mode=TOKEN 时有意义）。")]
@@ -452,9 +458,8 @@ impl Config {
                 return Err(format!("{label} command cannot be empty"));
             }
 
-            let tokens = shlex::split(trimmed).ok_or_else(|| {
-                format!("{label} command must be valid shell-like command text")
-            })?;
+            let tokens = shlex::split(trimmed)
+                .ok_or_else(|| format!("{label} command must be valid shell-like command text"))?;
 
             if tokens.is_empty() {
                 return Err(format!("{label} command must include an executable"));
@@ -582,26 +587,24 @@ impl Config {
 
                 if let Some(script) = repo.setup_script.as_deref() {
                     validate_single_command_text(
-                        &format!(
-                            "projects[{project_index}].repos[{repo_index}].setup_script"
-                        ),
+                        &format!("projects[{project_index}].repos[{repo_index}].setup_script"),
                         script,
                     )?;
                 }
 
                 if let Some(script) = repo.cleanup_script.as_deref() {
                     validate_single_command_text(
-                        &format!(
-                            "projects[{project_index}].repos[{repo_index}].cleanup_script"
-                        ),
+                        &format!("projects[{project_index}].repos[{repo_index}].cleanup_script"),
                         script,
                     )?;
                 }
             }
 
             if let Some(script) = project.dev_script.as_deref() {
-                validate_single_command_text(&format!("projects[{project_index}].dev_script"), script)
-                    ?;
+                validate_single_command_text(
+                    &format!("projects[{project_index}].dev_script"),
+                    script,
+                )?;
             }
 
             if let Some(working_dir) = project.dev_script_working_dir.as_deref() {
