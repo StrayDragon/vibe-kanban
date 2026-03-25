@@ -172,6 +172,20 @@ pub async fn create_task(
     headers: HeaderMap,
     Json(payload): Json<CreateTask>,
 ) -> Result<ResponseJson<ApiResponse<Task>>, ApiError> {
+    let project_configured = {
+        let config = deployment.config().read().await;
+        config
+            .projects
+            .iter()
+            .any(|project| project.id == Some(payload.project_id))
+    };
+    if !project_configured {
+        return Err(ApiError::BadRequest(
+            "Project not found in config.yaml. Edit config.yaml and reload (POST /api/config/reload)."
+                .to_string(),
+        ));
+    }
+
     let key = crate::routes::idempotency::idempotency_key(&headers);
     let hash = crate::routes::idempotency::request_hash(&payload)?;
 
@@ -204,6 +218,21 @@ pub async fn create_task_and_start(
         .require_coding_agent(&payload.executor_profile_id)
         .map_err(|err| ApiError::BadRequest(err.to_string()))?;
 
+    let project_config = {
+        let config = deployment.config().read().await;
+        config
+            .projects
+            .iter()
+            .find(|project| project.id == Some(payload.task.project_id))
+            .cloned()
+    }
+    .ok_or_else(|| {
+        ApiError::BadRequest(
+            "Project not found in config.yaml. Edit config.yaml and reload (POST /api/config/reload)."
+                .to_string(),
+        )
+    })?;
+
     let runtime = DeploymentTaskRuntime::new(deployment.container());
     let repos: Vec<CreateWorkspaceRepo> = payload
         .repos
@@ -214,14 +243,7 @@ pub async fn create_task_and_start(
         })
         .collect();
 
-    let agent_working_dir = deployment
-        .config()
-        .read()
-        .await
-        .projects
-        .iter()
-        .find(|project| project.id == Some(payload.task.project_id))
-        .and_then(|project| project.default_agent_working_dir.clone());
+    let agent_working_dir = project_config.default_agent_working_dir.clone();
 
     let task = orchestration::create_task_and_start(
         &runtime,
@@ -353,19 +375,25 @@ mod tests {
         let db_path = temp_root.join("db.sqlite");
         let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
         let _env_guard = TestEnvGuard::new(&temp_root, db_url);
-        let deployment = DeploymentImpl::new().await.unwrap();
 
         let project_id = Uuid::new_v4();
-        Project::create(
-            &deployment.db().pool,
-            &CreateProject {
-                name: "Idempotency".to_string(),
-                repositories: Vec::new(),
-            },
-            project_id,
+        let repo_path = temp_root.join("repo");
+        std::fs::create_dir_all(&repo_path).unwrap();
+        std::fs::write(
+            temp_root.join("vk-config").join("config.yaml"),
+            format!(
+                r#"projects:
+  - id: {project_id}
+    name: Idempotency
+    repos:
+      - path: {repo_path}
+"#,
+                repo_path = repo_path.to_string_lossy()
+            ),
         )
-        .await
         .unwrap();
+
+        let deployment = DeploymentImpl::new().await.unwrap();
 
         let payload =
             CreateTask::from_title_description(project_id, "A".to_string(), Some("d".to_string()));
@@ -474,19 +502,25 @@ mod tests {
         let db_path = temp_root.join("db.sqlite");
         let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
         let _env_guard = TestEnvGuard::new(&temp_root, db_url);
-        let deployment = DeploymentImpl::new().await.unwrap();
 
         let project_id = Uuid::new_v4();
-        Project::create(
-            &deployment.db().pool,
-            &CreateProject {
-                name: "Idempotency conflict".to_string(),
-                repositories: Vec::new(),
-            },
-            project_id,
+        let repo_path = temp_root.join("repo");
+        std::fs::create_dir_all(&repo_path).unwrap();
+        std::fs::write(
+            temp_root.join("vk-config").join("config.yaml"),
+            format!(
+                r#"projects:
+  - id: {project_id}
+    name: Idempotency conflict
+    repos:
+      - path: {repo_path}
+"#,
+                repo_path = repo_path.to_string_lossy()
+            ),
         )
-        .await
         .unwrap();
+
+        let deployment = DeploymentImpl::new().await.unwrap();
 
         let payload1 = CreateTask::from_title_description(project_id, "A".to_string(), None);
         let payload2 = CreateTask::from_title_description(project_id, "B".to_string(), None);

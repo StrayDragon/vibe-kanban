@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use app_runtime::{Deployment, DeploymentError};
 use axum::{
-    Router,
+    Json, Router,
     body::Body,
     extract::{Path, Query, State},
     http,
@@ -34,6 +34,7 @@ pub fn router() -> Router<DeploymentImpl> {
         .route("/info", get(get_user_system_info))
         .route("/config/status", get(get_config_status))
         .route("/config/reload", post(reload_config))
+        .route("/config/open", post(open_config_target))
         .route("/config", put(update_config))
         .route("/sounds/{sound}", get(get_sound))
         .route("/mcp-config", get(get_mcp_servers).post(update_mcp_servers))
@@ -126,6 +127,7 @@ pub struct ConfigStatusResponse {
     pub config_dir: String,
     pub config_path: String,
     pub secret_env_path: String,
+    pub schema_path: String,
     pub loaded_at_unix_ms: u64,
     pub last_error: Option<String>,
 }
@@ -147,6 +149,9 @@ async fn get_config_status(
         config_dir: status.config_dir.to_string_lossy().to_string(),
         config_path: status.config_path.to_string_lossy().to_string(),
         secret_env_path: status.secret_env_path.to_string_lossy().to_string(),
+        schema_path: utils_core::vk_config_schema_path()
+            .to_string_lossy()
+            .to_string(),
         loaded_at_unix_ms: to_unix_ms(status.loaded_at),
         last_error: status.last_error,
     };
@@ -169,11 +174,63 @@ async fn reload_config(
         config_dir: status.config_dir.to_string_lossy().to_string(),
         config_path: status.config_path.to_string_lossy().to_string(),
         secret_env_path: status.secret_env_path.to_string_lossy().to_string(),
+        schema_path: utils_core::vk_config_schema_path()
+            .to_string_lossy()
+            .to_string(),
         loaded_at_unix_ms: to_unix_ms(status.loaded_at),
         last_error: status.last_error,
     };
 
     Ok(ResponseJson(ApiResponse::success(response)))
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenConfigTarget {
+    ConfigDir,
+    ConfigYaml,
+    SecretEnv,
+    Schema,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+pub struct OpenConfigTargetRequest {
+    pub target: OpenConfigTarget,
+    pub editor_type: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+pub struct OpenConfigTargetResponse {
+    pub url: Option<String>,
+}
+
+#[axum::debug_handler]
+async fn open_config_target(
+    State(deployment): State<DeploymentImpl>,
+    Json(payload): Json<OpenConfigTargetRequest>,
+) -> Result<ResponseJson<ApiResponse<OpenConfigTargetResponse>>, ApiError> {
+    let status = deployment.config_status().read().await.clone();
+    let path = match payload.target {
+        OpenConfigTarget::ConfigDir => status.config_dir,
+        OpenConfigTarget::ConfigYaml => status.config_path,
+        OpenConfigTarget::SecretEnv => status.secret_env_path,
+        OpenConfigTarget::Schema => utils_core::vk_config_schema_path(),
+    };
+
+    let editor_config = {
+        let config = deployment.config().read().await;
+        if config.editor.is_integration_disabled() {
+            return Err(ApiError::BadRequest(
+                "Editor integration is disabled".to_string(),
+            ));
+        }
+        config.editor.with_override(payload.editor_type.as_deref())
+    };
+
+    let url = editor_config.open_file(&path).await?;
+    Ok(ResponseJson(ApiResponse::success(
+        OpenConfigTargetResponse { url },
+    )))
 }
 
 fn settings_write_disabled() -> (http::StatusCode, ResponseJson<ApiResponse<()>>) {

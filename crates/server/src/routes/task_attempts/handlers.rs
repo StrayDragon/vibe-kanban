@@ -1031,14 +1031,21 @@ pub async fn create_task_attempt(
             let task = Task::find_by_id(&deployment.db().pool, payload.task_id)
                 .await?
                 .ok_or(DbErr::RecordNotFound("Task not found".to_string()))?;
-            let agent_working_dir = deployment
-                .config()
-                .read()
-                .await
-                .projects
-                .iter()
-                .find(|project| project.id == Some(task.project_id))
-                .and_then(|project| project.default_agent_working_dir.clone());
+            let project_config = {
+                let config = deployment.config().read().await;
+                config
+                    .projects
+                    .iter()
+                    .find(|project| project.id == Some(task.project_id))
+                    .cloned()
+            }
+            .ok_or_else(|| {
+                ApiError::BadRequest(
+                    "Project not found in config.yaml. Edit config.yaml and reload (POST /api/config/reload)."
+                        .to_string(),
+                )
+            })?;
+            let agent_working_dir = project_config.default_agent_working_dir.clone();
             let workspace = orchestration::create_task_attempt(
                 &runtime,
                 &deployment.db().pool,

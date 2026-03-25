@@ -8,9 +8,6 @@ import { Loader } from '@/components/ui/loader';
 import { ApiError, tasksApi } from '@/lib/api';
 import type { RepoBranchStatus, Workspace } from 'shared/types';
 import { openTaskForm } from '@/lib/openTaskForm';
-import { FeatureShowcaseDialog } from '@/components/dialogs/global/FeatureShowcaseDialog';
-import { showcases } from '@/config/showcases';
-import { useUserSystem } from '@/components/ConfigProvider';
 
 import { useSearch } from '@/contexts/SearchContext';
 import { useProject } from '@/contexts/ProjectContext';
@@ -49,7 +46,6 @@ import { useProjectTasks } from '@/hooks/projects/useProjectTasks';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useHotkeysContext } from 'react-hotkeys-hook';
 import { TasksLayout, type LayoutMode } from '@/components/layout/TasksLayout';
-import { NotFoundState } from '@/components/layout/NotFoundState';
 import { PreviewPanel } from '@/components/panels/PreviewPanel';
 import { DiffsPanel } from '@/components/panels/DiffsPanel';
 import TaskAttemptPanel from '@/components/panels/TaskAttemptPanel';
@@ -197,35 +193,6 @@ export function ProjectTasks() {
   );
 
   const isPanelOpen = Boolean(taskId && selectedTask);
-
-  const { config, updateAndSaveConfig, loading } = useUserSystem();
-
-  const isLoaded = !loading;
-  const showcaseId = showcases.taskPanel.id;
-  const seenFeatures = useMemo(
-    () => config?.showcases?.seen_features ?? [],
-    [config?.showcases?.seen_features]
-  );
-  const seen = isLoaded && seenFeatures.includes(showcaseId);
-
-  useEffect(() => {
-    if (!isLoaded || !isPanelOpen || seen) return;
-
-    FeatureShowcaseDialog.show({ config: showcases.taskPanel }).finally(() => {
-      FeatureShowcaseDialog.hide();
-      if (seenFeatures.includes(showcaseId)) return;
-      void updateAndSaveConfig({
-        showcases: { seen_features: [...seenFeatures, showcaseId] },
-      });
-    });
-  }, [
-    isLoaded,
-    isPanelOpen,
-    seen,
-    showcaseId,
-    updateAndSaveConfig,
-    seenFeatures,
-  ]);
 
   const isLatest = attemptId === 'latest';
   const { data: attempts = [], isLoading: isAttemptsLoading } = useTaskAttempts(
@@ -719,25 +686,9 @@ export function ProjectTasks() {
   );
 
   const isInitialTasksLoad = isLoading && tasks.length === 0;
-  const isProjectMissing = Boolean(
+  const isProjectOrphaned = Boolean(
     projectId && !projectLoading && !project && !projectError
   );
-
-  if (isProjectMissing) {
-    return (
-      <NotFoundState
-        title={t('common:notFound.title', 'Not found')}
-        description={t(
-          'projects:projectNotFound',
-          "The project you're looking for doesn't exist or has been deleted."
-        )}
-        primaryAction={{
-          label: t('common:notFound.backToTasks', 'Back to tasks'),
-          onClick: () => navigate(paths.overview()),
-        }}
-      />
-    );
-  }
 
   if (projectError) {
     return (
@@ -976,6 +927,21 @@ export function ProjectTasks() {
             {t('common:states.reconnecting')}
           </AlertTitle>
           <AlertDescription>{streamError}</AlertDescription>
+        </Alert>
+      )}
+      {isProjectOrphaned && (
+        <Alert className="w-full z-20 xl:sticky xl:top-0">
+          <AlertTitle className="flex items-center gap-2">
+            <AlertTriangle size="16" />
+            {t('projects:orphanedProject', 'Unknown project')}
+          </AlertTitle>
+          <AlertDescription>
+            {t(
+              'projects:orphanedProjectHint',
+              'This project id is not present in config.yaml. You can view historical tasks, but to run new work add it to config.yaml and reload.'
+            )}{' '}
+            <span className="font-mono">{projectId}</span>
+          </AlertDescription>
         </Alert>
       )}
 

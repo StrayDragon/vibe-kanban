@@ -219,6 +219,20 @@ pub async fn create_milestone(
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<CreateMilestone>,
 ) -> Result<ResponseJson<ApiResponse<Milestone>>, ApiError> {
+    let project_configured = {
+        let config = deployment.config().read().await;
+        config
+            .projects
+            .iter()
+            .any(|project| project.id == Some(payload.project_id))
+    };
+    if !project_configured {
+        return Err(ApiError::BadRequest(
+            "Project not found in config.yaml. Edit config.yaml and reload (POST /api/config/reload)."
+                .to_string(),
+        ));
+    }
+
     let id = Uuid::new_v4();
     let node_instructions = payload
         .graph

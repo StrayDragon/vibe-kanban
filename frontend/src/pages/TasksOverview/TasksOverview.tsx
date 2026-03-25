@@ -42,7 +42,6 @@ import { DiffsPanel } from '@/components/panels/DiffsPanel';
 import TodoPanel from '@/components/tasks/TodoPanel';
 import { AttemptCompletionTasksResync } from '@/components/tasks/AttemptCompletionTasksResync';
 import { CreateAttemptDialog } from '@/components/dialogs/tasks/CreateAttemptDialog';
-import { ProjectFormDialog } from '@/components/dialogs/projects/ProjectFormDialog';
 
 import { useSearch } from '@/contexts/SearchContext';
 import { useProject } from '@/contexts/ProjectContext';
@@ -375,15 +374,8 @@ export function TasksOverview() {
     resync: resyncTasks,
   } = useAllTasks({ includeArchived });
 
-  const handleCreateProject = useCallback(async () => {
-    try {
-      const result = await ProjectFormDialog.show({});
-      if (result && result !== 'canceled') {
-        navigateWithSearch(paths.projectTasks(result.id));
-      }
-    } catch (error) {
-      // User cancelled - do nothing
-    }
+  const handleOpenSettings = useCallback(() => {
+    navigateWithSearch('/settings');
   }, [navigateWithSearch]);
 
   useEffect(() => {
@@ -775,7 +767,10 @@ export function TasksOverview() {
 
   const isInitialTasksLoad = tasksLoading && tasks.length === 0;
   const showNoProjects =
-    !projectsLoading && !projectsError && projects.length === 0;
+    !projectsLoading &&
+    !projectsError &&
+    projects.length === 0 &&
+    tasks.length === 0;
 
   if (isInitialTasksLoad) {
     return <Loader message={t('loading')} size={32} className="py-8" />;
@@ -855,18 +850,21 @@ export function TasksOverview() {
             <Plus className="h-6 w-6" />
           </div>
           <h3 className="mt-4 text-lg font-semibold">
-            {t('projects:empty.title')}
+            {t('projects:empty.title', 'No projects configured')}
           </h3>
           <p className="mt-2 text-sm text-muted-foreground">
-            {t('projects:empty.description')}
+            {t(
+              'projects:empty.description',
+              'Projects are configured via config.yaml. Edit the file and reload config to get started.'
+            )}
           </p>
           <Button
             className="mt-4"
-            onClick={handleCreateProject}
+            variant="outline"
+            onClick={handleOpenSettings}
             id={uiIds.tasksOverviewCreateProject}
           >
-            <Plus className="mr-2 h-4 w-4" />
-            {t('projects:createProject')}
+            {t('common:buttons.openSettings', 'Open settings')}
           </Button>
         </CardContent>
       </Card>

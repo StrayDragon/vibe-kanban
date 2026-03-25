@@ -8,6 +8,7 @@ use std::{
 };
 
 use app_runtime::Deployment;
+pub use db::models::project::Project;
 use db::{
     DbErr,
     events::{
@@ -28,8 +29,6 @@ use db::{
         execution_process::{ExecutionProcess, ExecutionProcessRunReason, ExecutionProcessStatus},
         execution_process_repo_state::CreateExecutionProcessRepoState,
         mcp_tool_task as mcp_tool_task_model,
-        project::Project,
-        project_repo::ProjectRepo,
         session::Session,
         tag::Tag,
         task::{CreateTask, Task, TaskStatus, TaskWithAttemptStatus},

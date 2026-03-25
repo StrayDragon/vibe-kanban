@@ -10,7 +10,6 @@ import { SearchProvider } from '@/contexts/SearchContext';
 import { ThemeMode } from 'shared/types';
 
 import { DisclaimerDialog } from '@/components/dialogs/global/DisclaimerDialog';
-import { OnboardingDialog } from '@/components/dialogs/global/OnboardingDialog';
 
 const TasksOverview = lazy(() =>
   import('@/pages/TasksOverview').then((mod) => ({
@@ -85,7 +84,7 @@ function RouteSuspense({ children }: { children: ReactNode }) {
 }
 
 export function AppRouter() {
-  const { config, updateAndSaveConfig, loading } = useUserSystem();
+  const { config, loading } = useUserSystem();
 
   usePreviousPath();
 
@@ -93,43 +92,24 @@ export function AppRouter() {
     if (!config) return;
     let cancelled = false;
 
-    const showNextStep = async () => {
-      if (!config.disclaimer_acknowledged) {
-        await DisclaimerDialog.show();
-        if (!cancelled) {
-          await updateAndSaveConfig({ disclaimer_acknowledged: true });
-        }
-        DisclaimerDialog.hide();
-        return;
-      }
+    const showDisclaimer = async () => {
+      const storageKey = 'vk.disclaimer_acknowledged';
+      const acknowledged = localStorage.getItem(storageKey) === '1';
+      if (acknowledged) return;
 
-      if (!config.onboarding_acknowledged) {
-        const result = await OnboardingDialog.show();
-        if (!cancelled) {
-          await updateAndSaveConfig({
-            onboarding_acknowledged: true,
-            executor_profile: result.profile,
-            editor: result.editor,
-          });
-        }
-        OnboardingDialog.hide();
-        return;
+      await DisclaimerDialog.show();
+      if (!cancelled) {
+        localStorage.setItem(storageKey, '1');
       }
-
-      if (config.show_release_notes) {
-        if (!cancelled) {
-          await updateAndSaveConfig({ show_release_notes: false });
-        }
-        return;
-      }
+      DisclaimerDialog.hide();
     };
 
-    showNextStep();
+    void showDisclaimer();
 
     return () => {
       cancelled = true;
     };
-  }, [config, updateAndSaveConfig]);
+  }, [config]);
 
   if (loading) {
     return (

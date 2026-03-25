@@ -3,7 +3,6 @@ import type {
   BaseCodingAgent,
   CheckEditorAvailabilityResponse,
   CliDependencyPreflightResponse,
-  Config,
   CodexProtocolCompatibility,
   EditorType,
   UserSystemInfo,
@@ -11,18 +10,49 @@ import type {
 
 import { handleApiResponse, makeRequest } from './client';
 
+export type ConfigStatusResponse = {
+  config_dir: string;
+  config_path: string;
+  secret_env_path: string;
+  schema_path: string;
+  loaded_at_unix_ms: number;
+  last_error: string | null;
+};
+
+export type OpenConfigTarget = 'config_dir' | 'config_yaml' | 'secret_env' | 'schema';
+
+export type OpenConfigTargetResponse = {
+  url: string | null;
+};
+
 export const configApi = {
   getConfig: async (): Promise<UserSystemInfo> => {
     const response = await makeRequest('/api/info', { cache: 'no-store' });
     return handleApiResponse<UserSystemInfo>(response);
   },
 
-  saveConfig: async (config: Config): Promise<Config> => {
-    const response = await makeRequest('/api/config', {
-      method: 'PUT',
-      body: JSON.stringify(config),
+  getConfigStatus: async (): Promise<ConfigStatusResponse> => {
+    const response = await makeRequest('/api/config/status', { cache: 'no-store' });
+    return handleApiResponse<ConfigStatusResponse>(response);
+  },
+
+  reloadConfig: async (): Promise<ConfigStatusResponse> => {
+    const response = await makeRequest('/api/config/reload', { method: 'POST' });
+    return handleApiResponse<ConfigStatusResponse>(response);
+  },
+
+  openConfigTarget: async (
+    target: OpenConfigTarget,
+    editorType?: string | null
+  ): Promise<OpenConfigTargetResponse> => {
+    const response = await makeRequest('/api/config/open', {
+      method: 'POST',
+      body: JSON.stringify({
+        target,
+        editor_type: editorType ?? undefined,
+      }),
     });
-    return handleApiResponse<Config>(response);
+    return handleApiResponse<OpenConfigTargetResponse>(response);
   },
 
   checkEditorAvailability: async (

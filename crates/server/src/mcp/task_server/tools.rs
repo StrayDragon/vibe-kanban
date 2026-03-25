@@ -332,20 +332,24 @@ Avoid: Guessing project_id (use list_projects)."#,
             ListArchivedKanbansRequest,
         >,
     ) -> Result<Json<ListArchivedKanbansResponse>, ErrorData> {
-        let pool = &self.deployment.db().pool;
-        let project = Project::find_by_id(pool, project_id).await.map_err(|e| {
-            ErrorData::internal_error(
-                "Failed to load project",
-                Some(json!({ "error": e.to_string(), "project_id": project_id })),
-            )
-        })?;
-        if project.is_none() {
+        let config_has_project = {
+            let config = self.deployment.config().read().await;
+            config
+                .projects
+                .iter()
+                .any(|project| project.id == Some(project_id))
+        };
+        if !config_has_project {
             return Err(ErrorData::invalid_params(
                 "Project not found",
-                Some(json!({ "project_id": project_id })),
+                Some(json!({
+                    "project_id": project_id,
+                    "hint": "Projects are file-backed. Edit config.yaml and reload (POST /api/config/reload)."
+                })),
             ));
         }
 
+        let pool = &self.deployment.db().pool;
         let archives = ArchivedKanban::list_by_project_with_task_counts(pool, project_id)
             .await
             .map_err(|e| {
@@ -389,21 +393,24 @@ Avoid: Archiving tasks with running execution processes."#,
             title,
         }): Parameters<ArchiveProjectKanbanRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let pool = &self.deployment.db().pool;
-        let project = Project::find_by_id(pool, project_id)
-            .await
-            .map_err(|e| {
-                ErrorData::internal_error(
-                    "Failed to load project",
-                    Some(json!({ "error": e.to_string(), "project_id": project_id })),
-                )
-            })?
-            .ok_or_else(|| {
-                ErrorData::invalid_params(
-                    "Project not found",
-                    Some(json!({ "project_id": project_id })),
-                )
-            })?;
+        let now = chrono::Utc::now();
+        let project = {
+            let config = self.deployment.config().read().await;
+            config
+                .projects
+                .iter()
+                .find(|project| project.id == Some(project_id))
+                .and_then(|project| crate::routes::projects::project_from_config(project, now))
+        }
+        .ok_or_else(|| {
+            ErrorData::invalid_params(
+                "Project not found",
+                Some(json!({
+                    "project_id": project_id,
+                    "hint": "Projects are file-backed. Edit config.yaml and reload (POST /api/config/reload)."
+                })),
+            )
+        })?;
 
         let mut parsed_statuses = Vec::new();
         for raw in statuses {
@@ -2506,17 +2513,20 @@ Avoid: Providing both attempt_id and session_id; missing prompt."#,
                         )
                     })?;
 
-                let project_repos = ProjectRepo::find_by_project_id_with_names(
-                    pool,
-                    task.project_id,
-                )
-                .await
-                .map_err(|e| {
-                    ErrorData::internal_error(
-                        "Failed to load project repos",
-                        Some(json!({ "error": e.to_string(), "project_id": task.project_id })),
-                    )
-                })?;
+                let project_repos = self
+                    .deployment
+                    .container()
+                    .project_repos_with_names(task.project_id)
+                    .await
+                    .map_err(|e| {
+                        ErrorData::internal_error(
+                            "Failed to load project repos",
+                            Some(json!({
+                                "error": e.to_string(),
+                                "project_id": task.project_id,
+                            })),
+                        )
+                    })?;
                 let cleanup_action = self
                     .deployment
                     .container()

@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { cloneDeep, merge, isEqual } from 'lodash';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Copy, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
+
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
@@ -8,794 +12,301 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Loader2, Volume2 } from 'lucide-react';
-import {
-  DEFAULT_PR_DESCRIPTION_PROMPT,
-  DiffPreviewGuardPreset,
-  EditorType,
-  SoundFile,
-  ThemeMode,
-  UiLanguage,
-} from 'shared/types';
-import { getLanguageOptions } from '@/i18n/languages';
-
-import { toPrettyCase } from '@/utils/string';
-import { useEditorAvailability } from '@/hooks/config/useEditorAvailability';
-import { EditorAvailabilityIndicator } from '@/components/EditorAvailabilityIndicator';
-import { useTheme } from '@/components/ThemeProvider';
+import { toast } from '@/components/ui/toast';
 import { useUserSystem } from '@/components/ConfigProvider';
-import { TagManager } from '@/components/TagManager';
+import {
+  configApi,
+  type ConfigStatusResponse,
+  type OpenConfigTarget,
+} from '@/lib/api';
+
+const CONFIG_STATUS_QUERY_KEY = ['configStatus'] as const;
+
+function copyToClipboard(label: string, value: string) {
+  void navigator.clipboard
+    .writeText(value)
+    .then(() => {
+      toast({
+        title: 'Copied',
+        description: `${label} copied to clipboard.`,
+      });
+    })
+    .catch((err) => {
+      console.error('Failed to copy to clipboard:', err);
+      toast({
+        variant: 'destructive',
+        title: 'Copy failed',
+        description: `Could not copy ${label}.`,
+      });
+    });
+}
 
 export function GeneralSettings() {
   const { t } = useTranslation(['settings', 'common']);
+  const queryClient = useQueryClient();
+  const { reloadSystem } = useUserSystem();
+  const [opening, setOpening] = useState<OpenConfigTarget | null>(null);
 
-  // Get language options with proper display names
-  const languageOptions = getLanguageOptions(
-    t('language.browserDefault', {
-      ns: 'common',
-      defaultValue: 'Browser Default',
-    })
-  );
-  const diffPreviewOptions = [
-    {
-      value: DiffPreviewGuardPreset.SAFE,
-      label: t('settings.general.diffPreview.options.safe'),
-    },
-    {
-      value: DiffPreviewGuardPreset.BALANCED,
-      label: t('settings.general.diffPreview.options.balanced'),
-    },
-    {
-      value: DiffPreviewGuardPreset.RELAXED,
-      label: t('settings.general.diffPreview.options.relaxed'),
-    },
-    {
-      value: DiffPreviewGuardPreset.OFF,
-      label: t('settings.general.diffPreview.options.off'),
-    },
-  ];
   const {
-    config,
-    loading,
-    updateAndSaveConfig, // Use this on Save
-  } = useUserSystem();
+    data: status,
+    isLoading,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: CONFIG_STATUS_QUERY_KEY,
+    queryFn: configApi.getConfigStatus,
+    staleTime: 5_000,
+  });
 
-  // Draft state management
-  const [draft, setDraft] = useState(() => (config ? cloneDeep(config) : null));
-  const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  const [branchPrefixError, setBranchPrefixError] = useState<string | null>(
-    null
-  );
-  const { setTheme } = useTheme();
-
-  // Check editor availability when draft editor changes
-  const editorAvailability = useEditorAvailability(draft?.editor.editor_type);
-
-  const validateBranchPrefix = useCallback(
-    (prefix: string): string | null => {
-      if (!prefix) return null; // empty allowed
-      if (prefix.includes('/'))
-        return t('settings.general.git.branchPrefix.errors.slash');
-      if (prefix.startsWith('.'))
-        return t('settings.general.git.branchPrefix.errors.startsWithDot');
-      if (prefix.endsWith('.') || prefix.endsWith('.lock'))
-        return t('settings.general.git.branchPrefix.errors.endsWithDot');
-      if (prefix.includes('..') || prefix.includes('@{'))
-        return t('settings.general.git.branchPrefix.errors.invalidSequence');
-      if (/[ \t~^:?*[\\]/.test(prefix))
-        return t('settings.general.git.branchPrefix.errors.invalidChars');
-      // Control chars check
-      for (let i = 0; i < prefix.length; i++) {
-        const code = prefix.charCodeAt(i);
-        if (code < 0x20 || code === 0x7f)
-          return t('settings.general.git.branchPrefix.errors.controlChars');
-      }
-      return null;
-    },
-    [t]
-  );
-
-  // When config loads or changes externally, update draft only if not dirty
-  useEffect(() => {
-    if (!config) return;
-    if (!dirty) {
-      setDraft(cloneDeep(config));
-    }
-  }, [config, dirty]);
-
-  // Check for unsaved changes
-  const hasUnsavedChanges = useMemo(() => {
-    if (!draft || !config) return false;
-    return !isEqual(draft, config);
-  }, [draft, config]);
-
-  // Generic draft update helper
-  const updateDraft = useCallback(
-    (patch: Partial<typeof config>) => {
-      setDraft((prev: typeof config) => {
-        if (!prev) return prev;
-        const next = merge({}, prev, patch);
-        // Mark dirty if changed
-        if (!isEqual(next, config)) {
-          setDirty(true);
-        }
-        return next;
+  const reloadMutation = useMutation({
+    mutationFn: configApi.reloadConfig,
+    onSuccess: async (next: ConfigStatusResponse) => {
+      queryClient.setQueryData(CONFIG_STATUS_QUERY_KEY, next);
+      await reloadSystem();
+      toast({
+        title: 'Config reloaded',
+        description: 'Reload succeeded.',
       });
     },
-    [config]
-  );
+    onError: (err) => {
+      console.error('Config reload failed:', err);
+      toast({
+        variant: 'destructive',
+        title: 'Reload failed',
+        description:
+          err instanceof Error ? err.message : 'Config reload failed.',
+      });
+    },
+  });
 
-  // Optional: warn on tab close/navigation with unsaved changes
-  useEffect(() => {
-    const handler = (e: BeforeUnloadEvent) => {
-      if (hasUnsavedChanges) {
-        e.preventDefault();
-        e.returnValue = '';
+  const openTarget = async (target: OpenConfigTarget) => {
+    setOpening(target);
+    try {
+      const result = await configApi.openConfigTarget(target);
+      if (result.url) {
+        window.open(result.url, '_blank', 'noopener,noreferrer');
       }
-    };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  }, [hasUnsavedChanges]);
-
-  const playSound = async (soundFile: SoundFile) => {
-    const audio = new Audio(`/api/sounds/${soundFile}`);
-    try {
-      await audio.play();
     } catch (err) {
-      console.error('Failed to play sound:', err);
-    }
-  };
-
-  const handleSave = async () => {
-    if (!draft) return;
-
-    setSaving(true);
-    setError(null);
-    setSuccess(false);
-
-    try {
-      await updateAndSaveConfig(draft); // Atomically apply + persist
-      setTheme(draft.theme);
-      setDirty(false);
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
-    } catch (err) {
-      setError(t('settings.general.save.error'));
-      console.error('Error saving config:', err);
+      console.error('Failed to open config target:', err);
+      toast({
+        variant: 'destructive',
+        title: 'Open failed',
+        description: err instanceof Error ? err.message : 'Open failed.',
+      });
     } finally {
-      setSaving(false);
+      setOpening(null);
     }
   };
 
-  const handleDiscard = () => {
-    if (!config) return;
-    setDraft(cloneDeep(config));
-    setDirty(false);
-  };
-
-  const resetDisclaimer = async () => {
-    if (!config) return;
-    updateAndSaveConfig({ disclaimer_acknowledged: false });
-  };
-
-  const resetOnboarding = async () => {
-    if (!config) return;
-    updateAndSaveConfig({ onboarding_acknowledged: false });
-  };
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center py-8">
         <Loader2 className="h-8 w-8 animate-spin" />
-        <span className="ml-2">{t('settings.general.loading')}</span>
+        <span className="ml-2">{t('settings.general.loading', 'Loading')}</span>
       </div>
     );
   }
 
-  if (!config) {
+  if (error || !status) {
     return (
       <div className="py-8">
         <Alert variant="destructive">
-          <AlertDescription>{t('settings.general.loadError')}</AlertDescription>
+          <AlertTitle>{t('common:error', 'Error')}</AlertTitle>
+          <AlertDescription>
+            {error instanceof Error ? error.message : t('common:error', 'Error')}
+          </AlertDescription>
         </Alert>
       </div>
     );
   }
 
+  const loadedAt = new Date(status.loaded_at_unix_ms);
+  const schemaHeader = '# yaml-language-server: $schema=./config.schema.json';
+
   return (
     <div className="space-y-6">
-      {error && (
+      {status.last_error && (
         <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      {success && (
-        <Alert variant="success">
-          <AlertDescription className="font-medium">
-            {t('settings.general.save.success')}
-          </AlertDescription>
+          <AlertTitle>{t('settings.config.lastError', 'Last error')}</AlertTitle>
+          <AlertDescription>{status.last_error}</AlertDescription>
         </Alert>
       )}
 
       <Card>
         <CardHeader>
-          <CardTitle>{t('settings.general.appearance.title')}</CardTitle>
+          <CardTitle>{t('settings.config.title', 'Config')}</CardTitle>
           <CardDescription>
-            {t('settings.general.appearance.description')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="theme">
-              {t('settings.general.appearance.theme.label')}
-            </Label>
-            <Select
-              value={draft?.theme}
-              onValueChange={(value: ThemeMode) =>
-                updateDraft({ theme: value })
-              }
-            >
-              <SelectTrigger id="theme">
-                <SelectValue
-                  placeholder={t(
-                    'settings.general.appearance.theme.placeholder'
-                  )}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.values(ThemeMode).map((theme) => (
-                  <SelectItem key={theme} value={theme}>
-                    {toPrettyCase(theme)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-sm text-muted-foreground">
-              {t('settings.general.appearance.theme.helper')}
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="language">
-              {t('settings.general.appearance.language.label')}
-            </Label>
-            <Select
-              value={draft?.language}
-              onValueChange={(value: UiLanguage) =>
-                updateDraft({ language: value })
-              }
-            >
-              <SelectTrigger id="language">
-                <SelectValue
-                  placeholder={t(
-                    'settings.general.appearance.language.placeholder'
-                  )}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {languageOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-sm text-muted-foreground">
-              {t('settings.general.appearance.language.helper')}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('settings.general.editor.title')}</CardTitle>
-          <CardDescription>
-            {t('settings.general.editor.description')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="editor-type">
-              {t('settings.general.editor.type.label')}
-            </Label>
-            <Select
-              value={draft?.editor.editor_type}
-              onValueChange={(value: EditorType) =>
-                updateDraft({
-                  editor: { ...draft!.editor, editor_type: value },
-                })
-              }
-            >
-              <SelectTrigger id="editor-type">
-                <SelectValue
-                  placeholder={t('settings.general.editor.type.placeholder')}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.values(EditorType).map((editor) => (
-                  <SelectItem key={editor} value={editor}>
-                    {editor === EditorType.NONE
-                      ? t('settings.general.editor.type.noneOption')
-                      : toPrettyCase(editor)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {/* Editor availability status indicator */}
-            {draft?.editor.editor_type !== EditorType.CUSTOM &&
-              draft?.editor.editor_type !== EditorType.NONE && (
-                <EditorAvailabilityIndicator
-                  availability={editorAvailability}
-                />
-              )}
-
-            <p className="text-sm text-muted-foreground">
-              {t('settings.general.editor.type.helper')}
-            </p>
-          </div>
-
-          {draft?.editor.editor_type === EditorType.CUSTOM && (
-            <div className="space-y-2">
-              <Label htmlFor="custom-command">
-                {t('settings.general.editor.customCommand.label')}
-              </Label>
-              <Input
-                id="custom-command"
-                placeholder={t(
-                  'settings.general.editor.customCommand.placeholder'
-                )}
-                value={draft?.editor.custom_command || ''}
-                onChange={(e) =>
-                  updateDraft({
-                    editor: {
-                      ...draft!.editor,
-                      custom_command: e.target.value || null,
-                    },
-                  })
-                }
-              />
-              <p className="text-sm text-muted-foreground">
-                {t('settings.general.editor.customCommand.helper')}
-              </p>
-            </div>
-          )}
-
-          {(draft?.editor.editor_type === EditorType.VS_CODE ||
-            draft?.editor.editor_type === EditorType.CURSOR ||
-            draft?.editor.editor_type === EditorType.WINDSURF) && (
-            <>
-              <div className="space-y-2">
-                <Label htmlFor="remote-ssh-host">
-                  {t('settings.general.editor.remoteSsh.host.label')}
-                </Label>
-                <Input
-                  id="remote-ssh-host"
-                  placeholder={t(
-                    'settings.general.editor.remoteSsh.host.placeholder'
-                  )}
-                  value={draft?.editor.remote_ssh_host || ''}
-                  onChange={(e) =>
-                    updateDraft({
-                      editor: {
-                        ...draft!.editor,
-                        remote_ssh_host: e.target.value || null,
-                      },
-                    })
-                  }
-                />
-                <p className="text-sm text-muted-foreground">
-                  {t('settings.general.editor.remoteSsh.host.helper')}
-                </p>
-              </div>
-
-              {draft?.editor.remote_ssh_host && (
-                <div className="space-y-2">
-                  <Label htmlFor="remote-ssh-user">
-                    {t('settings.general.editor.remoteSsh.user.label')}
-                  </Label>
-                  <Input
-                    id="remote-ssh-user"
-                    placeholder={t(
-                      'settings.general.editor.remoteSsh.user.placeholder'
-                    )}
-                    value={draft?.editor.remote_ssh_user || ''}
-                    onChange={(e) =>
-                      updateDraft({
-                        editor: {
-                          ...draft!.editor,
-                          remote_ssh_user: e.target.value || null,
-                        },
-                      })
-                    }
-                  />
-                  <p className="text-sm text-muted-foreground">
-                    {t('settings.general.editor.remoteSsh.user.helper')}
-                  </p>
-                </div>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('settings.general.git.title')}</CardTitle>
-          <CardDescription>
-            {t('settings.general.git.description')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="git-branch-prefix">
-              {t('settings.general.git.branchPrefix.label')}
-            </Label>
-            <Input
-              id="git-branch-prefix"
-              type="text"
-              placeholder={t('settings.general.git.branchPrefix.placeholder')}
-              value={draft?.git_branch_prefix ?? ''}
-              onChange={(e) => {
-                const value = e.target.value.trim();
-                updateDraft({ git_branch_prefix: value });
-                setBranchPrefixError(validateBranchPrefix(value));
-              }}
-              aria-invalid={!!branchPrefixError}
-              className={branchPrefixError ? 'border-destructive' : undefined}
-            />
-            {branchPrefixError && (
-              <p className="text-sm text-destructive">{branchPrefixError}</p>
+            {t(
+              'settings.config.description',
+              'Edit config.yaml on disk, then reload to apply changes.'
             )}
-            <p className="text-sm text-muted-foreground">
-              {t('settings.general.git.branchPrefix.helper')}{' '}
-              {draft?.git_branch_prefix ? (
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              onClick={() => reloadMutation.mutate()}
+              disabled={reloadMutation.isPending}
+            >
+              {reloadMutation.isPending ? (
                 <>
-                  {t('settings.general.git.branchPrefix.preview')}{' '}
-                  <code className="text-xs bg-muted px-1 py-0.5 rounded">
-                    {t('settings.general.git.branchPrefix.previewWithPrefix', {
-                      prefix: draft.git_branch_prefix,
-                    })}
-                  </code>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {t('settings.config.reloading', 'Reloading')}
                 </>
               ) : (
                 <>
-                  {t('settings.general.git.branchPrefix.preview')}{' '}
-                  <code className="text-xs bg-muted px-1 py-0.5 rounded">
-                    {t('settings.general.git.branchPrefix.previewNoPrefix')}
-                  </code>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  {t('settings.config.reload', 'Reload')}
                 </>
               )}
-            </p>
-          </div>
-          <div className="flex items-center space-x-2">
-            <Checkbox
-              id="git-no-verify"
-              checked={draft?.git_no_verify ?? false}
-              onCheckedChange={(checked: boolean) =>
-                updateDraft({ git_no_verify: checked })
-              }
-            />
-            <div className="space-y-0.5">
-              <Label htmlFor="git-no-verify" className="cursor-pointer">
-                {t('settings.general.git.noVerify.label')}
-              </Label>
-              <p className="text-sm text-muted-foreground">
-                {t('settings.general.git.noVerify.helper')}
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('settings.general.diffPreview.title')}</CardTitle>
-          <CardDescription>
-            {t('settings.general.diffPreview.description')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="diff-preview-guard">
-              {t('settings.general.diffPreview.preset.label')}
-            </Label>
-            <Select
-              value={
-                draft?.diff_preview_guard ?? DiffPreviewGuardPreset.BALANCED
-              }
-              onValueChange={(value) =>
-                updateDraft({
-                  diff_preview_guard: value as DiffPreviewGuardPreset,
-                })
-              }
-            >
-              <SelectTrigger id="diff-preview-guard">
-                <SelectValue
-                  placeholder={t(
-                    'settings.general.diffPreview.preset.placeholder'
-                  )}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {diffPreviewOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-sm text-muted-foreground">
-              {t('settings.general.diffPreview.preset.helper')}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('settings.general.pullRequests.title')}</CardTitle>
-          <CardDescription>
-            {t('settings.general.pullRequests.description')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center space-x-2">
-            <Checkbox
-              id="pr-auto-description"
-              checked={draft?.pr_auto_description_enabled ?? false}
-              onCheckedChange={(checked: boolean) =>
-                updateDraft({ pr_auto_description_enabled: checked })
-              }
-            />
-            <div className="space-y-0.5">
-              <Label htmlFor="pr-auto-description" className="cursor-pointer">
-                {t('settings.general.pullRequests.autoDescription.label')}
-              </Label>
-              <p className="text-sm text-muted-foreground">
-                {t('settings.general.pullRequests.autoDescription.helper')}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center space-x-2">
-            <Checkbox
-              id="use-custom-prompt"
-              checked={draft?.pr_auto_description_prompt != null}
-              onCheckedChange={(checked: boolean) => {
-                if (checked) {
-                  updateDraft({
-                    pr_auto_description_prompt: DEFAULT_PR_DESCRIPTION_PROMPT,
-                  });
-                } else {
-                  updateDraft({ pr_auto_description_prompt: null });
-                }
-              }}
-            />
-            <Label htmlFor="use-custom-prompt" className="cursor-pointer">
-              {t('settings.general.pullRequests.customPrompt.useCustom')}
-            </Label>
-          </div>
-          <div className="space-y-2">
-            <textarea
-              id="pr-custom-prompt"
-              className={`flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
-                draft?.pr_auto_description_prompt == null
-                  ? 'opacity-50 cursor-not-allowed'
-                  : ''
-              }`}
-              value={
-                draft?.pr_auto_description_prompt ??
-                DEFAULT_PR_DESCRIPTION_PROMPT
-              }
-              disabled={draft?.pr_auto_description_prompt == null}
-              onChange={(e) =>
-                updateDraft({
-                  pr_auto_description_prompt: e.target.value,
-                })
-              }
-            />
-            <p className="text-sm text-muted-foreground">
-              {t('settings.general.pullRequests.customPrompt.helper')}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('settings.general.notifications.title')}</CardTitle>
-          <CardDescription>
-            {t('settings.general.notifications.description')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center space-x-2">
-            <Checkbox
-              id="sound-enabled"
-              checked={draft?.notifications.sound_enabled}
-              onCheckedChange={(checked: boolean) =>
-                updateDraft({
-                  notifications: {
-                    ...draft!.notifications,
-                    sound_enabled: checked,
-                  },
-                })
-              }
-            />
-            <div className="space-y-0.5">
-              <Label htmlFor="sound-enabled" className="cursor-pointer">
-                {t('settings.general.notifications.sound.label')}
-              </Label>
-              <p className="text-sm text-muted-foreground">
-                {t('settings.general.notifications.sound.helper')}
-              </p>
-            </div>
-          </div>
-          {draft?.notifications.sound_enabled && (
-            <div className="ml-6 space-y-2">
-              <Label htmlFor="sound-file">
-                {t('settings.general.notifications.sound.fileLabel')}
-              </Label>
-              <div className="flex gap-2">
-                <Select
-                  value={draft.notifications.sound_file}
-                  onValueChange={(value: SoundFile) =>
-                    updateDraft({
-                      notifications: {
-                        ...draft.notifications,
-                        sound_file: value,
-                      },
-                    })
-                  }
-                >
-                  <SelectTrigger id="sound-file" className="flex-1">
-                    <SelectValue
-                      placeholder={t(
-                        'settings.general.notifications.sound.filePlaceholder'
-                      )}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.values(SoundFile).map((soundFile) => (
-                      <SelectItem key={soundFile} value={soundFile}>
-                        {toPrettyCase(soundFile)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => playSound(draft.notifications.sound_file)}
-                  className="px-3"
-                >
-                  <Volume2 className="h-4 w-4" />
-                </Button>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {t('settings.general.notifications.sound.fileHelper')}
-              </p>
-            </div>
-          )}
-          <div className="flex items-center space-x-2">
-            <Checkbox
-              id="push-notifications"
-              checked={draft?.notifications.push_enabled}
-              onCheckedChange={(checked: boolean) =>
-                updateDraft({
-                  notifications: {
-                    ...draft!.notifications,
-                    push_enabled: checked,
-                  },
-                })
-              }
-            />
-            <div className="space-y-0.5">
-              <Label htmlFor="push-notifications" className="cursor-pointer">
-                {t('settings.general.notifications.push.label')}
-              </Label>
-              <p className="text-sm text-muted-foreground">
-                {t('settings.general.notifications.push.helper')}
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('settings.general.taskTemplates.title')}</CardTitle>
-          <CardDescription>
-            {t('settings.general.taskTemplates.description')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <TagManager />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('settings.general.safety.title')}</CardTitle>
-          <CardDescription>
-            {t('settings.general.safety.description')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">
-                {t('settings.general.safety.disclaimer.title')}
-              </p>
-              <p className="text-sm text-muted-foreground">
-                {t('settings.general.safety.disclaimer.description')}
-              </p>
-            </div>
-            <Button variant="outline" onClick={resetDisclaimer}>
-              {t('settings.general.safety.disclaimer.button')}
             </Button>
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">
-                {t('settings.general.safety.onboarding.title')}
-              </p>
-              <p className="text-sm text-muted-foreground">
-                {t('settings.general.safety.onboarding.description')}
-              </p>
-            </div>
-            <Button variant="outline" onClick={resetOnboarding}>
-              {t('settings.general.safety.onboarding.button')}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Sticky Save Button */}
-      <div className="sticky bottom-0 z-10 bg-background/80 backdrop-blur-sm border-t py-4">
-        <div className="flex items-center justify-between">
-          {hasUnsavedChanges ? (
-            <span className="text-sm text-muted-foreground">
-              {t('settings.general.save.unsavedChanges')}
-            </span>
-          ) : (
-            <span />
-          )}
-          <div className="flex gap-2">
             <Button
               variant="outline"
-              onClick={handleDiscard}
-              disabled={!hasUnsavedChanges || saving}
+              onClick={() => void refetch()}
+              disabled={isLoading}
             >
-              {t('settings.general.save.discard')}
-            </Button>
-            <Button
-              onClick={handleSave}
-              disabled={!hasUnsavedChanges || saving || !!branchPrefixError}
-            >
-              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {t('settings.general.save.button')}
+              {t('settings.config.refresh', 'Refresh status')}
             </Button>
           </div>
-        </div>
-      </div>
+
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <div className="text-sm font-medium">
+                {t('settings.config.loadedAt', 'Loaded at')}
+              </div>
+              <div className="text-sm text-muted-foreground">
+                {loadedAt.toLocaleString()}
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-sm font-medium">
+                {t('settings.config.configDir', 'Config directory')}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="text-xs break-all">{status.config_dir}</code>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => copyToClipboard('config dir', status.config_dir)}
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  {t('common:buttons.copy', 'Copy')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void openTarget('config_dir')}
+                  disabled={opening === 'config_dir'}
+                >
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  {t('settings.config.open', 'Open')}
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-sm font-medium">config.yaml</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="text-xs break-all">{status.config_path}</code>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => copyToClipboard('config.yaml path', status.config_path)}
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  {t('common:buttons.copy', 'Copy')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void openTarget('config_yaml')}
+                  disabled={opening === 'config_yaml'}
+                >
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  {t('settings.config.open', 'Open')}
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-sm font-medium">secret.env</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="text-xs break-all">{status.secret_env_path}</code>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    copyToClipboard('secret.env path', status.secret_env_path)
+                  }
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  {t('common:buttons.copy', 'Copy')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void openTarget('secret_env')}
+                  disabled={opening === 'secret_env'}
+                >
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  {t('settings.config.open', 'Open')}
+                </Button>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {t(
+                  'settings.config.secretHint',
+                  'Use {{secret.NAME}} to reference values from secret.env (higher priority than system env).'
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-sm font-medium">config.schema.json</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="text-xs break-all">{status.schema_path}</code>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    copyToClipboard('config.schema.json path', status.schema_path)
+                  }
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  {t('common:buttons.copy', 'Copy')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void openTarget('schema')}
+                  disabled={opening === 'schema'}
+                >
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  {t('settings.config.open', 'Open')}
+                </Button>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {t(
+                  'settings.config.schemaHint',
+                  'Add this line to the top of config.yaml to enable YAML LSP validation:'
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="text-xs break-all">{schemaHeader}</code>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => copyToClipboard('schema header', schemaHeader)}
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  {t('common:buttons.copy', 'Copy')}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
+

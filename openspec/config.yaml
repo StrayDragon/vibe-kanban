@@ -46,8 +46,18 @@ context: |
   Constraints / safety:
   - Do not edit `shared/types.ts` directly. Update Rust types and
     `crates/server/src/bin/generate_types.rs`, then run `pnpm run generate-types`.
-  - Config semantics changes must be versioned/migrated under
-    `crates/services/src/services/config/versions`.
+  - Canonical user config is file-backed YAML:
+    - Linux/macOS default: `~/.config/vk/config.yaml`
+    - Override: `VK_CONFIG_DIR=/path/to/dir`
+    - Sidecars: `secret.env` (dotenv) + generated `config.schema.json`
+  - YAML template syntax:
+    - `{{env.NAME}}` / `{{env.NAME:-default}}`
+    - `{{secret.NAME}}` (from `secret.env` only)
+    - Precedence: `secret.env` > process/system env
+  - Services/UI MUST NOT write `config.yaml`/`secret.env` via API; settings pages are read-only
+    (allowed: status/reload/open helpers, schema generation, optional export tooling).
+  - Config semantics changes must be versioned under
+    `crates/services/src/services/config/versions` (prefer breaking bumps over compatibility shims).
   - Never commit secrets; redact tokens/credentials in API responses and logs.
   - Important env vars: `FRONTEND_PORT`, `BACKEND_PORT`, `HOST`.
 

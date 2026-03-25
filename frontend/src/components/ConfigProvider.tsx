@@ -10,7 +10,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   type Config,
   type Environment,
-  type UserSystemInfo,
   type BaseAgentCapability,
   type AgentCommandResolution,
 } from 'shared/types';
@@ -31,23 +30,13 @@ interface UserSystemContextType {
   // Full system state
   system: UserSystemState;
 
-  // Hot path - config helpers (most frequently used)
   config: Config | null;
-  updateConfig: (updates: Partial<Config>) => void;
-  updateAndSaveConfig: (updates: Partial<Config>) => Promise<boolean>;
-  saveConfig: () => Promise<boolean>;
 
   // System data access
   environment: Environment | null;
   profiles: Record<string, ExecutorConfig> | null;
   capabilities: Record<string, BaseAgentCapability[]> | null;
   agentCommandResolutions: Record<string, AgentCommandResolution> | null;
-  setEnvironment: (env: Environment | null) => void;
-  setProfiles: (profiles: Record<string, ExecutorConfig> | null) => void;
-  setCapabilities: (caps: Record<string, BaseAgentCapability[]> | null) => void;
-  setAgentCommandResolutions: (
-    resolutions: Record<string, AgentCommandResolution> | null
-  ) => void;
 
   // Reload system data
   reloadSystem: () => Promise<void>;
@@ -96,102 +85,9 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
     }
   }, [config?.language]);
 
-  const updateConfig = useCallback(
-    (updates: Partial<Config>) => {
-      queryClient.setQueryData<UserSystemInfo>(userSystemKeys.all, (old) => {
-        if (!old) return old;
-        return {
-          ...old,
-          config: { ...old.config, ...updates },
-        };
-      });
-    },
-    [queryClient]
-  );
-
-  const saveConfig = useCallback(async (): Promise<boolean> => {
-    if (!config) return false;
-    try {
-      await configApi.saveConfig(config);
-      return true;
-    } catch (err) {
-      console.error('Error saving config:', err);
-      return false;
-    }
-  }, [config]);
-
-  const updateAndSaveConfig = useCallback(
-    async (updates: Partial<Config>): Promise<boolean> => {
-      if (!config) return false;
-
-      const newConfig = { ...config, ...updates };
-      updateConfig(updates);
-
-      try {
-        const saved = await configApi.saveConfig(newConfig);
-        queryClient.setQueryData<UserSystemInfo>(userSystemKeys.all, (old) => {
-          if (!old) return old;
-          return {
-            ...old,
-            config: saved,
-          };
-        });
-        return true;
-      } catch (err) {
-        console.error('Error saving config:', err);
-        queryClient.invalidateQueries({ queryKey: userSystemKeys.all });
-        return false;
-      }
-    },
-    [config, queryClient, updateConfig]
-  );
-
   const reloadSystem = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: userSystemKeys.all });
   }, [queryClient]);
-
-  const setEnvironment = useCallback(
-    (env: Environment | null) => {
-      queryClient.setQueryData<UserSystemInfo>(userSystemKeys.all, (old) => {
-        if (!old || !env) return old;
-        return { ...old, environment: env };
-      });
-    },
-    [queryClient]
-  );
-
-  const setProfiles = useCallback(
-    (newProfiles: Record<string, ExecutorConfig> | null) => {
-      queryClient.setQueryData<UserSystemInfo>(userSystemKeys.all, (old) => {
-        if (!old || !newProfiles) return old;
-        return {
-          ...old,
-          executors: newProfiles as unknown as UserSystemInfo['executors'],
-        };
-      });
-    },
-    [queryClient]
-  );
-
-  const setCapabilities = useCallback(
-    (newCapabilities: Record<string, BaseAgentCapability[]> | null) => {
-      queryClient.setQueryData<UserSystemInfo>(userSystemKeys.all, (old) => {
-        if (!old || !newCapabilities) return old;
-        return { ...old, capabilities: newCapabilities };
-      });
-    },
-    [queryClient]
-  );
-
-  const setAgentCommandResolutions = useCallback(
-    (newResolutions: Record<string, AgentCommandResolution> | null) => {
-      queryClient.setQueryData<UserSystemInfo>(userSystemKeys.all, (old) => {
-        if (!old || !newResolutions) return old;
-        return { ...old, agent_command_resolutions: newResolutions };
-      });
-    },
-    [queryClient]
-  );
 
   // Memoize context value to prevent unnecessary re-renders
   const value = useMemo<UserSystemContextType>(
@@ -208,13 +104,6 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
       profiles,
       capabilities,
       agentCommandResolutions,
-      updateConfig,
-      saveConfig,
-      updateAndSaveConfig,
-      setEnvironment,
-      setProfiles,
-      setCapabilities,
-      setAgentCommandResolutions,
       reloadSystem,
       loading: isLoading,
     }),
@@ -224,15 +113,8 @@ export function UserSystemProvider({ children }: UserSystemProviderProps) {
       profiles,
       capabilities,
       agentCommandResolutions,
-      updateConfig,
-      saveConfig,
-      updateAndSaveConfig,
       reloadSystem,
       isLoading,
-      setEnvironment,
-      setProfiles,
-      setCapabilities,
-      setAgentCommandResolutions,
     ]
   );
 

@@ -29,9 +29,9 @@
 ## 5. Projects / Repos 静态化（YAML）与 DB-backed settings 移除
 
 - [x] 5.1 定义 projects/repos 的 YAML 结构（稳定 id、repo paths、hooks/policy 等）并纳入 schema，验证：`cargo test -p config` + schema 生成
-- [ ] 5.2 后端以 YAML 作为 projects/repos 的唯一事实来源（停止写入 DB settings），验证：`pnpm run backend:check` +（`pnpm run dev`）`curl -s http://localhost:<BACKEND_PORT>/api/projects` 返回与 `config.yaml` 一致
-- [ ] 5.3 对“orphaned runtime history”（DB 中引用了不存在的 project id）提供 `Unknown project` 占位展示，验证：前端任务列表/详情不崩溃 + 基本可追溯
-- [ ] 5.4 新增/调整最小化 Settings UI：展示 config dir、打开文件/目录、reload、校验错误（last error + last-known-good），验证：`pnpm run check` + 手动 UI smoke
+- [x] 5.2 后端以 YAML 作为 projects/repos 的唯一事实来源（停止写入 DB settings），验证：`pnpm run backend:check` +（`pnpm run dev`）`curl -s http://localhost:<BACKEND_PORT>/api/projects` 返回与 `config.yaml` 一致
+- [x] 5.3 对“orphaned runtime history”（DB 中引用了不存在的 project id）提供 `Unknown project` 占位展示，验证：前端任务列表/详情不崩溃 + 基本可追溯
+- [x] 5.4 新增/调整最小化 Settings UI：展示 config dir、打开文件/目录、reload、校验错误（last error + last-known-good），验证：`pnpm run check` + 手动 UI smoke
 - [ ] 5.5（可选）提供“项目配置片段生成器”（生成 YAML snippet + Copy），引导用户粘贴到 `config.yaml` 并 reload，验证：手动 UI smoke
 - [ ] 5.6（可选）提供一次性导出：将现有 DB project/repo settings 导出为 YAML（不导出 secrets），验证：`cargo run --bin <export-bin> -- --out <path>` 生成文件可被 loader 读取
 - [ ] 5.7 如共享类型变更，更新 Rust DTO 并运行 `pnpm run generate-types`，验证：`pnpm run check`

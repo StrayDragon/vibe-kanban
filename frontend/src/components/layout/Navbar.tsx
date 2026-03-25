@@ -21,7 +21,6 @@ import {
   MessageCircleQuestion,
   Menu,
   Plus,
-  X,
 } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { SearchBar } from '@/components/SearchBar';
@@ -33,9 +32,7 @@ import { useOpenProjectInEditor } from '@/hooks/projects/useOpenProjectInEditor'
 import { OpenInIdeButton } from '@/components/ide/OpenInIdeButton';
 import { useNavigateWithSearch, useProjectRepos } from '@/hooks';
 import { useEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
-import { ProjectFormDialog } from '@/components/dialogs/projects/ProjectFormDialog';
-import { ArchiveKanbanDialog, ConfirmDialog } from '@/components/dialogs';
-import { projectsApi } from '@/lib/api';
+import { ArchiveKanbanDialog } from '@/components/dialogs';
 import { paths } from '@/lib/paths';
 import { uiIds } from '@/lib/uiIds';
 import type { Project } from 'shared/types';
@@ -81,13 +78,15 @@ export function Navbar() {
   const isProjectArchiveDetailRoute =
     /^\/projects\/[^/]+\/archives\/[^/]+\/?$/.test(location.pathname);
 
-  const { data: repos } = useProjectRepos(projectId);
+  const { data: repos } = useProjectRepos(projectId, {
+    enabled: Boolean(projectId && project),
+  });
   const isSingleRepoProject = repos?.length === 1;
   const showOpenInIde = Boolean(
-    projectId && isSingleRepoProject && editorIntegrationEnabled
+    projectId && project && isSingleRepoProject && editorIntegrationEnabled
   );
   const showCreateTask = Boolean(
-    projectId && !isOverviewRoute && !isProjectArchiveDetailRoute
+    projectId && project && !isOverviewRoute && !isProjectArchiveDetailRoute
   );
   const showProjectActions = showOpenInIde || showCreateTask;
   const hasProjects = projects.length > 0;
@@ -119,9 +118,13 @@ export function Navbar() {
     [projectNameCounts]
   );
 
+  const unknownProjectLabel = projectId
+    ? `Unknown project · ${projectId.slice(0, 8)}`
+    : null;
   const switcherLabel =
     (project ? formatProjectLabel(project) : null) ??
-    (projectsLoading ? t('loading') : t('switcher.placeholder'));
+    (unknownProjectLabel ??
+      (projectsLoading ? t('loading') : t('switcher.placeholder')));
 
   const setSearchBarRef = useCallback(
     (node: HTMLInputElement | null) => {
@@ -158,56 +161,6 @@ export function Navbar() {
     handleOpenInEditor();
   };
 
-  const handleCreateProject = async () => {
-    try {
-      const result = await ProjectFormDialog.show({});
-      if (result && result !== 'canceled') {
-        navigateWithSearch(paths.projectTasks(result.id));
-      }
-    } catch (error) {
-      // User cancelled - do nothing
-    }
-  };
-
-  const handleDeleteProject = async (projectToDelete: Project) => {
-    const result = await ConfirmDialog.show({
-      title: t('delete.confirmTitle'),
-      message: t('delete.confirmMessage', {
-        name: projectToDelete.name,
-        id: projectToDelete.id,
-        repoPathLine: '',
-      }),
-      confirmText: t('common:buttons.delete'),
-      cancelText: t('common:buttons.cancel'),
-      variant: 'destructive',
-    });
-
-    if (result !== 'confirmed') return;
-
-    try {
-      await projectsApi.delete(projectToDelete.id);
-
-      if (projectId === projectToDelete.id) {
-        const nextProject = projects.find(
-          (item) => item.id !== projectToDelete.id
-        );
-        const nextPath = nextProject
-          ? paths.projectTasks(nextProject.id)
-          : paths.overview();
-        const nextUrl = new URL(nextPath, window.location.origin);
-        if (!nextUrl.search && window.location.search) {
-          nextUrl.search = window.location.search;
-        }
-        if (!nextUrl.hash && window.location.hash) {
-          nextUrl.hash = window.location.hash;
-        }
-        window.location.assign(nextUrl.toString());
-      }
-    } catch (error) {
-      console.error('Failed to delete project:', error);
-    }
-  };
-
   const renderProjectOption = (item: Project) => (
     // Disambiguate same-name projects by showing a stable identifier.
     <DropdownMenuRadioItem
@@ -229,23 +182,6 @@ export function Navbar() {
           </span>
         )}
       </span>
-      <button
-        type="button"
-        data-project-delete
-        className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          void handleDeleteProject(item);
-        }}
-        onPointerDown={(event) => {
-          event.stopPropagation();
-        }}
-        aria-label={t('common:buttons.delete')}
-        title={t('common:buttons.delete')}
-      >
-        <X className="h-3 w-3" />
-      </button>
     </DropdownMenuRadioItem>
   );
 
@@ -293,11 +229,6 @@ export function Navbar() {
                       {projects.map(renderProjectOption)}
                     </DropdownMenuRadioGroup>
                   )}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleCreateProject}>
-                    <Plus className="h-4 w-4" />
-                    {t('createProject')}
-                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
@@ -382,13 +313,7 @@ export function Navbar() {
                 asChild
                 aria-label={tCommon('navigation.settings')}
               >
-                <Link
-                  to={
-                    projectId
-                      ? `/settings/projects?projectId=${projectId}`
-                      : '/settings'
-                  }
-                >
+                <Link to="/settings">
                   <Settings className="h-4 w-4" />
                 </Link>
               </Button>
@@ -481,13 +406,6 @@ export function Navbar() {
                           {projects.map(renderProjectOption)}
                         </DropdownMenuRadioGroup>
                       )}
-                      <DropdownMenuItem
-                        className="sm:hidden"
-                        onClick={handleCreateProject}
-                      >
-                        <Plus className="h-4 w-4" />
-                        {t('createProject')}
-                      </DropdownMenuItem>
                     </>
                   )}
 

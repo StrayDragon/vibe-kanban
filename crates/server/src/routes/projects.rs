@@ -449,7 +449,7 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
     Router::new().nest("/projects", projects_router)
 }
 
-fn project_from_config(
+pub(crate) fn project_from_config(
     project: &config::ProjectConfig,
     now: chrono::DateTime<Utc>,
 ) -> Option<Project> {
