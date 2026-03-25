@@ -11,7 +11,7 @@
 - [x] 2.1 增加配置状态查询（config dir、loaded_at、last error summary；不回显 `secret.env` 值），验证：`pnpm run backend:check` +（`pnpm run dev`）`curl -s http://localhost:<BACKEND_PORT>/api/config/status`
 - [x] 2.2 增加显式 reload（`POST /api/config/reload`）并接入快照切换语义，验证：`pnpm run backend:check` +（`pnpm run dev`）修改 `config.yaml` 后执行 `curl -s -X POST http://localhost:<BACKEND_PORT>/api/config/reload`
 - [ ] 2.3（可选）增加 `notify` 文件监听（去抖）自动触发 reload，验证：`pnpm run dev` 后编辑 `config.yaml` 观察日志与 `/api/config/status`
-- [ ] 2.4 禁用/移除 settings 写入类 endpoints（例如 `PUT /api/config`、`PUT /api/profiles`、`POST/PUT/DELETE /api/projects`），并在响应中提示“编辑 `config.yaml` + reload”，验证：对上述 endpoints 发起请求返回 `405`（或等价错误）
+- [x] 2.4 禁用/移除 settings 写入类 endpoints（例如 `PUT /api/config`、`PUT /api/profiles`、`POST/PUT/DELETE /api/projects`），并在响应中提示“编辑 `config.yaml` + reload”，验证：对上述 endpoints 发起请求返回 `405`（或等价错误）
 
 ## 3. YAML JSON Schema（YAML LSP）
 

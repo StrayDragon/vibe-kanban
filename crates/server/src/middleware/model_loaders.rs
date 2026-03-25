@@ -115,6 +115,13 @@ pub async fn load_project_middleware<S>(
 where
     S: ModelLoaderDeps,
 {
+    // Projects settings are file-backed; server-side write endpoints are disabled. Ensure the
+    // method-level guard (405) is returned even when the project id doesn't exist.
+    if request.method() == axum::http::Method::PUT || request.method() == axum::http::Method::DELETE
+    {
+        return Ok(next.run(request).await);
+    }
+
     load_request_extension(
         request,
         next,

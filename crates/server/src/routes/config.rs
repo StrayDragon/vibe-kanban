@@ -12,7 +12,6 @@ use axum::{
 use config::{
     Config, ConfigError, SoundFile,
     editor::{EditorConfig, EditorType},
-    save_config_to_file,
 };
 use execution::github::GitHubService;
 use executors::{
@@ -159,9 +158,7 @@ async fn reload_config(
     State(deployment): State<DeploymentImpl>,
 ) -> Result<ResponseJson<ApiResponse<ConfigStatusResponse>>, ApiError> {
     if let Err(err) = deployment.reload_user_config().await {
-        return Err(ApiError::BadRequest(format!(
-            "Config reload failed: {err}"
-        )));
+        return Err(ApiError::BadRequest(format!("Config reload failed: {err}")));
     }
 
     let status = deployment.config_status().read().await.clone();
@@ -176,63 +173,17 @@ async fn reload_config(
     Ok(ResponseJson(ApiResponse::success(response)))
 }
 
-async fn update_config(
-    State(deployment): State<DeploymentImpl>,
-    Json(new_config): Json<Config>,
-) -> Result<ResponseJson<ApiResponse<Config>>, ApiError> {
-    let config_path = utils_core::vk_config_yaml_path();
-
-    // Validate git branch prefix
-    if !utils_git::is_valid_branch_prefix(&new_config.git_branch_prefix) {
-        return Err(ApiError::BadRequest(
-            "Invalid git branch prefix. Must be a valid git branch name component without slashes."
-                .to_string(),
-        ));
-    }
-
-    let new_config = new_config.normalized();
-
-    if matches!(
-        new_config.access_control.mode,
-        config::AccessControlMode::Token
-    ) && new_config
-        .access_control
-        .token
-        .as_deref()
-        .map(str::trim)
-        .filter(|token| !token.is_empty())
-        .is_none()
-    {
-        return Err(ApiError::BadRequest(
-            "accessControl.token is required when accessControl.mode=TOKEN".to_string(),
-        ));
-    }
-
-    // Get old config state before updating
-    let old_config = deployment.config().read().await.clone();
-
-    save_config_to_file(&new_config, &config_path).await?;
-
-    let mut config = deployment.config().write().await;
-    *config = new_config.clone();
-    drop(config);
-
-    // Run side effects on config transitions
-    handle_config_events(&deployment, &old_config, &new_config).await;
-
-    let mut response_config = new_config;
-    response_config.access_control.token = None;
-    Ok(ResponseJson(ApiResponse::success(response_config)))
+fn settings_write_disabled() -> (http::StatusCode, ResponseJson<ApiResponse<()>>) {
+    (
+        http::StatusCode::METHOD_NOT_ALLOWED,
+        ResponseJson(ApiResponse::<()>::error(
+            "已禁用通过 API 写入 settings：请编辑 `config.yaml` + reload（POST /api/config/reload）。",
+        )),
+    )
 }
 
-async fn handle_config_events(deployment: &DeploymentImpl, old: &Config, new: &Config) {
-    if !old.disclaimer_acknowledged && new.disclaimer_acknowledged {
-        // Spawn auto project setup as background task to avoid blocking config response
-        let deployment_clone = deployment.clone();
-        tokio::spawn(async move {
-            deployment_clone.trigger_auto_project_setup().await;
-        });
-    }
+async fn update_config() -> (http::StatusCode, ResponseJson<ApiResponse<()>>) {
+    settings_write_disabled()
 }
 
 async fn get_sound(Path(sound): Path<SoundFile>) -> Result<Response, ApiError> {
@@ -487,34 +438,8 @@ async fn get_profiles(
     }))
 }
 
-async fn update_profiles(
-    State(_deployment): State<DeploymentImpl>,
-    body: String,
-) -> Result<ResponseJson<ApiResponse<String>>, ApiError> {
-    // Try to parse as ExecutorProfileConfigs format
-    let executor_profiles = serde_json::from_str::<ExecutorConfigs>(&body)
-        .map_err(|e| ApiError::BadRequest(format!("Invalid executor profiles format: {e}")))?;
-
-    executor_profiles.save_overrides().map_err(|e| match e {
-        executors::profile::ProfileError::Validation(msg) => ApiError::BadRequest(msg),
-        executors::profile::ProfileError::CannotDeleteExecutor { executor } => {
-            ApiError::BadRequest(format!("Built-in executor '{executor}' cannot be deleted"))
-        }
-        executors::profile::ProfileError::CannotDeleteBuiltInConfig { executor, variant } => {
-            ApiError::BadRequest(format!(
-                "Built-in configuration '{executor}:{variant}' cannot be deleted"
-            ))
-        }
-        executors::profile::ProfileError::Io(err) => ApiError::Io(err),
-        _ => ApiError::Internal(format!("Failed to save executor profiles: {e}")),
-    })?;
-
-    tracing::info!("Executor profiles saved successfully");
-    ExecutorConfigs::reload();
-
-    Ok(ResponseJson(ApiResponse::success(
-        "Executor profiles updated successfully".to_string(),
-    )))
+async fn update_profiles() -> (http::StatusCode, ResponseJson<ApiResponse<()>>) {
+    settings_write_disabled()
 }
 
 #[derive(Debug, Default)]

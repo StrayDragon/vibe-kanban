@@ -257,11 +257,84 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert!(deployment.config_status().read().await.last_error.is_some());
-        assert_eq!(deployment.config_status().read().await.loaded_at, loaded_at_before);
+        assert_eq!(
+            deployment.config_status().read().await.loaded_at,
+            loaded_at_before
+        );
         assert_eq!(
             deployment.config().read().await.git_branch_prefix,
             git_branch_prefix_before
         );
+    }
+
+    #[tokio::test]
+    async fn settings_write_endpoints_return_405_with_guidance() {
+        let (_env_guard, deployment) = setup_deployment().await;
+        let app = super::router(deployment);
+
+        async fn assert_method_not_allowed(app: &axum::Router, request: Request<Body>) {
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(json.get("success").and_then(|v| v.as_bool()), Some(false));
+            let message = json
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            assert!(message.contains("config.yaml"));
+        }
+
+        assert_method_not_allowed(
+            &app,
+            Request::builder()
+                .method("PUT")
+                .uri("/api/config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+
+        assert_method_not_allowed(
+            &app,
+            Request::builder()
+                .method("PUT")
+                .uri("/api/profiles")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+
+        assert_method_not_allowed(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/api/projects")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+
+        assert_method_not_allowed(
+            &app,
+            Request::builder()
+                .method("PUT")
+                .uri("/api/projects/00000000-0000-0000-0000-000000000000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+
+        assert_method_not_allowed(
+            &app,
+            Request::builder()
+                .method("DELETE")
+                .uri("/api/projects/00000000-0000-0000-0000-000000000000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
     }
 
     #[tokio::test]
