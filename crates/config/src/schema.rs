@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    collections::HashSet,
+    path::{Component, Path, PathBuf},
+};
 
 use anyhow::Error;
 use executors::profile::ExecutorConfigs;
@@ -392,6 +395,11 @@ pub struct Config {
     pub diff_preview_guard: DiffPreviewGuardPreset,
     #[serde(alias = "accessControl")]
     pub access_control: AccessControlConfig,
+    #[serde(default)]
+    #[schemars(
+        description = "Projects 与 repos 配置（file-first）。\n\n- projects 的 `id` 必须显式提供且全局唯一\n- repo `path` 必须为绝对路径\n- 写入/修改方式：编辑 `config.yaml` 后调用 `POST /api/config/reload`"
+    )]
+    pub projects: Vec<ProjectConfig>,
 }
 
 impl Config {
@@ -436,6 +444,234 @@ impl Config {
 
         self
     }
+
+    pub fn validate_projects(&self, profiles: &ExecutorConfigs) -> Result<(), String> {
+        fn validate_single_command_text(label: &str, script: &str) -> Result<(), String> {
+            let trimmed = script.trim();
+            if trimmed.is_empty() {
+                return Err(format!("{label} command cannot be empty"));
+            }
+
+            let tokens = shlex::split(trimmed).ok_or_else(|| {
+                format!("{label} command must be valid shell-like command text")
+            })?;
+
+            if tokens.is_empty() {
+                return Err(format!("{label} command must include an executable"));
+            }
+
+            let has_forbidden = tokens.iter().any(|token| {
+                matches!(
+                    token.as_str(),
+                    "|" | "||" | "&" | "&&" | ";" | ">" | ">>" | "<" | "<<"
+                )
+            });
+            if has_forbidden {
+                return Err(format!(
+                    "{label} command must be a single command without shell operators"
+                ));
+            }
+
+            Ok(())
+        }
+
+        fn validate_workspace_relative_dir(label: &str, working_dir: &str) -> Result<(), String> {
+            let trimmed = working_dir.trim();
+            if trimmed.is_empty() {
+                return Ok(());
+            }
+
+            let path = Path::new(trimmed);
+            if path.is_absolute() {
+                return Err(format!(
+                    "{label} working directory must be relative to the workspace root"
+                ));
+            }
+            if path
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+            {
+                return Err(format!(
+                    "{label} working directory cannot traverse outside the workspace"
+                ));
+            }
+            Ok(())
+        }
+
+        fn validate_workspace_hook(
+            phase: &str,
+            hook: &WorkspaceLifecycleHookConfig,
+        ) -> Result<(), String> {
+            validate_single_command_text(phase, &hook.command)?;
+            if let Some(working_dir) = hook.working_dir.as_deref() {
+                validate_workspace_relative_dir(phase, working_dir)?;
+            }
+
+            match phase {
+                "after_prepare_hook" => {
+                    match hook.failure_policy {
+                        WorkspaceLifecycleHookFailurePolicy::BlockStart
+                        | WorkspaceLifecycleHookFailurePolicy::WarnOnly => {}
+                        WorkspaceLifecycleHookFailurePolicy::BlockCleanup => {
+                            return Err(
+                                "after_prepare hooks only support block_start or warn_only"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                    if hook.run_mode.is_none() {
+                        return Err("after_prepare hooks require a run_mode".to_string());
+                    }
+                }
+                "before_cleanup_hook" => {
+                    match hook.failure_policy {
+                        WorkspaceLifecycleHookFailurePolicy::WarnOnly
+                        | WorkspaceLifecycleHookFailurePolicy::BlockCleanup => {}
+                        WorkspaceLifecycleHookFailurePolicy::BlockStart => {
+                            return Err(
+                                "before_cleanup hooks only support warn_only or block_cleanup"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                    if hook.run_mode.is_some() {
+                        return Err("before_cleanup hooks do not support run_mode".to_string());
+                    }
+                }
+                _ => {}
+            }
+
+            Ok(())
+        }
+
+        let mut seen_ids = HashSet::new();
+        for (project_index, project) in self.projects.iter().enumerate() {
+            let Some(project_id) = project.id else {
+                return Err(format!("projects[{project_index}] missing id (UUID)"));
+            };
+            if !seen_ids.insert(project_id) {
+                return Err(format!("Duplicate project id: {project_id}"));
+            }
+
+            if project.name.trim().is_empty() {
+                return Err(format!("projects[{project_index}].name cannot be empty"));
+            }
+
+            if project.repos.is_empty() {
+                return Err(format!("projects[{project_index}].repos must not be empty"));
+            }
+
+            let mut seen_repo_paths = HashSet::new();
+            for (repo_index, repo) in project.repos.iter().enumerate() {
+                let path = repo.path.trim();
+                if path.is_empty() {
+                    return Err(format!(
+                        "projects[{project_index}].repos[{repo_index}].path cannot be empty"
+                    ));
+                }
+                if !Path::new(path).is_absolute() {
+                    return Err(format!(
+                        "projects[{project_index}].repos[{repo_index}].path must be an absolute path"
+                    ));
+                }
+                if !seen_repo_paths.insert(path.to_string()) {
+                    return Err(format!(
+                        "projects[{project_index}].repos[{repo_index}] duplicate path: {path}"
+                    ));
+                }
+
+                if let Some(script) = repo.setup_script.as_deref() {
+                    validate_single_command_text(
+                        &format!(
+                            "projects[{project_index}].repos[{repo_index}].setup_script"
+                        ),
+                        script,
+                    )?;
+                }
+
+                if let Some(script) = repo.cleanup_script.as_deref() {
+                    validate_single_command_text(
+                        &format!(
+                            "projects[{project_index}].repos[{repo_index}].cleanup_script"
+                        ),
+                        script,
+                    )?;
+                }
+            }
+
+            if let Some(script) = project.dev_script.as_deref() {
+                validate_single_command_text(&format!("projects[{project_index}].dev_script"), script)
+                    ?;
+            }
+
+            if let Some(working_dir) = project.dev_script_working_dir.as_deref() {
+                validate_workspace_relative_dir(
+                    &format!("projects[{project_index}].dev_script_working_dir"),
+                    working_dir,
+                )?;
+            }
+
+            if let Some(working_dir) = project.default_agent_working_dir.as_deref() {
+                validate_workspace_relative_dir(
+                    &format!("projects[{project_index}].default_agent_working_dir"),
+                    working_dir,
+                )?;
+            }
+
+            if project.scheduler_max_concurrent < 1 {
+                return Err(format!(
+                    "projects[{project_index}].scheduler_max_concurrent must be at least 1"
+                ));
+            }
+
+            if project.scheduler_max_retries < 0 {
+                return Err(format!(
+                    "projects[{project_index}].scheduler_max_retries must be zero or greater"
+                ));
+            }
+
+            if project.default_continuation_turns < 0 {
+                return Err(format!(
+                    "projects[{project_index}].default_continuation_turns must be zero or greater"
+                ));
+            }
+
+            if matches!(
+                project.mcp_auto_executor_policy_mode,
+                ProjectMcpExecutorPolicyMode::AllowList
+            ) {
+                if project.mcp_auto_executor_policy_allow_list.is_empty() {
+                    return Err(format!(
+                        "projects[{project_index}].mcp_auto_executor_policy_allow_list must not be empty when mode=allow_list"
+                    ));
+                }
+
+                for (entry_index, entry) in project
+                    .mcp_auto_executor_policy_allow_list
+                    .iter()
+                    .enumerate()
+                {
+                    profiles
+                        .require_coding_agent(entry)
+                        .map_err(|err| {
+                            format!(
+                                "projects[{project_index}].mcp_auto_executor_policy_allow_list[{entry_index}] invalid executor profile: {err}"
+                            )
+                        })?;
+                }
+            }
+
+            if let Some(hook) = project.after_prepare_hook.as_ref() {
+                validate_workspace_hook("after_prepare_hook", hook)?;
+            }
+
+            if let Some(hook) = project.before_cleanup_hook.as_ref() {
+                validate_workspace_hook("before_cleanup_hook", hook)?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for Config {
@@ -462,6 +698,7 @@ impl Default for Config {
             llman_claude_code_path: None,
             diff_preview_guard: default_diff_preview_guard(),
             access_control: AccessControlConfig::default(),
+            projects: Vec::new(),
         }
     }
 }

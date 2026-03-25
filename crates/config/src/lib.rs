@@ -11,6 +11,9 @@ pub use editor::{EditorConfig, EditorOpenError, EditorType};
 pub use schema::{
     AccessControlConfig, AccessControlMode, CURRENT_CONFIG_VERSION, Config, DiffPreviewGuardPreset,
     GitHubConfig, NotificationConfig, ShowcaseState, SoundFile, ThemeMode, UiLanguage,
+    ProjectConfig, ProjectMcpExecutorPolicyMode, ProjectRepoConfig,
+    WorkspaceLifecycleHookConfig, WorkspaceLifecycleHookFailurePolicy,
+    WorkspaceLifecycleHookRunMode,
 };
 pub use yaml_schema::{ConfigSchemaError, generate_config_schema_json, write_config_schema_json};
 
@@ -189,6 +192,10 @@ pub fn try_load_config_from_file(config_path: &PathBuf) -> Result<Config, Config
         .require_coding_agent(&config.executor_profile)
         .map_err(|err| ConfigError::ValidationError(err.to_string()))?;
 
+    config
+        .validate_projects(&profiles)
+        .map_err(ConfigError::ValidationError)?;
+
     Ok(config)
 }
 
@@ -366,6 +373,61 @@ github:
         match prev {
             Some(value) => unsafe { std::env::set_var("GITHUB_PAT", value) },
             None => unsafe { std::env::remove_var("GITHUB_PAT") },
+        }
+    }
+
+    #[test]
+    fn project_missing_id_is_validation_error() {
+        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
+        let config_path = dir.join("config.yaml");
+
+        write_file(
+            &config_path,
+            r#"
+projects:
+  - name: test
+    repos:
+      - path: /tmp/test-repo
+"#,
+        );
+
+        let err = try_load_config_from_file(&config_path).expect_err("expected error");
+        match err {
+            ConfigError::ValidationError(message) => {
+                assert!(message.contains("projects[0]"));
+                assert!(message.to_lowercase().contains("missing id"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn duplicate_project_ids_are_rejected() {
+        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
+        let config_path = dir.join("config.yaml");
+
+        write_file(
+            &config_path,
+            r#"
+projects:
+  - id: 11111111-1111-1111-1111-111111111111
+    name: a
+    repos:
+      - path: /tmp/repo-a
+  - id: 11111111-1111-1111-1111-111111111111
+    name: b
+    repos:
+      - path: /tmp/repo-b
+"#,
+        );
+
+        let err = try_load_config_from_file(&config_path).expect_err("expected error");
+        match err {
+            ConfigError::ValidationError(message) => {
+                assert!(message.contains("Duplicate project id"));
+                assert!(message.contains("11111111-1111-1111-1111-111111111111"));
+            }
+            other => panic!("unexpected error: {other:?}"),
         }
     }
 }
