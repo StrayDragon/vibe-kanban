@@ -1,10 +1,10 @@
 ## 1. 配置目录与 YAML 加载基础
 
-- [ ] 1.1 增加 VK 配置目录解析（`VK_CONFIG_DIR` override + OS 默认目录），验证：`cargo test -p utils-core` / `pnpm run backend:check`
-- [ ] 1.2 将系统配置入口从 `asset_dir()/config.json` 切换为 `config.yaml`（缺失/无效回退 defaults），验证：`cargo test -p config`
-- [ ] 1.3 实现 `secret.env` 自动加载（dotenv），并保证优先级 `secret.env` > process/system env，验证：`cargo test -p config`
-- [ ] 1.4 实现 YAML 字符串值模板解析（`${NAME}` / `${NAME:-default}`；缺失且无默认值报错），验证：`cargo test -p config`
-- [ ] 1.5 引入“last-known-good”配置快照与 last error 记录（reload 失败不影响当前运行配置），验证：`cargo test -p config`
+- [x] 1.1 增加 VK 配置目录解析（`VK_CONFIG_DIR` override + OS 默认目录），验证：`cargo test -p utils-core` / `pnpm run backend:check`
+- [x] 1.2 将系统配置入口从 `asset_dir()/config.json` 切换为 `config.yaml`（缺失/无效回退 defaults），验证：`cargo test -p config`
+- [x] 1.3 实现 `secret.env` 自动加载（dotenv），并保证优先级 `secret.env` > process/system env，验证：`cargo test -p config`
+- [x] 1.4 实现 YAML 字符串值模板解析（`${NAME}` / `${NAME:-default}`；缺失且无默认值报错），验证：`cargo test -p config`
+- [x] 1.5 引入“last-known-good”配置快照与 last error 记录（reload 失败不影响当前运行配置），验证：`cargo test -p config`
 
 ## 2. Reload / Status API（不泄露 secrets）
 

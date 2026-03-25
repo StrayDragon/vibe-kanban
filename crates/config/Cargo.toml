@@ -12,6 +12,7 @@ utils-core = { path = "../utils-core" }
 utils-assets = { path = "../utils-assets" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = "0.9"
 anyhow = { workspace = true }
 tracing = { workspace = true }
 ts-rs = { workspace = true }
@@ -20,3 +21,6 @@ strum_macros = "0.27.2"
 strum = "0.27.2"
 rust-embed = "8.2"
 once_cell = "1.20"
+
+[dev-dependencies]
+uuid = { version = "1.0", features = ["v4"] }

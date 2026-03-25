@@ -27,7 +27,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::fs;
 use ts_rs::TS;
-use utils_assets::config_path;
 use utils_core::response::ApiResponse;
 
 use crate::{DeploymentImpl, error::ApiError};
@@ -124,7 +123,7 @@ async fn update_config(
     State(deployment): State<DeploymentImpl>,
     Json(new_config): Json<Config>,
 ) -> Result<ResponseJson<ApiResponse<Config>>, ApiError> {
-    let config_path = config_path();
+    let config_path = utils_core::vk_config_yaml_path();
 
     // Validate git branch prefix
     if !utils_git::is_valid_branch_prefix(&new_config.git_branch_prefix) {

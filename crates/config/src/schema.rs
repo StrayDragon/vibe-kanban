@@ -266,21 +266,6 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn from_raw(raw_config: &str) -> Self {
-        match serde_json::from_str::<Config>(raw_config) {
-            Ok(config) => config.normalized(),
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to parse config (line {}, column {}): {}, using default",
-                    e.line(),
-                    e.column(),
-                    e
-                );
-                Self::default()
-            }
-        }
-    }
-
     pub fn normalized(mut self) -> Self {
         self.config_version = CURRENT_CONFIG_VERSION.to_string();
 
@@ -357,7 +342,9 @@ mod tests {
 
     #[test]
     fn defaults_apply_for_empty_config() {
-        let config = Config::from_raw("{}");
+        let config = serde_yaml::from_str::<Config>("{}")
+            .expect("YAML parse should succeed for empty mapping")
+            .normalized();
 
         assert_eq!(config.config_version, CURRENT_CONFIG_VERSION);
         assert!(matches!(config.theme, ThemeMode::System));
@@ -370,22 +357,17 @@ mod tests {
     }
 
     #[test]
-    fn invalid_json_falls_back_to_default() {
-        let config = Config::from_raw("{invalid json");
-
-        assert_eq!(config.config_version, CURRENT_CONFIG_VERSION);
-        assert_eq!(config.git_branch_prefix, default_git_branch_prefix());
-    }
-
-    #[test]
     fn aliases_and_normalization_are_applied() {
-        let raw = r#"{
-            "configVersion": "v1",
-            "gitBranchPrefix": "feature",
-            "executorProfile": { "executor": "CLAUDE_CODE" }
-        }"#;
+        let raw = r#"
+configVersion: v1
+gitBranchPrefix: feature
+executorProfile:
+  executor: CLAUDE_CODE
+"#;
 
-        let config = Config::from_raw(raw);
+        let config = serde_yaml::from_str::<Config>(raw)
+            .expect("YAML parse should succeed")
+            .normalized();
 
         assert_eq!(config.config_version, CURRENT_CONFIG_VERSION);
         assert_eq!(config.git_branch_prefix, "feature");
@@ -393,8 +375,12 @@ mod tests {
 
     #[test]
     fn invalid_branch_prefix_is_reset() {
-        let raw = r#"{ "gitBranchPrefix": "foo/bar" }"#;
-        let config = Config::from_raw(raw);
+        let raw = r#"
+gitBranchPrefix: foo/bar
+"#;
+        let config = serde_yaml::from_str::<Config>(raw)
+            .expect("YAML parse should succeed")
+            .normalized();
 
         assert_eq!(config.git_branch_prefix, default_git_branch_prefix());
     }

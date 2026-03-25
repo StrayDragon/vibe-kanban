@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
+    time::SystemTime,
 };
 
 mod notification;
@@ -8,7 +9,7 @@ use anyhow::Error as AnyhowError;
 use async_trait::async_trait;
 use axum::response::sse::Event;
 use config::{
-    Config, ConfigError, cache_budget::cache_budgets, load_config_from_file, save_config_to_file,
+    Config, ConfigError, cache_budget::cache_budgets,
 };
 use db::{
     DBService, DbErr,
@@ -46,7 +47,6 @@ use tasks::approvals::Approvals;
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use utils_assets::config_path;
 use utils_core::notifications::SharedNotifier;
 use uuid::Uuid;
 
@@ -97,6 +97,8 @@ pub trait Deployment: Clone + Send + Sync + 'static {
     async fn new() -> Result<Self, DeploymentError>;
 
     fn config(&self) -> &Arc<RwLock<Config>>;
+
+    fn config_status(&self) -> &Arc<RwLock<RuntimeConfigStatus>>;
 
     fn db(&self) -> &DBService;
 
@@ -309,6 +311,7 @@ pub trait Deployment: Clone + Send + Sync + 'static {
 #[derive(Clone)]
 pub struct AppRuntime {
     config: Arc<RwLock<Config>>,
+    config_status: Arc<RwLock<RuntimeConfigStatus>>,
     db: DBService,
     container: LocalContainerService,
     git: GitService,
@@ -342,10 +345,19 @@ struct RuntimeServices {
     shutdown_token: CancellationToken,
 }
 
+#[derive(Clone, Debug)]
+pub struct RuntimeConfigStatus {
+    pub config_dir: std::path::PathBuf,
+    pub config_path: std::path::PathBuf,
+    pub secret_env_path: std::path::PathBuf,
+    pub loaded_at: SystemTime,
+    pub last_error: Option<String>,
+}
+
 #[async_trait]
 impl Deployment for AppRuntime {
     async fn new() -> Result<Self, DeploymentError> {
-        let config = Self::load_runtime_config().await?;
+        let (config, config_status) = Self::load_runtime_config().await?;
         let core = Self::build_core_services();
         let runtime = Self::build_runtime_services(config.clone(), &core).await?;
 
@@ -370,6 +382,7 @@ impl Deployment for AppRuntime {
 
         let deployment = Self {
             config,
+            config_status,
             db,
             container,
             git,
@@ -389,6 +402,10 @@ impl Deployment for AppRuntime {
 
     fn config(&self) -> &Arc<RwLock<Config>> {
         &self.config
+    }
+
+    fn config_status(&self) -> &Arc<RwLock<RuntimeConfigStatus>> {
+        &self.config_status
     }
 
     fn db(&self) -> &DBService {
@@ -441,8 +458,23 @@ impl Deployment for AppRuntime {
 }
 
 impl AppRuntime {
-    async fn load_runtime_config() -> Result<Arc<RwLock<Config>>, DeploymentError> {
-        let mut raw_config = load_config_from_file(&config_path()).await;
+    async fn load_runtime_config(
+    ) -> Result<(Arc<RwLock<Config>>, Arc<RwLock<RuntimeConfigStatus>>), DeploymentError> {
+        let config_path = utils_core::vk_config_yaml_path();
+        let config_dir = config_path
+            .parent()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(utils_core::vk_config_dir);
+        let secret_env_path = config_dir.join("secret.env");
+
+        let loaded_at = SystemTime::now();
+        let (mut raw_config, last_error) = match config::try_load_config_from_file(&config_path) {
+            Ok(config) => (config, None),
+            Err(err) => {
+                tracing::warn!("Failed to load config from disk, using defaults: {}", err);
+                (Config::default(), Some(err.to_string()))
+            }
+        };
 
         let profiles = ExecutorConfigs::get_cached();
         executors_core::agent_command::agent_command_resolver().warm_cache();
@@ -453,9 +485,19 @@ impl AppRuntime {
         }
 
         Self::update_app_version_state(&mut raw_config, utils_core::version::APP_VERSION);
-        save_config_to_file(&raw_config, &config_path()).await?;
 
-        Ok(Arc::new(RwLock::new(raw_config)))
+        let status = RuntimeConfigStatus {
+            config_dir,
+            config_path,
+            secret_env_path,
+            loaded_at,
+            last_error,
+        };
+
+        Ok((
+            Arc::new(RwLock::new(raw_config)),
+            Arc::new(RwLock::new(status)),
+        ))
     }
 
     fn update_app_version_state(config: &mut Config, current_version: &str) {
@@ -467,6 +509,28 @@ impl AppRuntime {
         let stored_version = config.last_app_version.as_deref();
         if stored_version != Some(current_version) {
             config.last_app_version = Some(current_version.to_string());
+        }
+    }
+
+    pub async fn reload_user_config(&self) -> Result<(), ConfigError> {
+        let config_path = utils_core::vk_config_yaml_path();
+
+        match config::try_load_config_from_file(&config_path) {
+            Ok(new_config) => {
+                let mut config = self.config.write().await;
+                *config = new_config;
+                drop(config);
+
+                let mut status = self.config_status.write().await;
+                status.loaded_at = SystemTime::now();
+                status.last_error = None;
+                Ok(())
+            }
+            Err(err) => {
+                let mut status = self.config_status.write().await;
+                status.last_error = Some(err.to_string());
+                Err(err)
+            }
         }
     }
 
