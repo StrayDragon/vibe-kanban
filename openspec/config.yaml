@@ -6,9 +6,11 @@ context: |
   logs, and review workflows across multiple repos/worktrees.
 
   Language:
-  - Prefer English for OpenSpec artifacts (`proposal.md`, `design.md`, `spec.md`,
-    `tasks.md`) to match existing docs.
-  - Chinese is OK when explicitly requested; keep code/commands/paths in English.
+  - Prefer Chinese for change artifacts (`proposal.md`, `design.md`, `tasks.md`)
+    unless explicitly requested otherwise.
+  - Prefer English for capability specs (`spec.md`) to match the existing spec
+    corpus unless explicitly requested otherwise.
+  - Keep code/commands/paths in English.
 
   Tech stack:
   - Backend: Rust (Axum 0.8 + Tokio), SQLite + SeaORM, SSE/WebSocket for realtime,
