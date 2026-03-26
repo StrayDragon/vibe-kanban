@@ -29,6 +29,60 @@ use utils_core::response::ApiResponse;
 
 use crate::{DeploymentImpl, error::ApiError};
 
+fn is_sensitive_env_key(key: &str) -> bool {
+    let upper = key.trim().to_ascii_uppercase();
+    upper.contains("TOKEN")
+        || upper.contains("PASSWORD")
+        || upper.contains("PASSWD")
+        || upper.contains("SECRET")
+        || upper.contains("PAT")
+        || upper.ends_with("_KEY")
+        || upper.contains("API_KEY")
+        || upper.contains("ACCESS_KEY")
+        || upper.contains("PRIVATE_KEY")
+}
+
+fn redact_secrets_in_env_objects(value: &mut Value) {
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        Value::Array(items) => {
+            for item in items {
+                redact_secrets_in_env_objects(item);
+            }
+        }
+        Value::Object(map) => {
+            for (key, value) in map.iter_mut() {
+                if key == "env" {
+                    if let Value::Object(env) = value {
+                        for (env_key, env_value) in env.iter_mut() {
+                            if is_sensitive_env_key(env_key) {
+                                *env_value = Value::String("<redacted>".to_string());
+                            }
+                        }
+                    }
+                }
+                redact_secrets_in_env_objects(value);
+            }
+        }
+    }
+}
+
+fn redacted_executor_configs_for_api(profiles: &ExecutorConfigs) -> ExecutorConfigs {
+    let mut value = match serde_json::to_value(profiles) {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::error!("Failed to serialize profiles to JSON for redaction: {err}");
+            return ExecutorConfigs::from_defaults();
+        }
+    };
+    redact_secrets_in_env_objects(&mut value);
+
+    serde_json::from_value::<ExecutorConfigs>(value).unwrap_or_else(|err| {
+        tracing::error!("Failed to deserialize redacted profiles JSON: {err}");
+        ExecutorConfigs::from_defaults()
+    })
+}
+
 pub fn router() -> Router<DeploymentImpl> {
     Router::new()
         .route("/info", get(get_user_system_info))
@@ -102,15 +156,17 @@ async fn get_user_system_info(
     redacted_config.github.pat = None;
     redacted_config.github.oauth_token = None;
 
+    let profiles = ExecutorConfigs::get_cached();
+    let redacted_profiles = redacted_executor_configs_for_api(&profiles);
+
     let user_system_info = UserSystemInfo {
         config: redacted_config,
-        profiles: ExecutorConfigs::get_cached(),
+        profiles: redacted_profiles,
         environment: Environment::new(),
         capabilities: {
             let mut caps: HashMap<String, Vec<BaseAgentCapability>> = HashMap::new();
-            let profs = ExecutorConfigs::get_cached();
-            for key in profs.executors.keys() {
-                if let Some(agent) = profs.get_coding_agent(&ExecutorProfileId::new(*key)) {
+            for key in profiles.executors.keys() {
+                if let Some(agent) = profiles.get_coding_agent(&ExecutorProfileId::new(*key)) {
                     caps.insert(key.to_string(), agent.capabilities());
                 }
             }
@@ -351,8 +407,9 @@ async fn get_profiles(
 
     // Use cached data to ensure consistency with runtime and PUT updates
     let profiles = ExecutorConfigs::get_cached();
+    let redacted = redacted_executor_configs_for_api(&profiles);
 
-    let content = serde_json::to_string_pretty(&profiles).unwrap_or_else(|e| {
+    let content = serde_json::to_string_pretty(&redacted).unwrap_or_else(|e| {
         tracing::error!("Failed to serialize profiles to JSON: {}", e);
         serde_json::to_string_pretty(&ExecutorConfigs::from_defaults())
             .unwrap_or_else(|_| "{}".to_string())
@@ -578,5 +635,44 @@ mod tests {
             }
             other => panic!("expected error mapping, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn profiles_endpoint_redacts_sensitive_env_values() {
+        let profiles: ExecutorConfigs = serde_json::from_value(serde_json::json!({
+          "executors": {
+            "CLAUDE_CODE": {
+              "DEFAULT": {
+                "CLAUDE_CODE": {
+                  "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-test",
+                    "GITHUB_PAT": "ghp_test",
+                    "PLAIN_FLAG": "1"
+                  }
+                }
+              }
+            }
+          }
+        }))
+        .expect("deserialize profiles");
+
+        let redacted = redacted_executor_configs_for_api(&profiles);
+        let json = serde_json::to_value(redacted).expect("serialize redacted");
+
+        assert_eq!(
+            json.pointer("/executors/CLAUDE_CODE/DEFAULT/CLAUDE_CODE/env/ANTHROPIC_AUTH_TOKEN")
+                .and_then(|v| v.as_str()),
+            Some("<redacted>")
+        );
+        assert_eq!(
+            json.pointer("/executors/CLAUDE_CODE/DEFAULT/CLAUDE_CODE/env/GITHUB_PAT")
+                .and_then(|v| v.as_str()),
+            Some("<redacted>")
+        );
+        assert_eq!(
+            json.pointer("/executors/CLAUDE_CODE/DEFAULT/CLAUDE_CODE/env/PLAIN_FLAG")
+                .and_then(|v| v.as_str()),
+            Some("1")
+        );
     }
 }
