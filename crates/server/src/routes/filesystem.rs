@@ -81,13 +81,6 @@ where
     if let Some(workspace_dir) = configured_workspace_dir {
         let workspace_path = PathBuf::from(workspace_dir);
         candidates.insert(0, canonicalize_directory(&workspace_path)?);
-    } else {
-        if let Ok(home_dir) = std::env::var("HOME") {
-            candidates.insert(0, PathBuf::from(home_dir));
-        }
-        if let Ok(cwd) = std::env::current_dir() {
-            candidates.push(cwd);
-        }
     }
 
     let mut roots = Vec::new();

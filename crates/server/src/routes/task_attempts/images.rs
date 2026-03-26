@@ -95,10 +95,63 @@ pub async fn get_image_metadata(
         .ensure_container_exists(&workspace)
         .await?;
     let workspace_path = std::path::PathBuf::from(container_ref);
-    let full_path = workspace_path.join(&query.path);
+    let vibe_images_dir = workspace_path.join(utils_core::path::VIBE_IMAGES_DIR);
+    let image_rel = query.path.strip_prefix(&vibe_images_prefix).unwrap_or("");
+    if image_rel.trim().is_empty() {
+        return Ok(ResponseJson(ApiResponse::success(ImageMetadata {
+            exists: false,
+            file_name: None,
+            path: Some(query.path),
+            size_bytes: None,
+            format: None,
+            proxy_url: None,
+        })));
+    }
+
+    let full_path = vibe_images_dir.join(image_rel);
+
+    // Security: canonicalize and verify path stays within .vibe-images (blocks symlink escapes).
+    let canonical_path = match tokio::fs::canonicalize(&full_path).await {
+        Ok(path) => path,
+        Err(_) => {
+            return Ok(ResponseJson(ApiResponse::success(ImageMetadata {
+                exists: false,
+                file_name: None,
+                path: Some(query.path),
+                size_bytes: None,
+                format: None,
+                proxy_url: None,
+            })));
+        }
+    };
+
+    let canonical_vibe_images = match tokio::fs::canonicalize(&vibe_images_dir).await {
+        Ok(path) => path,
+        Err(_) => {
+            return Ok(ResponseJson(ApiResponse::success(ImageMetadata {
+                exists: false,
+                file_name: None,
+                path: Some(query.path),
+                size_bytes: None,
+                format: None,
+                proxy_url: None,
+            })));
+        }
+    };
+
+    if !canonical_path.starts_with(&canonical_vibe_images) {
+        return Ok(ResponseJson(ApiResponse::success(ImageMetadata {
+            exists: false,
+            file_name: None,
+            path: Some(query.path),
+            size_bytes: None,
+            format: None,
+            proxy_url: None,
+        })));
+    }
 
     // Check if file exists
-    let metadata = match tokio::fs::metadata(&full_path).await {
+    let metadata = match tokio::fs::metadata(&canonical_path).await {
         Ok(m) if m.is_file() => m,
         _ => {
             return Ok(ResponseJson(ApiResponse::success(ImageMetadata {
@@ -123,7 +176,7 @@ pub async fn get_image_metadata(
         .map(|ext| ext.to_string_lossy().to_lowercase());
 
     // Build proxy URL - the path after .vibe-images/
-    let image_path = query.path.strip_prefix(&vibe_images_prefix).unwrap_or("");
+    let image_path = image_rel;
     let proxy_url = format!(
         "/api/task-attempts/{}/images/file/{}",
         workspace.id, image_path
