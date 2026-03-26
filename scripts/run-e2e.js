@@ -28,6 +28,11 @@ function writeJson(filePath, value) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function writeConfigYaml(filePath, value) {
+  // `serde_yaml` accepts JSON as valid YAML, which keeps E2E config generation simple.
+  writeJson(filePath, value);
+}
+
 function shouldCopySeedAsset(srcPath) {
   const stat = fs.statSync(srcPath);
   if (stat.isDirectory()) {
@@ -124,10 +129,12 @@ async function main() {
   const repoRoot = process.cwd();
   const e2eRoot = path.join(repoRoot, '.e2e');
   const assetDir = path.join(e2eRoot, 'assets');
+  const configDir = path.join(e2eRoot, 'config');
   const reposDir = path.join(e2eRoot, 'repos');
 
   fs.mkdirSync(e2eRoot, { recursive: true });
   rmDirIfExists(assetDir);
+  rmDirIfExists(configDir);
   rmDirIfExists(reposDir);
   fs.mkdirSync(reposDir, { recursive: true });
   // Some UI flows expect user-provided parent directories to already exist.
@@ -144,47 +151,45 @@ async function main() {
   }
 
   // Deterministic, non-interactive config for E2E.
-  writeJson(path.join(assetDir, 'config.json'), {
-    config_version: 'v10',
+  writeConfigYaml(path.join(configDir, 'config.yaml'), {
+    config_version: 'v11',
     theme: 'LIGHT',
     language: 'EN',
     executor_profile: { executor: 'FAKE_AGENT' },
+    executor_profiles: {
+      executors: {
+        FAKE_AGENT: {
+          DEFAULT: {
+            FAKE_AGENT: {
+              seed,
+              cadence_ms: 0,
+              message_chunk_min: 4,
+              message_chunk_max: 8,
+              tool_events: {
+                exec_command: true,
+                apply_patch: true,
+                mcp: true,
+                web_search: false,
+                approvals: false,
+                errors: false,
+              },
+              write_fake_files: false,
+              include_reasoning: false,
+            },
+          },
+        },
+      },
+    },
     disclaimer_acknowledged: true,
     onboarding_acknowledged: true,
     show_release_notes: false,
-    // Prevent UI onboarding modals from blocking E2E flows.
-    showcases: { seen_features: ['task-panel-onboarding'] },
     editor: { editor_type: 'NONE' },
     notifications: {
       sound_enabled: false,
       push_enabled: false,
       sound_file: 'ABSTRACT_SOUND4',
     },
-  });
-
-  writeJson(path.join(assetDir, 'profiles.json'), {
-    executors: {
-      FAKE_AGENT: {
-        DEFAULT: {
-          FAKE_AGENT: {
-            seed,
-            cadence_ms: 0,
-            message_chunk_min: 4,
-            message_chunk_max: 8,
-            tool_events: {
-              exec_command: true,
-              apply_patch: true,
-              mcp: true,
-              web_search: false,
-              approvals: false,
-              errors: false,
-            },
-            write_fake_files: false,
-            include_reasoning: false,
-          },
-        },
-      },
-    },
+    projects: [],
   });
 
   const frontendPort =
@@ -195,6 +200,7 @@ async function main() {
 
   console.log(`[e2e] seed=${seed}`);
   console.log(`[e2e] asset_dir=${assetDir}`);
+  console.log(`[e2e] config_dir=${configDir}`);
   console.log(`[e2e] repos_dir=${reposDir}`);
   console.log(`[e2e] backend=http://127.0.0.1:${backendPort}`);
   console.log(`[e2e] frontend=${baseUrl}`);
@@ -203,6 +209,7 @@ async function main() {
     ...process.env,
     VK_E2E_SEED: String(seed),
     VK_E2E_REPOS_DIR: reposDir,
+    VK_E2E_CONFIG_DIR: configDir,
     VK_E2E_BASE_URL: baseUrl,
   };
 
@@ -230,18 +237,19 @@ async function main() {
     // Ensure fake-agent binary exists next to the dev server binary (target/debug).
     await runCommand(
       'cargo',
-      ['build', '-p', 'executors', '--bin', 'fake-agent'],
+      ['build', '-p', 'executors', '--bin', 'fake-agent', '--features', 'fake-agent'],
       { stdio: 'inherit' }
     );
 
     backendProc = spawnLogged(
       'cargo',
-      ['run', '-p', 'server', '--bin', 'server'],
+      ['run', '-p', 'server', '--bin', 'server', '--features', 'executors/fake-agent'],
       {
         stdio: 'inherit',
         env: {
           ...envCommon,
           VIBE_ASSET_DIR: assetDir,
+          VK_CONFIG_DIR: configDir,
           HOST: '127.0.0.1',
           BACKEND_PORT: String(backendPort),
           PORT: String(backendPort),

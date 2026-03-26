@@ -94,9 +94,17 @@ frontend-build force="0": install
     fi
 
 backend-build: # db-prepare
-    cargo build -p server --release
-    cargo build -p server --release --bin mcp_task_server
-    cargo build -p executors --release --bin fake-agent
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [[ "${VK_ENABLE_FAKE_AGENT:-0}" == "1" ]]; then
+        cargo build -p server --release --features executors/fake-agent
+        cargo build -p server --release --bin mcp_task_server --features executors/fake-agent
+        cargo build -p executors --release --bin fake-agent --features fake-agent
+    else
+        cargo build -p server --release
+        cargo build -p server --release --bin mcp_task_server
+    fi
 
 mcp-build:
     cargo build -p server --release --bin mcp_task_server

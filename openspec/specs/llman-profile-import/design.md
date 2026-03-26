@@ -14,7 +14,7 @@ Users manage multiple Claude Code accounts in llman using TOML groups. Vibe Kanb
 - Config key: add `llman_claude_code_path` (string, optional) to app config; when unset, default to `~/.config/llman/claude-code.toml` resolved via `dirs::config_dir()`.
 - Parsing: read TOML, extract `[groups.<name>]` tables, and keep only string values. Non-string values are ignored with a warning.
 - Mapping: create Claude Code variants named `LLMAN_<GROUP>` where `<GROUP>` is canonicalized to SCREAMING_SNAKE_CASE.
-- Import behavior: manual import creates or updates `LLMAN_` variants and persists them to `profiles.json`. No automatic syncing occurs on reload.
+- Import behavior: manual import creates or updates `LLMAN_` variants as `executor_profiles` overrides in `config.yaml` (the server/UI do not write config files). No automatic syncing occurs on reload.
 - Update rules: during import, `cmd.env` is replaced with the group's env map; other fields are preserved.
 
 ## Risks / Trade-offs

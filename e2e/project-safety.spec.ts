@@ -1,142 +1,73 @@
-import { expect, test } from './fixtures';
-import { createRepoAndProject, unsafeWorktreesDir } from './helpers/setup';
-import { uiIds } from '../frontend/src/lib/uiIds';
-import type { Locator } from '@playwright/test';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 
-async function expectAnyTextVisible(
-  container: Locator,
-  texts: string[]
-): Promise<void> {
-  for (const text of texts) {
-    // eslint-disable-next-line no-await-in-loop
-    if ((await container.getByText(text).count()) > 0) {
-      // eslint-disable-next-line no-await-in-loop
-      await expect(container.getByText(text).first()).toBeVisible();
-      return;
-    }
-  }
-  throw new Error(`Expected to find one of: ${texts.join(', ')}`);
-}
-
-async function findProjectRowByDisambiguator(
-  menu: Locator,
-  disambiguators: string[]
-) {
-  for (const value of disambiguators) {
-    // eslint-disable-next-line no-await-in-loop
-    const row = menu
-      .getByRole('menuitemradio')
-      .filter({ hasText: value })
-      .first();
-    // eslint-disable-next-line no-await-in-loop
-    if ((await row.count()) > 0) {
-      return row;
-    }
-  }
-  throw new Error(`Could not find project row by: ${disambiguators.join(', ')}`);
-}
+import { expect, test } from './fixtures';
+import { createRepoAndProject, createTask } from './helpers/setup';
+import { getConfigDir } from './helpers/seed';
 
 test.describe('project safety', () => {
-  test('same-name projects are disambiguated and delete confirm is unambiguous', async ({
+  test('same-name projects are disambiguated; create/delete actions are not shown', async ({
     page,
     makeName,
     reposDir,
   }) => {
     const sharedName = makeName('same-name');
-    const { repo: repoA, project: projectA } = await createRepoAndProject(
-      page.request,
-      {
-        name: sharedName,
-        reposDir,
-        repoFolderName: makeName('repo-a'),
-      }
-    );
-    const { repo: repoB, project: projectB } = await createRepoAndProject(
-      page.request,
-      {
-        name: sharedName,
-        reposDir,
-        repoFolderName: makeName('repo-b'),
-      }
-    );
-
-    const repoAFolder = path.basename(repoA.path);
-    const repoBFolder = path.basename(repoB.path);
+    const { project: projectA } = await createRepoAndProject(page.request, {
+      name: sharedName,
+      reposDir,
+      repoFolderName: makeName('repo-a'),
+    });
+    const { project: projectB } = await createRepoAndProject(page.request, {
+      name: sharedName,
+      reposDir,
+      repoFolderName: makeName('repo-b'),
+    });
 
     await page.goto(`/projects/${projectA.id}/tasks`);
     await page.getByRole('button', { name: 'Switch project' }).click();
 
-    const switcher = page.getByRole('menu');
-    await expectAnyTextVisible(switcher, [repoAFolder, projectA.id]);
-    await expectAnyTextVisible(switcher, [repoBFolder, projectB.id]);
+    const menu = page.getByRole('menu');
+    await expect(menu.getByText(projectA.id)).toBeVisible();
+    await expect(menu.getByText(projectB.id)).toBeVisible();
 
-    const projectBRow = await findProjectRowByDisambiguator(switcher, [
-      repoBFolder,
-      projectB.id,
-    ]);
-    await projectBRow.locator('[data-project-delete]').click();
-
-    const confirm = page.getByRole('dialog', { name: /delete/i });
-    await expect(confirm).toBeVisible();
-    await expect(confirm.getByText(sharedName)).toBeVisible();
-    await expectAnyTextVisible(confirm, [repoBFolder, projectB.id]);
-    await confirm.getByRole('button', { name: 'Delete' }).click();
-
-    await page.getByRole('button', { name: 'Switch project' }).click();
-    await expect(page.getByRole('menu').getByText(repoBFolder)).toHaveCount(0, {
-      timeout: 60_000,
-    });
-    await expect(page.getByRole('menu').getByText(projectB.id)).toHaveCount(0, {
-      timeout: 60_000,
-    });
-
-    // Keep the remaining project usable.
-    await expect(page).toHaveURL(new RegExp(`/projects/${projectA.id}/tasks`));
-    expect(projectB.id).toBeTruthy();
+    await expect(menu.locator('[data-project-delete]')).toHaveCount(0);
+    await expect(
+      menu.getByRole('menuitem', { name: 'Create Project' })
+    ).toHaveCount(0);
   });
 
-  test('project wizard is explicit and unsafe repo paths require acknowledgement', async ({
+  test('orphaned project history shows Unknown project banner', async ({
     page,
     makeName,
     reposDir,
   }) => {
-    const baseName = makeName('base-project');
-    const { project: baseProject } = await createRepoAndProject(page.request, {
-      name: baseName,
+    const { project } = await createRepoAndProject(page.request, {
+      name: makeName('orphaned-project'),
       reposDir,
-      repoFolderName: makeName('base-repo'),
+      repoFolderName: makeName('repo'),
     });
 
-    await page.goto(`/projects/${baseProject.id}/tasks`);
+    const taskTitle = makeName('task');
+    await createTask(page.request, {
+      projectId: project.id,
+      title: taskTitle,
+      status: 'todo',
+    });
 
-    await page.getByRole('button', { name: 'Switch project' }).click();
-    await page.getByRole('menuitem', { name: 'Create Project' }).click();
-
-    // Step 1: pick or create a repo in an unsafe-looking directory.
-    await page.locator(`#${uiIds.projectWizardPickRepo}`).click();
-    await page.locator(`#${uiIds.repoPickerOptionNew}`).click();
-    await page.locator(`#${uiIds.repoPickerName}`).fill(makeName('unsafe-repo'));
-    await page
-      .locator(`#${uiIds.repoPickerParentPath}`)
-      .fill(unsafeWorktreesDir(reposDir));
-    await page.locator(`#${uiIds.repoPickerSubmitCreate}`).click();
-
-    // Selecting a repo must NOT create/navigate until the wizard is explicitly confirmed.
-    await expect(page).toHaveURL(
-      new RegExp(`/projects/${baseProject.id}/tasks`)
+    const configPath = path.join(getConfigDir(), 'config.yaml');
+    const raw = await fs.readFile(configPath, 'utf8');
+    const current = raw.trim() ? JSON.parse(raw) : {};
+    const projects = Array.isArray(current.projects) ? current.projects : [];
+    const nextProjects = projects.filter((p: any) => p?.id !== project.id);
+    await fs.writeFile(
+      configPath,
+      `${JSON.stringify({ ...current, projects: nextProjects }, null, 2)}\n`
     );
+    await page.request.post('/api/config/reload', { data: {} });
 
-    // Step 2: confirm name + acknowledge unsafe path.
-    await page.locator(`#${uiIds.projectWizardName}`).fill(makeName('new-project'));
-
-    const createButton = page.locator(`#${uiIds.projectWizardSubmitCreate}`);
-    await expect(createButton).toBeDisabled();
-
-    await page.locator(`#${uiIds.projectWizardUnsafeAck}`).click();
-    await expect(createButton).toBeEnabled();
-
-    await createButton.click();
-    await expect(page).toHaveURL(/\/projects\/[^/]+\/tasks/);
+    await page.goto(`/projects/${project.id}/tasks`);
+    await expect(page.getByText('Unknown project')).toBeVisible();
+    await expect(page.getByText(taskTitle)).toBeVisible();
   });
 });
+

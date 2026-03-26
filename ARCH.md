@@ -288,9 +288,9 @@ fn default_mcp_config_path(&self) -> Option<PathBuf>
 - MCP（模型上下文协议）配置
 
 #### Fake Agent 本地复现
-- 构建二进制：`cargo build -p executors --bin fake-agent`
+- 构建二进制：`cargo build -p executors --features fake-agent --bin fake-agent`
 - 使用临时 dev 资产/数据库：`VIBE_ASSET_DIR=$(mktemp -d)` 后执行 `pnpm run dev`
-- Settings -> Task Execution 选择 `FAKE_AGENT`（或在 `profiles.json` 中设置）
+- 在 `config.yaml` 中配置 `executor_profile` / `executor_profiles` 使用 `FAKE_AGENT`，然后 `POST /api/config/reload`
 - 如需指定路径/命令：设置 `VIBE_FAKE_AGENT_PATH`
 - 脚本场景：在配置里设置 `scenario_path` 指向 JSONL
 - apply_patch 模拟会写入工作区下 `__fake_agent__<suffix>/` 以触发 diff
@@ -570,7 +570,7 @@ flowchart TD
 ### 本地部署（当前）
 单机部署：
 - `~/.vibe-kanban/data/` 中的 SQLite 数据库
-- `~/.vibe-kanban/config.json` 中的配置
+- `~/.config/vk/config.yaml`（或 `VK_CONFIG_DIR`）中的配置
 - `~/.vibe-kanban/worktrees/` 中的 Git worktrees
 - `~/.vibe-kanban/assets/` 中的资产
 - 本地构建的单个二进制文件

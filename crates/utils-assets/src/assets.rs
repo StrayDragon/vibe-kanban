@@ -36,14 +36,6 @@ pub fn asset_dir() -> std::path::PathBuf {
     // ✔ Windows → %APPDATA%\\Example\\MyApp
 }
 
-pub fn config_path() -> std::path::PathBuf {
-    asset_dir().join("config.json")
-}
-
-pub fn profiles_path() -> std::path::PathBuf {
-    asset_dir().join("profiles.json")
-}
-
 pub fn credentials_path() -> std::path::PathBuf {
     asset_dir().join("credentials.json")
 }

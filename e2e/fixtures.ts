@@ -10,6 +10,12 @@ type E2EFixtures = {
 };
 
 export const test = base.extend<E2EFixtures>({
+  page: async ({ page }, use) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('vk.disclaimer_acknowledged', '1');
+    });
+    await use(page);
+  },
   seed: [
     async ({}, use) => {
       await use(getSeed());

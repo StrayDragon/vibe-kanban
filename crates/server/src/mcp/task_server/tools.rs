@@ -4041,7 +4041,6 @@ mod tests {
         ServiceExt,
         handler::{client::ClientHandler, server::tool::IntoCallToolResult},
     };
-    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
     use super::*;
     use crate::test_support::TestEnvGuard;
@@ -4932,25 +4931,34 @@ mod tests {
         .await
         .unwrap();
 
-        // Set project policy to allow-list with an empty list so any explicit override is rejected.
-        let record = db::entities::project::Entity::find()
-            .filter(db::entities::project::Column::Uuid.eq(project_id))
-            .one(&pool)
-            .await
-            .unwrap()
-            .expect("project record");
-        let mut active: db::entities::project::ActiveModel = record.into();
-        active.mcp_auto_executor_policy_mode =
-            Set(db::types::ProjectMcpExecutorPolicyMode::AllowList);
-        active.mcp_auto_executor_policy_allow_list_json = Set(Some(serde_json::json!([])));
-        let _ = active.update(&pool).await.unwrap();
+        // Enforce a restrictive allow-list in config.yaml so variant overrides are rejected.
+        let config_path = temp_root.join("vk-config").join("config.yaml");
+        let repo_path = temp_root.join("repo");
+        std::fs::create_dir_all(&repo_path).unwrap();
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"projects:
+  - id: {project_id}
+    name: Policy project
+    repos:
+      - path: "{repo_path}"
+    mcp_auto_executor_policy_mode: allow_list
+    mcp_auto_executor_policy_allow_list:
+      - executor: CLAUDE_CODE
+"#,
+                repo_path = repo_path.display()
+            ),
+        )
+        .unwrap();
+        deployment.reload_user_config().await.unwrap();
 
         let server = TaskServer::new(deployment.clone());
         let result = server
             .start_attempt(Parameters(StartAttemptRequest {
                 task_id: node_task_id,
                 executor: Some("CLAUDE_CODE".to_string()),
-                variant: None,
+                variant: Some("xhigh".to_string()),
                 repos: vec![WorkspaceRepoInput {
                     repo_id: Uuid::new_v4(),
                     target_branch: "main".to_string(),
@@ -5106,17 +5114,27 @@ mod tests {
         .await
         .unwrap();
 
-        let record = db::entities::project::Entity::find()
-            .filter(db::entities::project::Column::Uuid.eq(project_id))
-            .one(&pool)
-            .await
-            .unwrap()
-            .expect("project record");
-        let mut active: db::entities::project::ActiveModel = record.into();
-        active.mcp_auto_executor_policy_mode =
-            Set(db::types::ProjectMcpExecutorPolicyMode::AllowList);
-        active.mcp_auto_executor_policy_allow_list_json = Set(Some(serde_json::json!([])));
-        let _ = active.update(&pool).await.unwrap();
+        // Enforce a restrictive allow-list in config.yaml so variant overrides are rejected.
+        let config_path = temp_root.join("vk-config").join("config.yaml");
+        let repo_path = temp_root.join("repo");
+        std::fs::create_dir_all(&repo_path).unwrap();
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"projects:
+  - id: {project_id}
+    name: Policy follow-up project
+    repos:
+      - path: "{repo_path}"
+    mcp_auto_executor_policy_mode: allow_list
+    mcp_auto_executor_policy_allow_list:
+      - executor: CLAUDE_CODE
+"#,
+                repo_path = repo_path.display()
+            ),
+        )
+        .unwrap();
+        deployment.reload_user_config().await.unwrap();
 
         let attempt_id = Uuid::new_v4();
         let workspace = Workspace::create(
@@ -5127,6 +5145,21 @@ mod tests {
             },
             attempt_id,
             node_task_id,
+        )
+        .await
+        .unwrap();
+        deployment.git().initialize_repo_with_main_branch(&repo_path).unwrap();
+        let repo =
+            db::models::repo::Repo::find_or_create(&pool, &repo_path, "Repo")
+                .await
+                .unwrap();
+        let _ = db::models::workspace_repo::WorkspaceRepo::create_many(
+            &pool,
+            workspace.id,
+            &[db::models::workspace_repo::CreateWorkspaceRepo {
+                repo_id: repo.id,
+                target_branch: "main".to_string(),
+            }],
         )
         .await
         .unwrap();

@@ -10,3 +10,6 @@ export function getReposDir(): string {
   return process.env.VK_E2E_REPOS_DIR ?? '.e2e/repos';
 }
 
+export function getConfigDir(): string {
+  return process.env.VK_E2E_CONFIG_DIR ?? '.e2e/config';
+}

@@ -651,6 +651,7 @@ mod tests {
                     target_branch: "main".to_string(),
                 }],
                 prompt_override: None,
+                agent_working_dir: None,
             },
         )
         .await
@@ -691,6 +692,7 @@ mod tests {
                     repo_id: repo.id,
                     target_branch: "main".to_string(),
                 }],
+                agent_working_dir: None,
             },
         )
         .await

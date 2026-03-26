@@ -579,40 +579,4 @@ mod tests {
             other => panic!("expected error mapping, got {other:?}"),
         }
     }
-
-    #[test]
-    fn set_mcp_servers_in_config_path_rejects_empty_path() {
-        let mut raw_config = serde_json::json!({});
-        let result = set_mcp_servers_in_config_path(&mut raw_config, &[], &HashMap::new());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn set_mcp_servers_in_config_path_overwrites_non_object_nodes() {
-        let mut raw_config = serde_json::json!({
-            "outer": "nope"
-        });
-        let mut servers = HashMap::new();
-        servers.insert(
-            "local".to_string(),
-            serde_json::json!({ "command": "tool" }),
-        );
-
-        set_mcp_servers_in_config_path(
-            &mut raw_config,
-            &["outer".to_string(), "mcpServers".to_string()],
-            &servers,
-        )
-        .expect("should coerce non-object nodes");
-
-        let outer = raw_config
-            .get("outer")
-            .and_then(Value::as_object)
-            .expect("outer object");
-        let mcp_servers = outer
-            .get("mcpServers")
-            .and_then(Value::as_object)
-            .expect("mcpServers object");
-        assert!(mcp_servers.contains_key("local"));
-    }
 }

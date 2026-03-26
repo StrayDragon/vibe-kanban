@@ -1,7 +1,7 @@
 pub mod assets;
 
 pub use assets::{
-    ScriptAssets, SoundAssets, asset_dir, config_path, credentials_path, profiles_path,
+    ScriptAssets, SoundAssets, asset_dir, credentials_path,
 };
 
 // Get or create cached PowerShell script file
