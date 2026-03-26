@@ -72,3 +72,13 @@ server legacy export-db-projects-yaml --out /tmp/vk-projects.yaml
 将导出的 `projects:` 合并到 `~/.config/vk/config.yaml`（或 `VK_CONFIG_DIR`），然后执行 `POST /api/config/reload` 生效。
 
 更多迁移细节（含 prompt 模板）：见 `docs/config-migration.md`。
+
+## 从 legacy `config.json` / `profiles.json` 迁移（可选）
+
+如果你升级自旧版本，并且旧版曾在 `asset_dir()` 下保存系统设置与 profiles overrides，可以运行：
+
+```bash
+server legacy export-asset-config-yaml --install
+```
+
+该工具会把 secrets 写入同级 `secret.env`，并在 YAML 中替换为 `{{secret.NAME}}`（不会把 token 明文写进 YAML）。

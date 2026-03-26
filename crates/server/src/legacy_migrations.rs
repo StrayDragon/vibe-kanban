@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     path::{Component, Path, PathBuf},
     str::FromStr,
 };
@@ -25,6 +26,22 @@ pub enum ExportDbProjectsYamlParseResult {
 
 pub const EXPORT_DB_PROJECTS_YAML_DEPRECATION_WARNING: &str = "DEPRECATED: DB-backed projects/repos settings are legacy. This migration tool will be removed in a future release.";
 
+#[derive(Debug, Default, Clone)]
+pub struct ExportAssetConfigYamlArgs {
+    pub out: Option<PathBuf>,
+    pub install: bool,
+    pub dry_run: bool,
+    pub print_paths: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportAssetConfigYamlParseResult {
+    Help,
+    Run,
+}
+
+pub const EXPORT_ASSET_CONFIG_YAML_DEPRECATION_WARNING: &str = "DEPRECATED: asset_dir()/config.json and asset_dir()/profiles.json are legacy. This migration tool will be removed in a future release.";
+
 pub fn export_db_projects_yaml_help() -> &'static str {
     r#"Export DB-backed project/repo settings to a YAML snippet.
 
@@ -48,6 +65,32 @@ Notes:
   - Install target is resolved the same way as VK:
     - Prefer `VK_CONFIG_DIR`
     - Otherwise OS config dir (~/.config/vk on Linux/macOS, %APPDATA%\vk on Windows)
+"#
+}
+
+pub fn export_asset_config_yaml_help() -> &'static str {
+    r#"Export legacy asset config (config.json + profiles.json) into YAML config fields.
+
+DEPRECATED:
+  asset_dir()/config.json and asset_dir()/profiles.json are legacy. This migration tool will be removed in a future release.
+
+Usage:
+  export-asset-config-yaml --out <path>
+  export-asset-config-yaml --out -
+  export-asset-config-yaml --install
+  export-asset-config-yaml --install --dry-run
+  export-asset-config-yaml --print-paths
+
+Notes:
+  - Output is a YAML mapping containing selected fields from legacy `config.json` and `profiles.json`
+  - Secrets are NOT written into YAML; they are written into `secret.env` and referenced via `{{secret.NAME}}`
+  - Only supported executors (default: CLAUDE_CODE + CODEX) are migrated from `profiles.json`
+  - Install target is resolved the same way as VK:
+    - Prefer `VK_CONFIG_DIR`
+    - Otherwise OS config dir (~/.config/vk on Linux/macOS, %APPDATA%\vk on Windows)
+  - Legacy source paths are resolved the same way as VK:
+    - `${VIBE_ASSET_DIR:-default_asset_dir}/config.json`
+    - `${VIBE_ASSET_DIR:-default_asset_dir}/profiles.json`
 "#
 }
 
@@ -104,6 +147,62 @@ pub fn parse_export_db_projects_yaml_args(
             print_paths,
         },
         ExportDbProjectsYamlParseResult::Run,
+    ))
+}
+
+pub fn parse_export_asset_config_yaml_args(
+    args: impl IntoIterator<Item = String>,
+) -> Result<(ExportAssetConfigYamlArgs, ExportAssetConfigYamlParseResult)> {
+    let mut out = None;
+    let mut install = false;
+    let mut dry_run = false;
+    let mut print_paths = false;
+
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == "--out" {
+            let value = args.next().context("Missing value for --out")?;
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                anyhow::bail!("--out must not be empty");
+            }
+            out = Some(PathBuf::from(trimmed));
+            continue;
+        }
+        if arg == "--install" {
+            install = true;
+            continue;
+        }
+        if arg == "--dry-run" {
+            dry_run = true;
+            continue;
+        }
+        if arg == "--print-paths" {
+            print_paths = true;
+            continue;
+        }
+        if arg == "--help" || arg == "-h" {
+            return Ok((
+                ExportAssetConfigYamlArgs::default(),
+                ExportAssetConfigYamlParseResult::Help,
+            ));
+        }
+
+        anyhow::bail!("Unknown argument: {arg}");
+    }
+
+    if out.is_some() && install {
+        anyhow::bail!("--out and --install are mutually exclusive");
+    }
+
+    Ok((
+        ExportAssetConfigYamlArgs {
+            out,
+            install,
+            dry_run,
+            print_paths,
+        },
+        ExportAssetConfigYamlParseResult::Run,
     ))
 }
 
@@ -736,6 +835,700 @@ pub async fn run_export_db_projects_yaml(args: ExportDbProjectsYamlArgs) -> Resu
     Ok(())
 }
 
+fn load_secret_env_for_merge(secret_env_path: &Path) -> Result<HashMap<String, String>> {
+    let raw = match std::fs::read_to_string(secret_env_path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(err) => return Err(err.into()),
+    };
+
+    let mut vars = HashMap::new();
+    for (idx, line) in raw.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let line = line.strip_prefix("export ").unwrap_or(line).trim();
+        let Some((key, value)) = line.split_once('=') else {
+            anyhow::bail!("Invalid secret.env line {}: expected KEY=VALUE", idx + 1);
+        };
+
+        let key = key.trim();
+        if key.is_empty() {
+            anyhow::bail!("Invalid secret.env line {}: empty key", idx + 1);
+        }
+
+        let mut value = value.trim().to_string();
+        if (value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\''))
+        {
+            value = value[1..value.len().saturating_sub(1)].to_string();
+        }
+        vars.insert(key.to_string(), value);
+    }
+
+    Ok(vars)
+}
+
+fn is_supported_executor_key(key: &str) -> bool {
+    matches!(key, "CLAUDE_CODE" | "CODEX")
+}
+
+fn is_sensitive_env_key(key: &str, value: &str) -> bool {
+    let upper = key.trim().to_ascii_uppercase();
+    if upper.contains("TOKEN")
+        || upper.contains("PASSWORD")
+        || upper.contains("PASSWD")
+        || upper.contains("SECRET")
+        || upper.contains("PAT")
+        || upper.ends_with("_KEY")
+        || upper.contains("API_KEY")
+        || upper.contains("ACCESS_KEY")
+        || upper.contains("PRIVATE_KEY")
+    {
+        return true;
+    }
+
+    let trimmed = value.trim();
+    trimmed.starts_with("sk-") || trimmed.starts_with("ghp_")
+}
+
+fn rewrite_secret_env_values_in_place(
+    env: &mut serde_json::Map<String, serde_json::Value>,
+    secrets: &mut HashMap<String, String>,
+) {
+    let keys = env.keys().cloned().collect::<Vec<_>>();
+    for key in keys {
+        let Some(value) = env.get_mut(&key) else {
+            continue;
+        };
+        let Some(raw) = value.as_str().map(|s| s.trim()).filter(|s| !s.is_empty()) else {
+            continue;
+        };
+
+        if !is_sensitive_env_key(&key, raw) {
+            continue;
+        }
+
+        match secrets.get(&key) {
+            Some(existing) if existing != raw => {
+                eprintln!(
+                    "warning: secret env key '{key}' has multiple values; keeping the first one"
+                );
+            }
+            Some(_) => {}
+            None => {
+                secrets.insert(key.clone(), raw.to_string());
+            }
+        }
+
+        *value = serde_json::Value::String(format!("{{{{secret.{key}}}}}"));
+    }
+}
+
+fn rewrite_secrets_in_env_objects(
+    value: &mut serde_json::Value,
+    secrets: &mut HashMap<String, String>,
+) {
+    match value {
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+        serde_json::Value::Array(items) => {
+            for item in items {
+                rewrite_secrets_in_env_objects(item, secrets);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (key, value) in map.iter_mut() {
+                if key == "env" {
+                    if let serde_json::Value::Object(env) = value {
+                        rewrite_secret_env_values_in_place(env, secrets);
+                    }
+                }
+                rewrite_secrets_in_env_objects(value, secrets);
+            }
+        }
+    }
+}
+
+fn extract_and_template_secret(
+    root: &mut serde_json::Value,
+    pointer: &str,
+    secret_key: &str,
+    secrets: &mut HashMap<String, String>,
+) {
+    let Some(value) = root.pointer_mut(pointer) else {
+        return;
+    };
+    let Some(raw) = value.as_str().map(|s| s.trim()).filter(|s| !s.is_empty()) else {
+        return;
+    };
+
+    secrets
+        .entry(secret_key.to_string())
+        .or_insert_with(|| raw.to_string());
+    *value = serde_json::Value::String(format!("{{{{secret.{secret_key}}}}}"));
+}
+
+fn config_json_to_yaml_fragment(
+    mut config_json: serde_json::Value,
+    secrets: &mut HashMap<String, String>,
+) -> Result<serde_yaml::Mapping> {
+    extract_and_template_secret(
+        &mut config_json,
+        "/access_control/token",
+        "VK_ACCESS_TOKEN",
+        secrets,
+    );
+    extract_and_template_secret(
+        &mut config_json,
+        "/accessControl/token",
+        "VK_ACCESS_TOKEN",
+        secrets,
+    );
+    extract_and_template_secret(&mut config_json, "/github/pat", "GITHUB_PAT", secrets);
+    extract_and_template_secret(
+        &mut config_json,
+        "/github/oauth_token",
+        "GITHUB_OAUTH_TOKEN",
+        secrets,
+    );
+    extract_and_template_secret(
+        &mut config_json,
+        "/github/oauthToken",
+        "GITHUB_OAUTH_TOKEN",
+        secrets,
+    );
+
+    let obj = config_json
+        .as_object()
+        .context("legacy config.json must be a JSON object")?;
+
+    let allowed_keys: [&str; 21] = [
+        "config_version",
+        "theme",
+        "executor_profile",
+        "executor_profiles",
+        "disclaimer_acknowledged",
+        "onboarding_acknowledged",
+        "notifications",
+        "editor",
+        "github",
+        "workspace_dir",
+        "last_app_version",
+        "show_release_notes",
+        "language",
+        "git_branch_prefix",
+        "git_no_verify",
+        "showcases",
+        "pr_auto_description_enabled",
+        "pr_auto_description_prompt",
+        "llman_claude_code_path",
+        "diff_preview_guard",
+        "access_control",
+    ];
+
+    let mut fragment = serde_yaml::Mapping::new();
+
+    for key in allowed_keys {
+        let Some(value) = obj.get(key) else {
+            continue;
+        };
+        if value.is_null() {
+            continue;
+        }
+
+        if key == "executor_profile" {
+            let parsed = serde_json::from_value::<ExecutorProfileId>(value.clone());
+            match parsed {
+                Ok(profile_id) => {
+                    if !matches!(
+                        profile_id.executor,
+                        BaseCodingAgent::ClaudeCode | BaseCodingAgent::Codex
+                    ) {
+                        eprintln!(
+                            "warning: legacy config.json executor_profile '{}' is not supported by this build; skipping it",
+                            profile_id
+                        );
+                        continue;
+                    }
+                }
+                Err(err) => {
+                    eprintln!(
+                        "warning: legacy config.json executor_profile is invalid ({err}); skipping it"
+                    );
+                    continue;
+                }
+            }
+        }
+
+        // If legacy config.json includes executor_profiles, do a best-effort filter to supported
+        // executors to avoid deserialization failures when default features are trimmed.
+        let yaml_value = if key == "executor_profiles" {
+            let mut filtered = value.clone();
+            if let Some(executors) = filtered
+                .get_mut("executors")
+                .and_then(|v| v.as_object_mut())
+            {
+                let executor_keys = executors.keys().cloned().collect::<Vec<_>>();
+                for executor_key in executor_keys {
+                    if !is_supported_executor_key(&executor_key) {
+                        executors.remove(&executor_key);
+                    }
+                }
+            }
+            rewrite_secrets_in_env_objects(&mut filtered, secrets);
+            serde_yaml::to_value(filtered).context("Failed to convert executor_profiles to YAML")?
+        } else {
+            serde_yaml::to_value(value)
+                .with_context(|| format!("Failed to convert {key} to YAML"))?
+        };
+
+        fragment.insert(serde_yaml::Value::String(key.to_string()), yaml_value);
+    }
+
+    Ok(fragment)
+}
+
+fn profiles_json_to_executor_profiles_yaml(
+    mut profiles_json: serde_json::Value,
+    secrets: &mut HashMap<String, String>,
+) -> Result<serde_yaml::Value> {
+    let executors = profiles_json
+        .get_mut("executors")
+        .context("legacy profiles.json missing top-level 'executors' key")?;
+    let executors_obj = executors
+        .as_object_mut()
+        .context("legacy profiles.json 'executors' must be a JSON object")?;
+
+    let keys = executors_obj.keys().cloned().collect::<Vec<_>>();
+    let mut dropped = Vec::new();
+    for key in keys {
+        if !is_supported_executor_key(&key) {
+            executors_obj.remove(&key);
+            dropped.push(key);
+        }
+    }
+    if !dropped.is_empty() {
+        dropped.sort();
+        eprintln!(
+            "warning: dropping unsupported executors from legacy profiles.json: {}",
+            dropped.join(", ")
+        );
+    }
+
+    rewrite_secrets_in_env_objects(&mut profiles_json, secrets);
+
+    let yaml =
+        serde_yaml::to_value(profiles_json).context("Failed to convert profiles.json to YAML")?;
+    Ok(yaml)
+}
+
+fn secret_env_to_string(tool_name: &str, vars: &HashMap<String, String>) -> String {
+    let mut keys = vars.keys().cloned().collect::<Vec<_>>();
+    keys.sort();
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# Generated by {tool_name} at {}\n",
+        Utc::now().to_rfc3339()
+    ));
+    for key in keys {
+        let value = vars.get(&key).expect("key exists");
+        out.push_str(&format!("{key}={value}\n"));
+    }
+    out
+}
+
+fn validate_yaml_with_secret_env(yaml: &str, secret_env: Option<&str>) -> Result<()> {
+    let validate_dir =
+        std::env::temp_dir().join(format!("vk-asset-export-validate-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&validate_dir).context("Failed to create validation temp dir")?;
+    let config_path = validate_dir.join("config.yaml");
+    std::fs::write(&config_path, yaml).context("Failed to write validation config.yaml")?;
+    if let Some(secret_env) = secret_env {
+        let secret_path = validate_dir.join("secret.env");
+        std::fs::write(&secret_path, secret_env)
+            .context("Failed to write validation secret.env")?;
+    }
+
+    match config::try_load_config_from_file(&config_path) {
+        Ok(_) => {
+            let _ = std::fs::remove_dir_all(&validate_dir);
+            Ok(())
+        }
+        Err(err) => Err(anyhow::anyhow!(
+            "Exported YAML is not loadable by VK config loader (validation file: {}): {}",
+            config_path.display(),
+            err
+        )),
+    }
+}
+
+fn install_yaml_fragment_into_user_config(
+    config_path: &Path,
+    fragment: serde_yaml::Mapping,
+    tool_name: &str,
+    dry_run: bool,
+) -> Result<()> {
+    let slug = timestamp_slug();
+    let config_dir = config_path
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(utils_core::vk_config_dir);
+
+    let header = "# yaml-language-server: $schema=./config.schema.json\n";
+    let generated = format!("# Updated by {tool_name} at {}\n", Utc::now().to_rfc3339());
+
+    if !config_path.exists() {
+        let mut new_contents = String::new();
+        new_contents.push_str(header);
+        new_contents.push_str(&generated);
+        new_contents.push_str(
+            &serde_yaml::to_string(&serde_yaml::Value::Mapping(fragment))
+                .context("Failed to serialize config.yaml")?,
+        );
+        if !new_contents.ends_with('\n') {
+            new_contents.push('\n');
+        }
+
+        if dry_run {
+            println!(
+                "dry-run: would write new config.yaml to {}",
+                config_path.display()
+            );
+            return Ok(());
+        }
+
+        atomic_write_out(config_path, &new_contents)?;
+        println!(
+            "Installed legacy asset config into {}",
+            config_path.display()
+        );
+        return Ok(());
+    }
+
+    let existing_raw = std::fs::read_to_string(config_path)
+        .with_context(|| format!("Failed to read {}", config_path.display()))?;
+
+    let existing_value: serde_yaml::Value = match serde_yaml::from_str(&existing_raw) {
+        Ok(value) => value,
+        Err(err) => {
+            let fallback_path = config_dir.join(format!("asset-config.export.{slug}.yaml"));
+            let contents = serde_yaml::to_string(&serde_yaml::Value::Mapping(fragment))
+                .context("Failed to serialize export as YAML")?;
+            if dry_run {
+                println!(
+                    "dry-run: existing config.yaml is invalid YAML; would write exported asset config to {}",
+                    fallback_path.display()
+                );
+                return Ok(());
+            }
+            atomic_write_out(&fallback_path, &contents)?;
+            println!(
+                "Existing config.yaml is invalid YAML ({err}); wrote exported asset config to {}",
+                fallback_path.display()
+            );
+            println!(
+                "Merge {} into {} manually, then reload.",
+                fallback_path.display(),
+                config_path.display()
+            );
+            return Ok(());
+        }
+    };
+
+    let mut existing_map = match existing_value {
+        serde_yaml::Value::Null => serde_yaml::Mapping::new(),
+        serde_yaml::Value::Mapping(map) => map,
+        other => {
+            let fallback_path = config_dir.join(format!("asset-config.export.{slug}.yaml"));
+            let contents = serde_yaml::to_string(&serde_yaml::Value::Mapping(fragment))
+                .context("Failed to serialize export as YAML")?;
+            if dry_run {
+                println!(
+                    "dry-run: existing config.yaml is not a YAML mapping ({:?}); would write exported asset config to {}",
+                    other,
+                    fallback_path.display()
+                );
+                return Ok(());
+            }
+            atomic_write_out(&fallback_path, &contents)?;
+            println!(
+                "Existing config.yaml is not a YAML mapping; wrote exported asset config to {}",
+                fallback_path.display()
+            );
+            println!(
+                "Merge {} into {} manually, then reload.",
+                fallback_path.display(),
+                config_path.display()
+            );
+            return Ok(());
+        }
+    };
+
+    for (k, v) in fragment {
+        existing_map.insert(k, v);
+    }
+
+    let mut new_contents = String::new();
+    new_contents.push_str(header);
+    new_contents.push_str(&generated);
+    new_contents.push_str(
+        &serde_yaml::to_string(&serde_yaml::Value::Mapping(existing_map))
+            .context("Failed to serialize merged config.yaml")?,
+    );
+    if !new_contents.ends_with('\n') {
+        new_contents.push('\n');
+    }
+
+    let backup_path = config_dir.join(format!("config.yaml.bak.{slug}"));
+    if dry_run {
+        println!(
+            "dry-run: would backup existing config.yaml to {}",
+            backup_path.display()
+        );
+        println!(
+            "dry-run: would update config.yaml in {}",
+            config_path.display()
+        );
+        return Ok(());
+    }
+
+    atomic_write_out(&backup_path, &existing_raw)?;
+    atomic_write_out(config_path, &new_contents)?;
+
+    println!(
+        "Updated config.yaml in {} (backup at {})",
+        config_path.display(),
+        backup_path.display()
+    );
+    Ok(())
+}
+
+fn install_secret_env(
+    secret_env_path: &Path,
+    new_secrets: HashMap<String, String>,
+    tool_name: &str,
+    dry_run: bool,
+) -> Result<()> {
+    if new_secrets.is_empty() {
+        return Ok(());
+    }
+
+    let slug = timestamp_slug();
+    let config_dir = secret_env_path
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(utils_core::vk_config_dir);
+
+    let mut merged = new_secrets;
+    let existing = load_secret_env_for_merge(secret_env_path)?;
+    for (k, v) in existing {
+        merged.insert(k, v);
+    }
+
+    let contents = secret_env_to_string(tool_name, &merged);
+
+    if secret_env_path.exists() {
+        let existing_raw = std::fs::read_to_string(secret_env_path)
+            .with_context(|| format!("Failed to read {}", secret_env_path.display()))?;
+        let backup_path = config_dir.join(format!("secret.env.bak.{slug}"));
+        if dry_run {
+            println!(
+                "dry-run: would backup existing secret.env to {}",
+                backup_path.display()
+            );
+            println!(
+                "dry-run: would update secret.env in {}",
+                secret_env_path.display()
+            );
+            return Ok(());
+        }
+
+        atomic_write_out(&backup_path, &existing_raw)?;
+        atomic_write_out(secret_env_path, &contents)?;
+    } else {
+        if dry_run {
+            println!(
+                "dry-run: would write new secret.env to {}",
+                secret_env_path.display()
+            );
+            return Ok(());
+        }
+        atomic_write_out(secret_env_path, &contents)?;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(secret_env_path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    Ok(())
+}
+
+pub async fn run_export_asset_config_yaml(args: ExportAssetConfigYamlArgs) -> Result<()> {
+    eprintln!("{EXPORT_ASSET_CONFIG_YAML_DEPRECATION_WARNING}");
+
+    let config_dir = utils_core::vk_config_dir();
+    let config_path = utils_core::vk_config_yaml_path();
+    let secret_env_path = utils_core::vk_secret_env_path();
+
+    let legacy_config_json = asset_dir().join("config.json");
+    let legacy_profiles_json = asset_dir().join("profiles.json");
+
+    if args.print_paths {
+        println!("asset_dir: {}", asset_dir().display());
+        println!("legacy_config_json: {}", legacy_config_json.display());
+        println!("legacy_profiles_json: {}", legacy_profiles_json.display());
+        println!("config_dir: {}", config_dir.display());
+        println!("config_yaml: {}", config_path.display());
+        println!("secret_env: {}", secret_env_path.display());
+        return Ok(());
+    }
+
+    if !args.install && args.out.is_none() {
+        anyhow::bail!("Missing output mode: use --out <path> or --install (see --help)");
+    }
+
+    let mut fragment = serde_yaml::Mapping::new();
+    let mut secrets = HashMap::<String, String>::new();
+
+    if legacy_config_json.exists() {
+        let raw = std::fs::read_to_string(&legacy_config_json)
+            .with_context(|| format!("Failed to read {}", legacy_config_json.display()))?;
+        let value = serde_json::from_str::<serde_json::Value>(&raw)
+            .with_context(|| format!("Failed to parse {}", legacy_config_json.display()))?;
+        let cfg_fragment = config_json_to_yaml_fragment(value, &mut secrets)?;
+        for (k, v) in cfg_fragment {
+            fragment.insert(k, v);
+        }
+    } else {
+        eprintln!(
+            "warning: legacy config.json not found at {}, skipping",
+            legacy_config_json.display()
+        );
+    }
+
+    if legacy_profiles_json.exists() {
+        let raw = std::fs::read_to_string(&legacy_profiles_json)
+            .with_context(|| format!("Failed to read {}", legacy_profiles_json.display()))?;
+        let value = serde_json::from_str::<serde_json::Value>(&raw)
+            .with_context(|| format!("Failed to parse {}", legacy_profiles_json.display()))?;
+        let executor_profiles = profiles_json_to_executor_profiles_yaml(value, &mut secrets)?;
+        fragment.insert(
+            serde_yaml::Value::String("executor_profiles".to_string()),
+            executor_profiles,
+        );
+    } else {
+        eprintln!(
+            "warning: legacy profiles.json not found at {}, skipping",
+            legacy_profiles_json.display()
+        );
+    }
+
+    let fragment_yaml = serde_yaml::to_string(&serde_yaml::Value::Mapping(fragment.clone()))
+        .context("Failed to serialize export as YAML")?;
+
+    let validation_secret_env = if secrets.is_empty() {
+        None
+    } else {
+        Some(secret_env_to_string("export-asset-config-yaml", &secrets))
+    };
+    validate_yaml_with_secret_env(&fragment_yaml, validation_secret_env.as_deref())?;
+
+    if args.install {
+        // Merge into current config.yaml + secret.env and validate the merged result before writing.
+        let existing_raw =
+            std::fs::read_to_string(&config_path).unwrap_or_else(|_| "{}".to_string());
+        let existing_value: serde_yaml::Value = serde_yaml::from_str(&existing_raw)
+            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+        let mut existing_map = match existing_value {
+            serde_yaml::Value::Null => serde_yaml::Mapping::new(),
+            serde_yaml::Value::Mapping(map) => map,
+            _ => serde_yaml::Mapping::new(),
+        };
+        for (k, v) in fragment.clone() {
+            existing_map.insert(k, v);
+        }
+        let header = "# yaml-language-server: $schema=./config.schema.json\n";
+        let generated = format!(
+            "# Updated by export-asset-config-yaml at {}\n",
+            Utc::now().to_rfc3339()
+        );
+        let mut merged_yaml = String::new();
+        merged_yaml.push_str(header);
+        merged_yaml.push_str(&generated);
+        merged_yaml.push_str(
+            &serde_yaml::to_string(&serde_yaml::Value::Mapping(existing_map))
+                .context("Failed to serialize merged config.yaml")?,
+        );
+        if !merged_yaml.ends_with('\n') {
+            merged_yaml.push('\n');
+        }
+
+        let merged_secret_env = if secrets.is_empty() {
+            None
+        } else {
+            let existing_secrets = load_secret_env_for_merge(&secret_env_path)?;
+            let mut merged = secrets.clone();
+            for (k, v) in existing_secrets {
+                merged.insert(k, v);
+            }
+            Some(secret_env_to_string("export-asset-config-yaml", &merged))
+        };
+
+        validate_yaml_with_secret_env(&merged_yaml, merged_secret_env.as_deref())?;
+
+        // Write secret.env first to avoid transient reload failures when config.yaml references
+        // `{{secret.*}}` placeholders.
+        install_secret_env(
+            &secret_env_path,
+            secrets,
+            "export-asset-config-yaml",
+            args.dry_run,
+        )?;
+        install_yaml_fragment_into_user_config(
+            &config_path,
+            fragment,
+            "export-asset-config-yaml",
+            args.dry_run,
+        )?;
+
+        return Ok(());
+    }
+
+    let out_path = args.out.expect("checked above");
+    if out_path.as_os_str() == "-" {
+        print!("{fragment_yaml}");
+        if !secrets.is_empty() {
+            eprintln!(
+                "note: export references secret.env keys (run with --install to write secret.env): {}",
+                secrets.keys().cloned().collect::<Vec<_>>().join(", ")
+            );
+        }
+        return Ok(());
+    }
+
+    if args.dry_run {
+        println!("dry-run: would write export to {}", out_path.display());
+        return Ok(());
+    }
+
+    atomic_write_out(&out_path, &fragment_yaml)?;
+    println!("Exported asset config YAML to {}", out_path.display());
+    if !secrets.is_empty() {
+        eprintln!(
+            "note: export references secret.env keys; run with --install to write secret.env"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Mutex, OnceLock};
@@ -968,5 +1761,137 @@ mod tests {
         let config_path = temp_root.join("config.yaml");
         install_projects_into_user_config(&config_path, &yaml, true).expect("dry-run");
         assert!(!config_path.exists());
+    }
+
+    struct AssetEnvGuard {
+        prev_vk_config_dir: Option<String>,
+        prev_asset_dir: Option<String>,
+    }
+
+    impl AssetEnvGuard {
+        fn new(vk_config_dir: &Path, asset_dir: &Path) -> Self {
+            let prev_vk_config_dir = std::env::var("VK_CONFIG_DIR").ok();
+            let prev_asset_dir = std::env::var("VIBE_ASSET_DIR").ok();
+
+            unsafe {
+                std::env::set_var("VK_CONFIG_DIR", vk_config_dir.as_os_str());
+                std::env::set_var("VIBE_ASSET_DIR", asset_dir.as_os_str());
+            }
+
+            Self {
+                prev_vk_config_dir,
+                prev_asset_dir,
+            }
+        }
+    }
+
+    impl Drop for AssetEnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.prev_vk_config_dir {
+                    Some(value) => std::env::set_var("VK_CONFIG_DIR", value),
+                    None => std::env::remove_var("VK_CONFIG_DIR"),
+                }
+                match &self.prev_asset_dir {
+                    Some(value) => std::env::set_var("VIBE_ASSET_DIR", value),
+                    None => std::env::remove_var("VIBE_ASSET_DIR"),
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn export_asset_config_installs_yaml_and_secret_env() {
+        let _guard = env_lock().lock().unwrap_or_else(|err| err.into_inner());
+
+        let temp_root = std::env::temp_dir().join(format!(
+            "vk-asset-export-install-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let asset_root = temp_root.join("asset");
+        let config_root = temp_root.join("config");
+        std::fs::create_dir_all(&asset_root).unwrap();
+        std::fs::create_dir_all(&config_root).unwrap();
+
+        let _env = AssetEnvGuard::new(&config_root, &asset_root);
+
+        let legacy_config = serde_json::json!({
+          "executor_profile": { "executor": "CODEX", "variant": "XHIGH" },
+          "language": "ZH_HANS",
+          "theme": "SYSTEM",
+          "notifications": { "sound_enabled": false, "push_enabled": true, "sound_file": "COW_MOOING" },
+          "editor": { "editor_type": "NONE", "custom_command": null, "remote_ssh_host": null, "remote_ssh_user": null },
+          "access_control": { "mode": "TOKEN", "token": "tok_test_123", "allow_localhost_bypass": true },
+          "github": { "pat": "ghp_test_123" }
+        });
+        std::fs::write(
+            asset_root.join("config.json"),
+            serde_json::to_string_pretty(&legacy_config).unwrap(),
+        )
+        .unwrap();
+
+        let legacy_profiles = serde_json::json!({
+          "executors": {
+            "CLAUDE_CODE": {
+              "LLMAN_ANYROUTER": {
+                "CLAUDE_CODE": {
+                  "env": {
+                    "ANTHROPIC_BASE_URL": "https://example.com",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-test-anthropic"
+                  }
+                }
+              }
+            },
+            "FAKE_AGENT": {
+              "DEFAULT": {
+                "FAKE_AGENT": {
+                  "env": {
+                    "FAKE_TOKEN": "should-not-export"
+                  }
+                }
+              }
+            }
+          }
+        });
+        std::fs::write(
+            asset_root.join("profiles.json"),
+            serde_json::to_string_pretty(&legacy_profiles).unwrap(),
+        )
+        .unwrap();
+
+        run_export_asset_config_yaml(ExportAssetConfigYamlArgs {
+            out: None,
+            install: true,
+            dry_run: false,
+            print_paths: false,
+        })
+        .await
+        .expect("run export-asset-config-yaml --install");
+
+        let config_path = config_root.join("config.yaml");
+        let secret_path = config_root.join("secret.env");
+
+        let config_raw = std::fs::read_to_string(&config_path).expect("read config.yaml");
+        assert!(config_raw.contains("executor_profile"));
+        assert!(config_raw.contains("executor_profiles"));
+        assert!(config_raw.contains("{{secret.VK_ACCESS_TOKEN}}"));
+        assert!(config_raw.contains("{{secret.GITHUB_PAT}}"));
+        assert!(config_raw.contains("{{secret.ANTHROPIC_AUTH_TOKEN}}"));
+        assert!(!config_raw.contains("tok_test_123"));
+        assert!(!config_raw.contains("ghp_test_123"));
+        assert!(!config_raw.contains("sk-test-anthropic"));
+        assert!(!config_raw.contains("FAKE_AGENT"));
+
+        let secret_raw = std::fs::read_to_string(&secret_path).expect("read secret.env");
+        assert!(secret_raw.contains("VK_ACCESS_TOKEN=tok_test_123"));
+        assert!(secret_raw.contains("GITHUB_PAT=ghp_test_123"));
+        assert!(secret_raw.contains("ANTHROPIC_AUTH_TOKEN=sk-test-anthropic"));
+        assert!(!secret_raw.contains("FAKE_TOKEN"));
+
+        let loaded = config::try_load_config_from_file(&config_path).expect("load config");
+        assert_eq!(
+            loaded.executor_profile,
+            ExecutorProfileId::with_variant(BaseCodingAgent::Codex, "XHIGH".to_string())
+        );
     }
 }

@@ -76,8 +76,9 @@ Usage:
 
 Legacy (DEPRECATED; will be removed):
   server legacy export-db-projects-yaml [--install|--out <path>|--print-paths] [--dry-run]
+  server legacy export-asset-config-yaml [--install|--out <path>|--print-paths] [--dry-run]
 
-Run `server legacy export-db-projects-yaml --help` for details.
+Run `server legacy export-db-projects-yaml --help` or `server legacy export-asset-config-yaml --help` for details.
 "#
     );
 }
@@ -116,6 +117,23 @@ async fn maybe_run_cli_command() -> Result<bool, AnyhowError> {
                 }
 
                 server::legacy_migrations::run_export_db_projects_yaml(parsed).await?;
+                return Ok(true);
+            }
+            Some("export-asset-config-yaml") => {
+                let (parsed, action) =
+                    server::legacy_migrations::parse_export_asset_config_yaml_args(
+                        args.into_iter().skip(2),
+                    )?;
+
+                if action == server::legacy_migrations::ExportAssetConfigYamlParseResult::Help {
+                    println!(
+                        "{}",
+                        server::legacy_migrations::export_asset_config_yaml_help()
+                    );
+                    return Ok(true);
+                }
+
+                server::legacy_migrations::run_export_asset_config_yaml(parsed).await?;
                 return Ok(true);
             }
             Some(other) => {
