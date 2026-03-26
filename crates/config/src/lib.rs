@@ -34,15 +34,7 @@ pub enum ConfigError {
     ValidationError(String),
 }
 
-fn load_secret_env(
-    secret_env_path: &std::path::Path,
-) -> Result<HashMap<String, String>, ConfigError> {
-    let raw = match std::fs::read_to_string(secret_env_path) {
-        Ok(raw) => raw,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
-        Err(err) => return Err(err.into()),
-    };
-
+pub fn parse_secret_env_contents(raw: &str) -> Result<HashMap<String, String>, ConfigError> {
     let mut vars = HashMap::new();
     for (idx, line) in raw.lines().enumerate() {
         let line = line.trim();
@@ -77,6 +69,67 @@ fn load_secret_env(
     }
 
     Ok(vars)
+}
+
+pub fn try_load_secret_env(secret_env_path: &Path) -> Result<HashMap<String, String>, ConfigError> {
+    load_secret_env(secret_env_path)
+}
+
+fn load_secret_env(secret_env_path: &std::path::Path) -> Result<HashMap<String, String>, ConfigError>
+{
+    let metadata = match std::fs::symlink_metadata(secret_env_path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(err) => return Err(err.into()),
+    };
+
+    if metadata.file_type().is_symlink() {
+        return Err(ConfigError::ValidationError(format!(
+            "Invalid secret.env: must not be a symlink ({})",
+            secret_env_path.display()
+        )));
+    }
+    if !metadata.file_type().is_file() {
+        return Err(ConfigError::ValidationError(format!(
+            "Invalid secret.env: must be a regular file ({})",
+            secret_env_path.display()
+        )));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let mode = metadata.permissions().mode() & 0o777;
+        if (mode & 0o077) != 0 {
+            return Err(ConfigError::ValidationError(format!(
+                "Insecure permissions on secret.env (mode {mode:03o}). Expected 0600. Fix with: chmod 600 {}",
+                secret_env_path.display()
+            )));
+        }
+
+        let uid = metadata.uid();
+        // SAFETY: libc call has no side effects.
+        let euid = unsafe { libc::geteuid() };
+        // If running as root, require a root-owned secret.env. This prevents accidentally loading
+        // secrets from an untrusted user-owned file in a shared directory.
+        if euid == 0 {
+            if uid != 0 {
+                return Err(ConfigError::ValidationError(format!(
+                    "Insecure ownership on secret.env (uid {uid}). Expected uid 0 (root). Fix with: chown root:root {}",
+                    secret_env_path.display()
+                )));
+            }
+        } else if uid != euid {
+            return Err(ConfigError::ValidationError(format!(
+                "Insecure ownership on secret.env (uid {uid}). Expected uid {euid}. Fix with: chown {euid} {}",
+                secret_env_path.display()
+            )));
+        }
+    }
+
+    let raw = std::fs::read_to_string(secret_env_path)?;
+    parse_secret_env_contents(&raw)
 }
 
 struct TemplateEnv {
@@ -217,6 +270,96 @@ fn yaml_from_raw_with_templates(
     Ok(value)
 }
 
+/// Load config.yaml + optional projects.yaml/projects.d without resolving `{{secret.*}}`/`{{env.*}}`
+/// templates. This is intended for *display* and API responses to avoid leaking expanded secrets.
+pub fn try_load_public_config_from_file(config_path: &PathBuf) -> Result<Config, ConfigError> {
+    let config_dir = config_path
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(utils_core::vk_config_dir);
+
+    let projects_path = config_dir.join("projects.yaml");
+    let projects_dir = config_dir.join("projects.d");
+
+    let mut projects_extra_paths = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&projects_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let is_yaml = matches!(
+                path.extension().and_then(|ext| ext.to_str()),
+                Some("yaml") | Some("yml")
+            );
+            if is_yaml {
+                projects_extra_paths.push(path);
+            }
+        }
+    }
+    projects_extra_paths.sort();
+
+    let (raw, projects_raw, projects_extra_raws) = std::thread::scope(|scope| {
+        let config_handle = scope.spawn(|| read_optional_file(config_path));
+        let projects_handle = scope.spawn(|| read_optional_file(&projects_path));
+        let extra_handles = projects_extra_paths
+            .iter()
+            .map(|path| scope.spawn(move || read_optional_file(path)))
+            .collect::<Vec<_>>();
+
+        let config_raw = config_handle
+            .join()
+            .expect("config file read thread panicked");
+        let projects_raw = projects_handle
+            .join()
+            .expect("projects.yaml read thread panicked");
+        let extra_raws = extra_handles
+            .into_iter()
+            .map(|handle| handle.join().expect("projects.d read thread panicked"))
+            .collect::<Vec<_>>();
+
+        (config_raw, projects_raw, extra_raws)
+    });
+
+    let raw = raw?;
+    let projects_raw = projects_raw?;
+    let projects_extra_raws = projects_extra_raws
+        .into_iter()
+        .collect::<Result<Vec<_>, std::io::Error>>()?;
+
+    let mut config = match raw.as_deref() {
+        Some(raw) => serde_yaml::from_str::<Config>(raw)?,
+        None => Config::default(),
+    };
+
+    // If projects.yaml (or projects.d/*.yaml) exist, they become the canonical source of
+    // projects configuration. Otherwise fall back to inline `projects` in config.yaml.
+    let mut projects_override = Vec::new();
+    let mut has_projects_override = false;
+
+    if let Some(raw) = projects_raw.as_deref() {
+        let file = serde_yaml::from_str::<ProjectsFile>(raw)?;
+        projects_override.extend(file.projects);
+        has_projects_override = true;
+    }
+
+    for raw in projects_extra_raws.into_iter().flatten() {
+        let file = serde_yaml::from_str::<ProjectsFile>(&raw)?;
+        projects_override.extend(file.projects);
+        has_projects_override = true;
+    }
+
+    if has_projects_override {
+        config.projects = projects_override;
+    }
+
+    let config = config.normalized();
+    config
+        .validate_config_version()
+        .map_err(ConfigError::ValidationError)?;
+    Ok(config)
+}
+
 pub fn try_load_config_from_file(config_path: &PathBuf) -> Result<Config, ConfigError> {
     let config_dir = config_path
         .parent()
@@ -307,6 +450,9 @@ pub fn try_load_config_from_file(config_path: &PathBuf) -> Result<Config, Config
     }
 
     let config = config.normalized();
+    config
+        .validate_config_version()
+        .map_err(ConfigError::ValidationError)?;
 
     let profiles = executors::profile::ExecutorConfigs::from_defaults_merged_with_overrides(
         config.executor_profiles.as_ref(),
@@ -356,6 +502,37 @@ mod tests {
         ENV_LOCK.get_or_init(|| Mutex::new(()))
     }
 
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: Option<&str>) -> Self {
+            let prev = std::env::var_os(key);
+            // SAFETY: tests using EnvVarGuard are serialized by env_lock().
+            unsafe {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: tests using EnvVarGuard are serialized by env_lock().
+            unsafe {
+                match &self.prev {
+                    Some(value) => std::env::set_var(self.key, value),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+    }
+
     fn write_file(path: &std::path::Path, contents: &str) {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).expect("create dir");
@@ -366,11 +543,7 @@ mod tests {
     #[test]
     fn secret_env_overrides_system_env() {
         let _guard = env_lock().lock().unwrap();
-
-        let prev = std::env::var_os("GITHUB_PAT");
-        unsafe {
-            std::env::set_var("GITHUB_PAT", "from_system");
-        }
+        let _env = EnvVarGuard::set("GITHUB_PAT", Some("from_system"));
 
         let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
         let config_path = dir.join("config.yaml");
@@ -384,24 +557,21 @@ github:
 "#,
         );
         write_file(&secret_path, "GITHUB_PAT=from_secret\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600))
+                .expect("chmod secret.env");
+        }
 
         let loaded = try_load_config_from_file(&config_path).expect("load config");
         assert_eq!(loaded.github.pat.as_deref(), Some("from_secret"));
-
-        match prev {
-            Some(value) => unsafe { std::env::set_var("GITHUB_PAT", value) },
-            None => unsafe { std::env::remove_var("GITHUB_PAT") },
-        }
     }
 
     #[test]
     fn template_default_is_used_when_missing() {
         let _guard = env_lock().lock().unwrap();
-
-        let prev = std::env::var_os("GITHUB_PAT");
-        unsafe {
-            std::env::remove_var("GITHUB_PAT");
-        }
+        let _env = EnvVarGuard::set("GITHUB_PAT", None);
 
         let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
         let config_path = dir.join("config.yaml");
@@ -416,21 +586,12 @@ github:
 
         let loaded = try_load_config_from_file(&config_path).expect("load config");
         assert_eq!(loaded.github.pat.as_deref(), Some("fallback"));
-
-        match prev {
-            Some(value) => unsafe { std::env::set_var("GITHUB_PAT", value) },
-            None => unsafe { std::env::remove_var("GITHUB_PAT") },
-        }
     }
 
     #[test]
     fn missing_template_var_without_default_is_validation_error() {
         let _guard = env_lock().lock().unwrap();
-
-        let prev = std::env::var_os("GITHUB_PAT");
-        unsafe {
-            std::env::remove_var("GITHUB_PAT");
-        }
+        let _env = EnvVarGuard::set("GITHUB_PAT", None);
 
         let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
         let config_path = dir.join("config.yaml");
@@ -450,21 +611,12 @@ github:
             }
             other => panic!("unexpected error: {other:?}"),
         }
-
-        match prev {
-            Some(value) => unsafe { std::env::set_var("GITHUB_PAT", value) },
-            None => unsafe { std::env::remove_var("GITHUB_PAT") },
-        }
     }
 
     #[test]
     fn reload_keeps_last_known_good_on_error() {
         let _guard = env_lock().lock().unwrap();
-
-        let prev = std::env::var_os("GITHUB_PAT");
-        unsafe {
-            std::env::remove_var("GITHUB_PAT");
-        }
+        let _env = EnvVarGuard::set("GITHUB_PAT", None);
 
         let mut current = Config::default();
         current.github.pat = Some("old".to_string());
@@ -482,11 +634,6 @@ github:
         let (reloaded, err) = reload_config_keep_last_known_good(&current, &config_path);
         assert_eq!(reloaded.github.pat.as_deref(), Some("old"));
         assert!(err.unwrap_or_default().contains("GITHUB_PAT"));
-
-        match prev {
-            Some(value) => unsafe { std::env::set_var("GITHUB_PAT", value) },
-            None => unsafe { std::env::remove_var("GITHUB_PAT") },
-        }
     }
 
     #[test]

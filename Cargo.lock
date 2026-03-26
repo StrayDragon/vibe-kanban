@@ -976,6 +976,7 @@ dependencies = [
  "executors",
  "executors-core",
  "executors-protocol",
+ "libc",
  "once_cell",
  "rust-embed",
  "schemars 1.0.4",

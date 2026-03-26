@@ -422,7 +422,9 @@ pub struct ProjectsFile {
 
 impl Config {
     pub fn normalized(mut self) -> Self {
-        self.config_version = CURRENT_CONFIG_VERSION.to_string();
+        if self.config_version.trim().is_empty() {
+            self.config_version = CURRENT_CONFIG_VERSION.to_string();
+        }
 
         if !utils_git::is_valid_branch_prefix(&self.git_branch_prefix) {
             tracing::warn!(
@@ -461,6 +463,16 @@ impl Config {
         }
 
         self
+    }
+
+    pub fn validate_config_version(&self) -> Result<(), String> {
+        if self.config_version != CURRENT_CONFIG_VERSION {
+            return Err(format!(
+                "Unsupported config_version '{}'. Expected '{}'. Please update your config.yaml to match the latest schema (see config.schema.json).",
+                self.config_version, CURRENT_CONFIG_VERSION
+            ));
+        }
+        Ok(())
     }
 
     pub fn validate_projects(&self, profiles: &ExecutorConfigs) -> Result<(), String> {
@@ -741,7 +753,7 @@ mod tests {
     #[test]
     fn aliases_and_normalization_are_applied() {
         let raw = r#"
-configVersion: v1
+configVersion: v10
 gitBranchPrefix: feature
 executorProfile:
   executor: CLAUDE_CODE
@@ -753,6 +765,22 @@ executorProfile:
 
         assert_eq!(config.config_version, CURRENT_CONFIG_VERSION);
         assert_eq!(config.git_branch_prefix, "feature");
+    }
+
+    #[test]
+    fn explicit_non_latest_config_version_is_rejected() {
+        let raw = r#"
+configVersion: v1
+executorProfile:
+  executor: CLAUDE_CODE
+"#;
+
+        let config = serde_yaml::from_str::<Config>(raw)
+            .expect("YAML parse should succeed")
+            .normalized();
+
+        assert_eq!(config.config_version, "v1");
+        assert!(config.validate_config_version().is_err());
     }
 
     #[test]
