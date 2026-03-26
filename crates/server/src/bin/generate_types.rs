@@ -179,6 +179,8 @@ fn generate_types_content() -> String {
         server::routes::task_attempts::RepoBranchStatus::decl(),
         repos::filesystem::DirectoryEntry::decl(),
         repos::filesystem::DirectoryListResponse::decl(),
+        config::ProjectRepoConfig::decl(),
+        config::ProjectConfig::decl(),
         config::Config::decl(),
         config::NotificationConfig::decl(),
         config::ThemeMode::decl(),
