@@ -1,10 +1,7 @@
-# config-management Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change refactor-config-migration. Update Purpose after archive.
-## Requirements
 ### Requirement: Single-schema config deserialization
-The system SHALL deserialize configuration using the latest schema with defaults for missing fields and without version-specific migrations.
+The system SHALL deserialize configuration from the canonical YAML config using the latest schema with defaults for missing fields and without version-specific migrations.
 
 #### Scenario: Missing optional fields
 - **WHEN** a config file omits optional fields
@@ -25,16 +22,9 @@ The system SHALL return default configuration when the config file is missing or
 - **WHEN** the config file cannot be read
 - **THEN** the loader returns the default Config
 
-#### Scenario: Invalid JSON
-- **WHEN** the config file contains malformed JSON
+#### Scenario: Invalid YAML
+- **WHEN** the config file contains malformed YAML
 - **THEN** the loader returns the default Config and logs a warning
-
-### Requirement: Persist latest schema on save
-The system SHALL persist configuration using the latest schema and config_version.
-
-#### Scenario: Save after load
-- **WHEN** a Config is saved
-- **THEN** the serialized config_version equals the latest value and uses the latest field set
 
 ### Requirement: Config endpoints remain stable
 The system SHALL preserve existing config endpoints and response shapes while server-side modules are reorganized.
@@ -43,3 +33,8 @@ The system SHALL preserve existing config endpoints and response shapes while se
 - **WHEN** the frontend requests `/api/info`
 - **THEN** the response still contains the expected `config` payload and required metadata
 
+## REMOVED Requirements
+
+### Requirement: Persist latest schema on save
+**Reason**: VK configuration is file-first YAML and is not persisted/rewritten by VK as part of normal runtime operation.
+**Migration**: Operators edit `config.yaml` directly (with YAML LSP using `config.schema.json`) and trigger a reload.
