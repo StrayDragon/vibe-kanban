@@ -28,10 +28,7 @@ import { TaskReviewInbox } from '@/components/tasks/TaskReviewInbox';
 import { useSearch } from '@/contexts/SearchContext';
 import { openTaskForm } from '@/lib/openTaskForm';
 import { useProject } from '@/contexts/ProjectContext';
-import { useOpenProjectInEditor } from '@/hooks/projects/useOpenProjectInEditor';
-import { OpenInIdeButton } from '@/components/ide/OpenInIdeButton';
-import { useNavigateWithSearch, useProjectRepos } from '@/hooks';
-import { useEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
+import { useNavigateWithSearch } from '@/hooks';
 import { ArchiveKanbanDialog } from '@/components/dialogs';
 import { paths } from '@/lib/paths';
 import { uiIds } from '@/lib/uiIds';
@@ -66,11 +63,9 @@ export function Navbar() {
     projects,
     isLoading: projectsLoading,
   } = useProject();
-  const editorIntegrationEnabled = useEditorIntegrationEnabled();
   const navigateWithSearch = useNavigateWithSearch();
   const { query, setQuery, active, clear, registerInputRef, reviewInbox } =
     useSearch();
-  const handleOpenInEditor = useOpenProjectInEditor(project || null);
   const isOverviewRoute = location.pathname.startsWith('/tasks');
   const isProjectTasksRoute = /^\/projects\/[^/]+\/tasks/.test(
     location.pathname
@@ -78,17 +73,10 @@ export function Navbar() {
   const isProjectArchiveDetailRoute =
     /^\/projects\/[^/]+\/archives\/[^/]+\/?$/.test(location.pathname);
 
-  const { data: repos } = useProjectRepos(projectId, {
-    enabled: Boolean(projectId && project),
-  });
-  const isSingleRepoProject = repos?.length === 1;
-  const showOpenInIde = Boolean(
-    projectId && project && isSingleRepoProject && editorIntegrationEnabled
-  );
   const showCreateTask = Boolean(
     projectId && project && !isOverviewRoute && !isProjectArchiveDetailRoute
   );
-  const showProjectActions = showOpenInIde || showCreateTask;
+  const showProjectActions = showCreateTask;
   const hasProjects = projects.length > 0;
   const kanbanPath = projectId
     ? paths.projectTasks(projectId)
@@ -155,10 +143,6 @@ export function Navbar() {
     } finally {
       ArchiveKanbanDialog.hide();
     }
-  };
-
-  const handleOpenInIDE = () => {
-    handleOpenInEditor();
   };
 
   const renderProjectOption = (item: Project) => (
@@ -247,12 +231,6 @@ export function Navbar() {
             {showProjectActions ? (
               <>
                 <div className="flex items-center gap-1">
-                  {showOpenInIde && (
-                    <OpenInIdeButton
-                      onClick={handleOpenInIDE}
-                      className="h-9 w-9"
-                    />
-                  )}
                   {isProjectTasksRoute && projectId && (
                     <Button
                       variant="ghost"

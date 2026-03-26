@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use anyhow;
 use app_runtime::Deployment;
 use axum::{
-    Extension, Json, Router,
+    Extension, Router,
     extract::{
         Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -11,7 +11,7 @@ use axum::{
     http::StatusCode,
     middleware::{Next, from_fn_with_state},
     response::{IntoResponse, Json as ResponseJson, Response},
-    routing::{get, post},
+    routing::get,
 };
 use chrono::Utc;
 use db::models::{
@@ -43,12 +43,13 @@ fn settings_write_disabled() -> (StatusCode, ResponseJson<ApiResponse<()>>) {
 pub async fn get_projects(
     State(deployment): State<DeploymentImpl>,
 ) -> Result<ResponseJson<ApiResponse<Vec<Project>>>, ApiError> {
-    let config = deployment.config().read().await;
-    let now = Utc::now();
+    let status = deployment.config_status().read().await.clone();
+    let loaded_at: chrono::DateTime<Utc> = status.loaded_at.into();
+    let config = deployment.public_config().read().await.clone();
     let projects = config
         .projects
         .iter()
-        .filter_map(|project| project_from_config(project, now))
+        .filter_map(|project| project_from_config(project, loaded_at))
         .collect();
     Ok(ResponseJson(ApiResponse::success(projects)))
 }
@@ -139,15 +140,14 @@ async fn send_projects_snapshot(
     deployment: &DeploymentImpl,
     last_seq: &mut u64,
 ) -> anyhow::Result<()> {
-    let now = Utc::now();
-    let projects = {
-        let config = deployment.config().read().await;
-        config
-            .projects
-            .iter()
-            .filter_map(|project| project_from_config(project, now))
-            .collect::<Vec<_>>()
-    };
+    let status = deployment.config_status().read().await.clone();
+    let loaded_at: chrono::DateTime<Utc> = status.loaded_at.into();
+    let config = deployment.public_config().read().await.clone();
+    let projects = config
+        .projects
+        .iter()
+        .filter_map(|project| project_from_config(project, loaded_at))
+        .collect::<Vec<_>>();
 
     let projects_map: serde_json::Map<String, serde_json::Value> = projects
         .into_iter()
@@ -208,72 +208,6 @@ pub async fn update_project() -> (StatusCode, ResponseJson<ApiResponse<()>>) {
 
 pub async fn delete_project() -> (StatusCode, ResponseJson<ApiResponse<()>>) {
     settings_write_disabled()
-}
-
-#[derive(serde::Deserialize)]
-pub struct OpenEditorRequest {
-    editor_type: Option<String>,
-    git_repo_path: Option<PathBuf>,
-}
-
-#[derive(Debug, serde::Serialize, ts_rs::TS)]
-pub struct OpenEditorResponse {
-    pub url: Option<String>,
-}
-
-pub async fn open_project_in_editor(
-    Extension(project): Extension<Project>,
-    State(deployment): State<DeploymentImpl>,
-    Json(payload): Json<Option<OpenEditorRequest>>,
-) -> Result<ResponseJson<ApiResponse<OpenEditorResponse>>, ApiError> {
-    let path = if let Some(ref req) = payload
-        && let Some(ref specified_path) = req.git_repo_path
-    {
-        specified_path.clone()
-    } else {
-        let config = deployment.config().read().await;
-        let project_config = config
-            .projects
-            .iter()
-            .find(|candidate| candidate.id == Some(project.id))
-            .ok_or_else(|| ApiError::NotFound("Project not found".to_string()))?;
-
-        project_config
-            .repos
-            .first()
-            .map(|repo| PathBuf::from(repo.path.clone()))
-            .ok_or_else(|| ApiError::BadRequest("Project has no repositories".to_string()))?
-    };
-
-    let editor_config = {
-        let config = deployment.config().read().await;
-        if config.editor.is_integration_disabled() {
-            return Err(ApiError::BadRequest(
-                "Editor integration is disabled".to_string(),
-            ));
-        }
-        let editor_type_str = payload.as_ref().and_then(|req| req.editor_type.as_deref());
-        config.editor.with_override(editor_type_str)
-    };
-
-    match editor_config.open_file(&path).await {
-        Ok(url) => {
-            tracing::info!(
-                "Opened editor for project {} at path: {}{}",
-                project.id,
-                path.to_string_lossy(),
-                if url.is_some() { " (remote mode)" } else { "" }
-            );
-
-            Ok(ResponseJson(ApiResponse::success(OpenEditorResponse {
-                url,
-            })))
-        }
-        Err(e) => {
-            tracing::error!("Failed to open editor for project {}: {:?}", project.id, e);
-            Err(ApiError::EditorOpen(e))
-        }
-    }
 }
 
 pub async fn search_project_files(
@@ -420,7 +354,6 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
             get(get_project).put(update_project).delete(delete_project),
         )
         .route("/search", get(search_project_files))
-        .route("/open-editor", post(open_project_in_editor))
         .route(
             "/archived-kanbans",
             get(crate::routes::archived_kanbans::list_project_archived_kanbans)
@@ -549,12 +482,14 @@ async fn load_project_from_config_middleware(
         return Ok(next.run(request).await);
     }
 
-    let config = deployment.config().read().await;
+    let status = deployment.config_status().read().await.clone();
+    let loaded_at: chrono::DateTime<Utc> = status.loaded_at.into();
+    let config = deployment.public_config().read().await.clone();
     let project = config
         .projects
         .iter()
         .find(|candidate| candidate.id == Some(project_id))
-        .and_then(|project| project_from_config(project, Utc::now()))
+        .and_then(|project| project_from_config(project, loaded_at))
         .ok_or(StatusCode::NOT_FOUND)?;
 
     request.extensions_mut().insert(project);

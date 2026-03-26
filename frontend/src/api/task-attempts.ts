@@ -10,8 +10,6 @@ import type {
   GitOperationError,
   TaskAttemptStatusResponse,
   MergeTaskAttemptRequest,
-  OpenEditorRequest,
-  OpenEditorResponse,
   PrCommentsResponse,
   PushError,
   PushTaskAttemptRequest,
@@ -124,20 +122,6 @@ export const attemptsApi = {
       }
     );
     return handleApiResponse<RunAgentSetupResponse>(response);
-  },
-
-  openEditor: async (
-    attemptId: string,
-    data: OpenEditorRequest
-  ): Promise<OpenEditorResponse> => {
-    const response = await makeRequest(
-      `/api/task-attempts/${attemptId}/open-editor`,
-      {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }
-    );
-    return handleApiResponse<OpenEditorResponse>(response);
   },
 
   getBranchStatus: async (attemptId: string): Promise<RepoBranchStatus[]> => {

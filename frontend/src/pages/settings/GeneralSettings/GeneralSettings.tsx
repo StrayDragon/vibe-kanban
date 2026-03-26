@@ -1,7 +1,6 @@
-import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Copy, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
+import { Copy, Loader2, RefreshCw } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -14,11 +13,8 @@ import {
 } from '@/components/ui/card';
 import { toast } from '@/components/ui/toast';
 import { useUserSystem } from '@/components/ConfigProvider';
-import {
-  configApi,
-  type ConfigStatusResponse,
-  type OpenConfigTarget,
-} from '@/lib/api';
+import { configApi } from '@/lib/api';
+import type { ConfigStatusResponse } from 'shared/types';
 
 const CONFIG_STATUS_QUERY_KEY = ['configStatus'] as const;
 
@@ -45,7 +41,6 @@ export function GeneralSettings() {
   const { t } = useTranslation(['settings', 'common']);
   const queryClient = useQueryClient();
   const { reloadSystem } = useUserSystem();
-  const [opening, setOpening] = useState<OpenConfigTarget | null>(null);
 
   const {
     data: status,
@@ -78,25 +73,6 @@ export function GeneralSettings() {
       });
     },
   });
-
-  const openTarget = async (target: OpenConfigTarget) => {
-    setOpening(target);
-    try {
-      const result = await configApi.openConfigTarget(target);
-      if (result.url) {
-        window.open(result.url, '_blank', 'noopener,noreferrer');
-      }
-    } catch (err) {
-      console.error('Failed to open config target:', err);
-      toast({
-        variant: 'destructive',
-        title: 'Open failed',
-        description: err instanceof Error ? err.message : 'Open failed.',
-      });
-    } finally {
-      setOpening(null);
-    }
-  };
 
   if (isLoading) {
     return (
@@ -194,15 +170,6 @@ export function GeneralSettings() {
                   <Copy className="mr-2 h-4 w-4" />
                   {t('common:buttons.copy', 'Copy')}
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void openTarget('config_dir')}
-                  disabled={opening === 'config_dir'}
-                >
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  {t('settings.config.open', 'Open')}
-                </Button>
               </div>
             </div>
 
@@ -217,15 +184,6 @@ export function GeneralSettings() {
                 >
                   <Copy className="mr-2 h-4 w-4" />
                   {t('common:buttons.copy', 'Copy')}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void openTarget('config_yaml')}
-                  disabled={opening === 'config_yaml'}
-                >
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  {t('settings.config.open', 'Open')}
                 </Button>
               </div>
             </div>
@@ -243,15 +201,6 @@ export function GeneralSettings() {
                 >
                   <Copy className="mr-2 h-4 w-4" />
                   {t('common:buttons.copy', 'Copy')}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void openTarget('projects_yaml')}
-                  disabled={opening === 'projects_yaml'}
-                >
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  {t('settings.config.open', 'Open')}
                 </Button>
               </div>
               <div className="text-xs text-muted-foreground">
@@ -276,15 +225,6 @@ export function GeneralSettings() {
                   <Copy className="mr-2 h-4 w-4" />
                   {t('common:buttons.copy', 'Copy')}
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void openTarget('projects_dir')}
-                  disabled={opening === 'projects_dir'}
-                >
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  {t('settings.config.open', 'Open')}
-                </Button>
               </div>
               <div className="text-xs text-muted-foreground">
                 {t(
@@ -308,15 +248,6 @@ export function GeneralSettings() {
                   <Copy className="mr-2 h-4 w-4" />
                   {t('common:buttons.copy', 'Copy')}
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void openTarget('secret_env')}
-                  disabled={opening === 'secret_env'}
-                >
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  {t('settings.config.open', 'Open')}
-                </Button>
               </div>
               <div className="text-xs text-muted-foreground">
                 {t(
@@ -339,15 +270,6 @@ export function GeneralSettings() {
                 >
                   <Copy className="mr-2 h-4 w-4" />
                   {t('common:buttons.copy', 'Copy')}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void openTarget('schema')}
-                  disabled={opening === 'schema'}
-                >
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  {t('settings.config.open', 'Open')}
                 </Button>
               </div>
               <div className="text-xs text-muted-foreground">
@@ -385,15 +307,6 @@ export function GeneralSettings() {
                 >
                   <Copy className="mr-2 h-4 w-4" />
                   {t('common:buttons.copy', 'Copy')}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void openTarget('projects_schema')}
-                  disabled={opening === 'projects_schema'}
-                >
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  {t('settings.config.open', 'Open')}
                 </Button>
               </div>
               <div className="text-xs text-muted-foreground">

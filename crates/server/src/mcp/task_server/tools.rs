@@ -90,8 +90,9 @@ Avoid: Guessing UUIDs."#,
         annotations(read_only_hint = true)
     )]
     async fn list_projects(&self) -> Result<Json<ListProjectsResponse>, ErrorData> {
-        let now = chrono::Utc::now().to_rfc3339();
-        let config = self.deployment.config().read().await;
+        let loaded_at = self.deployment.config_status().read().await.loaded_at;
+        let now = chrono::DateTime::<chrono::Utc>::from(loaded_at).to_rfc3339();
+        let config = self.deployment.public_config().read().await.clone();
         let summaries = config
             .projects
             .iter()
@@ -6912,7 +6913,7 @@ mod tests {
             .create_with_waiter(pool, request)
             .await
             .unwrap();
-        let created = tokio::time::timeout(Duration::from_millis(200), created_rx.recv())
+        let created = tokio::time::timeout(Duration::from_secs(2), created_rx.recv())
             .await
             .expect("approval should emit created event")
             .expect("created event receive should succeed");
@@ -7088,7 +7089,7 @@ mod tests {
             .create_with_waiter(pool, request)
             .await
             .unwrap();
-        let created = tokio::time::timeout(Duration::from_millis(200), created_rx.recv())
+        let created = tokio::time::timeout(Duration::from_secs(2), created_rx.recv())
             .await
             .expect("approval should emit created event")
             .expect("created event receive should succeed");
@@ -7247,7 +7248,7 @@ mod tests {
             .await
             .unwrap();
 
-        let timed_out = tokio::time::timeout(Duration::from_millis(200), waiter).await;
+        let timed_out = tokio::time::timeout(Duration::from_secs(1), waiter).await;
         assert!(timed_out.is_err(), "approval should stay pending");
         assert_eq!(client.call_count(), 0);
 

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use app_runtime::{Deployment, DeploymentError};
 use axum::{
-    Json, Router,
+    Router,
     body::Body,
     extract::{Path, Query, State},
     http,
@@ -10,7 +10,7 @@ use axum::{
     routing::{get, post, put},
 };
 use config::{
-    Config, ConfigError, SoundFile,
+    Config, SoundFile,
     editor::{EditorConfig, EditorType},
 };
 use execution::github::GitHubService;
@@ -18,7 +18,6 @@ use executors::{
     agent_command::{AgentCommandResolution, agent_command_resolver},
     executors::{AvailabilityInfo, BaseAgentCapability, CodingAgent, StandardCodingAgentExecutor},
     llman,
-    mcp_config::{McpConfig, read_agent_config},
     profile::ExecutorConfigs,
 };
 use executors_protocol::{BaseCodingAgent, ExecutorProfileId};
@@ -52,6 +51,28 @@ fn redact_secrets_in_env_objects(value: &mut Value) {
         }
         Value::Object(map) => {
             for (key, value) in map.iter_mut() {
+                // Avoid leaking executor command overrides (they may contain tokens, secrets, etc.).
+                if key == "base_command_override" {
+                    if matches!(value, Value::String(_)) {
+                        *value = Value::String("<redacted>".to_string());
+                    }
+                }
+                if key == "additional_params" {
+                    match value {
+                        Value::Array(items) => {
+                            for item in items.iter_mut() {
+                                if matches!(item, Value::String(_)) {
+                                    *item = Value::String("<redacted>".to_string());
+                                }
+                            }
+                        }
+                        Value::String(_) => {
+                            *value = Value::String("<redacted>".to_string());
+                        }
+                        _ => {}
+                    }
+                }
+
                 if key == "env" {
                     if let Value::Object(env) = value {
                         for (env_key, env_value) in env.iter_mut() {
@@ -88,10 +109,8 @@ pub fn router() -> Router<DeploymentImpl> {
         .route("/info", get(get_user_system_info))
         .route("/config/status", get(get_config_status))
         .route("/config/reload", post(reload_config))
-        .route("/config/open", post(open_config_target))
         .route("/config", put(update_config))
         .route("/sounds/{sound}", get(get_sound))
-        .route("/mcp-config", get(get_mcp_servers).post(update_mcp_servers))
         .route("/profiles", get(get_profiles).put(update_profiles))
         .route("/profiles/llman-path", get(resolve_llman_path))
         .route("/profiles/import-llman", post(import_llman_profiles))
@@ -150,8 +169,9 @@ pub struct UserSystemInfo {
 async fn get_user_system_info(
     State(deployment): State<DeploymentImpl>,
 ) -> ResponseJson<ApiResponse<UserSystemInfo>> {
-    let config = deployment.config().read().await;
-    let mut redacted_config = config.clone();
+    // Use the in-memory non-templated view of config for API responses to avoid leaking expanded
+    // secrets and to keep the response consistent with the last successfully loaded runtime config.
+    let mut redacted_config = deployment.public_config().read().await.clone();
     redacted_config.access_control.token = None;
     redacted_config.github.pat = None;
     redacted_config.github.oauth_token = None;
@@ -187,6 +207,7 @@ pub struct ConfigStatusResponse {
     pub secret_env_path: String,
     pub schema_path: String,
     pub projects_schema_path: String,
+    #[ts(type = "number")]
     pub loaded_at_unix_ms: u64,
     pub last_error: Option<String>,
 }
@@ -257,61 +278,6 @@ async fn reload_config(
     Ok(ResponseJson(ApiResponse::success(response)))
 }
 
-#[derive(Debug, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum OpenConfigTarget {
-    ConfigDir,
-    ConfigYaml,
-    ProjectsYaml,
-    ProjectsDir,
-    SecretEnv,
-    Schema,
-    ProjectsSchema,
-}
-
-#[derive(Debug, Serialize, Deserialize, TS)]
-pub struct OpenConfigTargetRequest {
-    pub target: OpenConfigTarget,
-    pub editor_type: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, TS)]
-pub struct OpenConfigTargetResponse {
-    pub url: Option<String>,
-}
-
-#[axum::debug_handler]
-async fn open_config_target(
-    State(deployment): State<DeploymentImpl>,
-    Json(payload): Json<OpenConfigTargetRequest>,
-) -> Result<ResponseJson<ApiResponse<OpenConfigTargetResponse>>, ApiError> {
-    let status = deployment.config_status().read().await.clone();
-    let path = match payload.target {
-        OpenConfigTarget::ConfigDir => status.config_dir,
-        OpenConfigTarget::ConfigYaml => status.config_path,
-        OpenConfigTarget::ProjectsYaml => utils_core::vk_projects_yaml_path(),
-        OpenConfigTarget::ProjectsDir => utils_core::vk_projects_dir(),
-        OpenConfigTarget::SecretEnv => status.secret_env_path,
-        OpenConfigTarget::Schema => utils_core::vk_config_schema_path(),
-        OpenConfigTarget::ProjectsSchema => utils_core::vk_projects_schema_path(),
-    };
-
-    let editor_config = {
-        let config = deployment.config().read().await;
-        if config.editor.is_integration_disabled() {
-            return Err(ApiError::BadRequest(
-                "Editor integration is disabled".to_string(),
-            ));
-        }
-        config.editor.with_override(payload.editor_type.as_deref())
-    };
-
-    let url = editor_config.open_file(&path).await?;
-    Ok(ResponseJson(ApiResponse::success(
-        OpenConfigTargetResponse { url },
-    )))
-}
-
 fn settings_write_disabled() -> (http::StatusCode, ResponseJson<ApiResponse<()>>) {
     (
         http::StatusCode::METHOD_NOT_ALLOWED,
@@ -336,77 +302,6 @@ async fn get_sound(Path(sound): Path<SoundFile>) -> Result<Response, ApiError> {
         .body(Body::from(sound.data.into_owned()))
         .unwrap();
     Ok(response)
-}
-
-#[derive(TS, Debug, Deserialize)]
-pub struct McpServerQuery {
-    executor: BaseCodingAgent,
-}
-
-#[derive(TS, Debug, Serialize, Deserialize)]
-pub struct GetMcpServerResponse {
-    // servers: HashMap<String, Value>,
-    mcp_config: McpConfig,
-    config_path: String,
-}
-
-async fn get_mcp_servers(
-    State(_deployment): State<DeploymentImpl>,
-    Query(query): Query<McpServerQuery>,
-) -> Result<ResponseJson<ApiResponse<GetMcpServerResponse>>, ApiError> {
-    let coding_agent = ExecutorConfigs::get_cached()
-        .get_coding_agent(&ExecutorProfileId::new(query.executor))
-        .ok_or(ConfigError::ValidationError(
-            "Executor not found".to_string(),
-        ))?;
-
-    if !coding_agent.supports_mcp() {
-        return Err(ApiError::BadRequest(
-            "MCP not supported by this executor".to_string(),
-        ));
-    }
-
-    // Resolve supplied config path or agent default
-    let config_path = match coding_agent.default_mcp_config_path() {
-        Some(path) => path,
-        None => {
-            return Err(ApiError::BadRequest(
-                "Could not determine config file path".to_string(),
-            ));
-        }
-    };
-
-    let mut mcpc = coding_agent.get_mcp_config();
-    let raw_config = read_agent_config(&config_path, &mcpc).await?;
-    let servers = get_mcp_servers_from_config_path(&raw_config, &mcpc.servers_path);
-    mcpc.set_servers(servers);
-    Ok(ResponseJson(ApiResponse::success(GetMcpServerResponse {
-        mcp_config: mcpc,
-        config_path: config_path.to_string_lossy().to_string(),
-    })))
-}
-
-async fn update_mcp_servers() -> (http::StatusCode, ResponseJson<ApiResponse<()>>) {
-    settings_write_disabled()
-}
-
-/// Helper function to get MCP servers from config using a path
-fn get_mcp_servers_from_config_path(raw_config: &Value, path: &[String]) -> HashMap<String, Value> {
-    let mut current = raw_config;
-    for part in path {
-        current = match current.get(part) {
-            Some(val) => val,
-            None => return HashMap::new(),
-        };
-    }
-    // Extract the servers object
-    match current.as_object() {
-        Some(servers) => servers
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
-        None => HashMap::new(),
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -562,6 +457,25 @@ async fn check_agent_compatibility(
         query.refresh.unwrap_or(false),
     )
     .await;
+
+    let mut compat = compat;
+    // This response is used for UI diagnostics. Do not leak the resolved base command, which may
+    // embed tokens (e.g. in overrides/params). Keep the message but redact the base command line.
+    compat.base_command = "<redacted>".to_string();
+    if let Some(message) = compat.message.as_mut() {
+        let redacted = message
+            .lines()
+            .map(|line| {
+                if line.starts_with("Base command: ") {
+                    "Base command: <redacted>"
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        *message = redacted;
+    }
 
     Ok(ResponseJson(ApiResponse::success(compat)))
 }

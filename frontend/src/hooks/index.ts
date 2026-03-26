@@ -1,6 +1,5 @@
 export { useBranchStatus } from './task-attempts/useBranchStatus';
 export { useAttemptExecution } from './task-attempts/useAttemptExecution';
-export { useOpenInEditor } from './task-attempts/useOpenInEditor';
 export {
   useTaskAttempt,
   useTaskAttemptWithSession,

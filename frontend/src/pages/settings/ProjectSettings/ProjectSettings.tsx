@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Copy, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
+import { Copy, Loader2, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -90,23 +90,6 @@ export function ProjectSettings() {
     },
   });
 
-  const openProjectsYaml = async () => {
-    try {
-      const result = await configApi.openConfigTarget('projects_yaml');
-      if (result.url) {
-        window.open(result.url, '_blank', 'noopener,noreferrer');
-      }
-    } catch (err) {
-      console.error('Failed to open projects.yaml:', err);
-      toast({
-        variant: 'destructive',
-        title: 'Open failed',
-        description:
-          err instanceof Error ? err.message : 'Failed to open projects.yaml.',
-      });
-    }
-  };
-
   const snippet = useMemo(() => {
     const name = snippetName.trim() || 'my-project';
     const repoPaths = snippetRepoPaths
@@ -154,10 +137,6 @@ export function ProjectSettings() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" onClick={() => void openProjectsYaml()}>
-            <ExternalLink className="mr-2 h-4 w-4" />
-            {t('settings.config.open', 'Open projects.yaml')}
-          </Button>
           <Button
             onClick={() => reloadMutation.mutate()}
             disabled={reloadMutation.isPending}

@@ -2,13 +2,11 @@ import { AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { ConflictOp } from 'shared/types';
 import { displayConflictOpLabel } from '@/lib/conflicts';
-import { useEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
 
 export type Props = Readonly<{
   attemptBranch: string | null;
   baseBranch?: string;
   conflictedFiles: readonly string[];
-  onOpenEditor: () => void;
   onAbort: () => void;
   op?: ConflictOp | null;
   onResolve?: () => void;
@@ -42,14 +40,12 @@ export function ConflictBanner({
   attemptBranch,
   baseBranch,
   conflictedFiles,
-  onOpenEditor,
   onAbort,
   op,
   onResolve,
   enableResolve,
   enableAbort,
 }: Props) {
-  const editorIntegrationEnabled = useEditorIntegrationEnabled();
   const { full: opTitle, lower: opTitleLower } = getOperationTitle(op);
   const {
     visible: visibleFiles,
@@ -105,16 +101,6 @@ export function ConflictBanner({
             className="bg-warning text-warning-foreground hover:bg-warning/90"
           >
             Resolve conflicts
-          </Button>
-        )}
-        {editorIntegrationEnabled && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="border-warning/40 text-warning-foreground hover:bg-warning/10 dark:text-warning/90"
-            onClick={onOpenEditor}
-          >
-            Open in Editor
           </Button>
         )}
 

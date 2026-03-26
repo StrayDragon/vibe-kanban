@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query';
-import { ExternalLink, Loader2, RefreshCw } from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -39,23 +39,6 @@ export function AgentSettings() {
     },
   });
 
-  const openConfigYaml = async () => {
-    try {
-      const result = await configApi.openConfigTarget('config_yaml');
-      if (result.url) {
-        window.open(result.url, '_blank', 'noopener,noreferrer');
-      }
-    } catch (err) {
-      console.error('Failed to open config.yaml:', err);
-      toast({
-        variant: 'destructive',
-        title: 'Open failed',
-        description:
-          err instanceof Error ? err.message : 'Failed to open config.yaml.',
-      });
-    }
-  };
-
   return (
     <div className="space-y-6">
       <Alert>
@@ -81,10 +64,6 @@ export function AgentSettings() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" onClick={() => void openConfigYaml()}>
-            <ExternalLink className="mr-2 h-4 w-4" />
-            {t('settings.config.open', 'Open config.yaml')}
-          </Button>
           <Button
             onClick={() => reloadMutation.mutate()}
             disabled={reloadMutation.isPending}
@@ -106,4 +85,3 @@ export function AgentSettings() {
     </div>
   );
 }
-

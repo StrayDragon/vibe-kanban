@@ -11,7 +11,6 @@ export * from './filesystem';
 export * from './repos';
 export * from './config';
 export * from './tags';
-export * from './mcp-servers';
 export * from './profiles';
 export * from './images';
 export * from './approvals';

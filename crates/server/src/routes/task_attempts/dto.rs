@@ -178,17 +178,6 @@ pub enum PushError {
     ForcePushRequired,
 }
 
-#[derive(Debug, Deserialize, TS)]
-pub struct OpenEditorRequest {
-    pub editor_type: Option<String>,
-    pub file_path: Option<String>,
-}
-
-#[derive(Debug, Serialize, TS)]
-pub struct OpenEditorResponse {
-    pub url: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct BranchStatus {
     pub commits_behind: Option<usize>,

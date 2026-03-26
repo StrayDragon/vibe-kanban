@@ -16,12 +16,9 @@ import {
   PencilLine,
   Copy,
   Key,
-  ExternalLink,
   MessageSquare,
 } from 'lucide-react';
 import '@/styles/diff-style-overrides.css';
-import { attemptsApi } from '@/lib/api';
-import type { Workspace } from 'shared/types';
 import {
   useReview,
   type ReviewDraft,
@@ -35,13 +32,11 @@ import {
   useWrapTextDiff,
 } from '@/stores/useDiffViewStore';
 import { useProject } from '@/contexts/ProjectContext';
-import { useEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
 
 type Props = {
   diff: Diff;
   expanded: boolean;
   onToggle: () => void;
-  selectedAttempt: Workspace | null;
 };
 
 function labelAndIcon(diff: Diff) {
@@ -79,7 +74,6 @@ export default function DiffCard({
   diff,
   expanded,
   onToggle,
-  selectedAttempt,
 }: Props) {
   const { config } = useUserSystem();
   const theme = getActualTheme(config?.theme);
@@ -88,7 +82,6 @@ export default function DiffCard({
   const ignoreWhitespace = useIgnoreWhitespaceDiff();
   const wrapText = useWrapTextDiff();
   const { projectId } = useProject();
-  const editorIntegrationEnabled = useEditorIntegrationEnabled();
 
   const oldName = diff.oldPath || undefined;
   const newName = diff.newPath || oldName || 'unknown';
@@ -246,25 +239,6 @@ export default function DiffCard({
     </p>
   );
 
-  const handleOpenInIDE = async () => {
-    if (!selectedAttempt?.id) return;
-    if (!editorIntegrationEnabled) return;
-    try {
-      const openPath = newName || oldName;
-      const response = await attemptsApi.openEditor(selectedAttempt.id, {
-        editor_type: null,
-        file_path: openPath ?? null,
-      });
-
-      // If a URL is returned, open it in a new window/tab
-      if (response.url) {
-        window.open(response.url, '_blank');
-      }
-    } catch (err) {
-      console.error('Failed to open file in IDE:', err);
-    }
-  };
-
   const expandable = true;
 
   return (
@@ -287,21 +261,6 @@ export default function DiffCard({
           </Button>
         )}
         {title}
-        {editorIntegrationEnabled && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleOpenInIDE();
-            }}
-            className="h-6 w-6 p-0 ml-2"
-            title="Open in IDE"
-            disabled={diff.change === 'deleted'}
-          >
-            <ExternalLink className="h-3 w-3" aria-hidden />
-          </Button>
-        )}
       </div>
 
       {expanded && diffFile && (
@@ -329,9 +288,7 @@ export default function DiffCard({
           style={{ color: 'hsl(var(--muted-foreground) / 0.9)' }}
         >
           {isOmitted
-            ? editorIntegrationEnabled
-              ? 'Content omitted due to file size. Open in editor to view.'
-              : 'Content omitted due to file size.'
+            ? 'Content omitted due to file size.'
             : isContentEqual
               ? diff.change === 'renamed'
                 ? 'File renamed with no content changes.'

@@ -1041,7 +1041,7 @@ pub async fn create_task_attempt(
             }
             .ok_or_else(|| {
                 ApiError::BadRequest(
-                    "Project not found in config.yaml. Edit config.yaml and reload (POST /api/config/reload)."
+                    "Project not found in projects config. Edit `projects.yaml` (or `projects.d/*.yaml`; if you don't have those files, edit inline `projects` in `config.yaml`) and reload (POST /api/config/reload)."
                         .to_string(),
                 )
             })?;
@@ -1364,68 +1364,6 @@ pub async fn force_push_task_attempt_branch(
     })
     .await?;
     Ok(ResponseJson(ApiResponse::success(())))
-}
-
-pub async fn open_task_attempt_in_editor(
-    Extension(workspace): Extension<Workspace>,
-    State(deployment): State<DeploymentImpl>,
-    Json(payload): Json<OpenEditorRequest>,
-) -> Result<ResponseJson<ApiResponse<OpenEditorResponse>>, ApiError> {
-    let container_ref = deployment
-        .container()
-        .ensure_container_exists(&workspace)
-        .await?;
-    let workspace_path = Path::new(&container_ref);
-
-    // For single-repo projects, open from the repo directory
-    let workspace_repos =
-        WorkspaceRepo::find_repos_for_workspace(&deployment.db().pool, workspace.id).await?;
-    let workspace_path = if workspace_repos.len() == 1 && payload.file_path.is_none() {
-        workspace_path.join(&workspace_repos[0].name)
-    } else {
-        workspace_path.to_path_buf()
-    };
-
-    // If a specific file path is provided, use it; otherwise use the base path
-    let path = if let Some(file_path) = payload.file_path.as_ref() {
-        workspace_path.join(file_path)
-    } else {
-        workspace_path
-    };
-
-    let editor_config = {
-        let config = deployment.config().read().await;
-        if config.editor.is_integration_disabled() {
-            return Err(ApiError::BadRequest(
-                "Editor integration is disabled".to_string(),
-            ));
-        }
-        let editor_type_str = payload.editor_type.as_deref();
-        config.editor.with_override(editor_type_str)
-    };
-
-    match editor_config.open_file(path.as_path()).await {
-        Ok(url) => {
-            tracing::info!(
-                "Opened editor for task attempt {} at path: {}{}",
-                workspace.id,
-                path.display(),
-                if url.is_some() { " (remote mode)" } else { "" }
-            );
-
-            Ok(ResponseJson(ApiResponse::success(OpenEditorResponse {
-                url,
-            })))
-        }
-        Err(e) => {
-            tracing::error!(
-                "Failed to open editor for attempt {}: {:?}",
-                workspace.id,
-                e
-            );
-            Err(ApiError::EditorOpen(e))
-        }
-    }
 }
 
 pub async fn get_task_attempt_branch_status(
@@ -2459,7 +2397,7 @@ mod tests {
     };
     use sea_orm::Database;
     use sea_orm_migration::MigratorTrait;
-    use tokio::time::{Duration, sleep};
+    use tokio::time::Duration;
     use uuid::Uuid;
 
     use super::{
@@ -2673,9 +2611,12 @@ mod tests {
         let task_b_id = create_task(&db, project_id, "Task B").await;
         let task_c_id = create_task(&db, project_id, "Task C").await;
 
-        create_workspace_with_repo(&db, task_a_id, repo.id, "work-a", "base-a").await;
-        sleep(Duration::from_millis(2)).await;
-        create_workspace_with_repo(&db, task_b_id, repo.id, "work-b", "base-b").await;
+        let _work_a = create_workspace_with_repo(&db, task_a_id, repo.id, "work-a", "base-a").await;
+        let work_b = create_workspace_with_repo(&db, task_b_id, repo.id, "work-b", "base-b").await;
+        // Avoid flaky wall-clock sleeps: bump updated_at explicitly.
+        Workspace::update_branch_name(&db, work_b.id, "work-b")
+            .await
+            .unwrap();
 
         let graph = MilestoneGraph {
             nodes: vec![

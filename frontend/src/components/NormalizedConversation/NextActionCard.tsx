@@ -14,14 +14,10 @@ import { useNavigate } from 'react-router-dom';
 import { ViewProcessesDialog } from '@/components/dialogs/tasks/ViewProcessesDialog';
 import { CreateAttemptDialog } from '@/components/dialogs/tasks/CreateAttemptDialog';
 import { GitActionsDialog } from '@/components/dialogs/tasks/GitActionsDialog';
-import { useOpenInEditor } from '@/hooks/task-attempts/useOpenInEditor';
 import { useDiffSummary } from '@/hooks/task-attempts/useDiffSummary';
 import { useDevServer } from '@/hooks/task-attempts/useDevServer';
-import { useEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
 import { Button } from '@/components/ui/button';
-import { IdeIcon } from '@/components/ide/IdeIcon';
 import { useUserSystem } from '@/components/ConfigProvider';
-import { getIdeName } from '@/components/ide/IdeIcon';
 import { useProject } from '@/contexts/ProjectContext';
 import { useQuery } from '@tanstack/react-query';
 import { attemptsApi } from '@/lib/api';
@@ -56,11 +52,9 @@ export function NextActionCard({
   needsSetup,
 }: NextActionCardProps) {
   const { t } = useTranslation('tasks');
-  const { config } = useUserSystem();
   const { project } = useProject();
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
-  const editorIntegrationEnabled = useEditorIntegrationEnabled();
 
   const { data: attempt } = useQuery({
     queryKey: taskAttemptKeys.attemptWithSession(attemptId),
@@ -68,8 +62,6 @@ export function NextActionCard({
     enabled: !!attemptId && failed,
   });
   const { capabilities } = useUserSystem();
-
-  const openInEditor = useOpenInEditor(attemptId);
   const { fileCount, added, deleted, error } = useDiffSummary(
     attemptId ?? null
   );
@@ -95,10 +87,6 @@ export function NextActionCard({
       console.warn('Copy to clipboard failed:', err);
     }
   }, [containerRef]);
-
-  const handleOpenInEditor = useCallback(() => {
-    openInEditor();
-  }, [openInEditor]);
 
   const handleViewLogs = useCallback(() => {
     if (attemptId) {
@@ -152,8 +140,6 @@ export function NextActionCard({
   const setupHelpText = canAutoSetup
     ? t('attempt.setupHelpText', { agent: attempt?.session?.executor })
     : null;
-
-  const editorName = getIdeName(config?.editor?.editor_type);
 
   // Necessary to prevent this component being displayed beyond fold within Virtualised List
   if (
@@ -269,31 +255,6 @@ export function NextActionCard({
                   </TooltipTrigger>
                   <TooltipContent>
                     {copied ? t('attempt.copied') : t('attempt.clickToCopy')}
-                  </TooltipContent>
-                </Tooltip>
-              )}
-
-              {editorIntegrationEnabled && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 w-7 p-0"
-                      onClick={handleOpenInEditor}
-                      disabled={!attemptId}
-                      aria-label={t('attempt.openInEditor', {
-                        editor: editorName,
-                      })}
-                    >
-                      <IdeIcon
-                        editorType={config?.editor?.editor_type}
-                        className="h-3.5 w-3.5"
-                      />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {t('attempt.openInEditor', { editor: editorName })}
                   </TooltipContent>
                 </Tooltip>
               )}

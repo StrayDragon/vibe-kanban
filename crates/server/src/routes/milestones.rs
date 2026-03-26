@@ -228,7 +228,7 @@ pub async fn create_milestone(
     };
     if !project_configured {
         return Err(ApiError::BadRequest(
-            "Project not found in config.yaml. Edit config.yaml and reload (POST /api/config/reload)."
+            "Project not found in projects config. Edit `projects.yaml` (or `projects.d/*.yaml`; if you don't have those files, edit inline `projects` in `config.yaml`) and reload (POST /api/config/reload)."
                 .to_string(),
         ));
     }

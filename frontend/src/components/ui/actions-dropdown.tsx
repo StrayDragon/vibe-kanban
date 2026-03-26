@@ -15,7 +15,6 @@ import { getWorkspaceHookOutcome } from '@/utils/workspaceHooks';
 import { cn } from '@/lib/utils';
 import type { TaskWithAttemptStatus } from 'shared/types';
 import type { Workspace } from 'shared/types';
-import { useOpenInEditor } from '@/hooks/task-attempts/useOpenInEditor';
 import { DeleteTaskConfirmationDialog } from '@/components/dialogs/tasks/DeleteTaskConfirmationDialog';
 import { ViewProcessesDialog } from '@/components/dialogs/tasks/ViewProcessesDialog';
 import { ViewRelatedTasksDialog } from '@/components/dialogs/tasks/ViewRelatedTasksDialog';
@@ -27,7 +26,6 @@ import { useProject } from '@/contexts/ProjectContext';
 import { openTaskForm } from '@/lib/openTaskForm';
 import { useExecutionProcesses } from '@/hooks/execution-processes/useExecutionProcesses';
 import { useTaskAttemptsWithSessions } from '@/hooks/task-attempts/useTaskAttempts';
-import { useEditorIntegrationEnabled } from '@/hooks/config/useEditorIntegrationEnabled';
 import { isMilestoneEntry } from '@/utils/milestone';
 
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -45,8 +43,6 @@ export function ActionsDropdown({
 }: ActionsDropdownProps) {
   const { t } = useTranslation('tasks');
   const { projectId } = useProject();
-  const openInEditor = useOpenInEditor(attempt?.id);
-  const editorIntegrationEnabled = useEditorIntegrationEnabled();
   const navigate = useNavigate();
   const location = useLocation();
   const isOverviewRoute = location.pathname.startsWith('/tasks');
@@ -146,16 +142,21 @@ export function ActionsDropdown({
     }
   };
 
-  const handleOpenInEditor = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!attempt?.id) return;
-    openInEditor();
-  };
-
   const handleViewProcesses = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!attempt?.id) return;
     ViewProcessesDialog.show({ attemptId: attempt.id });
+  };
+
+  const handleCopyWorktreePath = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const path = attempt?.agent_working_dir;
+    if (!path) return;
+    try {
+      await navigator.clipboard.writeText(path);
+    } catch (err) {
+      console.warn('Copy to clipboard failed:', err);
+    }
   };
 
   const handleViewRelatedTasks = (e: React.MouseEvent) => {
@@ -264,14 +265,13 @@ export function ActionsDropdown({
               <DropdownMenuLabel>{t('actionsMenu.attempt')}</DropdownMenuLabel>
               {hasAttemptActions && (
                 <>
-                  {editorIntegrationEnabled && (
-                    <DropdownMenuItem
-                      disabled={!attempt?.id}
-                      onClick={handleOpenInEditor}
-                    >
-                      {t('actionsMenu.openInIde')}
-                    </DropdownMenuItem>
-                  )}
+                  <DropdownMenuItem
+                    disabled={!attempt?.agent_working_dir}
+                    onClick={(e) => void handleCopyWorktreePath(e)}
+                    title={attempt?.agent_working_dir ?? undefined}
+                  >
+                    {t('actionsMenu.copyWorktreePath', 'Copy worktree path')}
+                  </DropdownMenuItem>
                   <DropdownMenuItem
                     disabled={!attempt?.id}
                     onClick={handleViewProcesses}

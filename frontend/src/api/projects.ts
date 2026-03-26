@@ -1,8 +1,6 @@
 import type {
   CreateProject,
   CreateProjectRepo,
-  OpenEditorRequest,
-  OpenEditorResponse,
   Project,
   ProjectFileSearchResponse,
   ProjectRepo,
@@ -35,17 +33,6 @@ export const projectsApi = {
       method: 'DELETE',
     });
     return handleApiResponse<void>(response);
-  },
-
-  openEditor: async (
-    id: string,
-    data: OpenEditorRequest
-  ): Promise<OpenEditorResponse> => {
-    const response = await makeRequest(`/api/projects/${id}/open-editor`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-    return handleApiResponse<OpenEditorResponse>(response);
   },
 
   searchFiles: async (

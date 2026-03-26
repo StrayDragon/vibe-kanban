@@ -263,9 +263,7 @@ agent_command_resolutions: { [key in string]?: AgentCommandResolution }, executo
 
 export type Environment = { os_type: string, os_version: string, os_architecture: string, bitness: string, };
 
-export type McpServerQuery = { executor: BaseCodingAgent, };
-
-export type GetMcpServerResponse = { mcp_config: McpConfig, config_path: string, };
+export type ConfigStatusResponse = { config_dir: string, config_path: string, projects_path: string, projects_dir: string, secret_env_path: string, schema_path: string, projects_schema_path: string, loaded_at_unix_ms: number, last_error: string | null, };
 
 export type CheckEditorAvailabilityQuery = { editor_type: EditorType, };
 
@@ -298,10 +296,6 @@ export type PushTaskAttemptRequest = { repo_id: string, };
 export type RenameBranchRequest = { new_branch_name: string, };
 
 export type RenameBranchResponse = { branch: string, };
-
-export type OpenEditorRequest = { editor_type: string | null, file_path: string | null, };
-
-export type OpenEditorResponse = { url: string | null, };
 
 export type AttemptState = "idle" | "running" | "completed" | "failed";
 
