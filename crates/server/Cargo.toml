@@ -31,6 +31,7 @@ axum = { workspace = true }
 sea-orm = { version = "2.0.0-rc.28", features = ["runtime-tokio-rustls", "sqlx-sqlite"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = "0.9"
 serde_path_to_error = "0.1.20"
 anyhow = { workspace = true }
 tracing = { workspace = true }
