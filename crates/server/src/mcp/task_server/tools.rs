@@ -5148,11 +5148,13 @@ mod tests {
         )
         .await
         .unwrap();
-        deployment.git().initialize_repo_with_main_branch(&repo_path).unwrap();
-        let repo =
-            db::models::repo::Repo::find_or_create(&pool, &repo_path, "Repo")
-                .await
-                .unwrap();
+        deployment
+            .git()
+            .initialize_repo_with_main_branch(&repo_path)
+            .unwrap();
+        let repo = db::models::repo::Repo::find_or_create(&pool, &repo_path, "Repo")
+            .await
+            .unwrap();
         let _ = db::models::workspace_repo::WorkspaceRepo::create_many(
             &pool,
             workspace.id,

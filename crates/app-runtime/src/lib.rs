@@ -48,6 +48,8 @@ use tokio_util::sync::CancellationToken;
 use utils_core::notifications::SharedNotifier;
 use uuid::Uuid;
 
+const CONFIG_WATCH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(250);
+
 const DISABLE_BACKGROUND_TASKS_ENV: &str = "VIBE_DISABLE_BACKGROUND_TASKS";
 
 fn background_tasks_disabled() -> bool {
@@ -396,6 +398,7 @@ impl Deployment for AppRuntime {
         };
 
         deployment.sync_config_projects_to_db().await?;
+        deployment.maybe_spawn_config_auto_reload_watcher();
 
         Ok(deployment)
     }
@@ -458,6 +461,124 @@ impl Deployment for AppRuntime {
 }
 
 impl AppRuntime {
+    fn maybe_spawn_config_auto_reload_watcher(&self) {
+        if background_tasks_disabled() {
+            return;
+        }
+
+        let config_dir = utils_core::vk_config_dir();
+        let config_path = utils_core::vk_config_yaml_path();
+        let secret_env_path = utils_core::vk_secret_env_path();
+        let shutdown = self.shutdown_token();
+
+        let deployment = self.clone();
+        tokio::spawn(async move {
+            if let Err(err) = deployment
+                .run_config_auto_reload_watcher(config_dir, config_path, secret_env_path, shutdown)
+                .await
+            {
+                tracing::warn!(error = %err, "Config auto-reload watcher stopped");
+            }
+        });
+    }
+
+    async fn run_config_auto_reload_watcher(
+        &self,
+        config_dir: std::path::PathBuf,
+        config_path: std::path::PathBuf,
+        secret_env_path: std::path::PathBuf,
+        shutdown: CancellationToken,
+    ) -> Result<(), notify::Error> {
+        use notify::{RecursiveMode, Watcher};
+
+        fn is_relevant_path(
+            path: &std::path::Path,
+            config_dir: &std::path::Path,
+            config_path: &std::path::Path,
+            secret_env_path: &std::path::Path,
+        ) -> bool {
+            if path == config_path || path == secret_env_path {
+                return true;
+            }
+
+            let file_name = path.file_name().and_then(|name| name.to_str());
+            if !matches!(file_name, Some("config.yaml" | "secret.env")) {
+                return false;
+            }
+
+            path.parent().is_some_and(|parent| parent == config_dir)
+        }
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<notify::Result<notify::Event>>();
+        let mut watcher = notify::recommended_watcher(move |res| {
+            let _ = tx.send(res);
+        })?;
+
+        // Watch the directory instead of individual files to handle atomic writes via rename.
+        watcher.watch(&config_dir, RecursiveMode::NonRecursive)?;
+
+        tracing::info!(
+            config_dir = %config_dir.display(),
+            "Config auto-reload watcher started"
+        );
+
+        let far_future = std::time::Duration::from_secs(60 * 60 * 24 * 365 * 100);
+        let mut next_reload_at: Option<tokio::time::Instant> = None;
+        let sleep = tokio::time::sleep(far_future);
+        tokio::pin!(sleep);
+
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => {
+                    break;
+                }
+                item = rx.recv() => {
+                    let Some(item) = item else {
+                        break;
+                    };
+
+                    match item {
+                        Ok(event) => {
+                            if event.kind.is_access() {
+                                continue;
+                            }
+
+                            if !event.paths.iter().any(|path| is_relevant_path(path, &config_dir, &config_path, &secret_env_path)) {
+                                continue;
+                            }
+
+                            next_reload_at = Some(tokio::time::Instant::now() + CONFIG_WATCH_DEBOUNCE);
+                            sleep.as_mut().reset(next_reload_at.expect("just set"));
+                        }
+                        Err(err) => {
+                            tracing::warn!(error = %err, "Config auto-reload watcher event error");
+                        }
+                    }
+                }
+                _ = &mut sleep, if next_reload_at.is_some() => {
+                    next_reload_at = None;
+                    sleep.as_mut().reset(tokio::time::Instant::now() + far_future);
+
+                    tracing::info!("Config change detected; reloading");
+                    match self.reload_user_config().await {
+                        Ok(()) => {
+                            if let Err(err) = self.sync_config_projects_to_db().await {
+                                tracing::warn!(error = %err, "Config reloaded but failed to sync projects to DB");
+                            }
+                            tracing::info!("Config auto-reload succeeded");
+                        }
+                        Err(err) => {
+                            tracing::warn!(error = %err, "Config auto-reload failed");
+                        }
+                    }
+                }
+            }
+        }
+
+        tracing::info!("Config auto-reload watcher stopped");
+        Ok(())
+    }
+
     async fn load_runtime_config()
     -> Result<(Arc<RwLock<Config>>, Arc<RwLock<RuntimeConfigStatus>>), DeploymentError> {
         let config_path = utils_core::vk_config_yaml_path();

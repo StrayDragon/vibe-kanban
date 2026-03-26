@@ -207,6 +207,7 @@ dependencies = [
  "git2",
  "logs-axum",
  "logs-store",
+ "notify",
  "notify-rust",
  "openssl-sys",
  "repos",
