@@ -12,7 +12,7 @@ use config::{Config, ConfigError, cache_budget::cache_budgets};
 use db::{
     DBService, DbErr,
     models::{
-        project::{CreateProject, Project},
+        project::{CreateProject, Project, UpdateProject},
         project_repo::CreateProjectRepo,
         workspace::WorkspaceError,
     },
@@ -43,7 +43,7 @@ use repos::{
 };
 use tasks::approvals::Approvals;
 use thiserror::Error;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use utils_core::notifications::SharedNotifier;
 use uuid::Uuid;
@@ -311,7 +311,11 @@ pub trait Deployment: Clone + Send + Sync + 'static {
 #[derive(Clone)]
 pub struct AppRuntime {
     config: Arc<RwLock<Config>>,
+    /// A view of the user config intended for API/UI display (does not resolve `{{secret.*}}` /
+    /// `{{env.*}}` templates). Kept in-sync with the last successfully loaded runtime config.
+    public_config: Arc<RwLock<Config>>,
     config_status: Arc<RwLock<RuntimeConfigStatus>>,
+    config_reload_lock: Arc<Mutex<()>>,
     db: DBService,
     container: LocalContainerService,
     git: GitService,
@@ -357,7 +361,7 @@ pub struct RuntimeConfigStatus {
 #[async_trait]
 impl Deployment for AppRuntime {
     async fn new() -> Result<Self, DeploymentError> {
-        let (config, config_status) = Self::load_runtime_config().await?;
+        let (config, public_config, config_status) = Self::load_runtime_config().await?;
         let core = Self::build_core_services();
         let runtime = Self::build_runtime_services(config.clone(), &core).await?;
 
@@ -382,7 +386,9 @@ impl Deployment for AppRuntime {
 
         let deployment = Self {
             config,
+            public_config,
             config_status,
+            config_reload_lock: Arc::new(Mutex::new(())),
             db,
             container,
             git,
@@ -461,6 +467,10 @@ impl Deployment for AppRuntime {
 }
 
 impl AppRuntime {
+    pub fn public_config(&self) -> &Arc<RwLock<Config>> {
+        &self.public_config
+    }
+
     fn maybe_spawn_config_auto_reload_watcher(&self) {
         if background_tasks_disabled() {
             return;
@@ -599,8 +609,14 @@ impl AppRuntime {
         Ok(())
     }
 
-    async fn load_runtime_config()
-    -> Result<(Arc<RwLock<Config>>, Arc<RwLock<RuntimeConfigStatus>>), DeploymentError> {
+    async fn load_runtime_config() -> Result<
+        (
+            Arc<RwLock<Config>>,
+            Arc<RwLock<Config>>,
+            Arc<RwLock<RuntimeConfigStatus>>,
+        ),
+        DeploymentError,
+    > {
         let config_path = utils_core::vk_config_yaml_path();
         let config_dir = config_path
             .parent()
@@ -626,12 +642,28 @@ impl AppRuntime {
         }
 
         let loaded_at = SystemTime::now();
+
         let (mut raw_config, last_error) = match config::try_load_config_from_file(&config_path) {
             Ok(config) => (config, None),
             Err(err) => {
                 tracing::warn!("Failed to load config from disk, using defaults: {}", err);
                 (Config::default(), Some(err.to_string()))
             }
+        };
+
+        // Public config is used for API/UI display (no template expansion). If the runtime config
+        // failed to load, keep the public view aligned with the last-known-good runtime (defaults
+        // on cold start) to avoid showing a config that isn't actually applied.
+        let mut public_config = if last_error.is_some() {
+            Config::default()
+        } else {
+            config::try_load_public_config_from_file(&config_path).unwrap_or_else(|err| {
+                tracing::warn!(
+                    "Failed to load public config from disk, using defaults: {}",
+                    err
+                );
+                Config::default()
+            })
         };
 
         let profiles = ExecutorConfigs::from_defaults_merged_with_overrides(
@@ -646,10 +678,12 @@ impl AppRuntime {
         if !raw_config.onboarding_acknowledged
             && let Ok(recommended_executor) = profiles.get_recommended_executor_profile().await
         {
-            raw_config.executor_profile = recommended_executor;
+            raw_config.executor_profile = recommended_executor.clone();
+            public_config.executor_profile = recommended_executor;
         }
 
         Self::update_app_version_state(&mut raw_config, utils_core::version::APP_VERSION);
+        Self::update_app_version_state(&mut public_config, utils_core::version::APP_VERSION);
 
         let status = RuntimeConfigStatus {
             config_dir,
@@ -661,6 +695,7 @@ impl AppRuntime {
 
         Ok((
             Arc::new(RwLock::new(raw_config)),
+            Arc::new(RwLock::new(public_config)),
             Arc::new(RwLock::new(status)),
         ))
     }
@@ -678,23 +713,43 @@ impl AppRuntime {
     }
 
     pub async fn reload_user_config(&self) -> Result<(), ConfigError> {
+        let _guard = self.config_reload_lock.lock().await;
         let config_path = utils_core::vk_config_yaml_path();
 
         match config::try_load_config_from_file(&config_path) {
-            Ok(new_config) => {
+            Ok(mut new_config) => {
+                // Keep a public (non-templated) view in sync with the runtime config so API/UI
+                // responses never need to re-read from disk (and won't leak expanded secrets).
+                let mut new_public_config = config::try_load_public_config_from_file(&config_path)?;
+
                 let profiles = ExecutorConfigs::from_defaults_merged_with_overrides(
                     new_config.executor_profiles.as_ref(),
                 )
                 .map_err(|err| ConfigError::ValidationError(err.to_string()))?;
-                ExecutorConfigs::set_cached(profiles);
+                executors_core::agent_command::agent_command_resolver().warm_cache();
+                if !new_config.onboarding_acknowledged
+                    && let Ok(recommended_executor) =
+                        profiles.get_recommended_executor_profile().await
+                {
+                    new_config.executor_profile = recommended_executor.clone();
+                    new_public_config.executor_profile = recommended_executor;
+                }
+                Self::update_app_version_state(&mut new_config, utils_core::version::APP_VERSION);
+                Self::update_app_version_state(
+                    &mut new_public_config,
+                    utils_core::version::APP_VERSION,
+                );
 
                 let mut config = self.config.write().await;
                 *config = new_config;
-                drop(config);
-
+                let mut public_config = self.public_config.write().await;
+                *public_config = new_public_config;
+                ExecutorConfigs::set_cached(profiles);
                 let mut status = self.config_status.write().await;
                 status.loaded_at = SystemTime::now();
                 status.last_error = None;
+                drop(status);
+                drop(config);
                 Ok(())
             }
             Err(err) => {
@@ -714,7 +769,26 @@ impl AppRuntime {
             };
 
             let existing = Project::find_by_id(&self.db.pool, project_id).await?;
-            if existing.is_some() {
+            if let Some(existing) = existing {
+                if existing.name != project.name {
+                    Project::update(
+                        &self.db.pool,
+                        project_id,
+                        &UpdateProject {
+                            name: Some(project.name.clone()),
+                            dev_script: None,
+                            dev_script_working_dir: None,
+                            default_agent_working_dir: None,
+                            git_no_verify_override: None,
+                            scheduler_max_concurrent: None,
+                            scheduler_max_retries: None,
+                            default_continuation_turns: None,
+                            after_prepare_hook: None,
+                            before_cleanup_hook: None,
+                        },
+                    )
+                    .await?;
+                }
                 continue;
             }
 
