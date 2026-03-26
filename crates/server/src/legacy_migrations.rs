@@ -574,6 +574,18 @@ pub async fn export_projects_yaml(pool: &db::DbPool) -> Result<String> {
 }
 
 fn atomic_write_out(path: &Path, contents: &str) -> Result<()> {
+    atomic_write_out_with_unix_mode(path, contents, None)
+}
+
+fn atomic_write_out_secure(path: &Path, contents: &str) -> Result<()> {
+    atomic_write_out_with_unix_mode(path, contents, Some(0o600))
+}
+
+fn atomic_write_out_with_unix_mode(
+    path: &Path,
+    contents: &str,
+    unix_mode: Option<u32>,
+) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| {
             format!(
@@ -587,14 +599,55 @@ fn atomic_write_out(path: &Path, contents: &str) -> Result<()> {
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| "vk-export.yaml".to_string());
-    let tmp_path = path.with_file_name(format!("{file_name}.tmp-{}", std::process::id()));
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let tmp_path = path.with_file_name(format!(
+        "{file_name}.tmp-{}-{unique}",
+        std::process::id()
+    ));
 
-    std::fs::write(&tmp_path, contents).with_context(|| {
-        format!(
-            "Failed to write temporary output file {}",
-            tmp_path.to_string_lossy()
-        )
-    })?;
+    #[cfg(unix)]
+    if let Some(mode) = unix_mode {
+        use std::{io::Write, os::unix::fs::OpenOptionsExt};
+
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(mode)
+            .open(&tmp_path)
+            .with_context(|| {
+                format!(
+                    "Failed to create temporary output file {}",
+                    tmp_path.to_string_lossy()
+                )
+            })?;
+        file.write_all(contents.as_bytes()).with_context(|| {
+            format!(
+                "Failed to write temporary output file {}",
+                tmp_path.to_string_lossy()
+            )
+        })?;
+    } else {
+        std::fs::write(&tmp_path, contents).with_context(|| {
+            format!(
+                "Failed to write temporary output file {}",
+                tmp_path.to_string_lossy()
+            )
+        })?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = unix_mode;
+        std::fs::write(&tmp_path, contents).with_context(|| {
+            format!(
+                "Failed to write temporary output file {}",
+                tmp_path.to_string_lossy()
+            )
+        })?;
+    }
 
     if let Err(err) = std::fs::rename(&tmp_path, path) {
         if path.exists() {
@@ -602,9 +655,15 @@ fn atomic_write_out(path: &Path, contents: &str) -> Result<()> {
             std::fs::rename(&tmp_path, path).with_context(|| {
                 format!("Failed to replace output file {}", path.to_string_lossy())
             })?;
-            return Ok(());
+        } else {
+            return Err(err.into());
         }
-        return Err(err.into());
+    }
+
+    #[cfg(unix)]
+    if let Some(mode) = unix_mode {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
     }
 
     Ok(())
@@ -841,42 +900,6 @@ pub async fn run_export_db_projects_yaml(args: ExportDbProjectsYamlArgs) -> Resu
     atomic_write_out(&out_path, &yaml)?;
     println!("Exported projects YAML to {}", out_path.display());
     Ok(())
-}
-
-fn load_secret_env_for_merge(secret_env_path: &Path) -> Result<HashMap<String, String>> {
-    let raw = match std::fs::read_to_string(secret_env_path) {
-        Ok(raw) => raw,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
-        Err(err) => return Err(err.into()),
-    };
-
-    let mut vars = HashMap::new();
-    for (idx, line) in raw.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        let line = line.strip_prefix("export ").unwrap_or(line).trim();
-        let Some((key, value)) = line.split_once('=') else {
-            anyhow::bail!("Invalid secret.env line {}: expected KEY=VALUE", idx + 1);
-        };
-
-        let key = key.trim();
-        if key.is_empty() {
-            anyhow::bail!("Invalid secret.env line {}: empty key", idx + 1);
-        }
-
-        let mut value = value.trim().to_string();
-        if (value.starts_with('"') && value.ends_with('"'))
-            || (value.starts_with('\'') && value.ends_with('\''))
-        {
-            value = value[1..value.len().saturating_sub(1)].to_string();
-        }
-        vars.insert(key.to_string(), value);
-    }
-
-    Ok(vars)
 }
 
 fn is_supported_executor_key(key: &str) -> bool {
@@ -1161,6 +1184,11 @@ fn validate_yaml_with_secret_env(yaml: &str, secret_env: Option<&str>) -> Result
         let secret_path = validate_dir.join("secret.env");
         std::fs::write(&secret_path, secret_env)
             .context("Failed to write validation secret.env")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600));
+        }
     }
 
     match config::try_load_config_from_file(&config_path) {
@@ -1334,7 +1362,7 @@ fn install_secret_env(
         .unwrap_or_else(utils_core::vk_config_dir);
 
     let mut merged = new_secrets;
-    let existing = load_secret_env_for_merge(secret_env_path)?;
+    let existing = config::try_load_secret_env(secret_env_path)?;
     for (k, v) in existing {
         merged.insert(k, v);
     }
@@ -1357,8 +1385,8 @@ fn install_secret_env(
             return Ok(());
         }
 
-        atomic_write_out(&backup_path, &existing_raw)?;
-        atomic_write_out(secret_env_path, &contents)?;
+        atomic_write_out_secure(&backup_path, &existing_raw)?;
+        atomic_write_out_secure(secret_env_path, &contents)?;
     } else {
         if dry_run {
             println!(
@@ -1367,7 +1395,7 @@ fn install_secret_env(
             );
             return Ok(());
         }
-        atomic_write_out(secret_env_path, &contents)?;
+        atomic_write_out_secure(secret_env_path, &contents)?;
     }
 
     #[cfg(unix)]
@@ -1482,7 +1510,7 @@ pub async fn run_export_asset_config_yaml(args: ExportAssetConfigYamlArgs) -> Re
         let merged_secret_env = if secrets.is_empty() {
             None
         } else {
-            let existing_secrets = load_secret_env_for_merge(&secret_env_path)?;
+            let existing_secrets = config::try_load_secret_env(&secret_env_path)?;
             let mut merged = secrets.clone();
             for (k, v) in existing_secrets {
                 merged.insert(k, v);
@@ -1539,63 +1567,17 @@ pub async fn run_export_asset_config_yaml(args: ExportAssetConfigYamlArgs) -> Re
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, OnceLock};
-
     use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
 
     use super::*;
 
-    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn env_lock() -> &'static Mutex<()> {
-        ENV_LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    struct EnvGuard {
-        prev_database_url: Option<String>,
-        prev_asset_dir: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn new(temp_root: &Path) -> Self {
-            let prev_database_url = std::env::var("DATABASE_URL").ok();
-            let prev_asset_dir = std::env::var("VIBE_ASSET_DIR").ok();
-
-            unsafe {
-                std::env::set_var("DATABASE_URL", "sqlite::memory:");
-                std::env::set_var("VIBE_ASSET_DIR", temp_root);
-            }
-
-            Self {
-                prev_database_url,
-                prev_asset_dir,
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            unsafe {
-                match &self.prev_database_url {
-                    Some(value) => std::env::set_var("DATABASE_URL", value),
-                    None => std::env::remove_var("DATABASE_URL"),
-                }
-                match &self.prev_asset_dir {
-                    Some(value) => std::env::set_var("VIBE_ASSET_DIR", value),
-                    None => std::env::remove_var("VIBE_ASSET_DIR"),
-                }
-            }
-        }
-    }
-
     #[tokio::test]
     async fn export_yaml_is_loadable_by_config_loader() {
-        let _guard = env_lock().lock().unwrap_or_else(|err| err.into_inner());
-
         let temp_root =
             std::env::temp_dir().join(format!("vk-export-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_root).unwrap();
-        let _env = EnvGuard::new(&temp_root);
+        let _env_guard =
+            crate::test_support::TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
 
         let db = db::DBService::new().await.expect("db service");
 
@@ -1837,7 +1819,9 @@ mod tests {
 
     #[tokio::test]
     async fn export_asset_config_installs_yaml_and_secret_env() {
-        let _guard = env_lock().lock().unwrap_or_else(|err| err.into_inner());
+        let _guard = crate::test_support::test_lock()
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
 
         let temp_root = std::env::temp_dir().join(format!(
             "vk-asset-export-install-test-{}",

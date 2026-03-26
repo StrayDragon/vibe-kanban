@@ -531,8 +531,6 @@ async fn shutdown_deadline(rx: watch::Receiver<bool>, timeout: std::time::Durati
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use tokio::sync::oneshot;
 
     use super::spawn_background;
@@ -541,11 +539,10 @@ mod tests {
     async fn spawn_background_returns_immediately() {
         let (tx, rx) = oneshot::channel::<()>();
 
-        let start = std::time::Instant::now();
         let handle = spawn_background(async move {
             let _ = rx.await;
         });
-        assert!(start.elapsed() < Duration::from_millis(50));
+        assert!(!handle.is_finished());
 
         let _ = tx.send(());
         let _ = handle.await;

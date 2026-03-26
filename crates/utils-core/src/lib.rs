@@ -129,23 +129,43 @@ mod vk_config_dir_tests {
         ENV_LOCK.get_or_init(|| Mutex::new(()))
     }
 
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            let prev = std::env::var_os(key);
+            // SAFETY: tests using EnvVarGuard are serialized by env_lock().
+            unsafe {
+                std::env::set_var(key, value.as_os_str());
+            }
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: tests using EnvVarGuard are serialized by env_lock().
+            unsafe {
+                match &self.prev {
+                    Some(value) => std::env::set_var(self.key, value),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+    }
+
     #[test]
     fn vk_config_dir_uses_override_and_creates_dir() {
         let _guard = env_lock().lock().unwrap();
 
-        let prev = std::env::var_os(VK_CONFIG_DIR_ENV);
         let tmp = std::env::temp_dir().join(format!("vk-test-{}", uuid::Uuid::new_v4()));
-        unsafe {
-            std::env::set_var(VK_CONFIG_DIR_ENV, tmp.to_string_lossy().to_string());
-        }
+        let _env = EnvVarGuard::set(VK_CONFIG_DIR_ENV, &tmp);
 
         let resolved = vk_config_dir();
         assert_eq!(resolved, tmp);
         assert!(resolved.is_dir());
-
-        match prev {
-            Some(value) => unsafe { std::env::set_var(VK_CONFIG_DIR_ENV, value) },
-            None => unsafe { std::env::remove_var(VK_CONFIG_DIR_ENV) },
-        }
     }
 }
