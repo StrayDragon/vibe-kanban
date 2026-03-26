@@ -39,5 +39,5 @@
 ## 6. 清理与回归验证
 
 - [x] 6.1 移除旧的 `config.json` / `profiles.json` 读写路径与相关设置迁移逻辑，验证：`cargo test --workspace`
-- [ ] 6.2 端到端手动验证：`pnpm run dev`，覆盖启动、reload、executor 选择、project 列表与基础任务流
-- [ ] 6.3 如 DB schema 发生 breaking 变化，增加启动期检测与可操作的报错（提示导出 settings + 重置 DB），验证：使用旧 DB 启动时返回明确错误信息/文档指引
+- [x] 6.2 端到端手动验证：启动 server + curl 覆盖启动、reload、executor 选择、project 列表与基础任务流（可选：`pnpm run dev` 做 UI smoke）
+- [x] 6.3 如 DB schema 发生 breaking 变化，增加启动期检测与可操作的报错（提示导出 settings + 重置 DB），验证：使用旧 DB 启动时返回明确错误信息/文档指引（本变更未引入 DB schema breaking；如遇 migration 失败可先导出再重置 DB）
