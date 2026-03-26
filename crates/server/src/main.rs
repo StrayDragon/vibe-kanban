@@ -66,6 +66,70 @@ fn env_var_truthy(name: &str) -> bool {
     }
 }
 
+fn print_cli_help() {
+    println!(
+        r#"VK Server
+
+Usage:
+  server                           # start backend server (no CLI args; configure via env + config.yaml)
+  server --help
+
+Legacy (DEPRECATED; will be removed):
+  server legacy export-db-projects-yaml [--install|--out <path>|--print-paths] [--dry-run]
+
+Run `server legacy export-db-projects-yaml --help` for details.
+"#
+    );
+}
+
+async fn maybe_run_cli_command() -> Result<bool, AnyhowError> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.is_empty() {
+        return Ok(false);
+    }
+
+    let first = args[0].as_str();
+    if matches!(first, "--help" | "-h" | "help") {
+        print_cli_help();
+        return Ok(true);
+    }
+
+    if first == "legacy" {
+        let sub = args.get(1).map(String::as_str);
+        match sub {
+            None | Some("--help" | "-h" | "help") => {
+                print_cli_help();
+                return Ok(true);
+            }
+            Some("export-db-projects-yaml") => {
+                let (parsed, action) =
+                    server::legacy_migrations::parse_export_db_projects_yaml_args(
+                        args.into_iter().skip(2),
+                    )?;
+
+                if action == server::legacy_migrations::ExportDbProjectsYamlParseResult::Help {
+                    println!(
+                        "{}",
+                        server::legacy_migrations::export_db_projects_yaml_help()
+                    );
+                    return Ok(true);
+                }
+
+                server::legacy_migrations::run_export_db_projects_yaml(parsed).await?;
+                return Ok(true);
+            }
+            Some(other) => {
+                anyhow::bail!("Unknown legacy subcommand: {other}");
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "Unknown CLI arguments: {:?}. Run `server --help` for supported commands.",
+        args
+    );
+}
+
 #[tokio::main]
 async fn main() -> Result<(), VibeKanbanError> {
     let log_level = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
@@ -81,6 +145,10 @@ async fn main() -> Result<(), VibeKanbanError> {
     // Create asset directory if it doesn't exist
     if !asset_dir().exists() {
         std::fs::create_dir_all(asset_dir())?;
+    }
+
+    if maybe_run_cli_command().await? {
+        return Ok(());
     }
 
     let deployment = DeploymentImpl::new().await?;

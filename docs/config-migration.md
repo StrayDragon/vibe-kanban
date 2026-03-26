@@ -7,7 +7,7 @@
 将 DB 中的 projects/repos 导出并合并到用户配置目录的 `config.yaml`（仅更新 `projects` 字段；**不导出 secrets**）：
 
 ```bash
-cargo run --bin export_db_projects_yaml -- --install
+server legacy export-db-projects-yaml --install
 ```
 
 安全性说明：
@@ -18,7 +18,7 @@ cargo run --bin export_db_projects_yaml -- --install
 预演（不落盘）：
 
 ```bash
-cargo run --bin export_db_projects_yaml -- --install --dry-run
+server legacy export-db-projects-yaml --install --dry-run
 ```
 
 ## 只导出为文件/标准输出
@@ -26,13 +26,13 @@ cargo run --bin export_db_projects_yaml -- --install --dry-run
 导出 YAML 片段（仅 `projects:`）到文件：
 
 ```bash
-cargo run --bin export_db_projects_yaml -- --out /tmp/vk-projects.yaml
+server legacy export-db-projects-yaml --out /tmp/vk-projects.yaml
 ```
 
 导出到标准输出：
 
 ```bash
-cargo run --bin export_db_projects_yaml -- --out -
+server legacy export-db-projects-yaml --out -
 ```
 
 ## 路径解析（参考/排查）
@@ -40,7 +40,7 @@ cargo run --bin export_db_projects_yaml -- --out -
 脚本提供“打印解析后的路径”能力：
 
 ```bash
-cargo run --bin export_db_projects_yaml -- --print-paths
+server legacy export-db-projects-yaml --print-paths
 ```
 
 输出包含：
@@ -91,8 +91,17 @@ curl -s -X POST http://localhost:<BACKEND_PORT>/api/config/reload
 - DB 由 DATABASE_URL 覆盖，否则使用 VIBE_ASSET_DIR/default_asset_dir 下的 db.sqlite。
 
 请基于以下信息给出可执行步骤（含回滚/备份）：
-1) `cargo run --bin export_db_projects_yaml -- --print-paths` 的输出：<粘贴>
+1) `server legacy export-db-projects-yaml --print-paths` 的输出：<粘贴>
 2) 我希望使用的迁移方式：`--install`（合并写入 config.yaml）/ `--out`（导出片段手动合并）
 3) 如果命令失败/导出为空/路径不对，请给出排查点与替代方案。
 ```
 
+## 源码构建（开发者）
+
+如果你是从源码运行（没有全局 `server` 可执行文件），用：
+
+```bash
+cargo run --bin server -- legacy export-db-projects-yaml --install
+```
+
+注意：旧的 `cargo run --bin export_db_projects_yaml -- ...` 入口属于过渡期遗留，将在未来版本移除。

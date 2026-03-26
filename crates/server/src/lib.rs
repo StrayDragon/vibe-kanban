@@ -3,6 +3,7 @@ pub mod auto_orchestrator;
 pub mod auto_orchestrator_prompt;
 pub mod error;
 pub mod http;
+pub mod legacy_migrations;
 pub mod mcp;
 pub mod middleware;
 pub mod milestone_dispatch;
