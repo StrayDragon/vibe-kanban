@@ -122,6 +122,7 @@ export function GeneralSettings() {
 
   const loadedAt = new Date(status.loaded_at_unix_ms);
   const schemaHeader = '# yaml-language-server: $schema=./config.schema.json';
+  const projectsSchemaHeader = '# yaml-language-server: $schema=./projects.schema.json';
 
   return (
     <div className="space-y-6">
@@ -138,7 +139,7 @@ export function GeneralSettings() {
           <CardDescription>
             {t(
               'settings.config.description',
-              'Edit config.yaml on disk, then reload to apply changes.'
+              'Edit config.yaml / projects.yaml on disk, then reload to apply changes.'
             )}
           </CardDescription>
         </CardHeader>
@@ -230,6 +231,70 @@ export function GeneralSettings() {
             </div>
 
             <div className="space-y-1">
+              <div className="text-sm font-medium">projects.yaml</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="text-xs break-all">{status.projects_path}</code>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    copyToClipboard('projects.yaml path', status.projects_path)
+                  }
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  {t('common:buttons.copy', 'Copy')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void openTarget('projects_yaml')}
+                  disabled={opening === 'projects_yaml'}
+                >
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  {t('settings.config.open', 'Open')}
+                </Button>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {t(
+                  'settings.config.projectsHint',
+                  'Projects and repos are configured here (or split across projects.d/*.yaml).'
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-sm font-medium">projects.d/</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="text-xs break-all">{status.projects_dir}</code>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    copyToClipboard('projects.d path', status.projects_dir)
+                  }
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  {t('common:buttons.copy', 'Copy')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void openTarget('projects_dir')}
+                  disabled={opening === 'projects_dir'}
+                >
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  {t('settings.config.open', 'Open')}
+                </Button>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {t(
+                  'settings.config.projectsDirHint',
+                  'Optional: split projects into multiple YAML files (merged deterministically).'
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-1">
               <div className="text-sm font-medium">secret.env</div>
               <div className="flex flex-wrap items-center gap-2">
                 <code className="text-xs break-all">{status.secret_env_path}</code>
@@ -303,10 +368,57 @@ export function GeneralSettings() {
                 </Button>
               </div>
             </div>
+
+            <div className="space-y-1">
+              <div className="text-sm font-medium">projects.schema.json</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="text-xs break-all">{status.projects_schema_path}</code>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    copyToClipboard(
+                      'projects.schema.json path',
+                      status.projects_schema_path
+                    )
+                  }
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  {t('common:buttons.copy', 'Copy')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void openTarget('projects_schema')}
+                  disabled={opening === 'projects_schema'}
+                >
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  {t('settings.config.open', 'Open')}
+                </Button>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {t(
+                  'settings.config.projectsSchemaHint',
+                  'Add this line to the top of projects.yaml to enable YAML LSP validation:'
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="text-xs break-all">{projectsSchemaHeader}</code>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    copyToClipboard('projects schema header', projectsSchemaHeader)
+                  }
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  {t('common:buttons.copy', 'Copy')}
+                </Button>
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>
     </div>
   );
 }
-

@@ -11,7 +11,7 @@
 - [x] 2.1 增加配置状态查询（config dir、loaded_at、last error summary；不回显 `secret.env` 值），验证：`pnpm run backend:check` +（`pnpm run dev`）`curl -s http://localhost:<BACKEND_PORT>/api/config/status`
 - [x] 2.2 增加显式 reload（`POST /api/config/reload`）并接入快照切换语义，验证：`pnpm run backend:check` +（`pnpm run dev`）修改 `config.yaml` 后执行 `curl -s -X POST http://localhost:<BACKEND_PORT>/api/config/reload`
 - [x] 2.3（可选）增加 `notify` 文件监听（去抖）自动触发 reload，验证：`pnpm run dev` 后编辑 `config.yaml` 观察日志与 `/api/config/status`
-- [x] 2.4 禁用/移除 settings 写入类 endpoints（例如 `PUT /api/config`、`PUT /api/profiles`、`POST/PUT/DELETE /api/projects`），并在响应中提示“编辑 `config.yaml` + reload”，验证：对上述 endpoints 发起请求返回 `405`（或等价错误）
+- [x] 2.4 禁用/移除 settings 写入类 endpoints（例如 `PUT /api/config`、`PUT /api/profiles`、`POST/PUT/DELETE /api/projects`），并在响应中提示“编辑 `config.yaml` / `projects.yaml` + reload”，验证：对上述 endpoints 发起请求返回 `405`（或等价错误）
 
 ## 3. YAML JSON Schema（YAML LSP）
 
@@ -29,13 +29,13 @@
 ## 5. Projects / Repos 静态化（YAML）与 DB-backed settings 移除
 
 - [x] 5.1 定义 projects/repos 的 YAML 结构（稳定 id、repo paths、hooks/policy 等）并纳入 schema，验证：`cargo test -p config` + schema 生成
-- [x] 5.2 后端以 YAML 作为 projects/repos 的唯一事实来源（停止写入 DB settings），验证：`pnpm run backend:check` +（`pnpm run dev`）`curl -s http://localhost:<BACKEND_PORT>/api/projects` 返回与 `config.yaml` 一致
+- [x] 5.2 后端以 YAML 作为 projects/repos 的唯一事实来源（停止写入 DB settings），验证：`pnpm run backend:check` +（`pnpm run dev`）`curl -s http://localhost:<BACKEND_PORT>/api/projects` 返回与 `projects.yaml` 一致
 - [x] 5.3 对“orphaned runtime history”（DB 中引用了不存在的 project id）提供 `Unknown project` 占位展示，验证：前端任务列表/详情不崩溃 + 基本可追溯
 - [x] 5.4 新增/调整最小化 Settings UI：展示 config dir、打开文件/目录、reload、校验错误（last error + last-known-good），验证：`pnpm run check` + 手动 UI smoke
-- [x] 5.5（可选）提供“项目配置片段生成器”（生成 YAML snippet + Copy），引导用户粘贴到 `config.yaml` 并 reload，验证：手动 UI smoke
+- [x] 5.5（可选）提供“项目配置片段生成器”（生成 YAML snippet + Copy），引导用户粘贴到 `projects.yaml` 并 reload，验证：手动 UI smoke
 - [x] 5.6（可选）提供一次性导出：将现有 DB project/repo settings 导出为 YAML（不导出 secrets），验证：`cargo run --bin export_db_projects_yaml -- --out <path>` 生成文件可被 loader 读取
 - [x] 5.7 如共享类型变更，更新 Rust DTO 并运行 `pnpm run generate-types`，验证：`pnpm run check`
-- [x] 5.8（新增）提供 DB → `config.yaml` 迁移脚本：支持 `--install` 合并写入（备份 + 原子写入）与 `--print-paths`，并补充迁移文档/prompt，验证：`cargo run --bin export_db_projects_yaml -- --install --dry-run`
+- [x] 5.8（新增）提供 DB → `projects.yaml` 迁移脚本：支持 `--install` 合并写入（备份 + 原子写入）与 `--print-paths`，并补充迁移文档/prompt，验证：`cargo run --bin export_db_projects_yaml -- --install --dry-run`
 
 ## 6. 清理与回归验证
 

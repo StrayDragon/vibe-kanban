@@ -13,13 +13,23 @@ import { handleApiResponse, makeRequest } from './client';
 export type ConfigStatusResponse = {
   config_dir: string;
   config_path: string;
+  projects_path: string;
+  projects_dir: string;
   secret_env_path: string;
   schema_path: string;
+  projects_schema_path: string;
   loaded_at_unix_ms: number;
   last_error: string | null;
 };
 
-export type OpenConfigTarget = 'config_dir' | 'config_yaml' | 'secret_env' | 'schema';
+export type OpenConfigTarget =
+  | 'config_dir'
+  | 'config_yaml'
+  | 'projects_yaml'
+  | 'projects_dir'
+  | 'secret_env'
+  | 'schema'
+  | 'projects_schema';
 
 export type OpenConfigTargetResponse = {
   url: string | null;

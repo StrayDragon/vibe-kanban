@@ -105,6 +105,18 @@ pub fn vk_config_schema_path() -> std::path::PathBuf {
     vk_config_dir().join("config.schema.json")
 }
 
+pub fn vk_projects_yaml_path() -> std::path::PathBuf {
+    vk_config_dir().join("projects.yaml")
+}
+
+pub fn vk_projects_schema_path() -> std::path::PathBuf {
+    vk_config_dir().join("projects.schema.json")
+}
+
+pub fn vk_projects_dir() -> std::path::PathBuf {
+    vk_config_dir().join("projects.d")
+}
+
 #[cfg(test)]
 mod vk_config_dir_tests {
     use std::sync::{Mutex, OnceLock};

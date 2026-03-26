@@ -321,6 +321,8 @@ pub enum ProjectMcpExecutorPolicyMode {
 pub struct ProjectConfig {
     #[schemars(description = "项目稳定 id（UUID，必须显式写入，且全局唯一）。")]
     pub id: Option<uuid::Uuid>,
+    #[schemars(description = "可选：远程项目 id（用于 remote sync / 共享任务等场景）。")]
+    pub remote_project_id: Option<uuid::Uuid>,
     #[schemars(description = "项目名称（用于 UI 展示）。")]
     pub name: String,
     #[schemars(description = "项目 repos（至少一个）。")]
@@ -403,7 +405,17 @@ pub struct Config {
     pub access_control: AccessControlConfig,
     #[serde(default)]
     #[schemars(
-        description = "Projects 与 repos 配置（file-first）。\n\n- projects 的 `id` 必须显式提供且全局唯一\n- repo `path` 必须为绝对路径\n- 写入/修改方式：编辑 `config.yaml` 后调用 `POST /api/config/reload`"
+        description = "Projects 与 repos 配置（file-first）。\n\n- 推荐写入 `projects.yaml`（或拆分到 `projects.d/*.yaml`）\n- 若存在 `projects.yaml` / `projects.d/*`，会覆盖 `config.yaml` 中的 inline `projects`\n- projects 的 `id` 必须显式提供且全局唯一\n- repo `path` 必须为绝对路径\n- 修改后调用 `POST /api/config/reload`（或启用 watcher 自动 reload）"
+    )]
+    pub projects: Vec<ProjectConfig>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS, Default, schemars::JsonSchema)]
+#[serde(default)]
+pub struct ProjectsFile {
+    #[serde(default)]
+    #[schemars(
+        description = "Projects 与 repos 配置（file-first）。\n\n编辑该文件（`projects.yaml` 或 `projects.d/*.yaml`）后调用 `POST /api/config/reload` 生效（或启用 watcher 自动 reload）。"
     )]
     pub projects: Vec<ProjectConfig>,
 }

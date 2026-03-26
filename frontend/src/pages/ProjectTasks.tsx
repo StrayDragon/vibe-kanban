@@ -938,7 +938,7 @@ export function ProjectTasks() {
           <AlertDescription>
             {t(
               'projects:orphanedProjectHint',
-              'This project id is not present in config.yaml. You can view historical tasks, but to run new work add it to config.yaml and reload.'
+              'This project id is not present in projects.yaml. You can view historical tasks, but to run new work add it to projects.yaml (or projects.d) and reload.'
             )}{' '}
             <span className="font-mono">{projectId}</span>
           </AlertDescription>

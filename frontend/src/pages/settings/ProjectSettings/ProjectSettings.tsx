@@ -90,19 +90,19 @@ export function ProjectSettings() {
     },
   });
 
-  const openConfigYaml = async () => {
+  const openProjectsYaml = async () => {
     try {
-      const result = await configApi.openConfigTarget('config_yaml');
+      const result = await configApi.openConfigTarget('projects_yaml');
       if (result.url) {
         window.open(result.url, '_blank', 'noopener,noreferrer');
       }
     } catch (err) {
-      console.error('Failed to open config.yaml:', err);
+      console.error('Failed to open projects.yaml:', err);
       toast({
         variant: 'destructive',
         title: 'Open failed',
         description:
-          err instanceof Error ? err.message : 'Failed to open config.yaml.',
+          err instanceof Error ? err.message : 'Failed to open projects.yaml.',
       });
     }
   };
@@ -120,7 +120,7 @@ export function ProjectSettings() {
         : [`    - path: ${yamlString('/abs/path/to/repo')}`];
 
     return [
-      '# Paste this under `projects:` in config.yaml (create `projects:` if missing)',
+      '# Paste this under `projects:` in projects.yaml (create the file if missing)',
       `- id: ${snippetProjectId}`,
       `  name: ${yamlString(name)}`,
       '  repos:',
@@ -138,7 +138,7 @@ export function ProjectSettings() {
         <AlertDescription>
           {t(
             'settings.projects.readOnlyDescription',
-            'Projects and repos are configured in config.yaml. Editing via UI is disabled.'
+            'Projects and repos are configured in projects.yaml (or projects.d/*.yaml). Editing via UI is disabled.'
           )}
         </AlertDescription>
       </Alert>
@@ -149,14 +149,14 @@ export function ProjectSettings() {
           <CardDescription>
             {t(
               'settings.projects.description',
-              'Edit config.yaml on disk, then reload to apply changes.'
+              'Edit projects.yaml on disk, then reload to apply changes.'
             )}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" onClick={() => void openConfigYaml()}>
+          <Button variant="outline" onClick={() => void openProjectsYaml()}>
             <ExternalLink className="mr-2 h-4 w-4" />
-            {t('settings.config.open', 'Open config.yaml')}
+            {t('settings.config.open', 'Open projects.yaml')}
           </Button>
           <Button
             onClick={() => reloadMutation.mutate()}
@@ -185,7 +185,7 @@ export function ProjectSettings() {
           <CardDescription>
             {t(
               'settings.projects.snippetDescription',
-              'Generate a minimal projects entry, then paste it into config.yaml and reload.'
+              'Generate a minimal projects entry, then paste it into projects.yaml and reload.'
             )}
           </CardDescription>
         </CardHeader>
@@ -253,7 +253,7 @@ export function ProjectSettings() {
           <CardDescription>
             {t(
               'settings.projects.configuredDescription',
-              'Read-only view of projects currently loaded from config.yaml.'
+              'Read-only view of projects currently loaded from projects.yaml / projects.d.'
             )}{' '}
             <span className="text-xs text-muted-foreground">
               {isConnected
@@ -281,7 +281,7 @@ export function ProjectSettings() {
             <div className="text-sm text-muted-foreground">
               {t(
                 'settings.projects.empty',
-                'No projects configured. Add a projects entry to config.yaml and reload.'
+                'No projects configured. Add a projects entry to projects.yaml and reload.'
               )}
             </div>
           )}

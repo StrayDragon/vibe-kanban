@@ -855,7 +855,7 @@ export function TasksOverview() {
           <p className="mt-2 text-sm text-muted-foreground">
             {t(
               'projects:empty.description',
-              'Projects are configured via config.yaml. Edit the file and reload config to get started.'
+              'Projects are configured via projects.yaml (or projects.d). Edit the file and reload config to get started.'
             )}
           </p>
           <Button

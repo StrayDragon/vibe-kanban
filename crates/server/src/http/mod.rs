@@ -282,7 +282,7 @@ mod tests {
                 .get("message")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default();
-            assert!(message.contains("config.yaml"));
+            assert!(message.contains("config.yaml") || message.contains("projects.yaml"));
         }
 
         assert_method_not_allowed(

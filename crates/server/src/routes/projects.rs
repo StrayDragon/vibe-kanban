@@ -35,7 +35,7 @@ fn settings_write_disabled() -> (StatusCode, ResponseJson<ApiResponse<()>>) {
     (
         StatusCode::METHOD_NOT_ALLOWED,
         ResponseJson(ApiResponse::<()>::error(
-            "Projects settings 已静态化：请编辑 `config.yaml` + reload（POST /api/config/reload）。",
+            "Projects settings 已静态化：请编辑 `projects.yaml`（或 `projects.d/*.yaml`）+ reload（POST /api/config/reload）。",
         )),
     )
 }
@@ -532,7 +532,7 @@ pub(crate) fn project_from_config(
         mcp_auto_executor_policy_allow_list,
         after_prepare_hook,
         before_cleanup_hook,
-        remote_project_id: None,
+        remote_project_id: project.remote_project_id,
         created_at: now,
         updated_at: now,
     })
@@ -576,7 +576,7 @@ mod tests {
             response
                 .message()
                 .unwrap_or_default()
-                .contains("config.yaml")
+                .contains("projects.yaml")
         );
     }
 }

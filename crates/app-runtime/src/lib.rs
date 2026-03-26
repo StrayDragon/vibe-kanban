@@ -469,12 +469,21 @@ impl AppRuntime {
         let config_dir = utils_core::vk_config_dir();
         let config_path = utils_core::vk_config_yaml_path();
         let secret_env_path = utils_core::vk_secret_env_path();
+        let projects_path = utils_core::vk_projects_yaml_path();
+        let projects_dir = utils_core::vk_projects_dir();
         let shutdown = self.shutdown_token();
 
         let deployment = self.clone();
         tokio::spawn(async move {
             if let Err(err) = deployment
-                .run_config_auto_reload_watcher(config_dir, config_path, secret_env_path, shutdown)
+                .run_config_auto_reload_watcher(
+                    config_dir,
+                    config_path,
+                    secret_env_path,
+                    projects_path,
+                    projects_dir,
+                    shutdown,
+                )
                 .await
             {
                 tracing::warn!(error = %err, "Config auto-reload watcher stopped");
@@ -487,6 +496,8 @@ impl AppRuntime {
         config_dir: std::path::PathBuf,
         config_path: std::path::PathBuf,
         secret_env_path: std::path::PathBuf,
+        projects_path: std::path::PathBuf,
+        projects_dir: std::path::PathBuf,
         shutdown: CancellationToken,
     ) -> Result<(), notify::Error> {
         use notify::{RecursiveMode, Watcher};
@@ -496,17 +507,25 @@ impl AppRuntime {
             config_dir: &std::path::Path,
             config_path: &std::path::Path,
             secret_env_path: &std::path::Path,
+            projects_path: &std::path::Path,
+            projects_dir: &std::path::Path,
         ) -> bool {
-            if path == config_path || path == secret_env_path {
+            if path == config_path || path == secret_env_path || path == projects_path {
                 return true;
             }
 
             let file_name = path.file_name().and_then(|name| name.to_str());
-            if !matches!(file_name, Some("config.yaml" | "secret.env")) {
-                return false;
+            let ext = path.extension().and_then(|ext| ext.to_str());
+
+            if path.parent().is_some_and(|parent| parent == config_dir) {
+                return matches!(file_name, Some("config.yaml" | "secret.env" | "projects.yaml"));
             }
 
-            path.parent().is_some_and(|parent| parent == config_dir)
+            if path.parent().is_some_and(|parent| parent == projects_dir) {
+                return matches!(ext, Some("yaml" | "yml"));
+            }
+
+            false
         }
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<notify::Result<notify::Event>>();
@@ -515,7 +534,8 @@ impl AppRuntime {
         })?;
 
         // Watch the directory instead of individual files to handle atomic writes via rename.
-        watcher.watch(&config_dir, RecursiveMode::NonRecursive)?;
+        // Use recursive mode so newly-created `projects.d/` is picked up without a restart.
+        watcher.watch(&config_dir, RecursiveMode::Recursive)?;
 
         tracing::info!(
             config_dir = %config_dir.display(),
@@ -543,7 +563,7 @@ impl AppRuntime {
                                 continue;
                             }
 
-                            if !event.paths.iter().any(|path| is_relevant_path(path, &config_dir, &config_path, &secret_env_path)) {
+                            if !event.paths.iter().any(|path| is_relevant_path(path, &config_dir, &config_path, &secret_env_path, &projects_path, &projects_dir)) {
                                 continue;
                             }
 
@@ -588,11 +608,19 @@ impl AppRuntime {
             .unwrap_or_else(utils_core::vk_config_dir);
         let secret_env_path = config_dir.join("secret.env");
         let schema_path = config_dir.join("config.schema.json");
+        let projects_schema_path = config_dir.join("projects.schema.json");
 
         if let Err(err) = config::write_config_schema_json(&schema_path) {
             tracing::warn!(
                 "Failed to write config schema '{}': {}",
                 schema_path.display(),
+                err
+            );
+        }
+        if let Err(err) = config::write_projects_schema_json(&projects_schema_path) {
+            tracing::warn!(
+                "Failed to write projects schema '{}': {}",
+                projects_schema_path.display(),
                 err
             );
         }

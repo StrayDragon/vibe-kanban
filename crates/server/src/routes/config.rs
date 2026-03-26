@@ -182,8 +182,11 @@ async fn get_user_system_info(
 pub struct ConfigStatusResponse {
     pub config_dir: String,
     pub config_path: String,
+    pub projects_path: String,
+    pub projects_dir: String,
     pub secret_env_path: String,
     pub schema_path: String,
+    pub projects_schema_path: String,
     pub loaded_at_unix_ms: u64,
     pub last_error: Option<String>,
 }
@@ -204,8 +207,15 @@ async fn get_config_status(
     let response = ConfigStatusResponse {
         config_dir: status.config_dir.to_string_lossy().to_string(),
         config_path: status.config_path.to_string_lossy().to_string(),
+        projects_path: utils_core::vk_projects_yaml_path()
+            .to_string_lossy()
+            .to_string(),
+        projects_dir: utils_core::vk_projects_dir().to_string_lossy().to_string(),
         secret_env_path: status.secret_env_path.to_string_lossy().to_string(),
         schema_path: utils_core::vk_config_schema_path()
+            .to_string_lossy()
+            .to_string(),
+        projects_schema_path: utils_core::vk_projects_schema_path()
             .to_string_lossy()
             .to_string(),
         loaded_at_unix_ms: to_unix_ms(status.loaded_at),
@@ -229,8 +239,15 @@ async fn reload_config(
     let response = ConfigStatusResponse {
         config_dir: status.config_dir.to_string_lossy().to_string(),
         config_path: status.config_path.to_string_lossy().to_string(),
+        projects_path: utils_core::vk_projects_yaml_path()
+            .to_string_lossy()
+            .to_string(),
+        projects_dir: utils_core::vk_projects_dir().to_string_lossy().to_string(),
         secret_env_path: status.secret_env_path.to_string_lossy().to_string(),
         schema_path: utils_core::vk_config_schema_path()
+            .to_string_lossy()
+            .to_string(),
+        projects_schema_path: utils_core::vk_projects_schema_path()
             .to_string_lossy()
             .to_string(),
         loaded_at_unix_ms: to_unix_ms(status.loaded_at),
@@ -245,8 +262,11 @@ async fn reload_config(
 pub enum OpenConfigTarget {
     ConfigDir,
     ConfigYaml,
+    ProjectsYaml,
+    ProjectsDir,
     SecretEnv,
     Schema,
+    ProjectsSchema,
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]
@@ -269,8 +289,11 @@ async fn open_config_target(
     let path = match payload.target {
         OpenConfigTarget::ConfigDir => status.config_dir,
         OpenConfigTarget::ConfigYaml => status.config_path,
+        OpenConfigTarget::ProjectsYaml => utils_core::vk_projects_yaml_path(),
+        OpenConfigTarget::ProjectsDir => utils_core::vk_projects_dir(),
         OpenConfigTarget::SecretEnv => status.secret_env_path,
         OpenConfigTarget::Schema => utils_core::vk_config_schema_path(),
+        OpenConfigTarget::ProjectsSchema => utils_core::vk_projects_schema_path(),
     };
 
     let editor_config = {
@@ -293,7 +316,7 @@ fn settings_write_disabled() -> (http::StatusCode, ResponseJson<ApiResponse<()>>
     (
         http::StatusCode::METHOD_NOT_ALLOWED,
         ResponseJson(ApiResponse::<()>::error(
-            "已禁用通过 API 写入 settings：请编辑 `config.yaml` + reload（POST /api/config/reload）。",
+            "已禁用通过 API 写入 settings：请编辑 `config.yaml` / `projects.yaml` + reload（POST /api/config/reload）。",
         )),
     )
 }
