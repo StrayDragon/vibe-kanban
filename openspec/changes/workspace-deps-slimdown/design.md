@@ -34,8 +34,13 @@
    - 选择：将“嵌入前端 dist + 嵌入音频资源”放在 `embed-frontend`/`embed-sounds` features 下；默认 features 仍开启。\n     server-only 节点可用 `--no-default-features` 启动，仅提供 API/MCP。
    - 原因：支持多 server 节点部署（只本地一个前端），并降低 server-only 节点体积/编译时间。
 
-5. **Git 依赖策略先调研再决策**
-   - 选择：以任务形式调研 git2-only vs git CLI-only：\n     - 兼容性（不同 git 版本差异）\n     - 依赖/构建复杂度（libgit2/openssl）\n     - 行为一致性与可测试性\n   - 输出：明确 1 条路线，并制定后续拆除另一条实现的计划。
+5. **server-only 节点 UI 路由策略：直接 404**
+   - 选择：server-only 形态不提供 UI 静态资源服务；相关 UI 路由直接返回 404（不做“友好提示页”）。
+   - 原因：减少额外页面/文案维护面；并避免误导用户“这个节点应该能打开 UI”。
+
+6. **Git 依赖策略：先做代码盘点并固化决策记录**
+   - 选择：本变更先完成“git2 依赖盘点 + CLI 覆盖度分析”，产出可执行的结论（记录在仓库内的 decision 文档），并形成后续拆除计划。\n     在结论落地前，不新增新的 git2 使用点；已有路径以“CLI 优先、git2 仅用于必要的只读/对象读取”为方向逐步收敛。
+   - 输出：明确 1 条路线（git2-only 或 git CLI-only 或分阶段迁移到 CLI-only），以及拆除另一条实现的顺序与风险点。
 
 ## Risks / Trade-offs
 
@@ -53,9 +58,3 @@
 3. reqwest 切换 rustls；移除/减少 openssl-sys 直依赖；跑全量测试。
 4. embed feature 化：默认仍 embed；server-only 提供新启动方式与文档。
 5. Git 依赖调研出结论后开后续变更落地（拆双实现）。
-
-## Open Questions
-
-- server-only 形态下，HTTP UI 路由返回策略：404 vs 提示“本节点不提供 UI”（更友好）。
-- git2 是否仍是不可避免依赖（例如某些功能强依赖 libgit2），这会影响“完全去 openssl”可达性。
-

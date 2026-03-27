@@ -37,7 +37,7 @@ Verification:
 
 - [ ] 5.1 `crates/server`：前端 embed 放入 `embed-frontend` feature（默认开启）
 - [ ] 5.2 `crates/utils-assets`：音频 embed 放入 `embed-sounds` feature（默认开启）
-- [ ] 5.3 server-only 形态行为：\n  - API/MCP 正常\n  - UI 路由返回 404 或友好提示（不依赖 frontend/dist 存在）
+- [ ] 5.3 server-only 形态行为：\n  - API/MCP 正常\n  - UI 路由返回 404（不依赖 frontend/dist 存在）
 - [ ] 5.4 文档更新：新增 server-only 构建/运行说明（集群场景）
 
 Verification:
@@ -46,5 +46,5 @@ Verification:
 ## 6. Git 依赖策略调研与决策（git2 vs git CLI）
 
 - [ ] 6.1 盘点当前 git 能力点：哪些功能必须依赖 git2，哪些可用 git CLI 等价替换
-- [ ] 6.2 比较两条路线：\n  - 兼容性（不同 git 版本差异）\n  - 依赖/构建复杂度（libgit2/openssl）\n  - 行为一致性与可测试性\n- [ ] 6.3 形成决策与后续拆除计划（开下一变更落地，避免长期双实现）
-
+- [ ] 6.2 比较两条路线：\n  - 兼容性（不同 git 版本差异）\n  - 依赖/构建复杂度（libgit2/openssl）\n  - 行为一致性与可测试性
+- [ ] 6.3 输出 decision 文档（例如 `docs/decisions/git-strategy.md`）：明确推荐路线与分阶段拆除计划（避免长期双实现）
