@@ -80,6 +80,13 @@ mod tests {
         config.access_control.allow_localhost_bypass = allow_localhost_bypass;
     }
 
+    async fn set_misconfigured_token_boundary(deployment: &DeploymentImpl) {
+        let mut config = deployment.config().write().await;
+        config.access_control.mode = AccessControlMode::Token;
+        config.access_control.token = None;
+        config.access_control.allow_localhost_bypass = false;
+    }
+
     async fn set_workspace_dir(deployment: &DeploymentImpl, workspace_dir: &std::path::Path) {
         let mut config = deployment.config().write().await;
         config.workspace_dir = Some(workspace_dir.to_string_lossy().to_string());
@@ -137,6 +144,37 @@ mod tests {
         assert_eq!(
             json.get("message").and_then(|v| v.as_str()),
             Some("Unauthorized")
+        );
+    }
+
+    #[tokio::test]
+    async fn api_requests_fail_closed_when_token_mode_is_misconfigured() {
+        let (_env_guard, deployment) = setup_deployment().await;
+        set_misconfigured_token_boundary(&deployment).await;
+
+        let app = super::router(deployment);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/info")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json.get("success").and_then(|v| v.as_bool()), Some(false));
+        assert!(
+            json.get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .contains("misconfigured")
         );
     }
 
@@ -376,6 +414,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn events_fail_closed_when_token_mode_is_misconfigured() {
+        let (_env_guard, deployment) = setup_deployment().await;
+        set_misconfigured_token_boundary(&deployment).await;
+
+        let app = super::router(deployment);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/events")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
     async fn websocket_upgrade_requires_token() {
         let (_env_guard, deployment) = setup_deployment().await;
         set_token_boundary(&deployment, "sekrit", false).await;
@@ -413,6 +471,29 @@ mod tests {
         // rejects WebSocket upgrades with 426 even when the handshake headers are
         // otherwise valid. We still assert this isn't a 401 to confirm auth passed.
         assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn websocket_upgrade_fails_closed_when_token_mode_is_misconfigured() {
+        let (_env_guard, deployment) = setup_deployment().await;
+        set_misconfigured_token_boundary(&deployment).await;
+
+        let app = super::router(deployment);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/api/tasks/stream/ws")
+            .version(axum::http::Version::HTTP_11)
+            .header(header::HOST, "localhost")
+            .header(header::CONNECTION, "Upgrade")
+            .header(header::UPGRADE, "websocket")
+            .header("sec-websocket-version", "13")
+            .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[tokio::test]

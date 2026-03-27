@@ -103,11 +103,24 @@ pub async fn require_api_auth(
         return next.run(req).await;
     }
 
-    let Some(expected_token) = access_control.token.as_deref().filter(|t| !t.is_empty()) else {
-        tracing::warn!(
-            "accessControl.mode=TOKEN but accessControl.token is missing; treating as disabled"
+    let Some(expected_token) = access_control
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    else {
+        tracing::error!(
+            "accessControl.mode=TOKEN but accessControl.token is missing/empty; rejecting all /api/** requests (fail-closed)"
         );
-        return next.run(req).await;
+
+        let response = ApiResponse::<()>::error(
+            "Access control misconfigured: accessControl.mode=TOKEN requires a non-empty accessControl.token.",
+        );
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(response),
+        )
+            .into_response();
     };
 
     let is_loopback = peer_is_loopback(&req).unwrap_or(false);

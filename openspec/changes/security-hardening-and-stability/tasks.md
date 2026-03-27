@@ -1,7 +1,7 @@
 ## 1. Access Control Fail-Closed
 
-- [ ] 1.1 在 `crates/server/src/http/auth.rs` 中将 `accessControl.mode=TOKEN` 且 token 缺失/为空的情况改为 **fail-closed**（拒绝 `/api/**`，返回标准 `ApiResponse` 错误包），并输出可操作的诊断日志
-- [ ] 1.2 为 1.1 增加覆盖 HTTP + SSE + WebSocket 的回归测试（token 缺失/为空时均应被拒绝；`/health` 不受影响）
+- [x] 1.1 在 `crates/server/src/http/auth.rs` 中将 `accessControl.mode=TOKEN` 且 token 缺失/为空的情况改为 **fail-closed**（拒绝 `/api/**`，返回标准 `ApiResponse` 错误包），并输出可操作的诊断日志
+- [x] 1.2 为 1.1 增加覆盖 HTTP + SSE + WebSocket 的回归测试（token 缺失/为空时均应被拒绝；`/health` 不受影响）
 - [ ] 1.3 校验并更新 `openspec/specs/access-control-boundary/spec.md` 的同步（归档时合并本次 delta spec）
 
 Verification:
