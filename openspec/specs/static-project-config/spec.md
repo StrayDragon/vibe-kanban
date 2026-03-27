@@ -4,20 +4,21 @@
 Define how projects and repositories are configured from file-first YAML sources and how runtime data associates to stable project identifiers without requiring DB-backed settings.
 ## Requirements
 ### Requirement: Project and repo configuration is file-based
-The system SHALL load project and repository definitions from the YAML configuration and SHALL NOT require DB-backed settings for these definitions.
+The system SHALL load project and repository definitions from file-based YAML configuration under the OS config directory and SHALL NOT require DB-backed settings for these definitions.
 
-Canonical sources:
-- `projects.yaml` in the config directory
-- optional `projects.d/*.yaml|yml` files in the same directory (merged deterministically)
+The canonical sources are:
+- `projects.yaml`
+- `projects.d/*.yaml|yml` (merged deterministically)
+
+Inline `projects` within `config.yaml` SHALL be used only when no `projects.yaml` or `projects.d/*` files exist.
 
 #### Scenario: Project list comes from projects.yaml
-- **WHEN** `projects.yaml` defines one or more projects
+- **WHEN** `projects.yaml` (or `projects.d/*.yaml|yml`) defines one or more projects
 - **THEN** the system lists those projects as the selectable set for task creation and policy evaluation
 
-#### Scenario: DB does not act as a configuration source
-- **WHEN** the database contains project records
-- **AND** `projects.yaml` / `projects.d` define no projects
-- **THEN** the system lists no configured projects
+#### Scenario: Inline projects are used only as a fallback
+- **WHEN** neither `projects.yaml` nor any `projects.d/*.yaml|yml` files exist
+- **THEN** the system MAY fall back to inline `projects` defined in `config.yaml`
 
 ### Requirement: Projects have stable identifiers
 Each configured project SHALL have a stable identifier that is used to associate runtime data (tasks/attempts/workspaces) with that project.
@@ -60,4 +61,13 @@ If runtime persistence requires a database project record (for example for forei
 - **WHEN** a client creates a task under a configured project
 - **THEN** the database contains a project record for that project id
 - **AND** the configuration source of truth remains the YAML files
+
+### Requirement: Project repo APIs do not expose setup/cleanup script bodies
+The system SHALL NOT expose repository `setup_script`, `cleanup_script`, or other executable script bodies in project/repository API responses.
+
+The system MAY expose safe metadata (for example, whether a script is configured) to support UI display.
+
+#### Scenario: Repository detail response is script-free
+- **WHEN** a client requests a project repository detail endpoint
+- **THEN** the response does not include the script body contents for setup/cleanup scripts
 

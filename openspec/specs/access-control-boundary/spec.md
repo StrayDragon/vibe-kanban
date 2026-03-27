@@ -114,3 +114,4 @@ When a token is configured locally, the frontend SHALL attach the token to API, 
 #### Scenario: No token means no injection
 - **WHEN** the frontend has no local token
 - **THEN** HTTP requests do not attach Authorization and stream URLs do not include `token`
+

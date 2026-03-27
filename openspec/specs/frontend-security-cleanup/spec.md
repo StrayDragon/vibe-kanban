@@ -28,3 +28,10 @@ The repository SHALL keep the frontend TypeScript typecheck and production build
 - **WHEN** a developer runs `pnpm -C frontend run build`
 - **THEN** the build completes successfully without unresolved imports or bundler errors
 
+### Requirement: User-uploaded images must not allow SVG execution
+The system SHALL reject SVG uploads (for example `.svg` or `image/svg+xml`) for user-uploaded images that are later served from the same origin.
+
+#### Scenario: SVG upload is rejected
+- **WHEN** a client uploads an image with SVG format
+- **THEN** the system rejects the upload with a 4xx error
+
