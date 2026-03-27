@@ -20,8 +20,7 @@ Verification:
 ## 3. 防滥用与回归测试
 
 - [ ] 3.1 为模板展开增加安全上限（替换次数、输出长度），避免极端配置导致资源放大
-- [ ] 3.2 增加测试覆盖：\n  - 白名单字段解析成功\n  - 非白名单字段拒绝\n  - secret.env 优先级\n  - 缺失变量 + default / 无 default 的行为\n  - 上限触发报错
+- [ ] 3.2 增加测试覆盖：白名单字段解析成功；非白名单字段拒绝；secret.env 优先级；缺失变量（含 default/无 default）；上限触发报错
 
 Verification:
 - `cargo test -p config`
-
