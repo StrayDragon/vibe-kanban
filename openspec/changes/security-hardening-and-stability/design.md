@@ -44,6 +44,10 @@ VK 在近期完成了以 OS config dir 为根的 file-first YAML 配置重构，
 
 **Why**: “不小心把敏感字段序列化出去”的风险在重构/字段演进中很难靠 code review 长期保证；DTO 是可持续的边界工具。
 
+**Clarification**:
+- `ExecutionProcess` 对外仅允许通过 `ExecutionProcessPublic` 暴露最小必要字段集合。
+- 不提供“debug-only 本地开关”去放大对外字段集合；若未来确有排障需求，应通过新变更引入单独的、严格 token-gated 的调试端点（且默认关闭）。
+
 **Alternatives**:
 - A) 在全局 JSON 序列化层做通用字符串扫描/替换：实现复杂且易误伤；无法保证覆盖所有 secret 形态（不选）。
 - B) 继续返回 model 但加 `#[serde(skip)]`：会影响内部使用与数据持久化语义，且容易在别处绕过（不选）。
@@ -116,7 +120,5 @@ VK 在近期完成了以 OS config dir 为根的 file-first YAML 配置重构，
   - 若 DTO 字段变更导致前端不兼容，可临时回滚前端适配或在服务端提供兼容字段（但尽量避免长期兼容层）。
   - 若 fail-closed 导致误锁（token 配置混乱），可通过编辑 YAML 修复；必要时临时切回 disabled（明确风险）。
 
-## Open Questions
-
-- ExecutionProcess DTO 的最小必要字段集合：前端实际依赖哪些字段（例如 executor_action 的哪些子字段）？是否需要 “debug-only” 的本地开关（仍需 token-gated）用于查看更详细信息。
-- 图片缓存策略取舍：`private, max-age=31536000, immutable` vs `private, max-age=3600` vs `no-store`，需要结合 UI 使用频率与内容敏感度确定默认值。
+## Follow-ups
+DTO 最小字段集合以 `ExecutionProcessPublic` 等公共 DTO 为准；图片缓存头的具体参数作为后续性能调优项单独演进（安全默认优先，不阻塞本变更目标）。
