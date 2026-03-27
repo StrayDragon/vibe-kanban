@@ -4,7 +4,10 @@ import {
   RestoreLogsDialog,
   type RestoreLogsDialogResult,
 } from '@/components/dialogs';
-import type { RepoBranchStatus, ExecutionProcess } from 'shared/types';
+import type {
+  ExecutionProcessPublic as ExecutionProcess,
+  RepoBranchStatus,
+} from 'shared/types';
 
 export interface RetryProcessParams {
   message: string;

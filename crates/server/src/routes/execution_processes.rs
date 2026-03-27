@@ -14,7 +14,7 @@ use axum::{
     routing::{get, post},
 };
 use db::models::{
-    execution_process::{ExecutionProcess, ExecutionProcessStatus},
+    execution_process::{ExecutionProcess, ExecutionProcessPublic, ExecutionProcessStatus},
     execution_process_repo_state::ExecutionProcessRepoState,
 };
 use execution::container::ContainerService;
@@ -112,8 +112,10 @@ fn read_env_usize(name: &str, default: usize) -> usize {
 pub async fn get_execution_process_by_id(
     Extension(execution_process): Extension<ExecutionProcess>,
     State(_deployment): State<DeploymentImpl>,
-) -> Result<ResponseJson<ApiResponse<ExecutionProcess>>, ApiError> {
-    Ok(ResponseJson(ApiResponse::success(execution_process)))
+) -> Result<ResponseJson<ApiResponse<ExecutionProcessPublic>>, ApiError> {
+    Ok(ResponseJson(ApiResponse::success(
+        ExecutionProcessPublic::from_process(&execution_process),
+    )))
 }
 
 pub async fn get_raw_logs_v2(

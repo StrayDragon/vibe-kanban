@@ -16,7 +16,10 @@ use db::models::milestone::{MilestoneGraph, MilestoneNode};
 use db::{
     DbErr,
     models::{
-        execution_process::{ExecutionProcess, ExecutionProcessRunReason, ExecutionProcessStatus},
+        execution_process::{
+            ExecutionProcess, ExecutionProcessPublic, ExecutionProcessRunReason,
+            ExecutionProcessStatus,
+        },
         merge::{Merge, MergeStatus, PrMerge, PullRequestInfo},
         project_repo::ProjectRepoWithName,
         repo::{Repo, RepoError},
@@ -2083,7 +2086,7 @@ pub async fn run_setup_script(
 ) -> Result<
     (
         StatusCode,
-        ResponseJson<ApiResponse<ExecutionProcess, RunScriptError>>,
+        ResponseJson<ApiResponse<ExecutionProcessPublic, RunScriptError>>,
     ),
     ApiError,
 > {
@@ -2184,7 +2187,9 @@ pub async fn run_setup_script(
 
     Ok((
         StatusCode::OK,
-        ResponseJson(ApiResponse::success(execution_process)),
+        ResponseJson(ApiResponse::success(ExecutionProcessPublic::from_process(
+            &execution_process,
+        ))),
     ))
 }
 
@@ -2195,7 +2200,7 @@ pub async fn run_cleanup_script(
 ) -> Result<
     (
         StatusCode,
-        ResponseJson<ApiResponse<ExecutionProcess, RunScriptError>>,
+        ResponseJson<ApiResponse<ExecutionProcessPublic, RunScriptError>>,
     ),
     ApiError,
 > {
@@ -2296,7 +2301,9 @@ pub async fn run_cleanup_script(
 
     Ok((
         StatusCode::OK,
-        ResponseJson(ApiResponse::success(execution_process)),
+        ResponseJson(ApiResponse::success(ExecutionProcessPublic::from_process(
+            &execution_process,
+        ))),
     ))
 }
 
@@ -2307,14 +2314,16 @@ pub async fn gh_cli_setup_handler(
 ) -> Result<
     (
         StatusCode,
-        ResponseJson<ApiResponse<ExecutionProcess, GhCliSetupError>>,
+        ResponseJson<ApiResponse<ExecutionProcessPublic, GhCliSetupError>>,
     ),
     ApiError,
 > {
     match gh_cli_setup::run_gh_cli_setup(&deployment, &workspace).await {
         Ok(execution_process) => Ok((
             StatusCode::OK,
-            ResponseJson(ApiResponse::success(execution_process)),
+            ResponseJson(ApiResponse::success(ExecutionProcessPublic::from_process(
+                &execution_process,
+            ))),
         )),
         Err(ApiError::Executor(ExecutorError::ExecutableNotFound { program }))
             if program == "brew" =>

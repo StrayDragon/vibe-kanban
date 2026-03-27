@@ -69,6 +69,64 @@ pub struct ExecutionProcess {
     pub updated_at: DateTime<Utc>,
 }
 
+fn redact_executor_action_for_public(action: &ExecutorAction) -> ExecutorAction {
+    let typ = match &action.typ {
+        ExecutorActionType::ScriptRequest(req) => {
+            // Script bodies can contain expanded `{{secret.*}}`/`{{env.*}}` values. Never expose
+            // the raw script content over APIs or realtime streams.
+            let mut req = req.clone();
+            req.script = "<redacted>".to_string();
+            ExecutorActionType::ScriptRequest(req)
+        }
+        other => other.clone(),
+    };
+
+    let next_action = action
+        .next_action
+        .as_deref()
+        .map(|next| Box::new(redact_executor_action_for_public(next)));
+
+    ExecutorAction {
+        typ,
+        next_action,
+    }
+}
+
+/// Public-safe execution process representation for API/UI consumption.
+/// This type MUST NOT expose secrets or secret-bearing script bodies.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExecutionProcessPublic {
+    pub id: Uuid,
+    pub session_id: Uuid,
+    pub run_reason: ExecutionProcessRunReason,
+    pub executor_action: ExecutorAction,
+    pub status: ExecutionProcessStatus,
+    pub exit_code: Option<i64>,
+    pub dropped: bool,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl ExecutionProcessPublic {
+    pub fn from_process(process: &ExecutionProcess) -> Self {
+        Self {
+            id: process.id,
+            session_id: process.session_id,
+            run_reason: process.run_reason.clone(),
+            executor_action: redact_executor_action_for_public(&process.executor_action),
+            status: process.status.clone(),
+            exit_code: process.exit_code,
+            dropped: process.dropped,
+            started_at: process.started_at,
+            completed_at: process.completed_at,
+            created_at: process.created_at,
+            updated_at: process.updated_at,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, TS)]
 pub struct CreateExecutionProcess {
     pub session_id: Uuid,

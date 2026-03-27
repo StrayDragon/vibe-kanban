@@ -10,9 +10,9 @@ Verification:
 
 ## 2. ExecutionProcess API DTO 与脱敏边界
 
-- [ ] 2.1 引入对外 DTO（例如 `ExecutionProcessPublic`），并将 `/api/execution-processes/**` 相关路由从“直接回传 DB model”改为“回传安全 DTO”（不包含脚本正文、Authorization/header/token 等敏感字段）
-- [ ] 2.2 更新前端 `frontend/src/api/*` 与相关 hooks/pages，使其适配新的 ExecutionProcess DTO（确保 attempt 页面/日志页面不回归）
-- [ ] 2.3 运行并修复类型生成链路：更新 `crates/server/src/bin/generate_types.rs`（如需要），执行 `pnpm run generate-types`，确保 `pnpm -C frontend run check` 通过
+- [x] 2.1 引入对外 DTO（例如 `ExecutionProcessPublic`），并将 `/api/execution-processes/**` 相关路由从“直接回传 DB model”改为“回传安全 DTO”（不包含脚本正文、Authorization/header/token 等敏感字段）
+- [x] 2.2 更新前端 `frontend/src/api/*` 与相关 hooks/pages，使其适配新的 ExecutionProcess DTO（确保 attempt 页面/日志页面不回归）
+- [x] 2.3 运行并修复类型生成链路：更新 `crates/server/src/bin/generate_types.rs`（如需要），执行 `pnpm run generate-types`，确保 `pnpm -C frontend run check` 通过
 
 Verification:
 - `pnpm run generate-types`

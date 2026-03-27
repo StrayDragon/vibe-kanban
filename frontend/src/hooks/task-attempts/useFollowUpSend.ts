@@ -1,6 +1,9 @@
 import { useCallback, useState } from 'react';
 import { sessionsApi } from '@/lib/api';
-import type { CreateFollowUpAttempt, ExecutionProcess } from 'shared/types';
+import type {
+  CreateFollowUpAttempt,
+  ExecutionProcessPublic as ExecutionProcess,
+} from 'shared/types';
 import { useOptimisticExecutionProcessesStore } from '@/stores/useOptimisticExecutionProcessesStore';
 
 type Args = {

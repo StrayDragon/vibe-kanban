@@ -12,7 +12,10 @@ import {
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import type { ExecutionProcess, Project } from 'shared/types';
+import type {
+  ExecutionProcessPublic as ExecutionProcess,
+  Project,
+} from 'shared/types';
 import {
   createScriptPlaceholderStrategy,
   ScriptPlaceholderContext,

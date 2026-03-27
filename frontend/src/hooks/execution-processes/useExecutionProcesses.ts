@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ExecutionProcess } from 'shared/types';
+import type { ExecutionProcessPublic as ExecutionProcess } from 'shared/types';
 import { useIdMapWsStream } from '@/realtime';
 import { useOptimisticExecutionProcessesStore } from '@/stores/useOptimisticExecutionProcessesStore';
 

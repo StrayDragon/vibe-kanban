@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { attemptsApi, executionProcessesApi } from '@/lib/api';
 import { useAttemptExecution } from '@/hooks/task-attempts/useAttemptExecution';
-import type { ExecutionProcess } from 'shared/types';
+import type { ExecutionProcessPublic as ExecutionProcess } from 'shared/types';
 import { executionProcessKeys } from '@/query-keys/executionProcessKeys';
 
 interface UseDevServerOptions {

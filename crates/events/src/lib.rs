@@ -13,7 +13,7 @@ use db::{
     },
     models::{
         event_outbox::EventOutbox,
-        execution_process::ExecutionProcess,
+        execution_process::{ExecutionProcess, ExecutionProcessPublic},
         project::Project,
         scratch::{Scratch, ScratchType},
         session::Session,
@@ -311,6 +311,7 @@ impl EventService {
 
         let process = ExecutionProcess::find_by_id(&self.db.pool, process_id).await?;
         if let Some(process) = process {
+            let process = ExecutionProcessPublic::from_process(&process);
             let patch = match kind {
                 PatchKind::Add => execution_process_patch::add(&process),
                 PatchKind::Replace => execution_process_patch::replace(&process),

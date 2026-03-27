@@ -1,5 +1,5 @@
 use db::models::{
-    execution_process::ExecutionProcess, project::Project, scratch::Scratch,
+    execution_process::ExecutionProcessPublic, project::Project, scratch::Scratch,
     task::TaskWithAttemptStatus, workspace::Workspace,
 };
 use json_patch::{AddOperation, Patch, PatchOperation, RemoveOperation, ReplaceOperation};
@@ -101,7 +101,7 @@ pub mod execution_process_patch {
     }
 
     /// Create patch for adding a new execution process
-    pub fn add(process: &ExecutionProcess) -> Patch {
+    pub fn add(process: &ExecutionProcessPublic) -> Patch {
         Patch(vec![PatchOperation::Add(AddOperation {
             path: execution_process_path(process.id)
                 .try_into()
@@ -112,7 +112,7 @@ pub mod execution_process_patch {
     }
 
     /// Create patch for updating an existing execution process
-    pub fn replace(process: &ExecutionProcess) -> Patch {
+    pub fn replace(process: &ExecutionProcessPublic) -> Patch {
         Patch(vec![PatchOperation::Replace(ReplaceOperation {
             path: execution_process_path(process.id)
                 .try_into()

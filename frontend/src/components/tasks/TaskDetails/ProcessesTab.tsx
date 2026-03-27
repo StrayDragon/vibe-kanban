@@ -13,7 +13,10 @@ import { ProfileVariantBadge } from '@/components/common/ProfileVariantBadge.tsx
 import { useExecutionProcesses } from '@/hooks/execution-processes/useExecutionProcesses';
 import { useLogStream } from '@/hooks/execution-processes/useLogStream';
 import { ProcessLogsViewerContent } from './ProcessLogsViewer';
-import { ExecutionProcessStatus, type ExecutionProcess } from 'shared/types';
+import {
+  ExecutionProcessStatus,
+  type ExecutionProcessPublic as ExecutionProcess,
+} from 'shared/types';
 
 import { useProcessSelection } from '@/contexts/ProcessSelectionContext';
 import { useRetryUi } from '@/contexts/RetryUiContext';

@@ -4,7 +4,7 @@ import { attemptsApi, executionProcessesApi } from '@/lib/api';
 import { useTaskStopping } from '@/stores/useTaskDetailsUiStore';
 import { useExecutionProcessesContext } from '@/contexts/ExecutionProcessesContext';
 import type { AttemptData } from '@/lib/types';
-import type { ExecutionProcess } from 'shared/types';
+import type { ExecutionProcessPublic as ExecutionProcess } from 'shared/types';
 import { executionProcessKeys } from '@/query-keys/executionProcessKeys';
 
 export function useAttemptExecution(attemptId?: string, taskId?: string) {

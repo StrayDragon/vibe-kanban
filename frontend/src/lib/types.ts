@@ -1,7 +1,7 @@
-import {
-  ExecutionProcess,
-  NormalizedEntry,
+import type {
+  ExecutionProcessPublic as ExecutionProcess,
   ExecutionProcessStatus,
+  NormalizedEntry,
 } from 'shared/types';
 
 export type AttemptData = {

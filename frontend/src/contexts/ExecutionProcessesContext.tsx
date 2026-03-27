@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useMemo } from 'react';
 import { useExecutionProcesses } from '@/hooks/execution-processes/useExecutionProcesses';
-import type { ExecutionProcess } from 'shared/types';
+import type { ExecutionProcessPublic as ExecutionProcess } from 'shared/types';
 
 type ExecutionProcessesContextType = {
   executionProcessesAll: ExecutionProcess[];

@@ -3,7 +3,7 @@ import { Terminal, ChevronDown } from 'lucide-react';
 import ProcessLogsViewer, {
   ProcessLogsViewerContent,
 } from '../ProcessLogsViewer';
-import { ExecutionProcess } from 'shared/types';
+import type { ExecutionProcessPublic as ExecutionProcess } from 'shared/types';
 
 interface DevServerLogsViewProps {
   latestDevServerProcess: ExecutionProcess | undefined;

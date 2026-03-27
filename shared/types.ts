@@ -199,13 +199,7 @@ export type WorkspaceLifecycleHookRunSummary = { phase: WorkspaceLifecycleHookPh
 
 export type Session = { id: string, workspace_id: string, executor: string | null, created_at: string, updated_at: string, };
 
-export type ExecutionProcess = { id: string, session_id: string, run_reason: ExecutionProcessRunReason, executor_action: ExecutorAction, status: ExecutionProcessStatus, exit_code: bigint | null, 
-/**
- * dropped: true if this process is excluded from the current
- * history view (due to restore/trimming). Hidden from logs/timeline;
- * still listed in the Processes tab.
- */
-dropped: boolean, started_at: string, completed_at: string | null, created_at: string, updated_at: string, };
+export type ExecutionProcessPublic = { id: string, session_id: string, run_reason: ExecutionProcessRunReason, executor_action: ExecutorAction, status: ExecutionProcessStatus, exit_code: bigint | null, dropped: boolean, started_at: string, completed_at: string | null, created_at: string, updated_at: string, };
 
 export enum ExecutionProcessStatus { running = "running", completed = "completed", failed = "failed", killed = "killed" }
 

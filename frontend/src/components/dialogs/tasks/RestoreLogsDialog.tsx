@@ -21,7 +21,7 @@ import {
 } from '@/constants/processes';
 import type {
   RepoBranchStatus,
-  ExecutionProcess,
+  ExecutionProcessPublic as ExecutionProcess,
   ExecutionProcessRepoState,
 } from 'shared/types';
 

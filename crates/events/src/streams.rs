@@ -9,7 +9,7 @@ use std::{
 use db::{
     DbPool,
     models::{
-        execution_process::ExecutionProcess,
+        execution_process::{ExecutionProcess, ExecutionProcessPublic},
         project::Project,
         scratch::Scratch,
         session::Session,
@@ -461,7 +461,8 @@ impl EventService {
                 .into_iter()
                 .filter_map(|process| {
                     let process_id = process.id;
-                    match serde_json::to_value(process) {
+                    let public = ExecutionProcessPublic::from_process(&process);
+                    match serde_json::to_value(public) {
                         Ok(value) => Some((process_id.to_string(), value)),
                         Err(err) => {
                             tracing::error!(
@@ -565,7 +566,7 @@ impl EventService {
                         match op {
                             json_patch::PatchOperation::Add(add) => {
                                 if let Ok(process) =
-                                    serde_json::from_value::<ExecutionProcess>(add.value.clone())
+                                    serde_json::from_value::<ExecutionProcessPublic>(add.value.clone())
                                     && session_matches_workspace(
                                         &session_ids,
                                         &self.db.pool,
@@ -590,7 +591,7 @@ impl EventService {
                                 }
                             }
                             json_patch::PatchOperation::Replace(replace) => {
-                                if let Ok(process) = serde_json::from_value::<ExecutionProcess>(
+                                if let Ok(process) = serde_json::from_value::<ExecutionProcessPublic>(
                                     replace.value.clone(),
                                 ) && session_matches_workspace(
                                     &session_ids,
@@ -664,7 +665,7 @@ impl EventService {
                                 match op {
                                     json_patch::PatchOperation::Add(add) => {
                                         if let Ok(process) =
-                                            serde_json::from_value::<ExecutionProcess>(
+                                            serde_json::from_value::<ExecutionProcessPublic>(
                                                 add.value.clone(),
                                             )
                                             && session_matches_workspace(
@@ -692,7 +693,7 @@ impl EventService {
                                     }
                                     json_patch::PatchOperation::Replace(replace) => {
                                         if let Ok(process) =
-                                            serde_json::from_value::<ExecutionProcess>(
+                                            serde_json::from_value::<ExecutionProcessPublic>(
                                                 replace.value.clone(),
                                             )
                                             && session_matches_workspace(

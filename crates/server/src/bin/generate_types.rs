@@ -101,7 +101,7 @@ fn generate_types_content() -> String {
         db::models::workspace::Workspace::decl(),
         db::models::workspace::WorkspaceLifecycleHookRunSummary::decl(),
         db::models::session::Session::decl(),
-        db::models::execution_process::ExecutionProcess::decl(),
+        db::models::execution_process::ExecutionProcessPublic::decl(),
         db::models::execution_process::ExecutionProcessStatus::decl(),
         db::models::execution_process::ExecutionProcessRunReason::decl(),
         db::models::execution_process_repo_state::ExecutionProcessRepoState::decl(),

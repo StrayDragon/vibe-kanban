@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ExecutionProcess } from 'shared/types';
+import type { ExecutionProcessPublic as ExecutionProcess } from 'shared/types';
 
 type OptimisticExecutionProcessesStore = {
   byAttemptId: Record<string, Record<string, ExecutionProcess>>;

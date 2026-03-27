@@ -1,6 +1,6 @@
 import type {
   CreateFollowUpAttempt,
-  ExecutionProcess,
+  ExecutionProcessPublic as ExecutionProcess,
   MilestonePlanDetectionResult,
   Session,
 } from 'shared/types';

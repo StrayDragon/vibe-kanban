@@ -5,7 +5,7 @@ import { useConversationHistory } from './execution-processes/useConversationHis
 import { streamLogEntries } from '@/utils/streamLogEntries';
 import type {
   ApiResponse,
-  ExecutionProcess,
+  ExecutionProcessPublic as ExecutionProcess,
   LogHistoryPage,
   PatchType,
   Workspace,

@@ -5,7 +5,7 @@ import type {
   CreateGitHubPrRequest,
   CreatePrError,
   CreateTaskAttemptBody,
-  ExecutionProcess,
+  ExecutionProcessPublic as ExecutionProcess,
   GhCliSetupError,
   GitOperationError,
   TaskAttemptStatusResponse,

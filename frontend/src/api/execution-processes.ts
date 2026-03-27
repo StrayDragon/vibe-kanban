@@ -1,5 +1,5 @@
 import type {
-  ExecutionProcess,
+  ExecutionProcessPublic as ExecutionProcess,
   ExecutionProcessRepoState,
   LogHistoryPage,
 } from 'shared/types';

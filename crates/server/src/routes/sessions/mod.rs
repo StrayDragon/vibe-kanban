@@ -14,7 +14,9 @@ use db::{
     DbErr,
     models::{
         coding_agent_turn::CodingAgentTurn,
-        execution_process::{ExecutionProcess, ExecutionProcessRunReason},
+        execution_process::{
+            ExecutionProcess, ExecutionProcessPublic, ExecutionProcessRunReason,
+        },
         project_repo::ProjectRepoWithName,
         scratch::{Scratch, ScratchType},
         session::{CreateSession, Session},
@@ -212,7 +214,7 @@ pub async fn follow_up(
     State(deployment): State<DeploymentImpl>,
     headers: HeaderMap,
     Json(payload): Json<CreateFollowUpAttempt>,
-) -> Result<ResponseJson<ApiResponse<ExecutionProcess>>, ApiError> {
+) -> Result<ResponseJson<ApiResponse<ExecutionProcessPublic>>, ApiError> {
     let key = crate::routes::idempotency::idempotency_key(&headers);
     let hash = crate::routes::idempotency::request_hash(&payload)?;
 
@@ -389,7 +391,7 @@ pub async fn follow_up(
                 );
             }
 
-            Ok(execution_process)
+            Ok(ExecutionProcessPublic::from_process(&execution_process))
         },
     )
     .await

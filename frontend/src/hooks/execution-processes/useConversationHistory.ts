@@ -1,7 +1,7 @@
 // useConversationHistory.ts
 import {
   CommandExitStatus,
-  ExecutionProcess,
+  ExecutionProcessPublic as ExecutionProcess,
   ExecutionProcessStatus,
   ExecutorAction,
   IndexedLogEntry,
