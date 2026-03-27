@@ -58,7 +58,16 @@ const ENV_VARS = [
     defaultValue: 'dev_assets/ (debug) or OS app data dir (release)',
     appliesTo: ['server', 'local-deployment'],
     description:
-      'Overrides the asset directory used for config, credentials, and the SQLite database.',
+      'Overrides the runtime asset directory used for credentials.json and the SQLite database (not user config).',
+  },
+  {
+    category: 'Storage',
+    name: 'VK_CONFIG_DIR',
+    type: 'path',
+    defaultValue: 'OS user config dir (e.g. ~/.config/vk/)',
+    appliesTo: ['server', 'mcp_task_server', 'local-deployment'],
+    description:
+      'Overrides the user config directory containing config.yaml/projects.yaml/secret.env and generated JSON schemas.',
   },
   {
     category: 'Storage',
@@ -516,8 +525,7 @@ function listFiles(dir) {
         parts.includes('.git') ||
         parts.includes('target') ||
         rel.startsWith(`frontend${path.sep}dist`) ||
-        rel.startsWith(`dev_assets${path.sep}`) ||
-        rel.startsWith(`dev_assets_seed${path.sep}`)
+        rel.startsWith(`dev_assets${path.sep}`)
       ) {
         continue;
       }

@@ -99,8 +99,9 @@ Notes:
 | Name | Type | Default | Applies to | Description |
 | --- | --- | --- | --- | --- |
 | `DATABASE_URL` | string | sqlite://<asset_dir>/db.sqlite?mode=rwc | server | SQLite database URL. Only sqlite URLs are supported. When unset, defaults under VIBE_ASSET_DIR. |
-| `VIBE_ASSET_DIR` | path | dev_assets/ (debug) or OS app data dir (release) | server, local-deployment | Overrides the asset directory used for config, credentials, and the SQLite database. |
+| `VIBE_ASSET_DIR` | path | dev_assets/ (debug) or OS app data dir (release) | server, local-deployment | Overrides the runtime asset directory used for credentials.json and the SQLite database (not user config). |
 | `VIBE_DB_RESET_ON_MIGRATION_ERROR` | bool | false | server | When true, resets the local SQLite DB files on migration error (destructive). |
+| `VK_CONFIG_DIR` | path | OS user config dir (e.g. ~/.config/vk/) | server, mcp_task_server, local-deployment | Overrides the user config directory containing config.yaml/projects.yaml/secret.env and generated JSON schemas. |
 
 ## Translation
 
@@ -128,7 +129,7 @@ The list below shows where each env var name appears in the repo (best-effort).
 
 - `BACKEND_HOST`: `frontend/vite.config.ts`, `scripts/run-e2e.js`
 - `BACKEND_PORT`: `crates/server/src/main.rs`, `frontend/vite.config.ts`, `package.json`, `scripts/run-e2e.js`
-- `DATABASE_URL`: `crates/db/src/lib.rs`, `crates/server/src/test_support.rs`, `scripts/prepare-db.js`
+- `DATABASE_URL`: `crates/db/src/lib.rs`, `crates/server/src/legacy_migrations.rs`, `crates/server/src/test_support.rs`, `scripts/prepare-db.js`
 - `DISABLE_WORKSPACE_EXPIRED_CLEANUP`: `crates/execution/src/container/local.rs`
 - `DISABLE_WORKTREE_ORPHAN_CLEANUP`: `crates/repos/src/workspace_manager.rs`, `package.json`
 - `FRONTEND_PORT`: `frontend/vite.config.ts`, `package.json`, `scripts/run-e2e.js`
@@ -143,7 +144,7 @@ The list below shows where each env var name appears in the repo (best-effort).
 - `POSTHOG_API_ENDPOINT`: `crates/server/build.rs`
 - `POSTHOG_API_KEY`: `crates/server/build.rs`
 - `RUST_LOG`: `crates/executor-codex/src/codex/mod.rs`, `crates/server/src/main.rs`, `package.json`
-- `VIBE_ASSET_DIR`: `crates/server/src/http/mod.rs`, `crates/server/src/test_support.rs`, `crates/utils-assets/src/assets.rs`, `scripts/run-e2e-just-run.js`, `scripts/run-e2e.js`
+- `VIBE_ASSET_DIR`: `crates/server/src/http/mod.rs`, `crates/server/src/legacy_migrations.rs`, `crates/server/src/test_support.rs`, `crates/utils-assets/src/assets.rs`, `scripts/run-e2e-just-run.js`, `scripts/run-e2e.js`, `scripts/setup-dev-environment.js`
 - `VIBE_BACKEND_URL`: —
 - `VIBE_DB_RESET_ON_MIGRATION_ERROR`: `crates/db/src/lib.rs`
 - `VIBE_FAKE_AGENT_CONFIG`: `crates/executor-fake-agent/src/fake_agent.rs`
@@ -154,6 +155,7 @@ The list below shows where each env var name appears in the repo (best-effort).
 - `VK_APPROVALS_COMPLETED_TTL_SECS`: `crates/config/src/cache_budget.rs`
 - `VK_CACHE_WARN_AT_RATIO`: `crates/config/src/cache_budget.rs`
 - `VK_CACHE_WARN_SAMPLE_SECS`: `crates/config/src/cache_budget.rs`
+- `VK_CONFIG_DIR`: `crates/server/src/http/mod.rs`, `crates/server/src/legacy_migrations.rs`, `crates/server/src/test_support.rs`, `crates/utils-core/src/lib.rs`, `scripts/run-e2e-just-run.js`, `scripts/run-e2e.js`
 - `VK_FILE_SEARCH_CACHE_MAX_REPOS`: `crates/config/src/cache_budget.rs`
 - `VK_FILE_SEARCH_CACHE_TTL_SECS`: `crates/config/src/cache_budget.rs`
 - `VK_FILE_SEARCH_MAX_FILES`: `crates/config/src/cache_budget.rs`
