@@ -287,14 +287,11 @@ mod tests {
         config_dir: PathBuf,
     }
 
-    fn test_lock() -> &'static std::sync::Mutex<()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
-    }
-
     impl TestEnvGuard {
         fn new(temp_root: &std::path::Path) -> Self {
-            let lock = test_lock().lock().unwrap_or_else(|err| err.into_inner());
+            let lock = super::super::test_lock()
+                .lock()
+                .unwrap_or_else(|err| err.into_inner());
             let prev_asset_dir = std::env::var("VIBE_ASSET_DIR").ok();
 
             let config_dir = temp_root.join("vk-config");

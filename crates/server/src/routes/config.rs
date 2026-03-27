@@ -208,6 +208,7 @@ pub struct ConfigStatusResponse {
     #[ts(type = "number")]
     pub loaded_at_unix_ms: u64,
     pub last_error: Option<String>,
+    pub dirty: bool,
 }
 
 fn to_unix_ms(time: std::time::SystemTime) -> u64 {
@@ -239,6 +240,7 @@ async fn get_config_status(
             .to_string(),
         loaded_at_unix_ms: to_unix_ms(status.loaded_at),
         last_error: status.last_error,
+        dirty: status.dirty,
     };
 
     ResponseJson(ApiResponse::success(response))
@@ -251,8 +253,6 @@ async fn reload_config(
     if let Err(err) = deployment.reload_user_config().await {
         return Err(ApiError::BadRequest(format!("Config reload failed: {err}")));
     }
-
-    deployment.sync_config_projects_to_db().await?;
 
     let status = deployment.config_status().read().await.clone();
     let response = ConfigStatusResponse {
@@ -271,6 +271,7 @@ async fn reload_config(
             .to_string(),
         loaded_at_unix_ms: to_unix_ms(status.loaded_at),
         last_error: status.last_error,
+        dirty: status.dirty,
     };
 
     Ok(ResponseJson(ApiResponse::success(response)))

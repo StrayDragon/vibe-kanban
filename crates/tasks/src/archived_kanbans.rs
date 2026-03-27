@@ -6,7 +6,6 @@ use db::{
         archived_kanban::{ArchivedKanban, ArchivedKanbanWithTaskCount},
         event_outbox::EventOutbox,
         milestone::{Milestone, MilestoneError},
-        project::Project,
         task::{Task, TaskKind, TaskStatus},
     },
 };
@@ -83,9 +82,9 @@ fn map_milestone_error(err: MilestoneError) -> TasksError {
 
 pub async fn list_project_archived_kanbans(
     db: &db::DbPool,
-    project: &Project,
+    project_id: Uuid,
 ) -> Result<Vec<ArchivedKanbanWithTaskCount>, TasksError> {
-    ArchivedKanban::list_by_project_with_task_counts(db, project.id)
+    ArchivedKanban::list_by_project_with_task_counts(db, project_id)
         .await
         .map_err(TasksError::from)
 }
@@ -93,7 +92,7 @@ pub async fn list_project_archived_kanbans(
 pub async fn archive_project_kanban<R: TaskRuntime + Sync>(
     runtime: &R,
     db: &db::DbPool,
-    project: &Project,
+    project_id: Uuid,
     payload: &ArchiveProjectKanbanRequest,
 ) -> Result<ArchiveProjectKanbanResponse, TasksError> {
     ensure_statuses_non_empty(&payload.statuses)?;
@@ -102,7 +101,7 @@ pub async fn archive_project_kanban<R: TaskRuntime + Sync>(
         .unwrap_or_else(|| default_archive_title(chrono::Utc::now()));
 
     let pool = db;
-    let project_row_id = db::models::ids::project_id_by_uuid(pool, project.id)
+    let project_row_id = db::models::ids::project_id_by_uuid(pool, project_id)
         .await?
         .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
 
@@ -188,7 +187,7 @@ pub async fn archive_project_kanban<R: TaskRuntime + Sync>(
     let moved_task_count = u64::try_from(to_archive.len()).unwrap_or(u64::MAX);
 
     let tx = pool.begin().await?;
-    let archive = ArchivedKanban::create(&tx, project.id, title).await?;
+    let archive = ArchivedKanban::create(&tx, project_id, title).await?;
     let archive_row_id = ArchivedKanban::row_id_by_uuid(&tx, archive.id)
         .await?
         .ok_or(DbErr::RecordNotFound(
@@ -221,7 +220,7 @@ pub async fn archive_project_kanban<R: TaskRuntime + Sync>(
     for task_id in &task_uuids {
         let payload = serde_json::to_value(TaskEventPayload {
             task_id: *task_id,
-            project_id: project.id,
+            project_id,
         })
         .map_err(|err| DbErr::Custom(err.to_string()))?;
         EventOutbox::enqueue(&tx, EVENT_TASK_UPDATED, "task", *task_id, payload).await?;

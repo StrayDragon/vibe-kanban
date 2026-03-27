@@ -316,6 +316,70 @@ impl Project {
         Ok(record.map(Self::from_model))
     }
 
+    /// Ensure the projects table contains a minimal row for `project_id`.
+    ///
+    /// This is intentionally "write as little as possible":
+    /// - If the row exists, do nothing.
+    /// - If missing, create a minimal cache row (uuid + name + required defaults).
+    ///
+    /// The YAML config remains the source of truth for full project configuration.
+    pub async fn find_or_create_minimal<C: ConnectionTrait>(
+        db: &C,
+        project_id: Uuid,
+        name: &str,
+    ) -> Result<Self, DbErr> {
+        if let Some(record) = project::Entity::find()
+            .filter(project::Column::Uuid.eq(project_id))
+            .one(db)
+            .await?
+        {
+            return Ok(Self::from_model(record));
+        }
+
+        let now = Utc::now();
+        let active = project::ActiveModel {
+            uuid: Set(project_id),
+            name: Set(name.to_string()),
+            dev_script: Set(None),
+            dev_script_working_dir: Set(None),
+            default_agent_working_dir: Set(None),
+            git_no_verify_override: Set(None),
+            scheduler_max_concurrent: Set(1),
+            scheduler_max_retries: Set(3),
+            default_continuation_turns: Set(0),
+            after_prepare_hook_command: Set(None),
+            after_prepare_hook_working_dir: Set(None),
+            after_prepare_hook_failure_policy: Set(None),
+            after_prepare_hook_run_mode: Set(None),
+            before_cleanup_hook_command: Set(None),
+            before_cleanup_hook_working_dir: Set(None),
+            before_cleanup_hook_failure_policy: Set(None),
+            mcp_auto_executor_policy_mode: Set(
+                crate::types::ProjectMcpExecutorPolicyMode::InheritAll,
+            ),
+            mcp_auto_executor_policy_allow_list_json: Set(None),
+            remote_project_id: Set(None),
+            created_at: Set(now.into()),
+            updated_at: Set(now.into()),
+            ..Default::default()
+        };
+
+        match active.insert(db).await {
+            Ok(model) => Ok(Self::from_model(model)),
+            Err(err) => {
+                // Handle races by re-querying before returning the insert failure.
+                if let Some(record) = project::Entity::find()
+                    .filter(project::Column::Uuid.eq(project_id))
+                    .one(db)
+                    .await?
+                {
+                    return Ok(Self::from_model(record));
+                }
+                Err(err)
+            }
+        }
+    }
+
     pub async fn create<C: ConnectionTrait>(
         db: &C,
         data: &CreateProject,

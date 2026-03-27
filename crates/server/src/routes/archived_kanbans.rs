@@ -5,7 +5,7 @@ use axum::{
     response::Json as ResponseJson,
     routing::{get, post},
 };
-use db::models::{archived_kanban::ArchivedKanbanWithTaskCount, project::Project};
+use db::models::archived_kanban::ArchivedKanbanWithTaskCount;
 pub use tasks::archived_kanbans::{
     ArchiveProjectKanbanRequest, ArchiveProjectKanbanResponse, DeleteArchivedKanbanResponse,
     GetArchivedKanbanResponse, RestoreArchivedKanbanRequest, RestoreArchivedKanbanResponse,
@@ -16,17 +16,17 @@ use uuid::Uuid;
 use crate::{DeploymentImpl, error::ApiError, task_runtime::DeploymentTaskRuntime};
 
 pub async fn list_project_archived_kanbans(
-    Extension(project): Extension<Project>,
+    Extension(project): Extension<crate::routes::projects::ProjectPublic>,
     State(deployment): State<DeploymentImpl>,
 ) -> Result<ResponseJson<ApiResponse<Vec<ArchivedKanbanWithTaskCount>>>, ApiError> {
     let archives =
-        tasks::archived_kanbans::list_project_archived_kanbans(&deployment.db().pool, &project)
+        tasks::archived_kanbans::list_project_archived_kanbans(&deployment.db().pool, project.id)
             .await?;
     Ok(ResponseJson(ApiResponse::success(archives)))
 }
 
 pub async fn archive_project_kanban(
-    Extension(project): Extension<Project>,
+    Extension(project): Extension<crate::routes::projects::ProjectPublic>,
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<ArchiveProjectKanbanRequest>,
 ) -> Result<ResponseJson<ApiResponse<ArchiveProjectKanbanResponse>>, ApiError> {
@@ -34,7 +34,7 @@ pub async fn archive_project_kanban(
     let response = tasks::archived_kanbans::archive_project_kanban(
         &runtime,
         &deployment.db().pool,
-        &project,
+        project.id,
         &payload,
     )
     .await?;

@@ -14,10 +14,7 @@ use axum::{
     routing::get,
 };
 use chrono::Utc;
-use db::models::{
-    project::{Project, ProjectFileSearchResponse},
-    repo::Repo,
-};
+use db::models::{project::ProjectFileSearchResponse, repo::Repo};
 use futures_util::{SinkExt, StreamExt};
 use logs_axum::SequencedLogMsgAxumExt;
 use logs_protocol::LogMsg;
@@ -43,14 +40,12 @@ fn settings_write_disabled() -> (StatusCode, ResponseJson<ApiResponse<()>>) {
 
 pub async fn get_projects(
     State(deployment): State<DeploymentImpl>,
-) -> Result<ResponseJson<ApiResponse<Vec<Project>>>, ApiError> {
-    let status = deployment.config_status().read().await.clone();
-    let loaded_at: chrono::DateTime<Utc> = status.loaded_at.into();
+) -> Result<ResponseJson<ApiResponse<Vec<ProjectPublic>>>, ApiError> {
     let config = deployment.public_config().read().await.clone();
     let projects = config
         .projects
         .iter()
-        .filter_map(|project| project_from_config(project, loaded_at))
+        .filter_map(project_public_from_config)
         .collect();
     Ok(ResponseJson(ApiResponse::success(projects)))
 }
@@ -141,13 +136,11 @@ async fn send_projects_snapshot(
     deployment: &DeploymentImpl,
     last_seq: &mut u64,
 ) -> anyhow::Result<()> {
-    let status = deployment.config_status().read().await.clone();
-    let loaded_at: chrono::DateTime<Utc> = status.loaded_at.into();
     let config = deployment.public_config().read().await.clone();
     let projects = config
         .projects
         .iter()
-        .filter_map(|project| project_from_config(project, loaded_at))
+        .filter_map(project_public_from_config)
         .collect::<Vec<_>>();
 
     let projects_map: serde_json::Map<String, serde_json::Value> = projects
@@ -194,8 +187,8 @@ async fn send_projects_snapshot(
 }
 
 pub async fn get_project(
-    Extension(project): Extension<Project>,
-) -> Result<ResponseJson<ApiResponse<Project>>, ApiError> {
+    Extension(project): Extension<ProjectPublic>,
+) -> Result<ResponseJson<ApiResponse<ProjectPublic>>, ApiError> {
     Ok(ResponseJson(ApiResponse::success(project)))
 }
 
@@ -213,7 +206,7 @@ pub async fn delete_project() -> (StatusCode, ResponseJson<ApiResponse<()>>) {
 
 pub async fn search_project_files(
     State(deployment): State<DeploymentImpl>,
-    Extension(project): Extension<Project>,
+    Extension(project): Extension<ProjectPublic>,
     Query(search_query): Query<SearchQuery>,
 ) -> Result<ResponseJson<ApiResponse<ProjectFileSearchResponse>>, ApiError> {
     if search_query.q.trim().is_empty() {
@@ -272,7 +265,7 @@ pub async fn search_project_files(
 }
 
 pub async fn get_project_repositories(
-    Extension(project): Extension<Project>,
+    Extension(project): Extension<ProjectPublic>,
     State(deployment): State<DeploymentImpl>,
 ) -> Result<ResponseJson<ApiResponse<Vec<Repo>>>, ApiError> {
     let config = deployment.config().read().await;
@@ -408,10 +401,26 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
     Router::new().nest("/projects", projects_router)
 }
 
-pub(crate) fn project_from_config(
-    project: &config::ProjectConfig,
-    now: chrono::DateTime<Utc>,
-) -> Option<Project> {
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ProjectPublic {
+    pub id: Uuid,
+    pub name: String,
+    pub dev_script: Option<String>,
+    pub dev_script_working_dir: Option<String>,
+    pub default_agent_working_dir: Option<String>,
+    pub git_no_verify_override: Option<bool>,
+    pub scheduler_max_concurrent: i32,
+    pub scheduler_max_retries: i32,
+    pub default_continuation_turns: i32,
+    pub mcp_auto_executor_policy_mode: db::types::ProjectMcpExecutorPolicyMode,
+    pub mcp_auto_executor_policy_allow_list: Vec<db::types::ProjectExecutorProfileAllowListEntry>,
+    pub after_prepare_hook: Option<db::models::project::WorkspaceLifecycleHookConfig>,
+    pub before_cleanup_hook: Option<db::models::project::WorkspaceLifecycleHookConfig>,
+    pub remote_project_id: Option<Uuid>,
+}
+
+pub(crate) fn project_public_from_config(project: &config::ProjectConfig) -> Option<ProjectPublic> {
     let id = project.id?;
 
     let mcp_auto_executor_policy_mode = match project.mcp_auto_executor_policy_mode {
@@ -477,7 +486,7 @@ pub(crate) fn project_from_config(
         }
     });
 
-    Some(Project {
+    Some(ProjectPublic {
         id,
         name: project.name.clone(),
         dev_script: project.dev_script.clone(),
@@ -492,8 +501,6 @@ pub(crate) fn project_from_config(
         after_prepare_hook,
         before_cleanup_hook,
         remote_project_id: project.remote_project_id,
-        created_at: now,
-        updated_at: now,
     })
 }
 
@@ -508,14 +515,12 @@ async fn load_project_from_config_middleware(
         return Ok(next.run(request).await);
     }
 
-    let status = deployment.config_status().read().await.clone();
-    let loaded_at: chrono::DateTime<Utc> = status.loaded_at.into();
     let config = deployment.public_config().read().await.clone();
     let project = config
         .projects
         .iter()
         .find(|candidate| candidate.id == Some(project_id))
-        .and_then(|project| project_from_config(project, loaded_at))
+        .and_then(project_public_from_config)
         .ok_or(StatusCode::NOT_FOUND)?;
 
     request.extensions_mut().insert(project);
@@ -530,7 +535,10 @@ mod tests {
         body::{Body, to_bytes},
         http::{Request, StatusCode},
     };
-    use db::models::repo::Repo;
+    use db::models::{
+        project::{CreateProject, Project},
+        repo::Repo,
+    };
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -651,6 +659,74 @@ mod tests {
         assert_eq!(
             json.pointer("/data/has_setup_script"),
             Some(&serde_json::Value::Bool(true))
+        );
+    }
+
+    #[tokio::test]
+    async fn projects_endpoint_uses_yaml_as_source_of_truth() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let _env_guard = crate::test_support::TestEnvGuard::new(&temp_root, db_url);
+
+        let vk_config_dir = temp_root.join("vk-config");
+        let repo_path = temp_root.join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+
+        let project_id = Uuid::new_v4();
+        fs::write(
+            vk_config_dir.join("projects.yaml"),
+            format!(
+                r#"projects:
+  - id: "{project_id}"
+    name: "YAML Name"
+    repos:
+      - path: "{}"
+"#,
+                repo_path.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+
+        Project::create(
+            &deployment.db().pool,
+            &CreateProject {
+                name: "DB Name".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let app = crate::http::router(deployment);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/projects")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        let project_id_str = project_id.to_string();
+        assert_eq!(
+            json.pointer("/data/0/id").and_then(|v| v.as_str()),
+            Some(project_id_str.as_str())
+        );
+        assert_eq!(
+            json.pointer("/data/0/name").and_then(|v| v.as_str()),
+            Some("YAML Name")
         );
     }
 }

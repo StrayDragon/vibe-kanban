@@ -269,6 +269,12 @@ struct ConfigDiskInputs {
     projects_extra: Vec<(PathBuf, Option<String>)>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ConfigPair {
+    pub runtime: Config,
+    pub public: Config,
+}
+
 fn list_projects_extra_paths(projects_dir: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Ok(entries) = std::fs::read_dir(projects_dir) {
@@ -461,6 +467,113 @@ pub fn try_load_config_from_file(config_path: &Path) -> Result<Config, ConfigErr
     Ok(config)
 }
 
+fn build_public_config_from_disk(disk: &ConfigDiskInputs) -> Result<Config, ConfigError> {
+    let mut config = match disk.config_raw.as_deref() {
+        Some(raw) => serde_yaml::from_str::<Config>(raw)?,
+        None => Config::default(),
+    };
+
+    // If projects.yaml (or projects.d/*.yaml) exist, they become the canonical source of
+    // projects configuration. Otherwise fall back to inline `projects` in config.yaml.
+    let mut projects_override = Vec::new();
+    let mut has_projects_override = false;
+
+    if let Some(raw) = disk.projects_raw.as_deref() {
+        let file = serde_yaml::from_str::<ProjectsFile>(raw)?;
+        projects_override.extend(file.projects);
+        has_projects_override = true;
+    }
+
+    for (_path, raw) in disk.projects_extra.iter() {
+        let Some(raw) = raw.as_deref() else {
+            continue;
+        };
+        let file = serde_yaml::from_str::<ProjectsFile>(raw)?;
+        projects_override.extend(file.projects);
+        has_projects_override = true;
+    }
+
+    if has_projects_override {
+        config.projects = projects_override;
+    }
+
+    let config = config.normalized();
+    config
+        .validate_config_version()
+        .map_err(ConfigError::ValidationError)?;
+    Ok(config)
+}
+
+fn build_runtime_config_from_disk(
+    disk: &ConfigDiskInputs,
+    env: &TemplateEnv,
+) -> Result<Config, ConfigError> {
+    let mut config = match disk.config_raw.as_deref() {
+        Some(raw) => {
+            let value = yaml_from_raw_with_templates(raw, env)?;
+            serde_yaml::from_value::<Config>(value)?
+        }
+        None => Config::default(),
+    };
+
+    // If projects.yaml (or projects.d/*.yaml) exist, they become the canonical source of
+    // projects configuration. Otherwise fall back to inline `projects` in config.yaml.
+    let mut projects_override = Vec::new();
+    let mut has_projects_override = false;
+
+    if let Some(raw) = disk.projects_raw.as_deref() {
+        let value = yaml_from_raw_with_templates(raw, env)?;
+        let file = serde_yaml::from_value::<ProjectsFile>(value)?;
+        projects_override.extend(file.projects);
+        has_projects_override = true;
+    }
+
+    for (_path, raw) in disk.projects_extra.iter() {
+        let Some(raw) = raw.as_deref() else {
+            continue;
+        };
+        let value = yaml_from_raw_with_templates(raw, env)?;
+        let file = serde_yaml::from_value::<ProjectsFile>(value)?;
+        projects_override.extend(file.projects);
+        has_projects_override = true;
+    }
+
+    if has_projects_override {
+        config.projects = projects_override;
+    }
+
+    let config = config.normalized();
+    config
+        .validate_config_version()
+        .map_err(ConfigError::ValidationError)?;
+
+    let profiles = executors::profile::ExecutorConfigs::from_defaults_merged_with_overrides(
+        config.executor_profiles.as_ref(),
+    )
+    .map_err(|err| ConfigError::ValidationError(err.to_string()))?;
+    profiles
+        .require_coding_agent(&config.executor_profile)
+        .map_err(|err| ConfigError::ValidationError(err.to_string()))?;
+
+    config
+        .validate_projects(&profiles)
+        .map_err(ConfigError::ValidationError)?;
+
+    Ok(config)
+}
+
+pub fn try_load_config_pair_from_file(config_path: &Path) -> Result<ConfigPair, ConfigError> {
+    let disk = read_config_disk_inputs_stable(config_path, true)?;
+    let env = TemplateEnv {
+        secret: disk.secret_env.clone(),
+    };
+
+    Ok(ConfigPair {
+        runtime: build_runtime_config_from_disk(&disk, &env)?,
+        public: build_public_config_from_disk(&disk)?,
+    })
+}
+
 pub fn reload_config_keep_last_known_good(
     current: &Config,
     config_path: &Path,
@@ -608,6 +721,69 @@ github:
 
         let loaded = try_load_config_from_file(&config_path).expect("load config");
         assert_eq!(loaded.github.pat.as_deref(), Some("fallback"));
+    }
+
+    #[test]
+    fn config_pair_runtime_expands_templates_but_public_does_not() {
+        let _guard = env_lock().lock().unwrap();
+        let _env = EnvVarGuard::set("GITHUB_PAT", Some("from_system"));
+
+        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
+        let config_path = dir.join("config.yaml");
+        let secret_path = dir.join("secret.env");
+        let projects_path = dir.join("projects.yaml");
+
+        write_file(
+            &config_path,
+            r#"
+github:
+  pat: "{{env.GITHUB_PAT}}"
+projects:
+  - id: 00000000-0000-0000-0000-000000000001
+    name: "inline"
+    repos:
+      - path: "/tmp/inline"
+"#,
+        );
+
+        write_file(&secret_path, "GITHUB_PAT=from_secret\nPROJECT_ROOT=/tmp\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600))
+                .expect("chmod secret.env");
+        }
+
+        write_file(
+            &projects_path,
+            r#"
+projects:
+  - id: 00000000-0000-0000-0000-000000000002
+    name: "from_projects_yaml"
+    repos:
+      - path: "{{env.PROJECT_ROOT}}/repo"
+"#,
+        );
+
+        let pair = try_load_config_pair_from_file(&config_path).expect("load config pair");
+        assert_eq!(pair.runtime.github.pat.as_deref(), Some("from_secret"));
+        assert_eq!(
+            pair.public.github.pat.as_deref(),
+            Some("{{env.GITHUB_PAT}}")
+        );
+
+        assert_eq!(pair.runtime.projects.len(), 1);
+        assert_eq!(pair.runtime.projects[0].name, "from_projects_yaml");
+        assert_eq!(pair.runtime.projects[0].repos.len(), 1);
+        assert_eq!(pair.runtime.projects[0].repos[0].path, "/tmp/repo");
+
+        assert_eq!(pair.public.projects.len(), 1);
+        assert_eq!(pair.public.projects[0].name, "from_projects_yaml");
+        assert_eq!(pair.public.projects[0].repos.len(), 1);
+        assert_eq!(
+            pair.public.projects[0].repos[0].path,
+            "{{env.PROJECT_ROOT}}/repo"
+        );
     }
 
     #[test]

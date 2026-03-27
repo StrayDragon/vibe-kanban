@@ -14,7 +14,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import type {
   ExecutionProcessPublic as ExecutionProcess,
-  Project,
+  ProjectPublic,
 } from 'shared/types';
 import {
   createScriptPlaceholderStrategy,
@@ -35,7 +35,7 @@ interface NoServerContentProps {
   isStartingDevServer: boolean;
   startDevServer: () => void;
   stopDevServer: () => void;
-  project: Project | undefined;
+  project: ProjectPublic | undefined;
 }
 
 export function NoServerContent({

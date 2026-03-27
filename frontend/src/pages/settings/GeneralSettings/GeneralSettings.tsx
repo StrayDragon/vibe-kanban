@@ -51,6 +51,7 @@ export function GeneralSettings() {
     queryKey: CONFIG_STATUS_QUERY_KEY,
     queryFn: configApi.getConfigStatus,
     staleTime: 5_000,
+    refetchInterval: 5_000,
   });
 
   const reloadMutation = useMutation({
@@ -112,6 +113,20 @@ export function GeneralSettings() {
             {t('settings.config.lastError', 'Last error')}
           </AlertTitle>
           <AlertDescription>{status.last_error}</AlertDescription>
+        </Alert>
+      )}
+
+      {status.dirty && (
+        <Alert>
+          <AlertTitle>
+            {t('settings.config.dirtyTitle', 'Modified but not applied')}
+          </AlertTitle>
+          <AlertDescription>
+            {t(
+              'settings.config.dirtyDescription',
+              'Config files have changed on disk but are not applied yet. Click Reload to apply.'
+            )}
+          </AlertDescription>
         </Alert>
       )}
 

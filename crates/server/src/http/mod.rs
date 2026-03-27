@@ -267,6 +267,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn server_starts_with_read_only_config_dir() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let _env_guard = TestEnvGuard::new(&temp_root, db_url);
+
+        let config_dir = utils_core::vk_config_dir();
+        let config_path = utils_core::vk_config_yaml_path();
+        std::fs::write(&config_path, "{}\n").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&config_dir, std::fs::Permissions::from_mode(0o500))
+                .expect("chmod config dir");
+        }
+
+        let deployment = DeploymentImpl::new()
+            .await
+            .expect("server should start with read-only config dir");
+
+        // Runtime no longer writes schemas on startup.
+        assert!(!utils_core::vk_config_schema_path().exists());
+        assert!(!utils_core::vk_projects_schema_path().exists());
+
+        // Sanity: the deployment should report the same config directory.
+        assert_eq!(
+            deployment.config_status().read().await.config_dir,
+            config_dir
+        );
+    }
+
+    #[tokio::test]
     async fn config_reload_failure_sets_last_error_and_keeps_config() {
         let (_env_guard, deployment) = setup_deployment().await;
         let config_path = deployment.config_status().read().await.config_path.clone();

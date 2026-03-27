@@ -6,15 +6,16 @@ import {
   useEffect,
 } from 'react';
 import { useLocation } from 'react-router-dom';
-import type { Project } from 'shared/types';
+import type { ProjectPublic } from 'shared/types';
 import { useProjects } from '@/hooks/projects/useProjects';
 
 interface ProjectContextValue {
   projectId: string | undefined;
-  project: Project | undefined;
-  projects: Project[];
-  projectsById: Record<string, Project>;
+  project: ProjectPublic | undefined;
+  projects: ProjectPublic[];
+  projectsById: Record<string, ProjectPublic>;
   isLoading: boolean;
+  isConnected: boolean;
   error: Error | null;
   isError: boolean;
 }
@@ -34,7 +35,8 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
     return match ? match[2] : undefined;
   }, [location.pathname]);
 
-  const { projects, projectsById, isLoading, error } = useProjects();
+  const { projects, projectsById, isLoading, isConnected, error } =
+    useProjects();
   const project = projectId ? projectsById[projectId] : undefined;
 
   const value = useMemo(
@@ -44,10 +46,11 @@ export function ProjectProvider({ children }: ProjectProviderProps) {
       projects,
       projectsById,
       isLoading,
+      isConnected,
       error,
       isError: !!error,
     }),
-    [projectId, project, projects, projectsById, isLoading, error]
+    [projectId, project, projects, projectsById, isLoading, isConnected, error]
   );
 
   // Centralized page title management

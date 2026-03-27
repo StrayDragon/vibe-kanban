@@ -6,6 +6,8 @@
 
 export type Project = { id: string, name: string, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null, scheduler_max_concurrent: number, scheduler_max_retries: number, default_continuation_turns: number, mcp_auto_executor_policy_mode: ProjectMcpExecutorPolicyMode, mcp_auto_executor_policy_allow_list: Array<ProjectExecutorProfileAllowListEntry>, after_prepare_hook: WorkspaceLifecycleHookConfig | null, before_cleanup_hook: WorkspaceLifecycleHookConfig | null, remote_project_id: string | null, created_at: Date, updated_at: Date, };
 
+export type ProjectPublic = { id: string, name: string, dev_script: string | null, dev_script_working_dir: string | null, default_agent_working_dir: string | null, git_no_verify_override: boolean | null, scheduler_max_concurrent: number, scheduler_max_retries: number, default_continuation_turns: number, mcp_auto_executor_policy_mode: ProjectMcpExecutorPolicyMode, mcp_auto_executor_policy_allow_list: Array<ProjectExecutorProfileAllowListEntry>, after_prepare_hook: WorkspaceLifecycleHookConfig | null, before_cleanup_hook: WorkspaceLifecycleHookConfig | null, remote_project_id: string | null, };
+
 export type WorkspaceLifecycleHookConfig = { command: string, working_dir: string | null, failure_policy: WorkspaceLifecycleHookFailurePolicy, run_mode: WorkspaceLifecycleHookRunMode | null, };
 
 export type ProjectMcpExecutorPolicyMode = "inherit_all" | "allow_list";
@@ -259,7 +261,7 @@ agent_command_resolutions: { [key in string]?: AgentCommandResolution }, executo
 
 export type Environment = { os_type: string, os_version: string, os_architecture: string, bitness: string, };
 
-export type ConfigStatusResponse = { config_dir: string, config_path: string, projects_path: string, projects_dir: string, secret_env_path: string, schema_path: string, projects_schema_path: string, loaded_at_unix_ms: number, last_error: string | null, };
+export type ConfigStatusResponse = { config_dir: string, config_path: string, projects_path: string, projects_dir: string, secret_env_path: string, schema_path: string, projects_schema_path: string, loaded_at_unix_ms: number, last_error: string | null, dirty: boolean, };
 
 export type CheckEditorAvailabilityQuery = { editor_type: EditorType, };
 

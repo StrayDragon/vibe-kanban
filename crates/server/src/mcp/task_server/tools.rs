@@ -394,14 +394,13 @@ Avoid: Archiving tasks with running execution processes."#,
             title,
         }): Parameters<ArchiveProjectKanbanRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let now = chrono::Utc::now();
         let project = {
-            let config = self.deployment.config().read().await;
+            let config = self.deployment.public_config().read().await;
             config
                 .projects
                 .iter()
                 .find(|project| project.id == Some(project_id))
-                .and_then(|project| crate::routes::projects::project_from_config(project, now))
+                .and_then(crate::routes::projects::project_public_from_config)
         }
         .ok_or_else(|| {
             ErrorData::invalid_params(
@@ -4803,20 +4802,30 @@ mod tests {
         std::fs::create_dir_all(&temp_root).unwrap();
         let _guard = TestEnvGuard::new(&temp_root, "sqlite::memory:".to_string());
 
+        let repo_path = temp_root.join("repo");
+        std::fs::create_dir_all(&repo_path).unwrap();
+
+        let project_id = Uuid::new_v4();
+        std::fs::write(
+            temp_root.join("vk-config").join("projects.yaml"),
+            format!(
+                r#"projects:
+  - id: "{project_id}"
+    name: "Archive guard"
+    repos:
+      - path: "{}"
+"#,
+                repo_path.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
         let deployment = DeploymentImpl::new().await.unwrap();
         let pool = deployment.db().pool.clone();
 
-        let project_id = Uuid::new_v4();
-        Project::create(
-            &pool,
-            &db::models::project::CreateProject {
-                name: "Archive guard".to_string(),
-                repositories: Vec::new(),
-            },
-            project_id,
-        )
-        .await
-        .unwrap();
+        db::models::project::Project::find_or_create_minimal(&pool, project_id, "Archive guard")
+            .await
+            .unwrap();
 
         let task_id = Uuid::new_v4();
         Task::create(
@@ -4827,10 +4836,15 @@ mod tests {
         .await
         .unwrap();
 
-        let project = Project::find_by_id(&pool, project_id)
-            .await
-            .unwrap()
-            .unwrap();
+        let project = {
+            let config = deployment.public_config().read().await;
+            config
+                .projects
+                .iter()
+                .find(|project| project.id == Some(project_id))
+                .and_then(crate::routes::projects::project_public_from_config)
+                .expect("project should exist in config")
+        };
         let _ = crate::routes::archived_kanbans::archive_project_kanban(
             axum::Extension(project),
             axum::extract::State(deployment.clone()),

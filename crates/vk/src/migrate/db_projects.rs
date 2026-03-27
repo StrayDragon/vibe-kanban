@@ -581,14 +581,11 @@ mod tests {
         config_dir: PathBuf,
     }
 
-    fn test_lock() -> &'static std::sync::Mutex<()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
-    }
-
     impl TestEnvGuard {
         fn new(temp_root: &Path, db_url: String) -> Self {
-            let lock = test_lock().lock().unwrap_or_else(|err| err.into_inner());
+            let lock = super::super::test_lock()
+                .lock()
+                .unwrap_or_else(|err| err.into_inner());
             let prev_database_url = std::env::var("DATABASE_URL").ok();
             let prev_asset_dir = std::env::var("VIBE_ASSET_DIR").ok();
             let prev_disable_background_tasks = std::env::var("VIBE_DISABLE_BACKGROUND_TASKS").ok();

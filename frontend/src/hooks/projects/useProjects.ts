@@ -1,10 +1,10 @@
 import { useMemo } from 'react';
 import { useIdMapWsStream } from '@/realtime';
-import type { Project } from 'shared/types';
+import type { ProjectPublic } from 'shared/types';
 
 export interface UseProjectsResult {
-  projects: Project[];
-  projectsById: Record<string, Project>;
+  projects: ProjectPublic[];
+  projectsById: Record<string, ProjectPublic>;
   isLoading: boolean;
   isConnected: boolean;
   error: Error | null;
@@ -13,21 +13,19 @@ export interface UseProjectsResult {
 export function useProjects(): UseProjectsResult {
   const endpoint = '/api/projects/stream/ws';
 
-  const { data, isConnected, error } = useIdMapWsStream<'projects', Project>(
-    endpoint,
-    true,
+  const { data, isConnected, error } = useIdMapWsStream<
     'projects',
-    '/projects/'
-  );
+    ProjectPublic
+  >(endpoint, true, 'projects', '/projects/');
 
   const projectsById = useMemo(() => data?.projects ?? {}, [data]);
 
   const projects = useMemo(() => {
-    return Object.values(projectsById).sort(
-      (a, b) =>
-        new Date(b.created_at as unknown as string).getTime() -
-        new Date(a.created_at as unknown as string).getTime()
-    );
+    return Object.values(projectsById).sort((a, b) => {
+      const byName = a.name.localeCompare(b.name);
+      if (byName !== 0) return byName;
+      return a.id.localeCompare(b.id);
+    });
   }, [projectsById]);
 
   const projectsData = data ? projects : undefined;

@@ -155,7 +155,7 @@ The list below shows where each env var name appears in the repo (best-effort).
 - `VK_APPROVALS_COMPLETED_TTL_SECS`: `crates/config/src/cache_budget.rs`
 - `VK_CACHE_WARN_AT_RATIO`: `crates/config/src/cache_budget.rs`
 - `VK_CACHE_WARN_SAMPLE_SECS`: `crates/config/src/cache_budget.rs`
-- `VK_CONFIG_DIR`: `crates/app-runtime/src/lib.rs`, `crates/server/src/http/mod.rs`, `crates/server/src/test_support.rs`, `crates/utils-core/src/lib.rs`, `crates/vk/src/migrate/asset_config.rs`, `crates/vk/src/migrate/db_projects.rs`, `scripts/run-e2e-just-run.js`, `scripts/run-e2e.js`
+- `VK_CONFIG_DIR`: `crates/app-runtime/src/lib.rs`, `crates/server/src/http/mod.rs`, `crates/server/src/test_support.rs`, `crates/utils-core/src/lib.rs`, `crates/vk/src/config_cmd/schema.rs`, `crates/vk/src/migrate/asset_config.rs`, `crates/vk/src/migrate/db_projects.rs`, `scripts/run-e2e-just-run.js`, `scripts/run-e2e.js`
 - `VK_FILE_SEARCH_CACHE_MAX_REPOS`: `crates/config/src/cache_budget.rs`
 - `VK_FILE_SEARCH_CACHE_TTL_SECS`: `crates/config/src/cache_budget.rs`
 - `VK_FILE_SEARCH_MAX_FILES`: `crates/config/src/cache_budget.rs`

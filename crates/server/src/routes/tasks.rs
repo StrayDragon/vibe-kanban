@@ -172,19 +172,27 @@ pub async fn create_task(
     headers: HeaderMap,
     Json(payload): Json<CreateTask>,
 ) -> Result<ResponseJson<ApiResponse<Task>>, ApiError> {
-    let project_configured = {
+    let project_name = {
         let config = deployment.config().read().await;
         config
             .projects
             .iter()
-            .any(|project| project.id == Some(payload.project_id))
+            .find(|project| project.id == Some(payload.project_id))
+            .map(|project| project.name.clone())
     };
-    if !project_configured {
+    let Some(project_name) = project_name else {
         return Err(ApiError::BadRequest(
             "Project not found in projects config. Edit `projects.yaml` (or `projects.d/*.yaml`; if you don't have those files, edit inline `projects` in `config.yaml`) and reload (POST /api/config/reload)."
                 .to_string(),
         ));
-    }
+    };
+
+    db::models::project::Project::find_or_create_minimal(
+        &deployment.db().pool,
+        payload.project_id,
+        &project_name,
+    )
+    .await?;
 
     let key = crate::routes::idempotency::idempotency_key(&headers);
     let hash = crate::routes::idempotency::request_hash(&payload)?;
@@ -232,6 +240,13 @@ pub async fn create_task_and_start(
                 .to_string(),
         )
     })?;
+
+    db::models::project::Project::find_or_create_minimal(
+        &deployment.db().pool,
+        payload.task.project_id,
+        &project_config.name,
+    )
+    .await?;
 
     let runtime = DeploymentTaskRuntime::new(deployment.container());
     let repos: Vec<CreateWorkspaceRepo> = payload
@@ -395,6 +410,13 @@ mod tests {
 
         let deployment = DeploymentImpl::new().await.unwrap();
 
+        assert!(
+            Project::find_by_id(&deployment.db().pool, project_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
         let payload =
             CreateTask::from_title_description(project_id, "A".to_string(), Some("d".to_string()));
 
@@ -406,6 +428,12 @@ mod tests {
         .await
         .unwrap();
         let task1 = response1.0.into_data().expect("task should be present");
+
+        let project = Project::find_by_id(&deployment.db().pool, project_id)
+            .await
+            .unwrap()
+            .expect("project should exist");
+        assert_eq!(project.name, "Idempotency");
 
         let response2 = create_task(
             State(deployment.clone()),
@@ -422,6 +450,61 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(tasks.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn create_task_does_not_update_existing_project_row_name() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let _env_guard = TestEnvGuard::new(&temp_root, db_url);
+
+        let project_id = Uuid::new_v4();
+        let repo_path = temp_root.join("repo");
+        std::fs::create_dir_all(&repo_path).unwrap();
+        std::fs::write(
+            temp_root.join("vk-config").join("config.yaml"),
+            format!(
+                r#"projects:
+  - id: {project_id}
+    name: YAML Name
+    repos:
+      - path: {repo_path}
+"#,
+                repo_path = repo_path.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+
+        Project::create(
+            &deployment.db().pool,
+            &CreateProject {
+                name: "DB Name".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let payload = CreateTask::from_title_description(project_id, "A".to_string(), None);
+        let _ = create_task(
+            State(deployment.clone()),
+            idempotency_headers("req-1"),
+            Json(payload),
+        )
+        .await
+        .unwrap();
+
+        let project = Project::find_by_id(&deployment.db().pool, project_id)
+            .await
+            .unwrap()
+            .expect("project should exist");
+        assert_eq!(project.name, "DB Name");
     }
 
     #[tokio::test]

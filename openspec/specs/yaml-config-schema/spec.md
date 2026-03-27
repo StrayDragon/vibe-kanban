@@ -1,5 +1,8 @@
-## ADDED Requirements
+# yaml-config-schema Specification
 
+## Purpose
+Define how VK generates and documents JSON Schema files for file-first YAML configuration so editors can provide validation and completion without leaking secrets.
+## Requirements
 ### Requirement: JSON Schema is generated for the YAML config
 The system SHALL generate a JSON Schema describing the YAML configuration and write it as `config.schema.json` in the config directory.
 
@@ -20,3 +23,20 @@ The system SHALL document a supported way to associate `config.yaml` with the ge
 #### Scenario: yaml-language-server directive references the generated schema
 - **WHEN** `config.yaml` contains `# yaml-language-server: $schema=./config.schema.json`
 - **THEN** YAML LSP tooling can use the generated schema for validation and completion
+
+### Requirement: CLI can upsert config schemas
+The system SHALL provide a CLI command that generates (or updates) `config.schema.json` and `projects.schema.json` under the config directory.
+
+#### Scenario: CLI upserts schemas successfully
+- **WHEN** an operator runs the schema upsert command
+- **THEN** `config.schema.json` exists in the config directory
+- **AND** `projects.schema.json` exists in the config directory
+
+### Requirement: Server startup does not require schema write side effects
+The system SHALL NOT require writing schema files as part of the server startup path.
+
+#### Scenario: Read-only config directory does not block server startup
+- **WHEN** the config directory is not writable
+- **THEN** the server can still start and serve core APIs
+- **AND** schema generation can be performed separately via CLI when desired
+

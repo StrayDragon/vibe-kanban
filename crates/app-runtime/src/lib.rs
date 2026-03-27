@@ -12,7 +12,7 @@ use config::{Config, ConfigError, cache_budget::cache_budgets};
 use db::{
     DBService, DbErr,
     models::{
-        project::{CreateProject, Project, UpdateProject},
+        project::{CreateProject, Project},
         project_repo::CreateProjectRepo,
         workspace::WorkspaceError,
     },
@@ -356,6 +356,7 @@ pub struct RuntimeConfigStatus {
     pub secret_env_path: std::path::PathBuf,
     pub loaded_at: SystemTime,
     pub last_error: Option<String>,
+    pub dirty: bool,
 }
 
 #[async_trait]
@@ -403,7 +404,6 @@ impl Deployment for AppRuntime {
             shutdown_token,
         };
 
-        deployment.sync_config_projects_to_db().await?;
         deployment.maybe_spawn_config_auto_reload_watcher();
 
         Ok(deployment)
@@ -525,13 +525,33 @@ impl AppRuntime {
             let file_name = path.file_name().and_then(|name| name.to_str());
             let ext = path.extension().and_then(|ext| ext.to_str());
 
+            if matches!(
+                file_name,
+                Some("config.yaml" | "secret.env" | "projects.yaml")
+            ) {
+                return true;
+            }
+
+            if file_name == Some("projects.d") {
+                return true;
+            }
+
+            let parent_name = path
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .and_then(|name| name.to_str());
+            if parent_name == Some("projects.d") {
+                return matches!(ext, Some("yaml" | "yml"));
+            }
+
+            // Fall back to strict path checks when the file watcher reports unexpected paths
+            // (e.g., when config_dir/config_path representations differ due to symlinks).
             if path.parent().is_some_and(|parent| parent == config_dir) {
                 return matches!(
                     file_name,
                     Some("config.yaml" | "secret.env" | "projects.yaml")
                 );
             }
-
             if path.parent().is_some_and(|parent| parent == projects_dir) {
                 return matches!(ext, Some("yaml" | "yml"));
             }
@@ -592,18 +612,9 @@ impl AppRuntime {
                     next_reload_at = None;
                     sleep.as_mut().reset(tokio::time::Instant::now() + far_future);
 
-                    tracing::info!("Config change detected; reloading");
-                    match self.reload_user_config().await {
-                        Ok(()) => {
-                            if let Err(err) = self.sync_config_projects_to_db().await {
-                                tracing::warn!(error = %err, "Config reloaded but failed to sync projects to DB");
-                            }
-                            tracing::info!("Config auto-reload succeeded");
-                        }
-                        Err(err) => {
-                            tracing::warn!(error = %err, "Config auto-reload failed");
-                        }
-                    }
+                    tracing::info!("Config change detected; marking dirty");
+                    let mut status = self.config_status.write().await;
+                    status.dirty = true;
                 }
             }
         }
@@ -626,48 +637,17 @@ impl AppRuntime {
             .map(std::path::PathBuf::from)
             .unwrap_or_else(utils_core::vk_config_dir);
         let secret_env_path = config_dir.join("secret.env");
-        let schema_path = config_dir.join("config.schema.json");
-        let projects_schema_path = config_dir.join("projects.schema.json");
-
-        if let Err(err) = config::write_config_schema_json(&schema_path) {
-            tracing::warn!(
-                "Failed to write config schema '{}': {}",
-                schema_path.display(),
-                err
-            );
-        }
-        if let Err(err) = config::write_projects_schema_json(&projects_schema_path) {
-            tracing::warn!(
-                "Failed to write projects schema '{}': {}",
-                projects_schema_path.display(),
-                err
-            );
-        }
 
         let loaded_at = SystemTime::now();
 
-        let (mut raw_config, last_error) = match config::try_load_config_from_file(&config_path) {
-            Ok(config) => (config, None),
-            Err(err) => {
-                tracing::warn!("Failed to load config from disk, using defaults: {}", err);
-                (Config::default(), Some(err.to_string()))
-            }
-        };
-
-        // Public config is used for API/UI display (no template expansion). If the runtime config
-        // failed to load, keep the public view aligned with the last-known-good runtime (defaults
-        // on cold start) to avoid showing a config that isn't actually applied.
-        let mut public_config = if last_error.is_some() {
-            Config::default()
-        } else {
-            config::try_load_public_config_from_file(&config_path).unwrap_or_else(|err| {
-                tracing::warn!(
-                    "Failed to load public config from disk, using defaults: {}",
-                    err
-                );
-                Config::default()
-            })
-        };
+        let (mut raw_config, mut public_config, last_error) =
+            match config::try_load_config_pair_from_file(&config_path) {
+                Ok(config::ConfigPair { runtime, public }) => (runtime, public, None),
+                Err(err) => {
+                    tracing::warn!("Failed to load config from disk, using defaults: {}", err);
+                    (Config::default(), Config::default(), Some(err.to_string()))
+                }
+            };
 
         let profiles = ExecutorConfigs::from_defaults_merged_with_overrides(
             raw_config.executor_profiles.as_ref(),
@@ -694,6 +674,7 @@ impl AppRuntime {
             secret_env_path,
             loaded_at,
             last_error,
+            dirty: false,
         };
 
         Ok((
@@ -719,12 +700,11 @@ impl AppRuntime {
         let _guard = self.config_reload_lock.lock().await;
         let config_path = utils_core::vk_config_yaml_path();
 
-        match config::try_load_config_from_file(&config_path) {
-            Ok(mut new_config) => {
-                // Keep a public (non-templated) view in sync with the runtime config so API/UI
-                // responses never need to re-read from disk (and won't leak expanded secrets).
-                let mut new_public_config = config::try_load_public_config_from_file(&config_path)?;
-
+        match config::try_load_config_pair_from_file(&config_path) {
+            Ok(config::ConfigPair {
+                runtime: mut new_config,
+                public: mut new_public_config,
+            }) => {
                 let profiles = ExecutorConfigs::from_defaults_merged_with_overrides(
                     new_config.executor_profiles.as_ref(),
                 )
@@ -756,6 +736,7 @@ impl AppRuntime {
                 ExecutorConfigs::set_cached(profiles);
                 status.loaded_at = loaded_at;
                 status.last_error = None;
+                status.dirty = false;
                 Ok(())
             }
             Err(err) => {
@@ -764,52 +745,6 @@ impl AppRuntime {
                 Err(err)
             }
         }
-    }
-
-    pub async fn sync_config_projects_to_db(&self) -> Result<(), DbErr> {
-        let config = self.config.read().await;
-
-        for project in &config.projects {
-            let Some(project_id) = project.id else {
-                continue;
-            };
-
-            let existing = Project::find_by_id(&self.db.pool, project_id).await?;
-            if let Some(existing) = existing {
-                if existing.name != project.name {
-                    Project::update(
-                        &self.db.pool,
-                        project_id,
-                        &UpdateProject {
-                            name: Some(project.name.clone()),
-                            dev_script: None,
-                            dev_script_working_dir: None,
-                            default_agent_working_dir: None,
-                            git_no_verify_override: None,
-                            scheduler_max_concurrent: None,
-                            scheduler_max_retries: None,
-                            default_continuation_turns: None,
-                            after_prepare_hook: None,
-                            before_cleanup_hook: None,
-                        },
-                    )
-                    .await?;
-                }
-                continue;
-            }
-
-            Project::create(
-                &self.db.pool,
-                &CreateProject {
-                    name: project.name.clone(),
-                    repositories: Vec::new(),
-                },
-                project_id,
-            )
-            .await?;
-        }
-
-        Ok(())
     }
 
     fn build_core_services() -> CoreServices {
@@ -957,6 +892,7 @@ mod tests {
     };
 
     use config::Config;
+    use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
 
     use super::{AppRuntime, Deployment};
@@ -1081,5 +1017,72 @@ mod tests {
             .expect("reload should finish after lock release")
             .expect("join should succeed")
             .expect("reload should succeed");
+    }
+
+    #[tokio::test]
+    async fn config_watcher_marks_dirty_until_manual_reload() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let _env_guard = EnvGuard::new(&temp_root, db_url);
+
+        let config_path = utils_core::vk_config_yaml_path();
+        std::fs::write(&config_path, "git_branch_prefix: old\n").unwrap();
+
+        let deployment = <AppRuntime as Deployment>::new().await.unwrap();
+        assert_eq!(deployment.config.read().await.git_branch_prefix, "old");
+        assert!(!deployment.config_status.read().await.dirty);
+
+        let shutdown = CancellationToken::new();
+        let watcher_deployment = deployment.clone();
+        let watcher_shutdown = shutdown.clone();
+        let watcher_handle = tokio::spawn(async move {
+            watcher_deployment
+                .run_config_auto_reload_watcher(
+                    utils_core::vk_config_dir(),
+                    utils_core::vk_config_yaml_path(),
+                    utils_core::vk_secret_env_path(),
+                    utils_core::vk_projects_yaml_path(),
+                    utils_core::vk_projects_dir(),
+                    watcher_shutdown,
+                )
+                .await
+        });
+
+        std::fs::write(&config_path, "git_branch_prefix: new\n").unwrap();
+
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if deployment.config_status.read().await.dirty {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("dirty should be observed");
+
+        // Watcher never applies changes automatically.
+        assert_eq!(deployment.config.read().await.git_branch_prefix, "old");
+
+        deployment
+            .reload_user_config()
+            .await
+            .expect("reload config");
+
+        // Give the watcher time to flush any pending events before asserting the final state.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        assert!(!deployment.config_status.read().await.dirty);
+        assert_eq!(deployment.config.read().await.git_branch_prefix, "new");
+
+        shutdown.cancel();
+        tokio::time::timeout(Duration::from_secs(5), watcher_handle)
+            .await
+            .expect("watcher should exit after shutdown")
+            .expect("watcher join should succeed")
+            .expect("watcher should return ok");
     }
 }

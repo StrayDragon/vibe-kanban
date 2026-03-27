@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { Project } from 'shared/types';
+import type { ProjectPublic } from 'shared/types';
 
 interface SearchBarProps {
   className?: string;
@@ -10,7 +10,7 @@ interface SearchBarProps {
   onChange?: (value: string) => void;
   disabled?: boolean;
   onClear?: () => void;
-  project: Project | null;
+  project: ProjectPublic | null;
 }
 
 export const SearchBar = React.forwardRef<HTMLInputElement, SearchBarProps>(

@@ -12,6 +12,7 @@ fn generate_types_content() -> String {
 
     let decls: Vec<String> = vec![
         db::models::project::Project::decl(),
+        server::routes::projects::ProjectPublic::decl(),
         db::models::project::WorkspaceLifecycleHookConfig::decl(),
         db::types::ProjectMcpExecutorPolicyMode::decl(),
         db::types::ProjectExecutorProfileAllowListEntry::decl(),

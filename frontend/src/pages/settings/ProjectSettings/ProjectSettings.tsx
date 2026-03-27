@@ -17,7 +17,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { useUserSystem } from '@/components/ConfigProvider';
-import { useProjects } from '@/hooks/projects/useProjects';
+import { useProject } from '@/contexts/ProjectContext';
 import { configApi } from '@/lib/api';
 
 function copyToClipboard(label: string, value: string) {
@@ -65,7 +65,7 @@ function yamlString(value: string): string {
 export function ProjectSettings() {
   const { t } = useTranslation(['settings', 'common']);
   const { reloadSystem } = useUserSystem();
-  const { projects, isLoading, error, isConnected } = useProjects();
+  const { projects, isLoading, error, isConnected } = useProject();
   const [snippetProjectId, setSnippetProjectId] = useState(() =>
     generateUuid()
   );

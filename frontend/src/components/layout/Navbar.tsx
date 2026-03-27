@@ -32,7 +32,7 @@ import { useNavigateWithSearch } from '@/hooks';
 import { ArchiveKanbanDialog } from '@/components/dialogs';
 import { paths } from '@/lib/paths';
 import { uiIds } from '@/lib/uiIds';
-import type { Project } from 'shared/types';
+import type { ProjectPublic } from 'shared/types';
 
 const EXTERNAL_LINKS = [
   {
@@ -97,7 +97,7 @@ export function Navbar() {
   }, [projects]);
 
   const formatProjectLabel = useCallback(
-    (item: Project | null | undefined): string => {
+    (item: ProjectPublic | null | undefined): string => {
       if (!item) return '';
       const needsDisambiguation = (projectNameCounts.get(item.name) ?? 0) > 1;
       if (!needsDisambiguation) return item.name;
@@ -145,7 +145,7 @@ export function Navbar() {
     }
   };
 
-  const renderProjectOption = (item: Project) => (
+  const renderProjectOption = (item: ProjectPublic) => (
     // Disambiguate same-name projects by showing a stable identifier.
     <DropdownMenuRadioItem
       key={item.id}

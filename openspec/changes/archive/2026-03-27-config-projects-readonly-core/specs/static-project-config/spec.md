@@ -47,4 +47,3 @@ If runtime persistence requires a database project record (for example for forei
 - **WHEN** a client creates a task under a configured project
 - **THEN** the database contains a project record for that project id
 - **AND** the configuration source of truth remains the YAML files
-
