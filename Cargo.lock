@@ -213,6 +213,7 @@ dependencies = [
  "serde_json",
  "tasks",
  "tempfile",
+ "test-support",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
@@ -985,6 +986,7 @@ dependencies = [
  "shlex",
  "strum",
  "strum_macros 0.27.2",
+ "test-support",
  "thiserror 2.0.17",
  "tracing",
  "ts-rs 11.0.1",
@@ -5529,6 +5531,7 @@ dependencies = [
  "strip-ansi-escapes",
  "strum",
  "tasks",
+ "test-support",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
@@ -6231,6 +6234,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "test-support"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
 ]
 
 [[package]]

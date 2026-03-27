@@ -57,19 +57,14 @@ mod tests {
         http::{Request, StatusCode, header},
     };
     use config::AccessControlMode;
+    use test_support::{TempRoot, TestDb, TestEnv, TestEnvGuard};
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    use crate::{DeploymentImpl, test_support::TestEnvGuard};
+    use crate::DeploymentImpl;
 
-    async fn setup_deployment() -> (TestEnvGuard, DeploymentImpl) {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let env_guard = TestEnvGuard::new(&temp_root, db_url);
-
+    async fn setup_deployment() -> (TestEnv, DeploymentImpl) {
+        let env_guard = TestEnv::new("vk-test-");
         let deployment = DeploymentImpl::new().await.unwrap();
 
         (env_guard, deployment)
@@ -318,12 +313,9 @@ mod tests {
 
     #[tokio::test]
     async fn server_starts_with_read_only_config_dir() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let _env_guard = TestEnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         let config_dir = utils_core::vk_config_dir();
         let config_path = utils_core::vk_config_yaml_path();
@@ -584,16 +576,14 @@ mod tests {
     #[tokio::test]
     async fn filesystem_directory_rejects_path_outside_workspace_dir() {
         let (_env_guard, deployment) = setup_deployment().await;
-        let allowed_root = std::env::temp_dir().join(format!("vk-fs-allowed-{}", Uuid::new_v4()));
-        let outside_root = std::env::temp_dir().join(format!("vk-fs-outside-{}", Uuid::new_v4()));
-        fs::create_dir_all(&allowed_root).unwrap();
-        fs::create_dir_all(&outside_root).unwrap();
-        set_workspace_dir(&deployment, &allowed_root).await;
+        let allowed_root = TempRoot::new("vk-fs-allowed-");
+        let outside_root = TempRoot::new("vk-fs-outside-");
+        set_workspace_dir(&deployment, allowed_root.path()).await;
 
         let app = super::router(deployment);
         let uri = format!(
             "/api/filesystem/directory?path={}",
-            outside_root.to_string_lossy()
+            outside_root.path().to_string_lossy()
         );
         let response = app
             .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
@@ -601,18 +591,15 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
-
-        let _ = fs::remove_dir_all(&allowed_root);
-        let _ = fs::remove_dir_all(&outside_root);
     }
 
     #[tokio::test]
     async fn filesystem_directory_allows_path_inside_workspace_dir() {
         let (_env_guard, deployment) = setup_deployment().await;
-        let allowed_root = std::env::temp_dir().join(format!("vk-fs-allowed-{}", Uuid::new_v4()));
+        let allowed_root = TempRoot::new("vk-fs-allowed-");
         let nested = allowed_root.join("project-a");
         fs::create_dir_all(&nested).unwrap();
-        set_workspace_dir(&deployment, &allowed_root).await;
+        set_workspace_dir(&deployment, allowed_root.path()).await;
 
         let app = super::router(deployment);
         let uri = format!(
@@ -633,25 +620,24 @@ mod tests {
             .pointer("/data/current_path")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
+        let allowed_root_path = allowed_root.path().to_path_buf();
         let allowed_root_canon =
-            std::fs::canonicalize(&allowed_root).unwrap_or_else(|_| allowed_root.clone());
+            std::fs::canonicalize(&allowed_root_path).unwrap_or_else(|_| allowed_root_path.clone());
         let current_path_canon =
             std::fs::canonicalize(current_path).unwrap_or_else(|_| current_path.into());
         assert!(current_path_canon.starts_with(&allowed_root_canon));
-
-        let _ = fs::remove_dir_all(&allowed_root);
     }
 
     #[tokio::test]
     async fn filesystem_git_repo_discovery_stays_within_workspace_dir() {
         let (_env_guard, deployment) = setup_deployment().await;
-        let allowed_root = std::env::temp_dir().join(format!("vk-fs-allowed-{}", Uuid::new_v4()));
+        let allowed_root = TempRoot::new("vk-fs-allowed-");
         let allowed_repo = allowed_root.join("repo-in").join(".git");
-        let outside_root = std::env::temp_dir().join(format!("vk-fs-outside-{}", Uuid::new_v4()));
+        let outside_root = TempRoot::new("vk-fs-outside-");
         let outside_repo = outside_root.join("repo-out").join(".git");
         fs::create_dir_all(&allowed_repo).unwrap();
         fs::create_dir_all(&outside_repo).unwrap();
-        set_workspace_dir(&deployment, &allowed_root).await;
+        set_workspace_dir(&deployment, allowed_root.path()).await;
 
         let app = super::router(deployment);
         let response = app
@@ -692,9 +678,6 @@ mod tests {
             "unexpected repo-out in {:?}",
             paths
         );
-
-        let _ = fs::remove_dir_all(&allowed_root);
-        let _ = fs::remove_dir_all(&outside_root);
     }
 
     #[tokio::test]

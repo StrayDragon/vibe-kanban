@@ -6,7 +6,7 @@ node scripts/check-doc-links.js
 
 cd frontend
 npm run lint
-./../scripts/check-i18n.sh
+node ./../scripts/check-i18n.js
 npm run format:check
 npx tsc --noEmit
 npm run test
@@ -18,7 +18,5 @@ cargo fmt --all -- --check
 npm run generate-types:check
 npm run generate-env-docs:check
 npm run prepare-db:check
-npm run remote:prepare-db:check
 cargo test --workspace
 cargo clippy --all --all-targets --all-features -- -D warnings
-

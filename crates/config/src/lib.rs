@@ -781,46 +781,9 @@ pub async fn load_config_from_file(config_path: &Path) -> Config {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, OnceLock};
+    use test_support::{EnvVarGuard, TempRoot};
 
     use super::*;
-
-    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn env_lock() -> &'static Mutex<()> {
-        ENV_LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    struct EnvVarGuard {
-        key: &'static str,
-        prev: Option<std::ffi::OsString>,
-    }
-
-    impl EnvVarGuard {
-        fn set(key: &'static str, value: Option<&str>) -> Self {
-            let prev = std::env::var_os(key);
-            // SAFETY: tests using EnvVarGuard are serialized by env_lock().
-            unsafe {
-                match value {
-                    Some(value) => std::env::set_var(key, value),
-                    None => std::env::remove_var(key),
-                }
-            }
-            Self { key, prev }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            // SAFETY: tests using EnvVarGuard are serialized by env_lock().
-            unsafe {
-                match &self.prev {
-                    Some(value) => std::env::set_var(self.key, value),
-                    None => std::env::remove_var(self.key),
-                }
-            }
-        }
-    }
 
     fn write_file(path: &std::path::Path, contents: &str) {
         if let Some(parent) = path.parent() {
@@ -861,12 +824,11 @@ mod tests {
 
     #[test]
     fn secret_env_overrides_system_env() {
-        let _guard = env_lock().lock().unwrap();
-        let _env = EnvVarGuard::set("GITHUB_PAT", Some("from_system"));
+        let _env = EnvVarGuard::set("GITHUB_PAT", "from_system");
 
-        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
-        let config_path = dir.join("config.yaml");
-        let secret_path = dir.join("secret.env");
+        let temp_root = TempRoot::new("vk-config-test-");
+        let config_path = temp_root.join("config.yaml");
+        let secret_path = temp_root.join("secret.env");
 
         write_file(
             &config_path,
@@ -889,11 +851,10 @@ github:
 
     #[test]
     fn template_default_is_used_when_missing() {
-        let _guard = env_lock().lock().unwrap();
-        let _env = EnvVarGuard::set("GITHUB_PAT", None);
+        let _env = EnvVarGuard::set_optional("GITHUB_PAT", None);
 
-        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
-        let config_path = dir.join("config.yaml");
+        let temp_root = TempRoot::new("vk-config-test-");
+        let config_path = temp_root.join("config.yaml");
 
         write_file(
             &config_path,
@@ -909,13 +870,12 @@ github:
 
     #[test]
     fn config_pair_runtime_expands_templates_but_public_does_not() {
-        let _guard = env_lock().lock().unwrap();
-        let _env = EnvVarGuard::set("GITHUB_PAT", Some("from_system"));
+        let _env = EnvVarGuard::set("GITHUB_PAT", "from_system");
 
-        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
-        let config_path = dir.join("config.yaml");
-        let secret_path = dir.join("secret.env");
-        let projects_path = dir.join("projects.yaml");
+        let temp_root = TempRoot::new("vk-config-test-");
+        let config_path = temp_root.join("config.yaml");
+        let secret_path = temp_root.join("secret.env");
+        let projects_path = temp_root.join("projects.yaml");
 
         write_file(
             &config_path,
@@ -978,11 +938,10 @@ projects:
 
     #[test]
     fn template_in_non_whitelisted_field_is_rejected() {
-        let _guard = env_lock().lock().unwrap();
-        let _env = EnvVarGuard::set("PROJECT_ROOT", Some("/tmp"));
+        let _env = EnvVarGuard::set("PROJECT_ROOT", "/tmp");
 
-        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
-        let config_path = dir.join("config.yaml");
+        let temp_root = TempRoot::new("vk-config-test-");
+        let config_path = temp_root.join("config.yaml");
 
         write_file(
             &config_path,
@@ -1007,12 +966,11 @@ projects:
 
     #[test]
     fn executor_profile_env_templates_are_resolved() {
-        let _guard = env_lock().lock().unwrap();
-        let _env = EnvVarGuard::set("OPENAI_API_KEY", Some("from_system"));
+        let _env = EnvVarGuard::set("OPENAI_API_KEY", "from_system");
 
-        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
-        let config_path = dir.join("config.yaml");
-        let secret_path = dir.join("secret.env");
+        let temp_root = TempRoot::new("vk-config-test-");
+        let config_path = temp_root.join("config.yaml");
+        let secret_path = temp_root.join("secret.env");
 
         write_file(
             &config_path,
@@ -1055,11 +1013,10 @@ executor_profiles:
 
     #[test]
     fn executor_profile_non_env_template_is_rejected() {
-        let _guard = env_lock().lock().unwrap();
-        let _env = EnvVarGuard::set("OPENAI_MODEL", Some("model"));
+        let _env = EnvVarGuard::set("OPENAI_MODEL", "model");
 
-        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
-        let config_path = dir.join("config.yaml");
+        let temp_root = TempRoot::new("vk-config-test-");
+        let config_path = temp_root.join("config.yaml");
 
         write_file(
             &config_path,
@@ -1088,11 +1045,10 @@ executor_profiles:
 
     #[test]
     fn template_replacement_limit_is_enforced() {
-        let _guard = env_lock().lock().unwrap();
-        let _env = EnvVarGuard::set("GITHUB_PAT", Some("x"));
+        let _env = EnvVarGuard::set("GITHUB_PAT", "x");
 
-        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
-        let config_path = dir.join("config.yaml");
+        let temp_root = TempRoot::new("vk-config-test-");
+        let config_path = temp_root.join("config.yaml");
 
         let pat = "{{env.GITHUB_PAT}}".repeat(MAX_TEMPLATE_REPLACEMENTS + 1);
         write_file(&config_path, &format!("github:\n  pat: \"{pat}\"\n"));
@@ -1108,12 +1064,11 @@ executor_profiles:
 
     #[test]
     fn template_output_limit_is_enforced() {
-        let _guard = env_lock().lock().unwrap();
         let huge = "a".repeat(MAX_TEMPLATE_OUTPUT_BYTES + 1);
-        let _env = EnvVarGuard::set("GITHUB_PAT", Some(&huge));
+        let _env = EnvVarGuard::set("GITHUB_PAT", huge.as_str());
 
-        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
-        let config_path = dir.join("config.yaml");
+        let temp_root = TempRoot::new("vk-config-test-");
+        let config_path = temp_root.join("config.yaml");
 
         write_file(
             &config_path,
@@ -1134,11 +1089,10 @@ github:
 
     #[test]
     fn missing_template_var_without_default_is_validation_error() {
-        let _guard = env_lock().lock().unwrap();
-        let _env = EnvVarGuard::set("GITHUB_PAT", None);
+        let _env = EnvVarGuard::set_optional("GITHUB_PAT", None);
 
-        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
-        let config_path = dir.join("config.yaml");
+        let temp_root = TempRoot::new("vk-config-test-");
+        let config_path = temp_root.join("config.yaml");
 
         write_file(
             &config_path,
@@ -1159,14 +1113,13 @@ github:
 
     #[test]
     fn reload_keeps_last_known_good_on_error() {
-        let _guard = env_lock().lock().unwrap();
-        let _env = EnvVarGuard::set("GITHUB_PAT", None);
+        let _env = EnvVarGuard::set_optional("GITHUB_PAT", None);
 
         let mut current = Config::default();
         current.github.pat = Some("old".to_string());
 
-        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
-        let config_path = dir.join("config.yaml");
+        let temp_root = TempRoot::new("vk-config-test-");
+        let config_path = temp_root.join("config.yaml");
         write_file(
             &config_path,
             r#"
@@ -1182,8 +1135,8 @@ github:
 
     #[test]
     fn project_missing_id_is_validation_error() {
-        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
-        let config_path = dir.join("config.yaml");
+        let temp_root = TempRoot::new("vk-config-test-");
+        let config_path = temp_root.join("config.yaml");
 
         write_file(
             &config_path,
@@ -1207,8 +1160,8 @@ projects:
 
     #[test]
     fn duplicate_project_ids_are_rejected() {
-        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
-        let config_path = dir.join("config.yaml");
+        let temp_root = TempRoot::new("vk-config-test-");
+        let config_path = temp_root.join("config.yaml");
 
         write_file(
             &config_path,
@@ -1237,18 +1190,15 @@ projects:
 
     #[test]
     fn projects_yaml_overrides_inline_projects() {
-        let dir = std::env::temp_dir().join(format!(
-            "vk-config-projects-override-test-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let temp_root = TempRoot::new("vk-config-projects-override-test-");
 
-        let repo_a = dir.join("repo-a");
-        let repo_b = dir.join("repo-b");
+        let repo_a = temp_root.join("repo-a");
+        let repo_b = temp_root.join("repo-b");
         std::fs::create_dir_all(&repo_a).unwrap();
         std::fs::create_dir_all(&repo_b).unwrap();
 
-        let config_path = dir.join("config.yaml");
-        let projects_path = dir.join("projects.yaml");
+        let config_path = temp_root.join("config.yaml");
+        let projects_path = temp_root.join("projects.yaml");
 
         let id_a = uuid::Uuid::new_v4();
         let id_b = uuid::Uuid::new_v4();
@@ -1287,20 +1237,17 @@ projects:
 
     #[test]
     fn projects_dir_files_are_loaded_and_merged() {
-        let dir = std::env::temp_dir().join(format!(
-            "vk-config-projects-dir-test-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let temp_root = TempRoot::new("vk-config-projects-dir-test-");
 
-        let repo_a = dir.join("repo-a");
-        let repo_b = dir.join("repo-b");
+        let repo_a = temp_root.join("repo-a");
+        let repo_b = temp_root.join("repo-b");
         std::fs::create_dir_all(&repo_a).unwrap();
         std::fs::create_dir_all(&repo_b).unwrap();
 
-        let config_path = dir.join("config.yaml");
+        let config_path = temp_root.join("config.yaml");
         write_file(&config_path, "{}\n");
 
-        let projects_dir = dir.join("projects.d");
+        let projects_dir = temp_root.join("projects.d");
         std::fs::create_dir_all(&projects_dir).unwrap();
 
         let id_a = uuid::Uuid::new_v4();

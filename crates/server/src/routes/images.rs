@@ -274,26 +274,19 @@ pub fn routes() -> Router<DeploymentImpl> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use app_runtime::Deployment;
     use axum::{
         body::{Body, to_bytes},
         http::{Request, StatusCode, header},
     };
+    use test_support::TestEnv;
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    use crate::{DeploymentImpl, http, test_support::TestEnvGuard};
+    use crate::{DeploymentImpl, http};
 
-    async fn setup_deployment() -> (TestEnvGuard, DeploymentImpl) {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let env_guard = TestEnvGuard::new(&temp_root, db_url);
-
+    async fn setup_deployment() -> (TestEnv, DeploymentImpl) {
+        let env_guard = TestEnv::new("vk-test-");
         let deployment = DeploymentImpl::new().await.unwrap();
 
         (env_guard, deployment)

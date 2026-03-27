@@ -679,9 +679,10 @@ impl Task {
         db: &C,
         project_id: Uuid,
     ) -> Result<Vec<TaskWithAttemptStatus>, DbErr> {
-        let project_row_id = ids::project_id_by_uuid(db, project_id)
-            .await?
-            .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+        let project_row_id = match ids::project_id_by_uuid(db, project_id).await? {
+            Some(row_id) => row_id,
+            None => return Ok(Vec::new()),
+        };
 
         let models = task::Entity::find()
             .filter(task::Column::ProjectId.eq(project_row_id))
@@ -743,10 +744,10 @@ impl Task {
         archived_kanban_id: Option<Uuid>,
     ) -> Result<Vec<TaskWithAttemptStatus>, DbErr> {
         let project_row_id = match project_id {
-            Some(project_id) => ids::project_id_by_uuid(db, project_id)
-                .await?
-                .ok_or(DbErr::RecordNotFound("Project not found".to_string()))
-                .map(Some)?,
+            Some(project_id) => match ids::project_id_by_uuid(db, project_id).await? {
+                Some(row_id) => Some(row_id),
+                None => return Ok(Vec::new()),
+            },
             None => None,
         };
 

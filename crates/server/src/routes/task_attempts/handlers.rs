@@ -2363,6 +2363,7 @@ mod tests {
     };
     use sea_orm::Database;
     use sea_orm_migration::MigratorTrait;
+    use test_support::{TempRoot, TestDb, TestEnvGuard};
     use tokio::time::Duration;
     use uuid::Uuid;
 
@@ -2378,7 +2379,6 @@ mod tests {
         DeploymentImpl,
         error::ApiError,
         routes::tasks::{CreateAndStartTaskRequest, create_task_and_start},
-        test_support::TestEnvGuard,
     };
 
     fn node(id: &str, status: TaskStatus) -> MilestoneNode {
@@ -2657,12 +2657,9 @@ mod tests {
 
     #[tokio::test]
     async fn start_failure_cleans_up_records_for_attempt_and_create_start() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         let deployment = DeploymentImpl::new().await.unwrap();
         let repo_path = temp_root.join("repo");
@@ -2767,20 +2764,13 @@ mod tests {
 
         let after_create_start_dirs = list_dir_names(&worktree_base);
         assert_eq!(baseline_dirs, after_create_start_dirs);
-
-        drop(deployment);
-        drop(env_guard);
-        let _ = std::fs::remove_dir_all(&temp_root);
     }
 
     #[tokio::test]
     async fn create_start_repo_failure_rolls_back_transaction() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         let deployment = DeploymentImpl::new().await.unwrap();
 
@@ -2823,20 +2813,13 @@ mod tests {
             .await
             .unwrap();
         assert!(workspaces.is_empty());
-
-        drop(deployment);
-        drop(env_guard);
-        let _ = std::fs::remove_dir_all(&temp_root);
     }
 
     #[tokio::test]
     async fn rename_branch_returns_non_200_with_error_data() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let _env_guard = TestEnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         let deployment = DeploymentImpl::new().await.unwrap();
 
@@ -2878,12 +2861,9 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_skips_status_restore_when_running_attempt_exists() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         let deployment = DeploymentImpl::new().await.unwrap();
 
@@ -2981,20 +2961,13 @@ mod tests {
             .unwrap()
             .expect("task should remain");
         assert_eq!(task_after.status, TaskStatus::InReview);
-
-        drop(deployment);
-        drop(env_guard);
-        let _ = std::fs::remove_dir_all(&temp_root);
     }
 
     #[tokio::test]
     async fn attempt_status_reports_idle_running_failed_and_ignores_devserver() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         let deployment = DeploymentImpl::new().await.unwrap();
 
@@ -3125,19 +3098,13 @@ mod tests {
             Some(summary) if !summary.trim().is_empty()
         ));
         assert!(status.last_activity_at.is_some());
-
-        drop(env_guard);
-        let _ = std::fs::remove_dir_all(&temp_root);
     }
 
     #[tokio::test]
     async fn attempt_changes_blocks_when_guard_exceeded_and_unblocks_when_forced() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         let deployment = DeploymentImpl::new().await.unwrap();
 
@@ -3262,19 +3229,13 @@ mod tests {
         WorkspaceManager::cleanup_workspace(&workspace_dir, &[repo])
             .await
             .unwrap();
-
-        drop(env_guard);
-        let _ = std::fs::remove_dir_all(&temp_root);
     }
 
     #[tokio::test]
     async fn cleanup_skips_status_restore_when_latest_attempt_differs() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         let deployment = DeploymentImpl::new().await.unwrap();
 
@@ -3381,10 +3342,6 @@ mod tests {
             .unwrap()
             .expect("task should remain");
         assert_eq!(task_after.status, TaskStatus::InReview);
-
-        drop(deployment);
-        drop(env_guard);
-        let _ = std::fs::remove_dir_all(&temp_root);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -3423,33 +3380,28 @@ mod tests {
 
     #[test]
     fn normalize_dev_server_working_dir_rejects_escape_path() {
-        let root = std::env::temp_dir().join(format!("vk-dev-root-{}", Uuid::new_v4()));
-        let outside = std::env::temp_dir().join(format!("vk-dev-outside-{}", Uuid::new_v4()));
+        let root = TempRoot::new("vk-dev-root-");
+        let outside = TempRoot::new("vk-dev-outside-");
         std::fs::create_dir_all(root.join("repo")).unwrap();
-        std::fs::create_dir_all(&outside).unwrap();
 
         let outside_name = outside
+            .path()
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap();
         let escape_path = format!("../{outside_name}");
 
-        let result = normalize_dev_server_working_dir(&root, Some(&escape_path));
+        let result = normalize_dev_server_working_dir(root.path(), Some(&escape_path));
         assert!(matches!(result, Err(ApiError::Forbidden(_))));
-
-        let _ = std::fs::remove_dir_all(&root);
-        let _ = std::fs::remove_dir_all(&outside);
     }
 
     #[test]
     fn normalize_dev_server_working_dir_accepts_nested_repo_path() {
-        let root = std::env::temp_dir().join(format!("vk-dev-root-{}", Uuid::new_v4()));
+        let root = TempRoot::new("vk-dev-root-");
         std::fs::create_dir_all(root.join("repo-a")).unwrap();
 
-        let result = normalize_dev_server_working_dir(&root, Some("repo-a")).unwrap();
+        let result = normalize_dev_server_working_dir(root.path(), Some("repo-a")).unwrap();
         assert_eq!(result, Some("repo-a".to_string()));
-
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

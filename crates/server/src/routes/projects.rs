@@ -523,6 +523,20 @@ async fn load_project_from_config_middleware(
         .and_then(project_public_from_config)
         .ok_or(StatusCode::NOT_FOUND)?;
 
+    // Ensure the DB has a minimal `projects` row for this configured project.
+    // Many tables have FKs to `projects`, so "read-only config" still needs a
+    // small cache row to exist before first write.
+    db::models::project::Project::find_or_create_minimal(
+        &deployment.db().pool,
+        project.id,
+        &project.name,
+    )
+    .await
+    .map_err(|err| {
+        tracing::error!(project_id = %project.id, error = %err, "Failed to ensure project row");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
     request.extensions_mut().insert(project);
     Ok(next.run(request).await)
 }
@@ -539,6 +553,7 @@ mod tests {
         project::{CreateProject, Project},
         repo::Repo,
     };
+    use test_support::{TempRoot, TestDb, TestEnvGuard};
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -561,12 +576,9 @@ mod tests {
     async fn project_routes_do_not_leak_expanded_secrets() {
         let secret = "sekrit-value-123";
 
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let _env_guard = crate::test_support::TestEnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         // Set up a projects.yaml that references a secret placeholder in fields that may be
         // returned by API routes (dev_script) and in repo setup_script (should not be exposed).
@@ -664,12 +676,9 @@ mod tests {
 
     #[tokio::test]
     async fn projects_endpoint_uses_yaml_as_source_of_truth() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let _env_guard = crate::test_support::TestEnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         let vk_config_dir = temp_root.join("vk-config");
         let repo_path = temp_root.join("repo");

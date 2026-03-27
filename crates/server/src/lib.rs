@@ -9,8 +9,6 @@ pub mod milestone_dispatch;
 pub mod milestone_planning;
 pub mod routes;
 pub mod task_runtime;
-#[cfg(test)]
-pub mod test_support;
 
 // #[cfg(feature = "cloud")]
 // type DeploymentImpl = vibe_kanban_cloud::deployment::CloudDeployment;

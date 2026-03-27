@@ -1,3 +1,5 @@
+import '@/prism';
+
 import { useMemo, useState, useCallback, memo } from 'react';
 import { LexicalComposer } from '@lexical/react/LexicalComposer';
 import { RichTextPlugin } from '@lexical/react/LexicalRichTextPlugin';

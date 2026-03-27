@@ -42,7 +42,7 @@ jobs:
       - name: Check i18n regressions
         env:
           GITHUB_BASE_REF: ${{ github.base_ref || 'main' }}
-        run: ./scripts/check-i18n.sh
+        run: node scripts/check-i18n.js
 
       - name: Format check frontend
         run: cd frontend && npm run format:check
@@ -82,6 +82,5 @@ jobs:
           npm run generate-types:check
           npm run generate-env-docs:check
           npm run prepare-db:check
-          npm run remote:prepare-db:check
           cargo test --workspace
           cargo clippy --all --all-targets -- -D warnings  

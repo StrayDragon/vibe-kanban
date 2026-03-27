@@ -8,8 +8,9 @@ test.describe('settings', () => {
     const configPath = path.join(getConfigDir(), 'config.yaml');
 
     await page.goto('/settings/mcp');
+    await expect(page).toHaveURL(/\/settings#mcp$/);
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'MCP Servers' })).toBeVisible();
+    await expect(page.getByText('MCP Server Configuration')).toBeVisible();
 
     await page.goto('/settings/general');
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();

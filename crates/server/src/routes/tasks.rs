@@ -371,10 +371,11 @@ mod tests {
         project::{CreateProject, Project},
         task::{CreateTask, Task},
     };
+    use test_support::{TempRoot, TestDb, TestEnvGuard};
     use uuid::Uuid;
 
     use super::{create_task, get_task_lineage};
-    use crate::{DeploymentImpl, test_support::TestEnvGuard};
+    use crate::DeploymentImpl;
 
     fn idempotency_headers(key: &'static str) -> axum::http::HeaderMap {
         let mut headers = axum::http::HeaderMap::new();
@@ -384,12 +385,9 @@ mod tests {
 
     #[tokio::test]
     async fn create_task_is_idempotent_by_idempotency_key() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let _env_guard = TestEnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         let project_id = Uuid::new_v4();
         let repo_path = temp_root.join("repo");
@@ -454,12 +452,9 @@ mod tests {
 
     #[tokio::test]
     async fn create_task_does_not_update_existing_project_row_name() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let _env_guard = TestEnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         let project_id = Uuid::new_v4();
         let repo_path = temp_root.join("repo");
@@ -509,12 +504,9 @@ mod tests {
 
     #[tokio::test]
     async fn get_task_lineage_returns_origin_and_follow_up_context() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let _env_guard = TestEnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
         let deployment = DeploymentImpl::new().await.unwrap();
 
         let project_id = Uuid::new_v4();
@@ -579,12 +571,9 @@ mod tests {
 
     #[tokio::test]
     async fn create_task_rejects_idempotency_key_reuse_with_different_payload() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let _env_guard = TestEnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         let project_id = Uuid::new_v4();
         let repo_path = temp_root.join("repo");

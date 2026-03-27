@@ -549,8 +549,6 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use app_runtime::Deployment;
     use axum::{
         body::{Body, to_bytes},
@@ -567,19 +565,17 @@ mod tests {
         ExecutorAction, ExecutorActionType,
         script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
     };
+    use test_support::{TempRoot, TestDb, TestEnvGuard};
     use tower::ServiceExt;
     use uuid::Uuid;
 
-    use crate::{DeploymentImpl, http, test_support::TestEnvGuard};
+    use crate::{DeploymentImpl, http};
 
     #[tokio::test]
     async fn execution_process_api_does_not_expose_script_contents() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let _env_guard = TestEnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         let deployment = DeploymentImpl::new().await.unwrap();
         let pool = &deployment.db().pool;

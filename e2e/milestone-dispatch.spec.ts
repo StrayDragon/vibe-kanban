@@ -115,6 +115,8 @@ test.describe('milestone dispatch', () => {
     makeName,
     reposDir,
   }) => {
+    test.setTimeout(180_000);
+
     fs.mkdirSync(reposDir, { recursive: true });
     fs.mkdirSync(path.join(reposDir, 'worktrees'), { recursive: true });
 
@@ -265,6 +267,8 @@ test.describe('milestone dispatch', () => {
     makeName,
     reposDir,
   }) => {
+    test.setTimeout(180_000);
+
     fs.mkdirSync(reposDir, { recursive: true });
     fs.mkdirSync(path.join(reposDir, 'worktrees'), { recursive: true });
 

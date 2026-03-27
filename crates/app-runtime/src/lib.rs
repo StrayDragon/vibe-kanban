@@ -875,83 +875,13 @@ impl AppRuntime {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        path::Path,
-        sync::{Mutex, MutexGuard, OnceLock},
-        time::Duration,
-    };
+    use std::time::Duration;
 
     use config::Config;
+    use test_support::{TempRoot, TestDb, TestEnvGuard};
     use tokio_util::sync::CancellationToken;
-    use uuid::Uuid;
 
     use super::{AppRuntime, Deployment};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    struct EnvGuard {
-        _lock: MutexGuard<'static, ()>,
-        prev_database_url: Option<String>,
-        prev_asset_dir: Option<String>,
-        prev_disable_background_tasks: Option<String>,
-        prev_vk_config_dir: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn new(temp_root: &Path, db_url: String) -> Self {
-            let lock = env_lock().lock().unwrap_or_else(|err| err.into_inner());
-            let prev_database_url = std::env::var("DATABASE_URL").ok();
-            let prev_asset_dir = std::env::var("VIBE_ASSET_DIR").ok();
-            let prev_disable_background_tasks = std::env::var("VIBE_DISABLE_BACKGROUND_TASKS").ok();
-            let prev_vk_config_dir = std::env::var("VK_CONFIG_DIR").ok();
-
-            let vk_config_dir = temp_root.join("vk-config");
-            std::fs::create_dir_all(&vk_config_dir).unwrap();
-
-            // SAFETY: tests using EnvGuard are serialized by env_lock.
-            unsafe {
-                std::env::set_var("VIBE_ASSET_DIR", temp_root);
-                std::env::set_var("DATABASE_URL", db_url);
-                std::env::set_var("VIBE_DISABLE_BACKGROUND_TASKS", "1");
-                std::env::set_var("VK_CONFIG_DIR", &vk_config_dir);
-            }
-
-            Self {
-                _lock: lock,
-                prev_database_url,
-                prev_asset_dir,
-                prev_disable_background_tasks,
-                prev_vk_config_dir,
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            // SAFETY: tests using EnvGuard are serialized by env_lock.
-            unsafe {
-                match &self.prev_database_url {
-                    Some(value) => std::env::set_var("DATABASE_URL", value),
-                    None => std::env::remove_var("DATABASE_URL"),
-                }
-                match &self.prev_asset_dir {
-                    Some(value) => std::env::set_var("VIBE_ASSET_DIR", value),
-                    None => std::env::remove_var("VIBE_ASSET_DIR"),
-                }
-                match &self.prev_disable_background_tasks {
-                    Some(value) => std::env::set_var("VIBE_DISABLE_BACKGROUND_TASKS", value),
-                    None => std::env::remove_var("VIBE_DISABLE_BACKGROUND_TASKS"),
-                }
-                match &self.prev_vk_config_dir {
-                    Some(value) => std::env::set_var("VK_CONFIG_DIR", value),
-                    None => std::env::remove_var("VK_CONFIG_DIR"),
-                }
-            }
-        }
-    }
 
     #[test]
     fn update_app_version_state_clears_release_notes_flag() {
@@ -983,12 +913,9 @@ mod tests {
 
     #[tokio::test]
     async fn reload_user_config_is_serialized_by_reload_lock() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let _env_guard = EnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         let deployment = <AppRuntime as Deployment>::new().await.unwrap();
 
@@ -1011,12 +938,9 @@ mod tests {
 
     #[tokio::test]
     async fn config_watcher_marks_dirty_until_manual_reload() {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let _env_guard = EnvGuard::new(&temp_root, db_url);
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
 
         let config_path = utils_core::vk_config_yaml_path();
         std::fs::write(&config_path, "git_branch_prefix: old\n").unwrap();

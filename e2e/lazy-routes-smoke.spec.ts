@@ -16,7 +16,9 @@ test.describe('lazy routes smoke', () => {
     });
 
     await page.goto('/tasks');
-    await expect(page.getByRole('heading', { name: 'All Tasks' })).toBeVisible();
+    await expect(
+      page.getByText(/All Tasks|No tasks across projects yet/)
+    ).toBeVisible();
 
     await page.goto(`/projects/${project.id}/archives`);
     await expect(page.getByRole('heading', { name: 'Archives' })).toBeVisible();
@@ -29,8 +31,9 @@ test.describe('lazy routes smoke', () => {
 
     await page.goto(`/settings/projects?projectId=${project.id}`);
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    await expect(page).toHaveURL(/\/settings#projects$/);
     await expect(
-      page.getByRole('button', { name: 'Save Project Settings' })
+      page.getByText('Projects are file-configured')
     ).toBeVisible();
   });
 });

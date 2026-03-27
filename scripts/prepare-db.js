@@ -2,6 +2,7 @@
 
 const { execSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const checkMode = process.argv.includes('--check');
@@ -16,9 +17,32 @@ console.log(
 const backendDir = path.join(__dirname, '..', 'crates/db');
 process.chdir(backendDir);
 
-// Create temporary database file
-const dbFile = path.join(backendDir, 'prepare_db.sqlite');
+// Create temporary database under OS temp to avoid polluting the repo worktree.
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'vk-prepare-db-'));
+const dbFile = path.join(tempRoot, 'prepare_db.sqlite');
 fs.writeFileSync(dbFile, '');
+
+let cleaned = false;
+function cleanup() {
+  if (cleaned) return;
+  cleaned = true;
+
+  try {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  } catch {
+    // ignore
+  }
+}
+
+process.on('SIGINT', () => {
+  cleanup();
+  process.exit(130);
+});
+
+process.on('SIGTERM', () => {
+  cleanup();
+  process.exit(143);
+});
 
 try {
   // Get absolute path (cross-platform)
@@ -36,8 +60,5 @@ try {
 
   console.log(checkMode ? 'SeaORM migration check complete!' : 'Database preparation complete!');
 } finally {
-  // Clean up temporary file
-  if (fs.existsSync(dbFile)) {
-    fs.unlinkSync(dbFile);
-  }
+  cleanup();
 }

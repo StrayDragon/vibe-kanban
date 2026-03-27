@@ -168,10 +168,11 @@ async fn reconcile_project(
             continue;
         };
 
-        match dispatch_task(deployment, project_id, project, task).await {
+        let run_next_requested = milestone.run_next_step_requested_at.is_some();
+        match dispatch_task(deployment, project_id, project, task, run_next_requested).await {
             Ok(DispatchOutcome::Started) => {
                 available_slots -= 1;
-                if milestone.run_next_step_requested_at.is_some()
+                if run_next_requested
                     && let Err(err) =
                         Milestone::clear_run_next_step_request(&deployment.db().pool, milestone.id)
                             .await
@@ -185,7 +186,7 @@ async fn reconcile_project(
                 }
             }
             Ok(DispatchOutcome::Blocked) => {
-                if milestone.run_next_step_requested_at.is_some()
+                if run_next_requested
                     && let Err(err) =
                         Milestone::clear_run_next_step_request(&deployment.db().pool, milestone.id)
                             .await
@@ -423,6 +424,7 @@ async fn dispatch_task(
     project_id: Uuid,
     project: &config::ProjectConfig,
     task: &TaskWithAttemptStatus,
+    run_next_requested: bool,
 ) -> Result<DispatchOutcome> {
     let executor_profile_id = {
         let config = deployment.config().read().await;
@@ -550,13 +552,28 @@ async fn dispatch_task(
                         None,
                     )
                 } else {
+                    let retry_delay = if run_next_requested {
+                        ChronoDuration::seconds(1)
+                    } else {
+                        retry_backoff(next_retry_count)
+                    };
                     (
                         db::types::TaskDispatchStatus::RetryScheduled,
                         next_retry_count,
                         None,
-                        Some(Utc::now() + retry_backoff(next_retry_count)),
+                        Some(Utc::now() + retry_delay),
                     )
                 };
+
+            if run_next_requested && matches!(status, db::types::TaskDispatchStatus::RetryScheduled)
+            {
+                warn!(
+                    task_id = %task.id,
+                    project_id = %project_id,
+                    error = %err_message,
+                    "scheduler dispatch failed for run-next-step request; will retry"
+                );
+            }
 
             TaskDispatchState::upsert(
                 &deployment.db().pool,

@@ -1,3 +1,5 @@
+import '@/prism';
+
 import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext';
 import { useEffect } from 'react';
 import { $createCodeNode } from '@lexical/code';

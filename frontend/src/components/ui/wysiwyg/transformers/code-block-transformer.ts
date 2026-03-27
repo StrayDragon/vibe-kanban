@@ -1,3 +1,5 @@
+import '@/prism';
+
 import { MultilineElementTransformer } from '@lexical/markdown';
 import { $createCodeNode, $isCodeNode, CodeNode } from '@lexical/code';
 import { $createTextNode } from 'lexical';

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use app_runtime::Deployment;
 use axum::{
@@ -11,7 +11,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use db::{
-    TransactionTrait,
+    DbErr, TransactionTrait,
     models::{
         milestone::{CreateMilestone, Milestone, MilestoneError, UpdateMilestone},
         task::{CreateTask, Task},
@@ -23,7 +23,7 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use ts_rs::TS;
-use utils_core::response::ApiResponse;
+use utils_core::{response::ApiResponse, text::milestone_integration_branch_name};
 use uuid::Uuid;
 
 use crate::{
@@ -71,11 +71,12 @@ fn resolve_seed_branch(
     None
 }
 
-async fn ensure_milestone_baseline_branch(
+async fn ensure_project_baseline_branch(
     deployment: &DeploymentImpl,
-    milestone: &Milestone,
+    project_id: Uuid,
+    baseline_ref: &str,
 ) -> Result<(), ApiError> {
-    let baseline = milestone.baseline_ref.trim();
+    let baseline = baseline_ref.trim();
     if baseline.is_empty() {
         return Err(ApiError::BadRequest(
             "Milestone baseline branch cannot be empty".to_string(),
@@ -84,7 +85,7 @@ async fn ensure_milestone_baseline_branch(
 
     let repos = deployment
         .project()
-        .get_repositories(&deployment.db().pool, milestone.project_id)
+        .get_repositories(&deployment.db().pool, project_id)
         .await?;
     if repos.is_empty() {
         return Ok(());
@@ -124,6 +125,46 @@ async fn ensure_milestone_baseline_branch(
     }
 
     Ok(())
+}
+
+fn resolve_create_baseline_ref(payload: &CreateMilestone, milestone_id: &Uuid) -> String {
+    payload
+        .baseline_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| milestone_integration_branch_name(milestone_id))
+}
+
+fn is_sqlite_busy_error(err: &DbErr) -> bool {
+    let message = err.to_string().to_ascii_lowercase();
+    // SQLite returns `SQLITE_BUSY` (5) for lock contention and `SQLITE_BUSY_SNAPSHOT` (517)
+    // when a read transaction attempts to promote to a write transaction under WAL.
+    message.contains("database is locked")
+        || message.contains("code: 517")
+        || message.contains("code: 5")
+}
+
+async fn retry_sqlite_busy<T, F, Fut>(mut f: F) -> Result<T, ApiError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, ApiError>>,
+{
+    let mut attempts = 0;
+    let mut backoff = Duration::from_millis(25);
+
+    loop {
+        match f().await {
+            Ok(value) => return Ok(value),
+            Err(ApiError::Database(err)) if is_sqlite_busy_error(&err) && attempts < 5 => {
+                attempts += 1;
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(Duration::from_secs(1));
+            }
+            Err(err) => return Err(err),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -219,19 +260,20 @@ pub async fn create_milestone(
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<CreateMilestone>,
 ) -> Result<ResponseJson<ApiResponse<Milestone>>, ApiError> {
-    let project_configured = {
+    let project_name = {
         let config = deployment.config().read().await;
         config
             .projects
             .iter()
-            .any(|project| project.id == Some(payload.project_id))
+            .find(|project| project.id == Some(payload.project_id))
+            .map(|project| project.name.clone())
     };
-    if !project_configured {
+    let Some(project_name) = project_name else {
         return Err(ApiError::BadRequest(
             "Project not found in projects config. Edit `projects.yaml` (or `projects.d/*.yaml`; if you don't have those files, edit inline `projects` in `config.yaml`) and reload (POST /api/config/reload)."
                 .to_string(),
         ));
-    }
+    };
 
     let id = Uuid::new_v4();
     let node_instructions = payload
@@ -251,12 +293,25 @@ pub async fn create_milestone(
         "Creating milestone"
     );
 
-    let tx = deployment.db().pool.begin().await?;
-    let milestone = Milestone::create(&tx, &payload, id)
-        .await
-        .map_err(map_milestone_error)?;
-    ensure_milestone_baseline_branch(&deployment, &milestone).await?;
-    tx.commit().await?;
+    db::models::project::Project::find_or_create_minimal(
+        &deployment.db().pool,
+        payload.project_id,
+        &project_name,
+    )
+    .await?;
+
+    let baseline_ref = resolve_create_baseline_ref(&payload, &id);
+    ensure_project_baseline_branch(&deployment, payload.project_id, &baseline_ref).await?;
+
+    let milestone = retry_sqlite_busy(|| async {
+        let tx = deployment.db().pool.begin().await?;
+        let milestone = Milestone::create(&tx, &payload, id)
+            .await
+            .map_err(map_milestone_error)?;
+        tx.commit().await?;
+        Ok(milestone)
+    })
+    .await?;
 
     Ok(ResponseJson(ApiResponse::success(milestone)))
 }
@@ -290,7 +345,8 @@ pub async fn update_milestone(
         .await
         .map_err(map_milestone_error)?;
     if payload.baseline_ref.is_some() {
-        ensure_milestone_baseline_branch(&deployment, &milestone).await?;
+        ensure_project_baseline_branch(&deployment, milestone.project_id, &milestone.baseline_ref)
+            .await?;
     }
     tx.commit().await?;
 
@@ -360,7 +416,8 @@ pub async fn push_baseline_branch(
     State(deployment): State<DeploymentImpl>,
     Json(request): Json<PushMilestoneBaselineRequest>,
 ) -> Result<ResponseJson<ApiResponse<PushMilestoneBaselineResponse>>, ApiError> {
-    ensure_milestone_baseline_branch(&deployment, &milestone).await?;
+    ensure_project_baseline_branch(&deployment, milestone.project_id, &milestone.baseline_ref)
+        .await?;
 
     let repos = deployment
         .project()
@@ -1080,7 +1137,12 @@ pub async fn apply_milestone_plan(
                 let updated = Milestone::update(&tx, milestone.id, &update)
                     .await
                     .map_err(map_milestone_error)?;
-                ensure_milestone_baseline_branch(&deployment, &updated).await?;
+                ensure_project_baseline_branch(
+                    &deployment,
+                    updated.project_id,
+                    &updated.baseline_ref,
+                )
+                .await?;
 
                 let plan_json = serde_json::to_string(&normalized_plan).map_err(|e| {
                     ApiError::Internal(format!("Failed to serialize applied plan payload: {e}"))
@@ -1156,10 +1218,11 @@ mod tests {
         project::{CreateProject, Project},
         task::Task,
     };
+    use test_support::TestEnv;
     use uuid::Uuid;
 
     use super::{apply_milestone_plan, preview_milestone_plan};
-    use crate::{DeploymentImpl, milestone_planning::MilestonePlanV1, test_support::TestEnvGuard};
+    use crate::{DeploymentImpl, milestone_planning::MilestonePlanV1};
 
     fn idempotency_headers(key: &'static str) -> axum::http::HeaderMap {
         let mut headers = axum::http::HeaderMap::new();
@@ -1167,13 +1230,8 @@ mod tests {
         headers
     }
 
-    async fn setup_deployment() -> (TestEnvGuard, DeploymentImpl) {
-        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_root).unwrap();
-
-        let db_path = temp_root.join("db.sqlite");
-        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
-        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+    async fn setup_deployment() -> (TestEnv, DeploymentImpl) {
+        let env_guard = TestEnv::new("vk-test-");
         let deployment = DeploymentImpl::new().await.unwrap();
         (env_guard, deployment)
     }

@@ -61,7 +61,11 @@ export const useScratch = (
     await scratchApi.delete(scratchType, id);
   }, [scratchType, id]);
 
-  const isLoading = connectEnabled && !data && !error && !isConnected;
+  // Treat scratch as "loading" until we receive the first snapshot/patch payload.
+  // `useJsonPatchWsStream` marks `isConnected` on socket open, which can happen
+  // before any patches arrive. Consumers generally need the initial data to
+  // avoid UI races (e.g. follow-up drafts being wiped during connect).
+  const isLoading = enabled && !data && !error;
 
   return {
     scratch,

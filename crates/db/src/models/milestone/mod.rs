@@ -404,9 +404,10 @@ impl Milestone {
         db: &C,
         project_id: Uuid,
     ) -> Result<Vec<Self>, MilestoneError> {
-        let project_row_id = ids::project_id_by_uuid(db, project_id)
-            .await?
-            .ok_or(MilestoneError::ProjectNotFound)?;
+        let project_row_id = match ids::project_id_by_uuid(db, project_id).await? {
+            Some(row_id) => row_id,
+            None => return Ok(Vec::new()),
+        };
 
         let models = milestone::Entity::find()
             .filter(milestone::Column::ProjectId.eq(project_row_id))

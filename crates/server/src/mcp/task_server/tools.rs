@@ -4041,9 +4041,9 @@ mod tests {
         ServiceExt,
         handler::{client::ClientHandler, server::tool::IntoCallToolResult},
     };
+    use test_support::TestEnvGuard;
 
     use super::*;
-    use crate::test_support::TestEnvGuard;
 
     #[derive(Clone)]
     struct TestElicitationClient {

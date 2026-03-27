@@ -109,6 +109,8 @@ pub fn write_projects_schema_json(path: &Path) -> Result<(), ConfigSchemaError> 
 
 #[cfg(test)]
 mod tests {
+    use test_support::TempRoot;
+
     use super::*;
 
     #[test]
@@ -137,10 +139,8 @@ mod tests {
 
     #[test]
     fn schema_write_creates_file() {
-        let dir = std::env::temp_dir().join(format!("vk-schema-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-
-        let path = dir.join("config.schema.json");
+        let temp_root = TempRoot::new("vk-schema-test-");
+        let path = temp_root.join("config.schema.json");
         write_config_schema_json(&path).expect("write schema");
 
         assert!(path.is_file());
@@ -148,11 +148,8 @@ mod tests {
 
     #[test]
     fn projects_schema_write_creates_file() {
-        let dir =
-            std::env::temp_dir().join(format!("vk-projects-schema-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-
-        let path = dir.join("projects.schema.json");
+        let temp_root = TempRoot::new("vk-projects-schema-test-");
+        let path = temp_root.join("projects.schema.json");
         write_projects_schema_json(&path).expect("write schema");
 
         assert!(path.is_file());
