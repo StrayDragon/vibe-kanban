@@ -3432,19 +3432,36 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn run_git_operation_does_not_block_async_runtime() {
-        let sleep_future = tokio::spawn(async {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-            1
-        });
+        use tokio::time::timeout;
 
-        let blocking_future = run_git_operation(GitService::new(), |_git| {
-            std::thread::sleep(Duration::from_millis(80));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+
+        let blocking_future = run_git_operation(GitService::new(), move |_git| {
+            // If run_git_operation accidentally blocks the runtime thread, awaiting started_rx
+            // below will time out and fail the test.
+            let _ = started_tx.send(());
+            release_rx.recv().ok();
             Ok::<usize, GitServiceError>(2)
         });
+        let blocking_handle = tokio::spawn(blocking_future);
 
-        let (sleep_res, blocking_res) = tokio::join!(sleep_future, blocking_future);
-        assert_eq!(sleep_res.unwrap(), 1);
-        assert_eq!(blocking_res.unwrap(), 2);
+        timeout(Duration::from_secs(1), started_rx)
+            .await
+            .expect("run_git_operation should not block the runtime")
+            .expect("run_git_operation should signal start");
+
+        // Prove the runtime is still making progress while the blocking operation is waiting.
+        tokio::task::yield_now().await;
+
+        let _ = release_tx.send(());
+
+        let result = timeout(Duration::from_secs(1), blocking_handle)
+            .await
+            .expect("run_git_operation should complete promptly")
+            .expect("run_git_operation join")
+            .expect("run_git_operation result");
+        assert_eq!(result, 2);
     }
 
     #[test]

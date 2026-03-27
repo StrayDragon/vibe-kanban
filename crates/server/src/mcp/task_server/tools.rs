@@ -5805,10 +5805,12 @@ mod tests {
             .unwrap();
         }
 
-        // Insert a new log entry shortly after the call starts waiting.
+        // Insert a new log entry while the call is long-polling.
         let pool2 = pool.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+        let insert_handle = tokio::spawn(async move {
+            // Yield once to give the long-poll a chance to start waiting without relying on
+            // wall-clock timing.
+            tokio::task::yield_now().await;
             let entry_json = serde_json::json!({ "type": "test_log", "n": 5 });
             db::models::execution_process_log_entries::ExecutionProcessLogEntry::upsert_entry(
                 &pool2,
@@ -5832,6 +5834,8 @@ mod tests {
             }))
             .await
             .unwrap();
+
+        insert_handle.await.unwrap();
 
         assert_eq!(result.is_error, Some(false));
         let text = result.content[0].as_text().unwrap().text.clone();
