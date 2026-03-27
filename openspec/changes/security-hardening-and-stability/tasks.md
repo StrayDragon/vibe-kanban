@@ -50,8 +50,8 @@ Verification:
 
 ## 6. Shell 注入防护（helper scripts）
 
-- [ ] 6.1 修复 `crates/server/src/routes/task_attempts/codex_setup.rs` 中 `program_path + args.join(\" \")` 的脚本拼接方式：对 argv 做安全 shell quoting（或改为结构化执行），避免 shell injection
-- [ ] 6.2 为 6.1 增加回归测试：包含空格/引号/分号/换行等特殊字符的参数不会改变执行语义
+- [x] 6.1 修复 `crates/server/src/routes/task_attempts/codex_setup.rs` 中 `program_path + args.join(\" \")` 的脚本拼接方式：对 argv 做安全 shell quoting（或改为结构化执行），避免 shell injection
+- [x] 6.2 为 6.1 增加回归测试：包含空格/引号/分号/换行等特殊字符的参数不会改变执行语义
 
 Verification:
 - `cargo test -p server codex_setup`

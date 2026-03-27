@@ -21,6 +21,18 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 
+fn join_program_and_args_for_bash(
+    program_path: &std::path::Path,
+    args: &[String],
+) -> Result<String, ApiError> {
+    let mut parts = Vec::with_capacity(args.len() + 1);
+    parts.push(program_path.to_string_lossy().to_string());
+    parts.extend(args.iter().cloned());
+
+    shlex::try_join(parts.iter().map(|s| s.as_str()))
+        .map_err(|err| ApiError::Internal(format!("Failed to quote argv for bash: {err}")))
+}
+
 pub async fn run_codex_setup(
     deployment: &crate::DeploymentImpl,
     workspace: &Workspace,
@@ -95,7 +107,7 @@ async fn get_setup_helper_action(codex: &Codex) -> Result<ExecutorAction, ApiErr
         .into_resolved()
         .await
         .map_err(ApiError::Executor)?;
-    let login_script = format!("{} {}", program_path.to_string_lossy(), args.join(" "));
+    let login_script = join_program_and_args_for_bash(&program_path, &args)?;
     let login_request = ScriptRequest {
         script: login_script,
         language: ScriptRequestLanguage::Bash,
@@ -107,4 +119,29 @@ async fn get_setup_helper_action(codex: &Codex) -> Result<ExecutorAction, ApiErr
         ExecutorActionType::ScriptRequest(login_request),
         None,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::join_program_and_args_for_bash;
+
+    #[test]
+    fn quoted_script_preserves_argv_semantics() {
+        let program = std::path::PathBuf::from("/tmp/weird path/bin");
+        let args = vec![
+            "--flag".to_string(),
+            "with spaces".to_string(),
+            "quote'quote".to_string(),
+            "semi;colon".to_string(),
+            "new\nline".to_string(),
+            "\"double\"".to_string(),
+            "$(echo injected)".to_string(),
+        ];
+
+        let script = join_program_and_args_for_bash(&program, &args).expect("quoted script");
+        let parts = shlex::split(&script).expect("quoted script should be parseable");
+
+        assert_eq!(parts.first().map(String::as_str), Some("/tmp/weird path/bin"));
+        assert_eq!(&parts[1..], args.as_slice());
+    }
 }
