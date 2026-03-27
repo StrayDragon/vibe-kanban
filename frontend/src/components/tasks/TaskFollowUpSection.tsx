@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   ScratchType,
-  type ProjectRepo,
+  type ProjectRepoPublic,
   type TaskWithAttemptStatus,
 } from 'shared/types';
 import { useBranchStatus } from '@/hooks';
@@ -88,7 +88,7 @@ export function TaskFollowUpSection({
         .sort((left, right) => left.localeCompare(right)),
     [repos]
   );
-  const { data: projectRepoScripts = [] } = useQuery<ProjectRepo[]>({
+  const { data: projectRepoScripts = [] } = useQuery<ProjectRepoPublic[]>({
     queryKey: projectKeys.repoScripts(projectId, repoIds),
     queryFn: async () => {
       if (!projectId) return [];
@@ -100,11 +100,11 @@ export function TaskFollowUpSection({
   });
 
   const hasSetupScript = useMemo(
-    () => projectRepoScripts.some((repo) => repo.setup_script?.trim()),
+    () => projectRepoScripts.some((repo) => repo.has_setup_script),
     [projectRepoScripts]
   );
   const hasCleanupScript = useMemo(
-    () => projectRepoScripts.some((repo) => repo.cleanup_script?.trim()),
+    () => projectRepoScripts.some((repo) => repo.has_cleanup_script),
     [projectRepoScripts]
   );
   const hasAnyScript = hasSetupScript || hasCleanupScript;

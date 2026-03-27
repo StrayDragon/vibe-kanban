@@ -21,9 +21,9 @@ Verification:
 
 ## 3. Project Repo API 不回传脚本正文
 
-- [ ] 3.1 调整 `GET /api/projects/{project_id}/repositories/{repo_id}`：不回传 `setup_script/cleanup_script` 等脚本正文，改为（可选）返回存在性字段（如 `has_setup_script`）或完全移除
-- [ ] 3.2 确保此类 config-derived API 使用 `public_config`（或等价的 redacted 视图），避免把 `{{secret.*}}` 展开结果回传
-- [ ] 3.3 更新前端相关页面/类型，使项目 repo 详情页不依赖脚本文本直出（改为引导查看 YAML）
+- [x] 3.1 调整 `GET /api/projects/{project_id}/repositories/{repo_id}`：不回传 `setup_script/cleanup_script` 等脚本正文，改为（可选）返回存在性字段（如 `has_setup_script`）或完全移除
+- [x] 3.2 确保此类 config-derived API 使用 `public_config`（或等价的 redacted 视图），避免把 `{{secret.*}}` 展开结果回传
+- [x] 3.3 更新前端相关页面/类型，使项目 repo 详情页不依赖脚本文本直出（改为引导查看 YAML）
 
 Verification:
 - `pnpm -C frontend run check`

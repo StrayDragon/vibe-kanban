@@ -26,6 +26,7 @@ fn generate_types_content() -> String {
         db::models::project::SearchMatchType::decl(),
         db::models::repo::Repo::decl(),
         db::models::project_repo::ProjectRepo::decl(),
+        server::routes::projects::ProjectRepoPublic::decl(),
         db::models::project_repo::CreateProjectRepo::decl(),
         db::models::project_repo::UpdateProjectRepo::decl(),
         db::models::workspace_repo::WorkspaceRepo::decl(),

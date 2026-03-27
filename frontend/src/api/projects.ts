@@ -4,6 +4,7 @@ import type {
   Project,
   ProjectFileSearchResponse,
   ProjectRepo,
+  ProjectRepoPublic,
   Repo,
   UpdateProject,
   UpdateProjectRepo,
@@ -86,11 +87,11 @@ export const projectsApi = {
   getRepository: async (
     projectId: string,
     repoId: string
-  ): Promise<ProjectRepo> => {
+  ): Promise<ProjectRepoPublic> => {
     const response = await makeRequest(
       `/api/projects/${projectId}/repositories/${repoId}`
     );
-    return handleApiResponse<ProjectRepo>(response);
+    return handleApiResponse<ProjectRepoPublic>(response);
   },
 
   updateRepository: async (

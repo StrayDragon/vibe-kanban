@@ -16,7 +16,6 @@ use axum::{
 use chrono::Utc;
 use db::models::{
     project::{Project, ProjectFileSearchResponse},
-    project_repo::ProjectRepo,
     repo::Repo,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -24,6 +23,8 @@ use logs_axum::SequencedLogMsgAxumExt;
 use logs_protocol::LogMsg;
 use logs_store::SequencedLogMsg;
 use repos::file_search_cache::SearchQuery;
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 use utils_core::response::ApiResponse;
 use uuid::Uuid;
 
@@ -309,17 +310,29 @@ pub async fn delete_project_repository() -> (StatusCode, ResponseJson<ApiRespons
     settings_write_disabled()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ProjectRepoPublic {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub repo_id: Uuid,
+    pub has_setup_script: bool,
+    pub has_cleanup_script: bool,
+    pub has_copy_files: bool,
+    pub parallel_setup_script: bool,
+}
+
 pub async fn get_project_repository(
     State(deployment): State<DeploymentImpl>,
     Path((project_id, repo_id)): Path<(Uuid, Uuid)>,
-) -> Result<ResponseJson<ApiResponse<ProjectRepo>>, ApiError> {
+) -> Result<ResponseJson<ApiResponse<ProjectRepoPublic>>, ApiError> {
     let repo = Repo::find_by_id(&deployment.db().pool, repo_id)
         .await?
         .ok_or_else(|| ApiError::NotFound("Repository not found".to_string()))?;
 
     let repo_path = repo.path.to_string_lossy().to_string();
 
-    let config = deployment.config().read().await;
+    let config = deployment.public_config().read().await;
     let project_config = config
         .projects
         .iter()
@@ -332,13 +345,26 @@ pub async fn get_project_repository(
         .find(|candidate| candidate.path == repo_path)
         .ok_or_else(|| ApiError::NotFound("Repository not found in project".to_string()))?;
 
-    Ok(ResponseJson(ApiResponse::success(ProjectRepo {
+    let has_setup_script = repo_config
+        .setup_script
+        .as_deref()
+        .is_some_and(|script| !script.trim().is_empty());
+    let has_cleanup_script = repo_config
+        .cleanup_script
+        .as_deref()
+        .is_some_and(|script| !script.trim().is_empty());
+    let has_copy_files = repo_config
+        .copy_files
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+
+    Ok(ResponseJson(ApiResponse::success(ProjectRepoPublic {
         id: repo_id,
         project_id,
         repo_id,
-        setup_script: repo_config.setup_script.clone(),
-        cleanup_script: repo_config.cleanup_script.clone(),
-        copy_files: repo_config.copy_files.clone(),
+        has_setup_script,
+        has_cleanup_script,
+        has_copy_files,
         parallel_setup_script: repo_config.parallel_setup_script,
     })))
 }
