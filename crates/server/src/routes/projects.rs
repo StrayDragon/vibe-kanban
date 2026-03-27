@@ -526,10 +526,9 @@ async fn load_project_from_config_middleware(
 mod tests {
     use std::fs;
 
-    use axum::http::StatusCode;
     use axum::{
         body::{Body, to_bytes},
-        http::Request,
+        http::{Request, StatusCode},
     };
     use db::models::repo::Repo;
     use tower::ServiceExt;
@@ -547,7 +546,7 @@ mod tests {
                 .message()
                 .unwrap_or_default()
                 .contains("projects.yaml")
-            );
+        );
     }
 
     #[tokio::test]
@@ -649,6 +648,9 @@ mod tests {
         assert!(!body_str.contains(secret));
 
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json.pointer("/data/has_setup_script"), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(
+            json.pointer("/data/has_setup_script"),
+            Some(&serde_json::Value::Bool(true))
+        );
     }
 }

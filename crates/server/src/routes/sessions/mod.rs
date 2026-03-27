@@ -14,9 +14,7 @@ use db::{
     DbErr,
     models::{
         coding_agent_turn::CodingAgentTurn,
-        execution_process::{
-            ExecutionProcess, ExecutionProcessPublic, ExecutionProcessRunReason,
-        },
+        execution_process::{ExecutionProcess, ExecutionProcessPublic, ExecutionProcessRunReason},
         project_repo::ProjectRepoWithName,
         scratch::{Scratch, ScratchType},
         session::{CreateSession, Session},

@@ -7,21 +7,21 @@
 
 ## 一键迁移（推荐）
 
-将 DB 中的 projects/repos 导出并合并到用户配置目录的 `projects.yaml`（仅更新 `projects` 字段；**不导出 secrets**）：
+将 DB 中的 projects/repos 导出为一个新的输出文件（**不导出 secrets**；不会覆盖 `projects.yaml`）：
 
 ```bash
-server legacy export-db-projects-yaml --install
+vk migrate export-db-projects-yaml --install
 ```
 
 安全性说明：
 
-- 若 `projects.yaml` 已存在：脚本会先写入备份 `projects.yaml.bak.<timestamp>`，再将 `projects` 合并写回。
-- 若现有 `projects.yaml` 不是合法 YAML（或顶层不是 mapping）：脚本不会覆盖它，而是写出 `projects.db-export.<timestamp>.yaml`，并提示你手动合并后再 reload。
+- `--install` 会在 config dir 写出 `projects.migrated.<timestamp>.yaml`（output-only），不会读取/merge/覆盖现有 `projects.yaml`。
+- 你可以手工或借助 AI 将其合并到 `projects.yaml`（或拆分到 `projects.d/*.yaml`），再 reload 生效。
 
 预演（不落盘）：
 
 ```bash
-server legacy export-db-projects-yaml --install --dry-run
+vk migrate export-db-projects-yaml --install --dry-run
 ```
 
 ## 只导出为文件/标准输出
@@ -29,13 +29,13 @@ server legacy export-db-projects-yaml --install --dry-run
 导出 YAML 片段（仅 `projects:`）到文件：
 
 ```bash
-server legacy export-db-projects-yaml --out /tmp/vk-projects.yaml
+vk migrate export-db-projects-yaml --out /tmp/vk-projects.yaml
 ```
 
 导出到标准输出：
 
 ```bash
-server legacy export-db-projects-yaml --out -
+vk migrate export-db-projects-yaml --out -
 ```
 
 ## 路径解析（参考/排查）
@@ -43,7 +43,7 @@ server legacy export-db-projects-yaml --out -
 脚本提供“打印解析后的路径”能力：
 
 ```bash
-server legacy export-db-projects-yaml --print-paths
+vk migrate export-db-projects-yaml --print-paths
 ```
 
 输出包含：
@@ -82,7 +82,15 @@ curl -s -X POST http://localhost:<BACKEND_PORT>/api/config/reload
 
 ## 给其他人/其他 LLM 的 Prompt 模板
 
-将下面这段 prompt 复制给协作者，并补充你机器上执行 `--print-paths` 的输出与导出/报错信息：
+推荐直接使用：
+
+```bash
+vk migrate prompt
+```
+
+它会输出一段可直接复制给 Claude Code/Codex 的迁移提示词（包含输入/输出路径、合并目标、注意事项与验证步骤）。
+
+如需手动编写 prompt，可参考下面模板，并补充你机器上执行 `--print-paths` 的输出与导出/报错信息：
 
 ```text
 你是 vibe-kanban(VK) 的迁移助手。我的目标是把旧版本保存在本机 sqlite DB 里的 projects/repos 配置迁移到用户配置目录的 projects.yaml（YAML file-first），并把 secrets 放到同级的 secret.env，通过 {{secret.X}} 引用。
@@ -94,8 +102,8 @@ curl -s -X POST http://localhost:<BACKEND_PORT>/api/config/reload
 - DB 由 DATABASE_URL 覆盖，否则使用 VIBE_ASSET_DIR/default_asset_dir 下的 db.sqlite。
 
 请基于以下信息给出可执行步骤（含回滚/备份）：
-1) `server legacy export-db-projects-yaml --print-paths` 的输出：<粘贴>
-2) 我希望使用的迁移方式：`--install`（合并写入 projects.yaml）/ `--out`（导出片段手动合并）
+1) `vk migrate export-db-projects-yaml --print-paths` 的输出：<粘贴>
+2) 我希望使用的迁移方式：`--install`（输出文件）/ `--out`（导出片段手动合并）
 3) 如果命令失败/导出为空/路径不对，请给出排查点与替代方案。
 ```
 
@@ -104,7 +112,7 @@ curl -s -X POST http://localhost:<BACKEND_PORT>/api/config/reload
 如果你是从源码运行（没有全局 `server` 可执行文件），用：
 
 ```bash
-cargo run --bin server -- legacy export-db-projects-yaml --install
+cargo run -p vk -- migrate export-db-projects-yaml --install
 ```
 
 ---
@@ -119,23 +127,23 @@ cargo run --bin server -- legacy export-db-projects-yaml --install
 可以使用一次性迁移工具将它们导出/合并到用户配置目录：
 
 ```bash
-server legacy export-asset-config-yaml --install
+vk migrate export-asset-config-yaml --install
 ```
 
 安全性说明（重要）：
 
-- 迁移会将 **疑似敏感** 的 env 值写入与 `config.yaml` 同级的 `secret.env`，并在 YAML 中替换为 `{{secret.NAME}}`。
+- 迁移会将 **疑似敏感** 的 env 值写入 `secret.env.migrated.<timestamp>`，并在 YAML 中替换为 `{{secret.NAME}}`。
 - 迁移只保留当前构建支持的 executors（默认仅 `CLAUDE_CODE` + `CODEX`）；其它（例如 `FAKE_AGENT`）会被丢弃并打印 warning。
-- 若 `config.yaml` / `secret.env` 已存在：会先写入备份 `*.bak.<timestamp>`，再合并写回。
+- `--install` 只会写出新文件（output-only），不会覆盖现有 `config.yaml` / `secret.env`。你需要手工/AI 合并后再 reload。
 
 预演（不落盘）：
 
 ```bash
-server legacy export-asset-config-yaml --install --dry-run
+vk migrate export-asset-config-yaml --install --dry-run
 ```
 
 路径解析（参考/排查）：
 
 ```bash
-server legacy export-asset-config-yaml --print-paths
+vk migrate export-asset-config-yaml --print-paths
 ```

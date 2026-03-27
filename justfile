@@ -130,3 +130,9 @@ check:
 
 lint:
     pnpm run lint
+
+qa:
+    pnpm run qa
+
+openspec-check:
+    openspec validate --changes --strict --no-interactive

@@ -70,11 +70,7 @@ function readPlainLine(
   }
 }
 
-export default function DiffCard({
-  diff,
-  expanded,
-  onToggle,
-}: Props) {
+export default function DiffCard({ diff, expanded, onToggle }: Props) {
   const { config } = useUserSystem();
   const theme = getActualTheme(config?.theme);
   const { comments, drafts, setDraft } = useReview();

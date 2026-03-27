@@ -183,10 +183,7 @@ mod tests {
         let inside_repo = workspace_dir.join("inside-repo");
         fs::create_dir_all(inside_repo.join(".git")).unwrap();
 
-        let outside_repo = workspace_dir
-            .parent()
-            .unwrap()
-            .join("outside-repo");
+        let outside_repo = workspace_dir.parent().unwrap().join("outside-repo");
         fs::create_dir_all(outside_repo.join(".git")).unwrap();
 
         let app = http::router(deployment);
@@ -231,10 +228,7 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
-        let traversal_path = format!(
-            "{}/../outside-repo",
-            workspace_dir.to_string_lossy()
-        );
+        let traversal_path = format!("{}/../outside-repo", workspace_dir.to_string_lossy());
         let response = app
             .clone()
             .oneshot(
@@ -289,10 +283,7 @@ mod tests {
         let parent_inside = workspace_dir.join("parent");
         fs::create_dir_all(&parent_inside).unwrap();
 
-        let parent_outside = workspace_dir
-            .parent()
-            .unwrap()
-            .join("outside-parent");
+        let parent_outside = workspace_dir.parent().unwrap().join("outside-parent");
         fs::create_dir_all(&parent_outside).unwrap();
 
         let app = http::router(deployment);
@@ -337,10 +328,7 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
-        let traversal_parent = format!(
-            "{}/../outside-parent",
-            workspace_dir.to_string_lossy()
-        );
+        let traversal_parent = format!("{}/../outside-parent", workspace_dir.to_string_lossy());
         let response = app
             .clone()
             .oneshot(

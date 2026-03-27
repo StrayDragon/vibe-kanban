@@ -22,7 +22,9 @@ use crate::{
     DeploymentImpl,
     error::ApiError,
     middleware::load_workspace_middleware,
-    routes::images::{ImageMetadata, ImageResponse, build_image_file_response, process_image_upload},
+    routes::images::{
+        ImageMetadata, ImageResponse, build_image_file_response, process_image_upload,
+    },
 };
 
 #[derive(Debug, Deserialize)]

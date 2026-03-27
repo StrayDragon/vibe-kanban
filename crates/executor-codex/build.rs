@@ -1,4 +1,7 @@
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -25,7 +28,7 @@ fn parse_toml_string(value: &str) -> Option<String> {
     Some(stripped.to_string())
 }
 
-fn find_workspace_cargo_lock(start_dir: &PathBuf) -> Option<PathBuf> {
+fn find_workspace_cargo_lock(start_dir: &Path) -> Option<PathBuf> {
     for ancestor in start_dir.ancestors() {
         let candidate = ancestor.join("Cargo.lock");
         if candidate.exists() {

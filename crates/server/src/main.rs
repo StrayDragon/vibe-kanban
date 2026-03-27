@@ -74,11 +74,8 @@ Usage:
   server                           # start backend server (no CLI args; configure via env + config.yaml)
   server --help
 
-Legacy (DEPRECATED; will be removed):
-  server legacy export-db-projects-yaml [--install|--out <path>|--print-paths] [--dry-run]
-  server legacy export-asset-config-yaml [--install|--out <path>|--print-paths] [--dry-run]
-
-Run `server legacy export-db-projects-yaml --help` or `server legacy export-asset-config-yaml --help` for details.
+Operator tooling:
+  vk --help
 "#
     );
 }
@@ -96,50 +93,16 @@ async fn maybe_run_cli_command() -> Result<bool, AnyhowError> {
     }
 
     if first == "legacy" {
-        let sub = args.get(1).map(String::as_str);
-        match sub {
-            None | Some("--help" | "-h" | "help") => {
-                print_cli_help();
-                return Ok(true);
-            }
-            Some("export-db-projects-yaml") => {
-                let (parsed, action) =
-                    server::legacy_migrations::parse_export_db_projects_yaml_args(
-                        args.into_iter().skip(2),
-                    )?;
+        eprintln!(
+            r#"`server legacy ...` has been removed.
 
-                if action == server::legacy_migrations::ExportDbProjectsYamlParseResult::Help {
-                    println!(
-                        "{}",
-                        server::legacy_migrations::export_db_projects_yaml_help()
-                    );
-                    return Ok(true);
-                }
+Use the operator CLI instead:
+  vk migrate export-db-projects-yaml ...
+  vk migrate export-asset-config-yaml ...
 
-                server::legacy_migrations::run_export_db_projects_yaml(parsed).await?;
-                return Ok(true);
-            }
-            Some("export-asset-config-yaml") => {
-                let (parsed, action) =
-                    server::legacy_migrations::parse_export_asset_config_yaml_args(
-                        args.into_iter().skip(2),
-                    )?;
-
-                if action == server::legacy_migrations::ExportAssetConfigYamlParseResult::Help {
-                    println!(
-                        "{}",
-                        server::legacy_migrations::export_asset_config_yaml_help()
-                    );
-                    return Ok(true);
-                }
-
-                server::legacy_migrations::run_export_asset_config_yaml(parsed).await?;
-                return Ok(true);
-            }
-            Some(other) => {
-                anyhow::bail!("Unknown legacy subcommand: {other}");
-            }
-        }
+Run `vk --help` for details."#
+        );
+        std::process::exit(2);
     }
 
     anyhow::bail!(

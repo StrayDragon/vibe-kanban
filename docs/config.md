@@ -14,8 +14,8 @@ VK 采用 **file-first** 的配置模型：以 OS 用户配置目录下的 YAML 
 - `projects.yaml`：项目/仓库配置（推荐）
 - `projects.d/*.yaml|yml`：可选，把项目配置拆分成多个文件（会按路径排序后合并加载）
 - `secret.env`：可选，dotenv 形式的 secrets overlay
-- `config.schema.json`：运行时自动生成的 JSON Schema（用于 `config.yaml` 的 YAML LSP）
-- `projects.schema.json`：运行时自动生成的 JSON Schema（用于 `projects.yaml` / `projects.d/*` 的 YAML LSP）
+- `config.schema.json`：JSON Schema（用于 `config.yaml` 的 YAML LSP）
+- `projects.schema.json`：JSON Schema（用于 `projects.yaml` / `projects.d/*` 的 YAML LSP）
 
 ## secrets 与模板注入
 
@@ -50,7 +50,11 @@ VK 会自动加载 `secret.env`，并按以下优先级解析所有已加载 YAM
 # yaml-language-server: $schema=./projects.schema.json
 ```
 
-启动 VK 后会在同一目录生成 `config.schema.json` 与 `projects.schema.json`，编辑器即可使用这些 schema 提供校验与补全。
+运行以下命令在同一目录生成/更新 `config.schema.json` 与 `projects.schema.json`，编辑器即可使用这些 schema 提供校验与补全：
+
+```bash
+vk config schema upsert
+```
 
 ## Reload / Status
 
@@ -61,16 +65,16 @@ VK 会自动加载 `secret.env`，并按以下优先级解析所有已加载 YAM
 
 如果你从旧版本升级，且本地 DB 仍保存了 project/repo 的设置，可以使用一次性导出工具生成可被 loader 读取的 YAML。
 
-推荐直接将 DB 中的 `projects` 合并写入用户配置目录的 `projects.yaml`：
+推荐先生成一个输出文件，再手工/AI 合并到 `projects.yaml`（或拆分到 `projects.d/*.yaml`）：
 
 ```bash
-server legacy export-db-projects-yaml --install
+vk migrate export-db-projects-yaml --install
 ```
 
 （预演不落盘：`--install --dry-run`；打印解析后的路径：`--print-paths`。）
 
 ```bash
-server legacy export-db-projects-yaml --out /tmp/vk-projects.yaml
+vk migrate export-db-projects-yaml --out /tmp/vk-projects.yaml
 ```
 
 该导出：
@@ -78,7 +82,7 @@ server legacy export-db-projects-yaml --out /tmp/vk-projects.yaml
 - 只生成 `projects:` 片段（不包含 secrets）
 - 会对明显无效的脚本/路径做清理并打印 warning（保证输出可被 loader 读取）
 
-将导出的 `projects:` 放入 `~/.config/vk/projects.yaml`（或 `VK_CONFIG_DIR`），然后执行 `POST /api/config/reload` 生效。
+该命令会在 config dir 写出 `projects.migrated.<timestamp>.yaml`（不会覆盖现有 `projects.yaml`）。将其内容合并到 `projects.yaml` / `projects.d/*.yaml` 后，执行 `POST /api/config/reload` 生效。
 
 > 注意：该 DB 导出只处理 projects/repos。旧版的“系统设置/默认 executor/profile/agent env”等不在 DB 表里，而在 `asset_dir()/config.json` 与 `asset_dir()/profiles.json`，需要使用下文的 asset 迁移命令。
 
@@ -89,7 +93,9 @@ server legacy export-db-projects-yaml --out /tmp/vk-projects.yaml
 如果你升级自旧版本，并且旧版曾在 `asset_dir()` 下保存系统设置与 profiles overrides，可以运行：
 
 ```bash
-server legacy export-asset-config-yaml --install
+vk migrate export-asset-config-yaml --install
 ```
 
-该工具会把 secrets 写入同级 `secret.env`，并在 YAML 中替换为 `{{secret.NAME}}`（不会把 token 明文写进 YAML）。
+该工具会把 secrets 写入 `secret.env.migrated.<timestamp>`，并在 YAML 中替换为 `{{secret.NAME}}`（不会把 token 明文写进 YAML）。
+
+`--install` 会写出 `config.migrated.<timestamp>.yaml` 与 `secret.env.migrated.<timestamp>`（不会覆盖现有 `config.yaml` / `secret.env`）。将其内容合并到目标文件后再 reload。

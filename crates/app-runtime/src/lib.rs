@@ -509,9 +509,7 @@ impl AppRuntime {
         projects_path: std::path::PathBuf,
         projects_dir: std::path::PathBuf,
         shutdown: CancellationToken,
-    ) -> Result<(), notify::Error> {
-        use notify::{RecursiveMode, Watcher};
-
+    ) -> Result<(), execution::fs_watch::FsWatchError> {
         fn is_relevant_path(
             path: &std::path::Path,
             config_dir: &std::path::Path,
@@ -528,7 +526,10 @@ impl AppRuntime {
             let ext = path.extension().and_then(|ext| ext.to_str());
 
             if path.parent().is_some_and(|parent| parent == config_dir) {
-                return matches!(file_name, Some("config.yaml" | "secret.env" | "projects.yaml"));
+                return matches!(
+                    file_name,
+                    Some("config.yaml" | "secret.env" | "projects.yaml")
+                );
             }
 
             if path.parent().is_some_and(|parent| parent == projects_dir) {
@@ -538,14 +539,7 @@ impl AppRuntime {
             false
         }
 
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<notify::Result<notify::Event>>();
-        let mut watcher = notify::recommended_watcher(move |res| {
-            let _ = tx.send(res);
-        })?;
-
-        // Watch the directory instead of individual files to handle atomic writes via rename.
-        // Use recursive mode so newly-created `projects.d/` is picked up without a restart.
-        watcher.watch(&config_dir, RecursiveMode::Recursive)?;
+        let (_watcher, mut rx) = execution::fs_watch::recommended_recursive_watcher(&config_dir)?;
 
         tracing::info!(
             config_dir = %config_dir.display(),
@@ -569,11 +563,20 @@ impl AppRuntime {
 
                     match item {
                         Ok(event) => {
-                            if event.kind.is_access() {
+                            if event.is_access {
                                 continue;
                             }
 
-                            if !event.paths.iter().any(|path| is_relevant_path(path, &config_dir, &config_path, &secret_env_path, &projects_path, &projects_dir)) {
+                            if !event.paths.iter().any(|path| {
+                                is_relevant_path(
+                                    path,
+                                    &config_dir,
+                                    &config_path,
+                                    &secret_env_path,
+                                    &projects_path,
+                                    &projects_dir,
+                                )
+                            }) {
                                 continue;
                             }
 
@@ -953,11 +956,10 @@ mod tests {
         time::Duration,
     };
 
-    use super::Deployment;
     use config::Config;
     use uuid::Uuid;
 
-    use super::AppRuntime;
+    use super::{AppRuntime, Deployment};
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

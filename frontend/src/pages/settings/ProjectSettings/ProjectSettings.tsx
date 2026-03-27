@@ -66,7 +66,9 @@ export function ProjectSettings() {
   const { t } = useTranslation(['settings', 'common']);
   const { reloadSystem } = useUserSystem();
   const { projects, isLoading, error, isConnected } = useProjects();
-  const [snippetProjectId, setSnippetProjectId] = useState(() => generateUuid());
+  const [snippetProjectId, setSnippetProjectId] = useState(() =>
+    generateUuid()
+  );
   const [snippetName, setSnippetName] = useState('');
   const [snippetRepoPaths, setSnippetRepoPaths] = useState('');
 

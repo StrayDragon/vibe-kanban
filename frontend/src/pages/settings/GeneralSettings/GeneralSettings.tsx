@@ -89,7 +89,9 @@ export function GeneralSettings() {
         <Alert variant="destructive">
           <AlertTitle>{t('common:error', 'Error')}</AlertTitle>
           <AlertDescription>
-            {error instanceof Error ? error.message : t('common:error', 'Error')}
+            {error instanceof Error
+              ? error.message
+              : t('common:error', 'Error')}
           </AlertDescription>
         </Alert>
       </div>
@@ -98,13 +100,17 @@ export function GeneralSettings() {
 
   const loadedAt = new Date(status.loaded_at_unix_ms);
   const schemaHeader = '# yaml-language-server: $schema=./config.schema.json';
-  const projectsSchemaHeader = '# yaml-language-server: $schema=./projects.schema.json';
+  const projectsSchemaHeader =
+    '# yaml-language-server: $schema=./projects.schema.json';
+  const schemaUpsertCommand = 'vk config schema upsert';
 
   return (
     <div className="space-y-6">
       {status.last_error && (
         <Alert variant="destructive">
-          <AlertTitle>{t('settings.config.lastError', 'Last error')}</AlertTitle>
+          <AlertTitle>
+            {t('settings.config.lastError', 'Last error')}
+          </AlertTitle>
           <AlertDescription>{status.last_error}</AlertDescription>
         </Alert>
       )}
@@ -165,7 +171,9 @@ export function GeneralSettings() {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => copyToClipboard('config dir', status.config_dir)}
+                  onClick={() =>
+                    copyToClipboard('config dir', status.config_dir)
+                  }
                 >
                   <Copy className="mr-2 h-4 w-4" />
                   {t('common:buttons.copy', 'Copy')}
@@ -180,7 +188,9 @@ export function GeneralSettings() {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => copyToClipboard('config.yaml path', status.config_path)}
+                  onClick={() =>
+                    copyToClipboard('config.yaml path', status.config_path)
+                  }
                 >
                   <Copy className="mr-2 h-4 w-4" />
                   {t('common:buttons.copy', 'Copy')}
@@ -191,7 +201,9 @@ export function GeneralSettings() {
             <div className="space-y-1">
               <div className="text-sm font-medium">projects.yaml</div>
               <div className="flex flex-wrap items-center gap-2">
-                <code className="text-xs break-all">{status.projects_path}</code>
+                <code className="text-xs break-all">
+                  {status.projects_path}
+                </code>
                 <Button
                   size="sm"
                   variant="outline"
@@ -237,7 +249,9 @@ export function GeneralSettings() {
             <div className="space-y-1">
               <div className="text-sm font-medium">secret.env</div>
               <div className="flex flex-wrap items-center gap-2">
-                <code className="text-xs break-all">{status.secret_env_path}</code>
+                <code className="text-xs break-all">
+                  {status.secret_env_path}
+                </code>
                 <Button
                   size="sm"
                   variant="outline"
@@ -265,7 +279,32 @@ export function GeneralSettings() {
                   size="sm"
                   variant="outline"
                   onClick={() =>
-                    copyToClipboard('config.schema.json path', status.schema_path)
+                    copyToClipboard(
+                      'config.schema.json path',
+                      status.schema_path
+                    )
+                  }
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  {t('common:buttons.copy', 'Copy')}
+                </Button>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {t(
+                  'settings.config.schemaUpsertHint',
+                  'Generate/update schema files with:'
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <code className="text-xs break-all">{schemaUpsertCommand}</code>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    copyToClipboard(
+                      'vk config schema upsert',
+                      schemaUpsertCommand
+                    )
                   }
                 >
                   <Copy className="mr-2 h-4 w-4" />
@@ -294,7 +333,9 @@ export function GeneralSettings() {
             <div className="space-y-1">
               <div className="text-sm font-medium">projects.schema.json</div>
               <div className="flex flex-wrap items-center gap-2">
-                <code className="text-xs break-all">{status.projects_schema_path}</code>
+                <code className="text-xs break-all">
+                  {status.projects_schema_path}
+                </code>
                 <Button
                   size="sm"
                   variant="outline"
@@ -316,12 +357,17 @@ export function GeneralSettings() {
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <code className="text-xs break-all">{projectsSchemaHeader}</code>
+                <code className="text-xs break-all">
+                  {projectsSchemaHeader}
+                </code>
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() =>
-                    copyToClipboard('projects schema header', projectsSchemaHeader)
+                    copyToClipboard(
+                      'projects schema header',
+                      projectsSchemaHeader
+                    )
                   }
                 >
                   <Copy className="mr-2 h-4 w-4" />

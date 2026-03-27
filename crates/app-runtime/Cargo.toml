@@ -29,7 +29,6 @@ tokio-util = { version = "0.7", features = ["io"] }
 tracing = { workspace = true }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 notify-rust = "4.11"
-notify = "8.2.0"
 
 [dev-dependencies]
 tempfile = "3.8"

@@ -4,6 +4,7 @@ members = [
     "crates/app-runtime",
     "crates/config",
     "crates/server",
+    "crates/vk",
     "crates/db",
     "crates/db/migration",
     "crates/events",

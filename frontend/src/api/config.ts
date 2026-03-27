@@ -18,12 +18,16 @@ export const configApi = {
   },
 
   getConfigStatus: async (): Promise<ConfigStatusResponse> => {
-    const response = await makeRequest('/api/config/status', { cache: 'no-store' });
+    const response = await makeRequest('/api/config/status', {
+      cache: 'no-store',
+    });
     return handleApiResponse<ConfigStatusResponse>(response);
   },
 
   reloadConfig: async (): Promise<ConfigStatusResponse> => {
-    const response = await makeRequest('/api/config/reload', { method: 'POST' });
+    const response = await makeRequest('/api/config/reload', {
+      method: 'POST',
+    });
     return handleApiResponse<ConfigStatusResponse>(response);
   },
 

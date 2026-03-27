@@ -565,15 +565,15 @@ impl EventService {
 
                         match op {
                             json_patch::PatchOperation::Add(add) => {
-                                if let Ok(process) =
-                                    serde_json::from_value::<ExecutionProcessPublic>(add.value.clone())
-                                    && session_matches_workspace(
-                                        &session_ids,
-                                        &self.db.pool,
-                                        workspace_id,
-                                        process.session_id,
-                                    )
-                                    .await
+                                if let Ok(process) = serde_json::from_value::<ExecutionProcessPublic>(
+                                    add.value.clone(),
+                                ) && session_matches_workspace(
+                                    &session_ids,
+                                    &self.db.pool,
+                                    workspace_id,
+                                    process.session_id,
+                                )
+                                .await
                                 {
                                     if !show_soft_deleted && process.dropped {
                                         initial_msgs.push(SequencedLogMsg {

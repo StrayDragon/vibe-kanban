@@ -141,7 +141,10 @@ mod tests {
         let script = join_program_and_args_for_bash(&program, &args).expect("quoted script");
         let parts = shlex::split(&script).expect("quoted script should be parseable");
 
-        assert_eq!(parts.first().map(String::as_str), Some("/tmp/weird path/bin"));
+        assert_eq!(
+            parts.first().map(String::as_str),
+            Some("/tmp/weird path/bin")
+        );
         assert_eq!(&parts[1..], args.as_slice());
     }
 }

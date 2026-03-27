@@ -305,10 +305,8 @@ mod tests {
 
         body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
         body.extend_from_slice(
-            format!(
-                "Content-Disposition: form-data; name=\"image\"; filename=\"{filename}\"\r\n"
-            )
-            .as_bytes(),
+            format!("Content-Disposition: form-data; name=\"image\"; filename=\"{filename}\"\r\n")
+                .as_bytes(),
         );
         body.extend_from_slice(format!("Content-Type: {content_type}\r\n\r\n").as_bytes());
         body.extend_from_slice(data);

@@ -14,8 +14,7 @@ pub use editor::{EditorConfig, EditorOpenError, EditorType};
 pub use schema::{
     AccessControlConfig, AccessControlMode, CURRENT_CONFIG_VERSION, Config, DiffPreviewGuardPreset,
     GitHubConfig, NotificationConfig, ProjectConfig, ProjectMcpExecutorPolicyMode,
-    ProjectsFile,
-    ProjectRepoConfig, ShowcaseState, SoundFile, ThemeMode, UiLanguage,
+    ProjectRepoConfig, ProjectsFile, ShowcaseState, SoundFile, ThemeMode, UiLanguage,
     WorkspaceLifecycleHookConfig, WorkspaceLifecycleHookFailurePolicy,
     WorkspaceLifecycleHookRunMode,
 };
@@ -75,8 +74,9 @@ pub fn try_load_secret_env(secret_env_path: &Path) -> Result<HashMap<String, Str
     load_secret_env(secret_env_path)
 }
 
-fn load_secret_env(secret_env_path: &std::path::Path) -> Result<HashMap<String, String>, ConfigError>
-{
+fn load_secret_env(
+    secret_env_path: &std::path::Path,
+) -> Result<HashMap<String, String>, ConfigError> {
     let metadata = match std::fs::symlink_metadata(secret_env_path) {
         Ok(meta) => meta,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
@@ -291,7 +291,7 @@ fn list_projects_extra_paths(projects_dir: &Path) -> Vec<PathBuf> {
 }
 
 fn read_config_disk_inputs_once(
-    config_path: &PathBuf,
+    config_path: &Path,
     include_secret_env: bool,
 ) -> Result<ConfigDiskInputs, ConfigError> {
     let config_dir = config_path
@@ -349,7 +349,7 @@ where
 }
 
 fn read_config_disk_inputs_stable(
-    config_path: &PathBuf,
+    config_path: &Path,
     include_secret_env: bool,
 ) -> Result<ConfigDiskInputs, ConfigError> {
     read_stable_with_retries(|| read_config_disk_inputs_once(config_path, include_secret_env))
@@ -366,7 +366,7 @@ fn yaml_from_raw_with_templates(
 
 /// Load config.yaml + optional projects.yaml/projects.d without resolving `{{secret.*}}`/`{{env.*}}`
 /// templates. This is intended for *display* and API responses to avoid leaking expanded secrets.
-pub fn try_load_public_config_from_file(config_path: &PathBuf) -> Result<Config, ConfigError> {
+pub fn try_load_public_config_from_file(config_path: &Path) -> Result<Config, ConfigError> {
     let disk = read_config_disk_inputs_stable(config_path, false)?;
 
     let mut config = match disk.config_raw.as_deref() {
@@ -403,7 +403,7 @@ pub fn try_load_public_config_from_file(config_path: &PathBuf) -> Result<Config,
     Ok(config)
 }
 
-pub fn try_load_config_from_file(config_path: &PathBuf) -> Result<Config, ConfigError> {
+pub fn try_load_config_from_file(config_path: &Path) -> Result<Config, ConfigError> {
     let disk = read_config_disk_inputs_stable(config_path, true)?;
     let env = TemplateEnv {
         secret: disk.secret_env,
@@ -463,7 +463,7 @@ pub fn try_load_config_from_file(config_path: &PathBuf) -> Result<Config, Config
 
 pub fn reload_config_keep_last_known_good(
     current: &Config,
-    config_path: &PathBuf,
+    config_path: &Path,
 ) -> (Config, Option<String>) {
     match try_load_config_from_file(config_path) {
         Ok(config) => (config, None),
@@ -472,7 +472,7 @@ pub fn reload_config_keep_last_known_good(
 }
 
 /// Will always return config, falling back to defaults on missing/invalid files.
-pub async fn load_config_from_file(config_path: &PathBuf) -> Config {
+pub async fn load_config_from_file(config_path: &Path) -> Config {
     match try_load_config_from_file(config_path) {
         Ok(config) => config,
         Err(err) => {

@@ -79,11 +79,15 @@ export function McpSettings() {
               {t('settings.mcp.jsonSnippet', 'JSON snippet (most agents)')}
             </div>
             <div className="rounded-md border border-border/60 bg-muted/40 p-3">
-              <pre className="text-xs whitespace-pre-wrap">{MCP_SNIPPET_JSON}</pre>
+              <pre className="text-xs whitespace-pre-wrap">
+                {MCP_SNIPPET_JSON}
+              </pre>
             </div>
             <Button
               variant="secondary"
-              onClick={() => copyToClipboard('MCP JSON snippet', MCP_SNIPPET_JSON)}
+              onClick={() =>
+                copyToClipboard('MCP JSON snippet', MCP_SNIPPET_JSON)
+              }
             >
               <Copy className="mr-2 h-4 w-4" />
               {t('common:buttons.copy', 'Copy')}
@@ -95,12 +99,17 @@ export function McpSettings() {
               {t('settings.mcp.codexSnippet', 'Codex snippet (TOML)')}
             </div>
             <div className="rounded-md border border-border/60 bg-muted/40 p-3">
-              <pre className="text-xs whitespace-pre-wrap">{MCP_SNIPPET_CODEX_TOML}</pre>
+              <pre className="text-xs whitespace-pre-wrap">
+                {MCP_SNIPPET_CODEX_TOML}
+              </pre>
             </div>
             <Button
               variant="secondary"
               onClick={() =>
-                copyToClipboard('MCP Codex TOML snippet', MCP_SNIPPET_CODEX_TOML)
+                copyToClipboard(
+                  'MCP Codex TOML snippet',
+                  MCP_SNIPPET_CODEX_TOML
+                )
               }
             >
               <Copy className="mr-2 h-4 w-4" />
@@ -112,4 +121,3 @@ export function McpSettings() {
     </div>
   );
 }
-

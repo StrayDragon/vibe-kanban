@@ -86,10 +86,7 @@ fn redact_executor_action_for_public(action: &ExecutorAction) -> ExecutorAction 
         .as_deref()
         .map(|next| Box::new(redact_executor_action_for_public(next)));
 
-    ExecutorAction {
-        typ,
-        next_action,
-    }
+    ExecutorAction { typ, next_action }
 }
 
 /// Public-safe execution process representation for API/UI consumption.

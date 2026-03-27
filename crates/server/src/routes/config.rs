@@ -52,10 +52,8 @@ fn redact_secrets_in_env_objects(value: &mut Value) {
         Value::Object(map) => {
             for (key, value) in map.iter_mut() {
                 // Avoid leaking executor command overrides (they may contain tokens, secrets, etc.).
-                if key == "base_command_override" {
-                    if matches!(value, Value::String(_)) {
-                        *value = Value::String("<redacted>".to_string());
-                    }
+                if key == "base_command_override" && matches!(value, Value::String(_)) {
+                    *value = Value::String("<redacted>".to_string());
                 }
                 if key == "additional_params" {
                     match value {
@@ -73,12 +71,12 @@ fn redact_secrets_in_env_objects(value: &mut Value) {
                     }
                 }
 
-                if key == "env" {
-                    if let Value::Object(env) = value {
-                        for (env_key, env_value) in env.iter_mut() {
-                            if is_sensitive_env_key(env_key) {
-                                *env_value = Value::String("<redacted>".to_string());
-                            }
+                if key == "env"
+                    && let Value::Object(env) = value
+                {
+                    for (env_key, env_value) in env.iter_mut() {
+                        if is_sensitive_env_key(env_key) {
+                            *env_value = Value::String("<redacted>".to_string());
                         }
                     }
                 }

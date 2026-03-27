@@ -111,8 +111,8 @@ export function Navbar() {
     : null;
   const switcherLabel =
     (project ? formatProjectLabel(project) : null) ??
-    (unknownProjectLabel ??
-      (projectsLoading ? t('loading') : t('switcher.placeholder')));
+    unknownProjectLabel ??
+    (projectsLoading ? t('loading') : t('switcher.placeholder'));
 
   const setSearchBarRef = useCallback(
     (node: HTMLInputElement | null) => {

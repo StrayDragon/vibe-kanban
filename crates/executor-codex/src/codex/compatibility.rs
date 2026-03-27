@@ -408,10 +408,7 @@ fn should_allow_patch_drift(expected: Option<&str>, runtime: Option<&str>) -> bo
 }
 
 fn semver_major_minor(version: &str) -> Option<(u64, u64)> {
-    let core = version
-        .split(|c| c == '-' || c == '+')
-        .next()
-        .unwrap_or(version);
+    let core = version.split(['-', '+']).next().unwrap_or(version);
     let mut parts = core.split('.');
     let major = parts.next()?.parse::<u64>().ok()?;
     let minor = parts.next()?.parse::<u64>().ok()?;
@@ -421,7 +418,7 @@ fn semver_major_minor(version: &str) -> Option<(u64, u64)> {
 
 fn compare_semver_core(a: &str, b: &str) -> Option<std::cmp::Ordering> {
     let parse = |v: &str| -> Option<(u64, u64, u64)> {
-        let core = v.split(|c| c == '-' || c == '+').next().unwrap_or(v);
+        let core = v.split(['-', '+']).next().unwrap_or(v);
         let mut parts = core.split('.');
         let major = parts.next()?.parse::<u64>().ok()?;
         let minor = parts.next()?.parse::<u64>().ok()?;
