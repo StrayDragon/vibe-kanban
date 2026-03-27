@@ -29,7 +29,7 @@ use db::{
         workspace_repo::{CreateWorkspaceRepo, RepoWithTargetBranch, WorkspaceRepo},
     },
 };
-use execution::{container::ContainerService, diff_stream, github::GitHubService};
+use execution::{container::ContainerService, diff_stream};
 use executors::{
     executors::{CodingAgent, ExecutorError},
     profile::ExecutorConfigs,
@@ -53,11 +53,8 @@ use utils_core::{
 };
 use uuid::Uuid;
 
-use super::{codex_setup, dto::*, gh_cli_setup};
-use crate::{
-    DeploymentImpl, error::ApiError, routes::task_attempts::gh_cli_setup::GhCliSetupError,
-    task_runtime::DeploymentTaskRuntime,
-};
+use super::{codex_setup, dto::*};
+use crate::{DeploymentImpl, error::ApiError, task_runtime::DeploymentTaskRuntime};
 
 async fn run_git_operation<T, F>(git: GitService, op: F) -> Result<T, GitServiceError>
 where
@@ -1306,9 +1303,6 @@ pub async fn push_task_attempt_branch(
 ) -> Result<(StatusCode, ResponseJson<ApiResponse<(), PushError>>), ApiError> {
     let pool = &deployment.db().pool;
 
-    let github_service = GitHubService::new()?;
-    github_service.check_token().await?;
-
     let workspace_repo =
         WorkspaceRepo::find_by_workspace_and_repo_id(pool, workspace.id, request.repo_id)
             .await?
@@ -1348,9 +1342,6 @@ pub async fn force_push_task_attempt_branch(
     Json(request): Json<PushTaskAttemptRequest>,
 ) -> Result<ResponseJson<ApiResponse<(), PushError>>, ApiError> {
     let pool = &deployment.db().pool;
-
-    let github_service = GitHubService::new()?;
-    github_service.check_token().await?;
 
     let workspace_repo =
         WorkspaceRepo::find_by_workspace_and_repo_id(pool, workspace.id, request.repo_id)
@@ -2313,48 +2304,6 @@ pub async fn run_cleanup_script(
             &execution_process,
         ))),
     ))
-}
-
-#[axum::debug_handler]
-pub async fn gh_cli_setup_handler(
-    Extension(workspace): Extension<Workspace>,
-    State(deployment): State<DeploymentImpl>,
-) -> Result<
-    (
-        StatusCode,
-        ResponseJson<ApiResponse<ExecutionProcessPublic, GhCliSetupError>>,
-    ),
-    ApiError,
-> {
-    match gh_cli_setup::run_gh_cli_setup(&deployment, &workspace).await {
-        Ok(execution_process) => Ok((
-            StatusCode::OK,
-            ResponseJson(ApiResponse::success(ExecutionProcessPublic::from_process(
-                &execution_process,
-            ))),
-        )),
-        Err(ApiError::Executor(ExecutorError::ExecutableNotFound { program }))
-            if program == "brew" =>
-        {
-            Ok((
-                StatusCode::BAD_REQUEST,
-                ResponseJson(ApiResponse::error_with_data(GhCliSetupError::BrewMissing)),
-            ))
-        }
-        Err(ApiError::Executor(ExecutorError::SetupHelperNotSupported)) => Ok((
-            StatusCode::BAD_REQUEST,
-            ResponseJson(ApiResponse::error_with_data(
-                GhCliSetupError::SetupHelperNotSupported,
-            )),
-        )),
-        Err(ApiError::Executor(err)) => Ok((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            ResponseJson(ApiResponse::error_with_data(GhCliSetupError::Other {
-                message: err.to_string(),
-            })),
-        )),
-        Err(err) => Err(err),
-    }
 }
 
 pub async fn get_task_attempt_repos(

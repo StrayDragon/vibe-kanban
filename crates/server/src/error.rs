@@ -14,7 +14,7 @@ use db::{
         session::SessionError, workspace::WorkspaceError,
     },
 };
-use execution::{container::ContainerError, github::GitHubServiceError, image::ImageError};
+use execution::{container::ContainerError, image::ImageError};
 use executors::executors::ExecutorError;
 use repos::{
     git::GitServiceError, project::ProjectServiceError, repo::RepoError as RepoServiceError,
@@ -41,8 +41,6 @@ pub enum ApiError {
     ExecutionProcess(#[from] ExecutionProcessError),
     #[error(transparent)]
     GitService(#[from] GitServiceError),
-    #[error(transparent)]
-    GitHubService(#[from] GitHubServiceError),
     #[error(transparent)]
     Deployment(#[from] DeploymentError),
     #[error(transparent)]
@@ -135,7 +133,6 @@ impl IntoResponse for ApiError {
                 }
                 _ => (StatusCode::INTERNAL_SERVER_ERROR, "GitServiceError"),
             },
-            ApiError::GitHubService(_) => (StatusCode::INTERNAL_SERVER_ERROR, "GitHubServiceError"),
             ApiError::Deployment(_) => (StatusCode::INTERNAL_SERVER_ERROR, "DeploymentError"),
             ApiError::Container(_) => (StatusCode::INTERNAL_SERVER_ERROR, "ContainerError"),
             ApiError::Executor(_) => (StatusCode::INTERNAL_SERVER_ERROR, "ExecutorError"),

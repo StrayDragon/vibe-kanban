@@ -23,7 +23,6 @@ use execution::{
         ContainerError, ContainerService, LocalContainerService, log_backfill_completion_cache_len,
     },
     image::{ImageError, ImageService},
-    pr_monitor::PrMonitorService,
     queued_message::QueuedMessageService,
 };
 use executors::{executors::ExecutorError, profile::ExecutorConfigs};
@@ -124,11 +123,6 @@ pub trait Deployment: Clone + Send + Sync + 'static {
 
     fn shutdown_token(&self) -> CancellationToken {
         CancellationToken::new()
-    }
-
-    async fn spawn_pr_monitor_service(&self) -> tokio::task::JoinHandle<()> {
-        let db = self.db().clone();
-        PrMonitorService::spawn(db, self.shutdown_token()).await
     }
 
     async fn trigger_auto_project_setup(&self) {
@@ -876,10 +870,6 @@ impl AppRuntime {
 
     pub fn begin_shutdown(&self) {
         self.shutdown_token.cancel();
-    }
-
-    pub async fn spawn_pr_monitor_service(&self) -> tokio::task::JoinHandle<()> {
-        PrMonitorService::spawn(self.db.clone(), self.shutdown_token()).await
     }
 }
 

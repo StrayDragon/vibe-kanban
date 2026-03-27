@@ -6,9 +6,17 @@ import {
   Settings,
   AlertTriangle,
   CheckCircle,
-  ExternalLink,
+  Copy,
+  Upload,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button.tsx';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu.tsx';
 import {
   Tooltip,
   TooltipContent,
@@ -18,18 +26,23 @@ import {
 import { useCallback, useMemo, useState } from 'react';
 import type {
   RepoBranchStatus,
-  Merge,
   TaskWithAttemptStatus,
   Workspace,
 } from 'shared/types';
 import { ChangeTargetBranchDialog } from '@/components/dialogs/tasks/ChangeTargetBranchDialog';
 import RepoSelector from '@/components/tasks/RepoSelector';
 import { RebaseDialog } from '@/components/dialogs/tasks/RebaseDialog';
-import { CreatePRDialog } from '@/components/dialogs/tasks/CreatePRDialog';
 import { useTranslation } from 'react-i18next';
 import { useAttemptRepo } from '@/hooks/task-attempts/useAttemptRepo';
 import { useGitOperations } from '@/hooks/task-attempts/useGitOperations';
 import { useRepoBranches } from '@/hooks';
+import { useCopyToClipboard } from '@/hooks/utils/useCopyToClipboard';
+
+function encodeCompareRef(ref: string): string {
+  const trimmed = ref.trim();
+  if (trimmed.startsWith('<') && trimmed.endsWith('>')) return trimmed;
+  return encodeURIComponent(trimmed);
+}
 
 interface GitOperationsProps {
   selectedAttempt: Workspace;
@@ -42,15 +55,16 @@ interface GitOperationsProps {
 
 export type GitOperationsInputs = Omit<GitOperationsProps, 'selectedAttempt'>;
 
-function GitOperations({
-  selectedAttempt,
-  task,
-  branchStatus,
-  isAttemptRunning,
-  selectedBranch,
-  layout = 'horizontal',
-}: GitOperationsProps) {
+function GitOperations(props: GitOperationsProps) {
+  const {
+    selectedAttempt,
+    branchStatus,
+    isAttemptRunning,
+    selectedBranch,
+    layout = 'horizontal',
+  } = props;
   const { t } = useTranslation('tasks');
+  const copyToClipboard = useCopyToClipboard();
 
   const { repos, selectedRepoId, setSelectedRepoId } = useAttemptRepo(
     selectedAttempt.id
@@ -109,64 +123,22 @@ function GitOperations({
   const hasConflictsCalculated =
     (selectedRepoStatus?.conflicted_files?.length ?? 0) > 0;
 
-  // Memoize merge status information to avoid repeated calculations
-  const mergeInfo = useMemo(() => {
-    const selectedRepoStatus = getSelectedRepoStatus();
-    if (!selectedRepoStatus?.merges)
-      return {
-        hasOpenPR: false,
-        openPR: null,
-        hasMergedPR: false,
-        mergedPR: null,
-        hasMerged: false,
-        latestMerge: null,
-      };
-
-    const openPR = selectedRepoStatus.merges.find(
-      (m: Merge) => m.type === 'pr' && m.pr_info.status === 'open'
-    );
-
-    const mergedPR = selectedRepoStatus.merges.find(
-      (m: Merge) => m.type === 'pr' && m.pr_info.status === 'merged'
-    );
-
-    const merges = selectedRepoStatus.merges.filter(
-      (m: Merge) =>
-        m.type === 'direct' ||
-        (m.type === 'pr' && m.pr_info.status === 'merged')
-    );
-
-    return {
-      hasOpenPR: !!openPR,
-      openPR,
-      hasMergedPR: !!mergedPR,
-      mergedPR,
-      hasMerged: merges.length > 0,
-      latestMerge: selectedRepoStatus.merges[0] || null, // Most recent merge
-    };
-  }, [getSelectedRepoStatus]);
-
   const mergeButtonLabel = useMemo(() => {
     if (mergeSuccess) return t('git.states.merged');
     if (merging) return t('git.states.merging');
     return t('git.states.merge');
   }, [mergeSuccess, merging, t]);
 
+  const pushButtonLabel = useMemo(() => {
+    if (pushSuccess) return t('git.states.pushed');
+    if (pushing) return t('git.states.pushing');
+    return t('git.states.push');
+  }, [pushSuccess, pushing, t]);
+
   const rebaseButtonLabel = useMemo(() => {
     if (rebasing) return t('git.states.rebasing');
     return t('git.states.rebase');
   }, [rebasing, t]);
-
-  const prButtonLabel = useMemo(() => {
-    if (mergeInfo.hasOpenPR) {
-      return pushSuccess
-        ? t('git.states.pushed')
-        : pushing
-          ? t('git.states.pushing')
-          : t('git.states.push');
-    }
-    return t('git.states.createPr');
-  }, [mergeInfo.hasOpenPR, pushSuccess, pushing, t]);
 
   const handleMergeClick = async () => {
     // Directly perform merge without checking branch status
@@ -243,21 +215,6 @@ function GitOperations({
     }
   };
 
-  const handlePRButtonClick = async () => {
-    // If PR already exists, push to it
-    if (mergeInfo.hasOpenPR) {
-      await handlePushClick();
-      return;
-    }
-
-    CreatePRDialog.show({
-      attempt: selectedAttempt,
-      task,
-      repoId: getSelectedRepoId(),
-      targetBranch: getSelectedRepoStatus()?.target_branch_name,
-    });
-  };
-
   const isVertical = layout === 'vertical';
 
   const containerClasses = isVertical
@@ -296,31 +253,12 @@ function GitOperations({
           );
         }
 
-        if (mergeInfo.hasMergedPR) {
+        if (mergeSuccess) {
           return (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100/70 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">
               <CheckCircle className="h-3.5 w-3.5" />
               {t('git.states.merged')}
             </span>
-          );
-        }
-
-        if (mergeInfo.hasOpenPR && mergeInfo.openPR?.type === 'pr') {
-          const prMerge = mergeInfo.openPR;
-          return (
-            <button
-              onClick={() => window.open(prMerge.pr_info.url, '_blank')}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-sky-100/60 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 hover:underline truncate max-w-[180px] sm:max-w-none"
-              aria-label={t('git.pr.open', {
-                number: Number(prMerge.pr_info.number),
-              })}
-            >
-              <GitPullRequest className="h-3.5 w-3.5" />
-              {t('git.pr.number', {
-                number: Number(prMerge.pr_info.number),
-              })}
-              <ExternalLink className="h-3.5 w-3.5" />
-            </button>
           );
         }
 
@@ -359,6 +297,18 @@ function GitOperations({
       })()}
     </div>
   );
+
+  const taskBranch = selectedAttempt.branch || '<task_branch>';
+  const targetBranchName =
+    getSelectedRepoStatus()?.target_branch_name ??
+    selectedBranch ??
+    '<base_branch>';
+  const compareUrlTemplate = `https://<git-host>/<owner>/<repo>/compare/${encodeCompareRef(targetBranchName)}...${encodeCompareRef(taskBranch)}?expand=1`;
+  const suggestedCommands = `git push -u origin ${taskBranch}\n${compareUrlTemplate}`;
+
+  const copyBranchLabel = t('git.prInfo.branchName');
+  const copyCompareUrlLabel = t('git.prInfo.compareUrlTemplate');
+  const copyCommandsLabel = t('git.prInfo.suggestedCommands');
 
   const branchChips = (
     <>
@@ -468,8 +418,6 @@ function GitOperations({
             <Button
               onClick={handleMergeClick}
               disabled={
-                mergeInfo.hasMergedPR ||
-                mergeInfo.hasOpenPR ||
                 merging ||
                 hasConflictsCalculated ||
                 isAttemptRunning ||
@@ -487,27 +435,64 @@ function GitOperations({
             </Button>
 
             <Button
-              onClick={handlePRButtonClick}
+              onClick={handlePushClick}
               disabled={
-                mergeInfo.hasMergedPR ||
                 pushing ||
                 isAttemptRunning ||
                 hasConflictsCalculated ||
-                (mergeInfo.hasOpenPR &&
-                  (selectedRepoStatus?.remote_commits_ahead ?? 0) === 0) ||
                 ((selectedRepoStatus?.commits_ahead ?? 0) === 0 &&
-                  (selectedRepoStatus?.remote_commits_ahead ?? 0) === 0 &&
                   !pushSuccess &&
                   !mergeSuccess)
               }
               variant="outline"
               size="xs"
               className="border-info text-info hover:bg-info gap-1 shrink-0"
-              aria-label={prButtonLabel}
+              aria-label={pushButtonLabel}
             >
-              <GitPullRequest className="h-3.5 w-3.5" />
-              <span className="truncate max-w-[10ch]">{prButtonLabel}</span>
+              <Upload className="h-3.5 w-3.5" />
+              <span className="truncate max-w-[10ch]">{pushButtonLabel}</span>
             </Button>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  className="gap-1 shrink-0"
+                  aria-label={t('git.prInfo.title')}
+                >
+                  <GitPullRequest className="h-3.5 w-3.5" />
+                  <span className="truncate max-w-[10ch]">
+                    {t('git.states.prInfo')}
+                  </span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() => copyToClipboard(copyBranchLabel, taskBranch)}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  {t('git.prInfo.copyBranch')}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() =>
+                    copyToClipboard(copyCompareUrlLabel, compareUrlTemplate)
+                  }
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  {t('git.prInfo.copyCompareUrlTemplate')}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() =>
+                    copyToClipboard(copyCommandsLabel, suggestedCommands)
+                  }
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  {t('git.prInfo.copySuggestedCommands')}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             <Button
               onClick={handleRebaseDialogOpen}

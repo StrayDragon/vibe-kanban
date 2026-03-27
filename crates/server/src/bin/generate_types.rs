@@ -1,7 +1,6 @@
 use std::{collections::HashMap, env, fs, path::Path};
 
 use schemars::{JsonSchema, Schema, SchemaGenerator, generate::SchemaSettings};
-use server::routes::task_attempts::pr::DEFAULT_PR_DESCRIPTION_PROMPT;
 use ts_rs::TS;
 
 fn generate_types_content() -> String {
@@ -130,7 +129,6 @@ fn generate_types_content() -> String {
         server::routes::config::CheckAgentAvailabilityQuery::decl(),
         server::routes::config::CheckAgentCompatibilityQuery::decl(),
         server::routes::config::CliDependencyPreflightQuery::decl(),
-        server::routes::config::GhCliPreflightStatus::decl(),
         server::routes::config::CliDependencyPreflightResponse::decl(),
         server::routes::config::ImportLlmanProfilesResponse::decl(),
         server::routes::config::ResolveLlmanPathResponse::decl(),
@@ -150,7 +148,6 @@ fn generate_types_content() -> String {
         server::routes::archived_kanbans::RestoreArchivedKanbanRequest::decl(),
         server::routes::archived_kanbans::RestoreArchivedKanbanResponse::decl(),
         server::routes::archived_kanbans::DeleteArchivedKanbanResponse::decl(),
-        server::routes::task_attempts::pr::CreateGitHubPrRequest::decl(),
         server::routes::images::ImageResponse::decl(),
         server::routes::images::ImageMetadata::decl(),
         server::routes::execution_processes::IndexedLogEntry::decl(),
@@ -161,20 +158,12 @@ fn generate_types_content() -> String {
         server::routes::task_attempts::WorkspaceRepoInput::decl(),
         server::routes::task_attempts::RunAgentSetupRequest::decl(),
         server::routes::task_attempts::RunAgentSetupResponse::decl(),
-        server::routes::task_attempts::gh_cli_setup::GhCliSetupError::decl(),
         server::routes::task_attempts::RebaseTaskAttemptRequest::decl(),
         server::routes::task_attempts::AbortConflictsRequest::decl(),
         server::routes::task_attempts::GitOperationError::decl(),
         server::routes::task_attempts::PushError::decl(),
-        server::routes::task_attempts::pr::CreatePrError::decl(),
         server::routes::task_attempts::BranchStatus::decl(),
         server::routes::task_attempts::RunScriptError::decl(),
-        server::routes::task_attempts::pr::AttachPrResponse::decl(),
-        server::routes::task_attempts::pr::AttachExistingPrRequest::decl(),
-        server::routes::task_attempts::pr::PrCommentsResponse::decl(),
-        server::routes::task_attempts::pr::GetPrCommentsError::decl(),
-        server::routes::task_attempts::pr::GetPrCommentsQuery::decl(),
-        execution::github::UnifiedPrComment::decl(),
         server::routes::task_attempts::RepoBranchStatus::decl(),
         repos::filesystem::DirectoryEntry::decl(),
         repos::filesystem::DirectoryListResponse::decl(),
@@ -255,16 +244,7 @@ fn generate_types_content() -> String {
         .collect::<Vec<_>>()
         .join("\n\n");
 
-    // Append exported constants
-    let prompt_escaped = DEFAULT_PR_DESCRIPTION_PROMPT
-        .replace('\\', "\\\\")
-        .replace('`', "\\`");
-    let constants = format!(
-        "export const DEFAULT_PR_DESCRIPTION_PROMPT = `{}`;",
-        prompt_escaped
-    );
-
-    format!("{HEADER}\n\n{body}\n\n{constants}")
+    format!("{HEADER}\n\n{body}")
 }
 
 fn generate_json_schema<T: JsonSchema>() -> Result<String, serde_json::Error> {

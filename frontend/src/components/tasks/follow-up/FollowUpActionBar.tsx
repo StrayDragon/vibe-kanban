@@ -2,7 +2,6 @@ import {
   AlertTriangle,
   Clock,
   Loader2,
-  MessageSquare,
   Paperclip,
   Send,
   StopCircle,
@@ -34,7 +33,6 @@ interface FollowUpActionBarProps {
   fileInputRef: RefObject<HTMLInputElement>;
   onAttachClick: () => void;
   onFileInputChange: (event: ChangeEvent<HTMLInputElement>) => void;
-  onGitHubCommentClick: () => void;
   hasAnyScript: boolean;
   hasSetupScript: boolean;
   hasCleanupScript: boolean;
@@ -66,7 +64,6 @@ export function FollowUpActionBar({
   fileInputRef,
   onAttachClick,
   onFileInputChange,
-  onGitHubCommentClick,
   hasAnyScript,
   hasSetupScript,
   hasCleanupScript,
@@ -125,17 +122,6 @@ export function FollowUpActionBar({
         aria-label="Attach image"
       >
         <Paperclip className="h-4 w-4" />
-      </Button>
-
-      <Button
-        onClick={onGitHubCommentClick}
-        disabled={!isEditable}
-        size="sm"
-        variant="outline"
-        title="Insert GitHub comment"
-        aria-label="Insert GitHub comment"
-      >
-        <MessageSquare className="h-4 w-4" />
       </Button>
 
       {hasAnyScript && (

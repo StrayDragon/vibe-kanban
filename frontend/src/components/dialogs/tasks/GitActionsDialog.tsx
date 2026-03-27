@@ -1,5 +1,4 @@
 import { useTranslation } from 'react-i18next';
-import { ExternalLink, GitPullRequest } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -16,7 +15,7 @@ import {
   GitOperationsProvider,
   useGitOperationsError,
 } from '@/contexts/GitOperationsContext';
-import type { Merge, TaskWithAttemptStatus, Workspace } from 'shared/types';
+import type { TaskWithAttemptStatus, Workspace } from 'shared/types';
 import NiceModal, { useModal } from '@ebay/nice-modal-react';
 import { defineModal } from '@/lib/modals';
 
@@ -34,7 +33,6 @@ function GitActionsDialogContent({
   attempt,
   task,
 }: GitActionsDialogContentProps) {
-  const { t } = useTranslation('tasks');
   const { data: branchStatus } = useBranchStatus(attempt.id);
   const { isAttemptRunning } = useAttemptExecution(attempt.id);
   const { error: gitError } = useGitOperationsError();
@@ -45,35 +43,8 @@ function GitActionsDialogContent({
     return branchStatus?.find((r) => r.repo_id === repoId);
   };
 
-  const mergedPR = getSelectedRepoStatus()?.merges?.find(
-    (m: Merge) => m.type === 'pr' && m.pr_info?.status === 'merged'
-  );
-
   return (
     <div className="space-y-4">
-      {mergedPR && mergedPR.type === 'pr' && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span>
-            {t('git.actions.prMerged', {
-              number: mergedPR.pr_info.number || '',
-            })}
-          </span>
-          {mergedPR.pr_info.url && (
-            <a
-              href={mergedPR.pr_info.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-primary hover:underline"
-            >
-              <GitPullRequest className="h-3.5 w-3.5" />
-              {t('git.pr.number', {
-                number: Number(mergedPR.pr_info.number),
-              })}
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-          )}
-        </div>
-      )}
       {gitError && (
         <div className="p-3 border border-destructive rounded text-destructive text-sm">
           {gitError}

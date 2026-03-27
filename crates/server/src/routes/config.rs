@@ -13,7 +13,6 @@ use config::{
     Config, SoundFile,
     editor::{EditorConfig, EditorType},
 };
-use execution::github::GitHubService;
 use executors::{
     agent_command::{AgentCommandResolution, agent_command_resolver},
     executors::{AvailabilityInfo, BaseAgentCapability, CodingAgent, StandardCodingAgentExecutor},
@@ -485,35 +484,8 @@ pub struct CliDependencyPreflightQuery {
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]
-#[serde(tag = "type", rename_all = "snake_case")]
-#[ts(tag = "type", rename_all = "snake_case")]
-pub enum GhCliPreflightStatus {
-    Ready,
-    NotInstalled,
-    NotAuthenticated,
-    Error { message: String },
-}
-
-#[derive(Debug, Serialize, Deserialize, TS)]
 pub struct CliDependencyPreflightResponse {
     pub agent: AvailabilityInfo,
-    pub github_cli: GhCliPreflightStatus,
-}
-
-fn map_github_cli_preflight_status(
-    err: &execution::github::GitHubServiceError,
-) -> GhCliPreflightStatus {
-    match err {
-        execution::github::GitHubServiceError::GhCliNotInstalled(_) => {
-            GhCliPreflightStatus::NotInstalled
-        }
-        execution::github::GitHubServiceError::AuthFailed(_) => {
-            GhCliPreflightStatus::NotAuthenticated
-        }
-        _ => GhCliPreflightStatus::Error {
-            message: err.to_string(),
-        },
-    }
 }
 
 async fn cli_dependency_preflight(
@@ -527,51 +499,14 @@ async fn cli_dependency_preflight(
         None => AvailabilityInfo::NotFound,
     };
 
-    let github_cli = match GitHubService::new() {
-        Ok(service) => match service.check_token().await {
-            Ok(_) => GhCliPreflightStatus::Ready,
-            Err(err) => map_github_cli_preflight_status(&err),
-        },
-        Err(err) => GhCliPreflightStatus::Error {
-            message: err.to_string(),
-        },
-    };
-
     ResponseJson(ApiResponse::success(CliDependencyPreflightResponse {
         agent,
-        github_cli,
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn github_cli_preflight_maps_statuses() {
-        use execution::github::{GhCliError, GitHubServiceError};
-
-        let not_installed = GitHubServiceError::GhCliNotInstalled(GhCliError::NotAvailable);
-        assert!(matches!(
-            map_github_cli_preflight_status(&not_installed),
-            GhCliPreflightStatus::NotInstalled
-        ));
-
-        let not_authenticated =
-            GitHubServiceError::AuthFailed(GhCliError::AuthFailed("auth failed".to_string()));
-        assert!(matches!(
-            map_github_cli_preflight_status(&not_authenticated),
-            GhCliPreflightStatus::NotAuthenticated
-        ));
-
-        let other = GitHubServiceError::Repository("unexpected".to_string());
-        match map_github_cli_preflight_status(&other) {
-            GhCliPreflightStatus::Error { message } => {
-                assert!(message.contains("unexpected"));
-            }
-            other => panic!("expected error mapping, got {other:?}"),
-        }
-    }
 
     #[test]
     fn profiles_endpoint_redacts_sensitive_env_values() {

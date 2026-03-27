@@ -498,7 +498,8 @@
       "forcePush": "强制推送",
       "forcePushing": "强制推送中...",
       "creating": "创建中...",
-      "createPr": "创建 PR"
+      "createPr": "创建 PR",
+      "prInfo": "PR 信息"
     },
     "errors": {
       "changeTargetBranch": "更改目标分支失败",
@@ -509,6 +510,15 @@
     "pr": {
       "open": "打开 PR #{{number}}",
       "number": "PR #{{number}}"
+    },
+    "prInfo": {
+      "title": "PR 信息",
+      "branchName": "分支名",
+      "compareUrlTemplate": "对比链接模板",
+      "suggestedCommands": "建议命令",
+      "copyBranch": "复制分支名",
+      "copyCompareUrlTemplate": "复制对比链接模板",
+      "copySuggestedCommands": "复制建议命令"
     },
     "actions": {
       "title": "Git 操作",
@@ -689,8 +699,8 @@
         "description": "使用加号图标直接在差异视图中添加特定行的评论。所有反馈都被收集并作为完整审查发送给编码代理。"
       },
       "pullRequest": {
-        "title": "从任务创建 PR",
-        "description": "直接从任务尝试合并您的更改或创建拉取请求。PR 对话框会从您的任务详情预填充标题和描述，以简化工作流程。"
+        "title": "手动 PR 流程",
+        "description": "从任务尝试复制分支名、对比链接模板和建议命令，然后手动创建 PR。"
       },
       "tags": {
         "title": "自定义提示标签",

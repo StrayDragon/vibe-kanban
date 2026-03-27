@@ -7,11 +7,6 @@ import { ContentEditable } from '@lexical/react/LexicalContentEditable';
 import { MarkdownShortcutPlugin } from '@lexical/react/LexicalMarkdownShortcutPlugin';
 import { TRANSFORMERS, type Transformer } from '@lexical/markdown';
 import { ImageNode, IMAGE_TRANSFORMER } from './wysiwyg/nodes/image-node';
-import {
-  GitHubCommentNode,
-  GITHUB_COMMENT_TRANSFORMER,
-  GITHUB_COMMENT_EXPORT_TRANSFORMER,
-} from './wysiwyg/nodes/github-comment-node';
 import { CODE_BLOCK_TRANSFORMER } from './wysiwyg/transformers/code-block-transformer';
 import {
   TaskAttemptContext,
@@ -161,21 +156,14 @@ function WYSIWYGEditor({
         CodeHighlightNode,
         LinkNode,
         ImageNode,
-        GitHubCommentNode,
       ],
     }),
     []
   );
 
-  // Extended transformers with image, GitHub comment, and code block support (memoized to prevent unnecessary re-renders)
+  // Extended transformers with image and code block support (memoized to prevent unnecessary re-renders)
   const extendedTransformers: Transformer[] = useMemo(
-    () => [
-      IMAGE_TRANSFORMER,
-      GITHUB_COMMENT_EXPORT_TRANSFORMER, // Export transformer for DecoratorNode (must be before import transformer)
-      GITHUB_COMMENT_TRANSFORMER, // Import transformer for fenced code block
-      CODE_BLOCK_TRANSFORMER,
-      ...TRANSFORMERS,
-    ],
+    () => [IMAGE_TRANSFORMER, CODE_BLOCK_TRANSFORMER, ...TRANSFORMERS],
     []
   );
 

@@ -41,10 +41,8 @@ import { useScratch } from '@/hooks/scratch/useScratch';
 import { useDebouncedCallback } from '@/hooks/utils/useDebouncedCallback';
 import { useQueueStatus } from '@/hooks/sessions/useQueueStatus';
 import { attemptsApi, projectsApi } from '@/lib/api';
-import { GitHubCommentsDialog } from '@/components/dialogs/tasks/GitHubCommentsDialog';
 import { ConfirmDialog } from '@/components/dialogs';
 import { projectKeys } from '@/query-keys/projectKeys';
-import type { NormalizedComment } from '@/components/ui/wysiwyg/nodes/github-comment-node';
 import type { Session } from 'shared/types';
 
 interface TaskFollowUpSectionProps {
@@ -74,11 +72,7 @@ export function TaskFollowUpSection({
 
   const { data: branchStatus, refetch: refetchBranchStatus } =
     useBranchStatus(workspaceId);
-  const { repos, selectedRepoId } = useAttemptRepo(workspaceId);
-
-  const getSelectedRepoId = useCallback(() => {
-    return selectedRepoId ?? repos[0]?.id;
-  }, [selectedRepoId, repos]);
+  const { repos } = useAttemptRepo(workspaceId);
 
   const repoIds = useMemo(
     () =>
@@ -279,7 +273,6 @@ export function TaskFollowUpSection({
     setLocalMessage,
     displayMessage,
     updateMessage,
-    appendToMessage,
     handlePasteFiles,
   } = useFollowUpEditor({
     workspaceId,
@@ -520,44 +513,6 @@ export function TaskFollowUpSection({
     [handlePasteFiles]
   );
 
-  // Handler for GitHub comments insertion
-  const handleGitHubCommentClick = useCallback(async () => {
-    if (!workspaceId) return;
-    const repoId = getSelectedRepoId();
-    if (!repoId) return;
-
-    const result = await GitHubCommentsDialog.show({
-      attemptId: workspaceId,
-      repoId,
-    });
-    if (result.comments.length > 0) {
-      // Build markdown for all selected comments
-      const markdownBlocks = result.comments.map((comment) => {
-        const payload: NormalizedComment = {
-          id:
-            comment.comment_type === 'general'
-              ? comment.id
-              : comment.id.toString(),
-          comment_type: comment.comment_type,
-          author: comment.author,
-          body: comment.body,
-          created_at: comment.created_at,
-          url: comment.url,
-          // Include review-specific fields when available
-          ...(comment.comment_type === 'review' && {
-            path: comment.path,
-            line: comment.line != null ? Number(comment.line) : null,
-            diff_hunk: comment.diff_hunk,
-          }),
-        };
-        return '```gh-comment\n' + JSON.stringify(payload, null, 2) + '\n```';
-      });
-
-      const markdown = markdownBlocks.join('\n\n');
-      appendToMessage(markdown);
-    }
-  }, [workspaceId, getSelectedRepoId, appendToMessage]);
-
   // Stable onChange handler for WYSIWYGEditor
   const handleEditorChange = useCallback(
     (value: string) => {
@@ -730,7 +685,6 @@ export function TaskFollowUpSection({
           fileInputRef={fileInputRef}
           onAttachClick={handleAttachClick}
           onFileInputChange={handleFileInputChange}
-          onGitHubCommentClick={handleGitHubCommentClick}
           hasAnyScript={hasAnyScript}
           hasSetupScript={hasSetupScript}
           hasCleanupScript={hasCleanupScript}

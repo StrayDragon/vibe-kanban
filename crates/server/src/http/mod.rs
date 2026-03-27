@@ -1,4 +1,9 @@
-use axum::{Router, middleware::from_fn_with_state, routing::get};
+use axum::{
+    Router,
+    http::StatusCode,
+    middleware::from_fn_with_state,
+    routing::{any, get},
+};
 
 use crate::{DeploymentImpl, routes};
 
@@ -24,6 +29,7 @@ pub fn router(deployment: DeploymentImpl) -> Router {
         .merge(routes::sessions::router(&deployment))
         .merge(routes::translation::router())
         .nest("/images", routes::images::routes())
+        .route("/{*path}", any(|| async { StatusCode::NOT_FOUND }))
         .layer(from_fn_with_state(
             deployment.clone(),
             auth::require_api_auth,
@@ -31,9 +37,9 @@ pub fn router(deployment: DeploymentImpl) -> Router {
 
     Router::new()
         .route("/health", get(routes::health::health_check))
+        .nest("/api", api_routes)
         .route("/", get(frontend::serve_frontend_root))
         .route("/{*path}", get(frontend::serve_frontend))
-        .nest("/api", api_routes)
         .with_state(deployment)
 }
 
@@ -264,6 +270,50 @@ mod tests {
                 .unwrap_or_default()
                 > 0
         );
+    }
+
+    #[tokio::test]
+    async fn removed_pr_endpoints_return_not_found() {
+        let (_env_guard, deployment) = setup_deployment().await;
+        let app = super::router(deployment);
+
+        let attempt_id = Uuid::new_v4();
+        let pr_routes = [
+            (
+                axum::http::Method::POST,
+                format!("/api/task-attempts/{attempt_id}/pr"),
+            ),
+            (
+                axum::http::Method::POST,
+                format!("/api/task-attempts/{attempt_id}/pr/attach"),
+            ),
+            (
+                axum::http::Method::GET,
+                format!("/api/task-attempts/{attempt_id}/pr/comments?repo_id={attempt_id}"),
+            ),
+        ];
+
+        for (method, uri) in pr_routes {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method.clone())
+                        .uri(uri.as_str())
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert!(
+                matches!(response.status(), StatusCode::NOT_FOUND | StatusCode::GONE),
+                "expected 404/410 for removed PR endpoint {} {}, got {}",
+                method,
+                uri,
+                response.status(),
+            );
+        }
     }
 
     #[tokio::test]

@@ -18,7 +18,6 @@ export {
   type TaskFormDialogProps,
 } from './tasks/TaskFormDialog';
 
-export { CreatePRDialog } from './tasks/CreatePRDialog';
 export {
   DeleteTaskConfirmationDialog,
   type DeleteTaskConfirmationDialogProps,
@@ -85,9 +84,6 @@ export {
   ArchivedTaskDetailsDialog,
   type ArchivedTaskDetailsDialogProps,
 } from './archived-kanbans/ArchivedTaskDetailsDialog';
-
-// Auth dialogs
-export { GhCliSetupDialog } from './auth/GhCliSetupDialog';
 
 // Settings dialogs
 export {

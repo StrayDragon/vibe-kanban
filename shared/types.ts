@@ -273,9 +273,7 @@ export type CheckAgentCompatibilityQuery = { executor: BaseCodingAgent, variant:
 
 export type CliDependencyPreflightQuery = { executor: BaseCodingAgent, };
 
-export type GhCliPreflightStatus = { "type": "ready" } | { "type": "not_installed" } | { "type": "not_authenticated" } | { "type": "error", message: string, };
-
-export type CliDependencyPreflightResponse = { agent: AvailabilityInfo, github_cli: GhCliPreflightStatus, };
+export type CliDependencyPreflightResponse = { agent: AvailabilityInfo, };
 
 export type ImportLlmanProfilesResponse = { path: string, imported: number, updated: number, skipped: number, };
 
@@ -313,8 +311,6 @@ export type RestoreArchivedKanbanResponse = { restored_task_count: bigint, };
 
 export type DeleteArchivedKanbanResponse = { deleted_task_count: bigint, };
 
-export type CreateGitHubPrRequest = { title: string, body: string | null, target_branch: string | null, draft: boolean | null, repo_id: string, auto_generate_description: boolean, };
-
 export type ImageResponse = { id: string, file_path: string, original_name: string, mime_type: string | null, size_bytes: bigint, hash: string, created_at: string, updated_at: string, };
 
 export type ImageMetadata = { exists: boolean, file_name: string | null, path: string | null, size_bytes: bigint | null, format: string | null, proxy_url: string | null, };
@@ -335,8 +331,6 @@ export type RunAgentSetupRequest = { executor_profile_id: ExecutorProfileId, };
 
 export type RunAgentSetupResponse = Record<string, never>;
 
-export type GhCliSetupError = "BREW_MISSING" | "SETUP_HELPER_NOT_SUPPORTED" | { "OTHER": { message: string, } };
-
 export type RebaseTaskAttemptRequest = { repo_id: string, old_base_branch: string | null, new_base_branch: string | null, };
 
 export type AbortConflictsRequest = { repo_id: string, };
@@ -344,8 +338,6 @@ export type AbortConflictsRequest = { repo_id: string, };
 export type GitOperationError = { "type": "merge_conflicts", message: string, op: ConflictOp, } | { "type": "rebase_in_progress" };
 
 export type PushError = { "type": "force_push_required" };
-
-export type CreatePrError = { "type": "github_cli_not_installed" } | { "type": "github_cli_not_logged_in" } | { "type": "git_cli_not_logged_in" } | { "type": "git_cli_not_installed" } | { "type": "target_branch_not_found", branch: string, };
 
 export type BranchStatus = { commits_behind: number | null, commits_ahead: number | null, has_uncommitted_changes: boolean | null, head_oid: string | null, uncommitted_count: number | null, untracked_count: number | null, target_branch_name: string, remote_commits_behind: number | null, remote_commits_ahead: number | null, merges: Array<Merge>, 
 /**
@@ -362,18 +354,6 @@ conflict_op: ConflictOp | null,
 conflicted_files: Array<string>, };
 
 export type RunScriptError = { "type": "no_script_configured" } | { "type": "process_already_running" };
-
-export type AttachPrResponse = { pr_attached: boolean, pr_url: string | null, pr_number: bigint | null, pr_status: MergeStatus | null, };
-
-export type AttachExistingPrRequest = { repo_id: string, };
-
-export type PrCommentsResponse = { comments: Array<UnifiedPrComment>, };
-
-export type GetPrCommentsError = { "type": "no_pr_attached" } | { "type": "github_cli_not_installed" } | { "type": "github_cli_not_logged_in" };
-
-export type GetPrCommentsQuery = { repo_id: string, };
-
-export type UnifiedPrComment = { "comment_type": "general", id: string, author: string, author_association: string, body: string, created_at: string, url: string, } | { "comment_type": "review", id: bigint, author: string, author_association: string, body: string, created_at: string, url: string, path: string, line: bigint | null, diff_hunk: string, };
 
 export type RepoBranchStatus = { repo_id: string, repo_name: string, commits_behind: number | null, commits_ahead: number | null, has_uncommitted_changes: boolean | null, head_oid: string | null, uncommitted_count: number | null, untracked_count: number | null, target_branch_name: string, remote_commits_behind: number | null, remote_commits_ahead: number | null, merges: Array<Merge>, 
 /**
@@ -583,16 +563,3 @@ export type ToolStatus = { "status": "created" } | { "status": "success" } | { "
 export type PatchType = { "type": "NORMALIZED_ENTRY", "content": NormalizedEntry } | { "type": "STDOUT", "content": string } | { "type": "STDERR", "content": string } | { "type": "DIFF", "content": Diff };
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
-
-export const DEFAULT_PR_DESCRIPTION_PROMPT = `Update the GitHub PR that was just created with a better title and description.
-The PR number is #{pr_number} and the URL is {pr_url}.
-
-Analyze the changes in this branch and write:
-1. A concise, descriptive title that summarizes the changes, postfixed with "(Vibe Kanban)"
-2. A detailed description that explains:
-   - What changes were made
-   - Why they were made (based on the task context)
-   - Any important implementation details
-   - At the end, include a note: "This PR was written using Vibe Kanban"
-
-Use \`gh pr edit\` to update the PR.`;

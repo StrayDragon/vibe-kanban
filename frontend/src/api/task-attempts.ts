@@ -2,15 +2,11 @@ import type {
   AbortConflictsRequest,
   ChangeTargetBranchRequest,
   ChangeTargetBranchResponse,
-  CreateGitHubPrRequest,
-  CreatePrError,
   CreateTaskAttemptBody,
   ExecutionProcessPublic as ExecutionProcess,
-  GhCliSetupError,
   GitOperationError,
   TaskAttemptStatusResponse,
   MergeTaskAttemptRequest,
-  PrCommentsResponse,
   PushError,
   PushTaskAttemptRequest,
   RebaseTaskAttemptRequest,
@@ -234,17 +230,6 @@ export const attemptsApi = {
     return handleApiResponse<void>(response);
   },
 
-  createPR: async (
-    attemptId: string,
-    data: CreateGitHubPrRequest
-  ): Promise<Result<string, CreatePrError>> => {
-    const response = await makeRequest(`/api/task-attempts/${attemptId}/pr`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-    return handleApiResponseAsResult<string, CreatePrError>(response);
-  },
-
   startDevServer: async (attemptId: string): Promise<void> => {
     const response = await makeRequest(
       `/api/task-attempts/${attemptId}/start-dev-server`,
@@ -253,16 +238,6 @@ export const attemptsApi = {
       }
     );
     return handleApiResponse<void>(response);
-  },
-
-  setupGhCli: async (attemptId: string): Promise<ExecutionProcess> => {
-    const response = await makeRequest(
-      `/api/task-attempts/${attemptId}/gh-cli-setup`,
-      {
-        method: 'POST',
-      }
-    );
-    return handleApiResponse<ExecutionProcess, GhCliSetupError>(response);
   },
 
   runSetupScript: async (
@@ -291,15 +266,5 @@ export const attemptsApi = {
     return handleApiResponseAsResult<ExecutionProcess, RunScriptError>(
       response
     );
-  },
-
-  getPrComments: async (
-    attemptId: string,
-    repoId: string
-  ): Promise<PrCommentsResponse> => {
-    const response = await makeRequest(
-      `/api/task-attempts/${attemptId}/pr/comments?repo_id=${encodeURIComponent(repoId)}`
-    );
-    return handleApiResponse<PrCommentsResponse>(response);
   },
 };

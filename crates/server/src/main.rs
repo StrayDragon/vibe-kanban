@@ -166,7 +166,6 @@ async fn main() -> Result<(), VibeKanbanError> {
             tracing::warn!("Failed to cleanup legacy JSONL logs: {}", err);
         }
     });
-    deployment.spawn_pr_monitor_service().await;
     let _auto_orchestrator_handle = server::auto_orchestrator::spawn(deployment.clone());
     // Pre-warm file search cache for most active projects
     let deployment_for_cache = deployment.clone();
