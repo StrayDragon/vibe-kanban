@@ -1,6 +1,7 @@
 ## 1. Config 加载与两视图（runtime/public）收敛
 
-- [ ] 1.1 在 `crates/config` 增加“一次磁盘快照产出两份视图”的入口（例如 `try_load_config_pair_from_file()`）：\n  - runtime：允许模板展开（维持现状语义）\n  - public：禁止模板展开，但 projects merge 语义一致\n- [ ] 1.2 `crates/app-runtime/src/lib.rs` 使用新入口改造 cold start 与 reload：避免重复读盘/parse；保证 runtime/public/status 同代提交
+- [ ] 1.1 在 `crates/config` 增加“一次磁盘快照产出两份视图”的入口（例如 `try_load_config_pair_from_file()`）：runtime 允许模板展开（维持现状语义）；public 禁止模板展开，但 projects merge 语义一致
+- [ ] 1.2 `crates/app-runtime/src/lib.rs` 使用新入口改造 cold start 与 reload：避免重复读盘/parse；保证 runtime/public/status 同代提交
 - [ ] 1.3 增加回归测试：runtime/public 同代一致性（同一次读取下 projects 覆盖语义一致；public 不展开模板）
 
 Verification:
@@ -33,8 +34,8 @@ Verification:
 
 - [ ] 4.1 Projects API 引入 `ProjectPublic` DTO（ts-rs 导出），从 `Deployment.public_config()` 映射生成；移除 `created_at/updated_at` 伪造语义
 - [ ] 4.2 前端适配 Projects DTO（hooks、页面、settings），并确保不重复建立 projects WS（复用全局 context，如果已存在）
-- [ ] 4.3 移除或降级 `sync_config_projects_to_db()`：\n  - 从 `/api/config/reload` 移除同步调用\n  - 若 DB 仍需要最小 project 行：在 task create / attempt start 路径按需 `find_or_create`（以 config 为准）\n  - 明确并测试规则（不更新/不删除 vs 按需写入最小 cache）
-- [ ] 4.4 增加回归测试：\n  - Projects 列表来自 YAML，DB 不作为配置源\n  - 创建 task/attempt 时 DB project 行按需存在（如 DB 约束要求）\n  - 项目名/策略以 YAML 为准（避免 DB 漂移影响）
+- [ ] 4.3 移除或降级 `sync_config_projects_to_db()`：从 `/api/config/reload` 移除同步调用；在 task create / attempt start 路径按需 `find_or_create`（以 config 为准）写入最小 project 行；并明确并测试“按需最小写入”规则
+- [ ] 4.4 增加回归测试：Projects 列表来自 YAML（DB 不作为配置源）；创建 task/attempt 时 DB project 行按需存在；项目名/策略以 YAML 为准（避免 DB 漂移影响）
 
 Verification:
 - `cargo test -p server projects tasks`
