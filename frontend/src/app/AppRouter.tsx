@@ -48,26 +48,6 @@ const SettingsLayout = lazy(() =>
     default: mod.SettingsLayout,
   }))
 );
-const GeneralSettings = lazy(() =>
-  import('@/pages/settings/GeneralSettings').then((mod) => ({
-    default: mod.GeneralSettings,
-  }))
-);
-const ProjectSettings = lazy(() =>
-  import('@/pages/settings/ProjectSettings').then((mod) => ({
-    default: mod.ProjectSettings,
-  }))
-);
-const AgentSettings = lazy(() =>
-  import('@/pages/settings/AgentSettings').then((mod) => ({
-    default: mod.AgentSettings,
-  }))
-);
-const McpSettings = lazy(() =>
-  import('@/pages/settings/McpSettings').then((mod) => ({
-    default: mod.McpSettings,
-  }))
-);
 
 function RouteSuspense({ children }: { children: ReactNode }) {
   return (
@@ -192,50 +172,36 @@ export function AppRouter() {
                 }
               />
               <Route
-                path="/settings/*"
+                path="/settings"
                 element={
                   <RouteSuspense>
                     <SettingsLayout />
                   </RouteSuspense>
                 }
-              >
-                <Route index element={<Navigate to="general" replace />} />
-                <Route
-                  path="general"
-                  element={
-                    <RouteSuspense>
-                      <GeneralSettings />
-                    </RouteSuspense>
-                  }
-                />
-                <Route
-                  path="projects"
-                  element={
-                    <RouteSuspense>
-                      <ProjectSettings />
-                    </RouteSuspense>
-                  }
-                />
-                <Route
-                  path="agents"
-                  element={
-                    <RouteSuspense>
-                      <AgentSettings />
-                    </RouteSuspense>
-                  }
-                />
-                <Route
-                  path="mcp"
-                  element={
-                    <RouteSuspense>
-                      <McpSettings />
-                    </RouteSuspense>
-                  }
-                />
-              </Route>
+              />
+              <Route
+                path="/settings/general"
+                element={<Navigate to="/settings#config" replace />}
+              />
+              <Route
+                path="/settings/projects"
+                element={<Navigate to="/settings#projects" replace />}
+              />
+              <Route
+                path="/settings/mcp"
+                element={<Navigate to="/settings#mcp" replace />}
+              />
+              <Route
+                path="/settings/agents"
+                element={<Navigate to="/settings#config" replace />}
+              />
+              <Route
+                path="/settings/*"
+                element={<Navigate to="/settings" replace />}
+              />
               <Route
                 path="/mcp-servers"
-                element={<Navigate to="/settings/mcp" replace />}
+                element={<Navigate to="/settings#mcp" replace />}
               />
               <Route
                 path="/projects/:projectId/tasks/:taskId"

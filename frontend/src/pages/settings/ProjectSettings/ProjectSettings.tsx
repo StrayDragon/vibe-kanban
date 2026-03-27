@@ -1,6 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { Copy, Loader2, RefreshCw } from 'lucide-react';
+import { useState } from 'react';
+import { Copy, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -12,32 +11,8 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { toast } from '@/components/ui/toast';
-import { useUserSystem } from '@/components/ConfigProvider';
 import { useProject } from '@/contexts/ProjectContext';
-import { configApi } from '@/lib/api';
-
-function copyToClipboard(label: string, value: string) {
-  void navigator.clipboard
-    .writeText(value)
-    .then(() => {
-      toast({
-        title: 'Copied',
-        description: `${label} copied to clipboard.`,
-      });
-    })
-    .catch((err) => {
-      console.error('Failed to copy to clipboard:', err);
-      toast({
-        variant: 'destructive',
-        title: 'Copy failed',
-        description: `Could not copy ${label}.`,
-      });
-    });
-}
+import { useCopyToClipboard } from '@/hooks/utils/useCopyToClipboard';
 
 function generateUuid(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -58,61 +33,21 @@ function generateUuid(): string {
     .join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`;
 }
 
-function yamlString(value: string): string {
-  return JSON.stringify(value);
-}
-
 export function ProjectSettings() {
   const { t } = useTranslation(['settings', 'common']);
-  const { reloadSystem } = useUserSystem();
   const { projects, isLoading, error, isConnected } = useProject();
+  const copyToClipboard = useCopyToClipboard();
   const [snippetProjectId, setSnippetProjectId] = useState(() =>
     generateUuid()
   );
-  const [snippetName, setSnippetName] = useState('');
-  const [snippetRepoPaths, setSnippetRepoPaths] = useState('');
-
-  const reloadMutation = useMutation({
-    mutationFn: configApi.reloadConfig,
-    onSuccess: async () => {
-      await reloadSystem();
-      toast({
-        title: 'Config reloaded',
-        description: 'Reload succeeded.',
-      });
-    },
-    onError: (err) => {
-      console.error('Config reload failed:', err);
-      toast({
-        variant: 'destructive',
-        title: 'Reload failed',
-        description:
-          err instanceof Error ? err.message : 'Config reload failed.',
-      });
-    },
-  });
-
-  const snippet = useMemo(() => {
-    const name = snippetName.trim() || 'my-project';
-    const repoPaths = snippetRepoPaths
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-
-    const repoLines =
-      repoPaths.length > 0
-        ? repoPaths.map((path) => `    - path: ${yamlString(path)}`)
-        : [`    - path: ${yamlString('/abs/path/to/repo')}`];
-
-    return [
-      '# Paste this under `projects:` in projects.yaml (or a file under projects.d/)',
-      `- id: ${snippetProjectId}`,
-      `  name: ${yamlString(name)}`,
-      '  repos:',
-      ...repoLines,
-      '',
-    ].join('\n');
-  }, [snippetName, snippetProjectId, snippetRepoPaths]);
+  const snippet = [
+    '# Paste this under `projects:` in projects.yaml (or a file under projects.d/)',
+    `- id: ${snippetProjectId}`,
+    '  name: "my-project"',
+    '  repos:',
+    '    - path: "/abs/path/to/repo"',
+    '',
+  ].join('\n');
 
   return (
     <div className="space-y-6">
@@ -138,24 +73,6 @@ export function ProjectSettings() {
             )}
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-2">
-          <Button
-            onClick={() => reloadMutation.mutate()}
-            disabled={reloadMutation.isPending}
-          >
-            {reloadMutation.isPending ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                {t('settings.config.reloading', 'Reloading')}
-              </>
-            ) : (
-              <>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                {t('settings.config.reload', 'Reload')}
-              </>
-            )}
-          </Button>
-        </CardContent>
       </Card>
 
       <Card>
@@ -171,37 +88,6 @@ export function ProjectSettings() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-2">
-            <Label htmlFor="projectSnippetName">
-              {t('settings.projects.snippetName', 'Project name')}
-            </Label>
-            <Input
-              id="projectSnippetName"
-              value={snippetName}
-              placeholder="my-project"
-              onChange={(e) => setSnippetName(e.target.value)}
-            />
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="projectSnippetRepos">
-              {t('settings.projects.snippetRepos', 'Repo paths (one per line)')}
-            </Label>
-            <Textarea
-              id="projectSnippetRepos"
-              value={snippetRepoPaths}
-              placeholder="/abs/path/to/repo"
-              rows={3}
-              onChange={(e) => setSnippetRepoPaths(e.target.value)}
-            />
-            <div className="text-xs text-muted-foreground">
-              {t(
-                'settings.projects.snippetReposHint',
-                'Repo paths must be absolute. VK will reject relative paths on reload.'
-              )}
-            </div>
-          </div>
-
           <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"

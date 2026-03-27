@@ -13,34 +13,25 @@ import {
 } from '@/components/ui/card';
 import { toast } from '@/components/ui/toast';
 import { useUserSystem } from '@/components/ConfigProvider';
+import { useCopyToClipboard } from '@/hooks/utils/useCopyToClipboard';
 import { configApi } from '@/lib/api';
 import type { ConfigStatusResponse } from 'shared/types';
 
 const CONFIG_STATUS_QUERY_KEY = ['configStatus'] as const;
 
-function copyToClipboard(label: string, value: string) {
-  void navigator.clipboard
-    .writeText(value)
-    .then(() => {
-      toast({
-        title: 'Copied',
-        description: `${label} copied to clipboard.`,
-      });
-    })
-    .catch((err) => {
-      console.error('Failed to copy to clipboard:', err);
-      toast({
-        variant: 'destructive',
-        title: 'Copy failed',
-        description: `Could not copy ${label}.`,
-      });
-    });
+function basename(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return trimmed;
+
+  const parts = trimmed.split(/[/\\]/);
+  return parts[parts.length - 1] ?? trimmed;
 }
 
 export function GeneralSettings() {
   const { t } = useTranslation(['settings', 'common']);
   const queryClient = useQueryClient();
   const { reloadSystem } = useUserSystem();
+  const copyToClipboard = useCopyToClipboard();
 
   const {
     data: status,
@@ -104,6 +95,7 @@ export function GeneralSettings() {
   const projectsSchemaHeader =
     '# yaml-language-server: $schema=./projects.schema.json';
   const schemaUpsertCommand = 'vk config schema upsert';
+  const secretEnvLabel = basename(status.secret_env_path) || 'secret.env';
 
   return (
     <div className="space-y-6">
@@ -129,6 +121,18 @@ export function GeneralSettings() {
           </AlertDescription>
         </Alert>
       )}
+
+      <Alert>
+        <AlertTitle>
+          {t('settings.agents.readOnlyTitle', 'Agents are file-configured')}
+        </AlertTitle>
+        <AlertDescription>
+          {t(
+            'settings.agents.readOnlyDescription',
+            'Executor profiles and agent-related settings are configured in config.yaml. Editing via UI is disabled.'
+          )}
+        </AlertDescription>
+      </Alert>
 
       <Card>
         <CardHeader>
@@ -264,9 +268,7 @@ export function GeneralSettings() {
             <div className="space-y-1">
               <div className="text-sm font-medium">secret.env</div>
               <div className="flex flex-wrap items-center gap-2">
-                <code className="text-xs break-all">
-                  {status.secret_env_path}
-                </code>
+                <code className="text-xs break-all">{secretEnvLabel}</code>
                 <Button
                   size="sm"
                   variant="outline"

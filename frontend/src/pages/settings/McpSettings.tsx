@@ -10,26 +10,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { toast } from '@/components/ui/toast';
-
-function copyToClipboard(label: string, value: string) {
-  void navigator.clipboard
-    .writeText(value)
-    .then(() => {
-      toast({
-        title: 'Copied',
-        description: `${label} copied to clipboard.`,
-      });
-    })
-    .catch((err) => {
-      console.error('Failed to copy to clipboard:', err);
-      toast({
-        variant: 'destructive',
-        title: 'Copy failed',
-        description: `Could not copy ${label}.`,
-      });
-    });
-}
+import { useCopyToClipboard } from '@/hooks/utils/useCopyToClipboard';
 
 const MCP_SNIPPET_JSON = `{
   "mcpServers": {
@@ -48,6 +29,7 @@ args = []
 
 export function McpSettings() {
   const { t } = useTranslation(['settings', 'common']);
+  const copyToClipboard = useCopyToClipboard();
 
   return (
     <div className="space-y-6">

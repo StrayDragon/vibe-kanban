@@ -1,37 +1,21 @@
-import { NavLink, Outlet } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Settings, Cpu, Server, X, FolderOpen } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useEffect } from 'react';
 import { useHotkeysContext } from 'react-hotkeys-hook';
 import { useKeyExit } from '@/keyboard/hooks';
 import { Scope } from '@/keyboard/registry';
 import { usePreviousPath } from '@/hooks/utils/usePreviousPath';
-
-const settingsNavigation = [
-  {
-    path: 'general',
-    icon: Settings,
-  },
-  {
-    path: 'projects',
-    icon: FolderOpen,
-  },
-  {
-    path: 'agents',
-    icon: Cpu,
-  },
-  {
-    path: 'mcp',
-    icon: Server,
-  },
-];
+import { GeneralSettings } from '@/pages/settings/GeneralSettings';
+import { ProjectSettings } from '@/pages/settings/ProjectSettings';
+import { McpSettings } from '@/pages/settings/McpSettings';
+import { useLocation } from 'react-router-dom';
 
 export function SettingsLayout() {
   const { t } = useTranslation('settings');
   const { enableScope, disableScope } = useHotkeysContext();
   const goToPreviousPath = usePreviousPath();
+  const { hash } = useLocation();
 
   // Enable SETTINGS scope when component mounts
   useEffect(() => {
@@ -40,6 +24,16 @@ export function SettingsLayout() {
       disableScope(Scope.SETTINGS);
     };
   }, [enableScope, disableScope]);
+
+  useEffect(() => {
+    if (!hash) return;
+    const id = hash.replace(/^#/, '');
+    if (!id) return;
+
+    requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({ block: 'start' });
+    });
+  }, [hash]);
 
   // Register ESC keyboard shortcut
   useKeyExit(goToPreviousPath, { scope: Scope.SETTINGS });
@@ -61,46 +55,16 @@ export function SettingsLayout() {
             <span className="text-xs font-medium">ESC</span>
           </Button>
         </div>
-        <div className="flex flex-col lg:flex-row gap-8">
-          {/* Sidebar Navigation */}
-          <aside className="w-full lg:w-64 lg:shrink-0 lg:sticky lg:top-24 lg:h-fit lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto">
-            <div className="space-y-1">
-              <nav className="space-y-1">
-                {settingsNavigation.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <NavLink
-                      key={item.path}
-                      to={item.path}
-                      end
-                      className={({ isActive }) =>
-                        cn(
-                          'flex items-start gap-3 px-3 py-2 text-sm transition-colors',
-                          'hover:text-accent-foreground',
-                          isActive
-                            ? 'text-primary-foreground'
-                            : 'text-secondary-foreground'
-                        )
-                      }
-                    >
-                      <Icon className="h-4 w-4 mt-0.5 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium">
-                          {t(`settings.layout.nav.${item.path}`)}
-                        </div>
-                        <div>{t(`settings.layout.nav.${item.path}Desc`)}</div>
-                      </div>
-                    </NavLink>
-                  );
-                })}
-              </nav>
-            </div>
-          </aside>
-
-          {/* Main Content */}
-          <main className="flex-1 min-w-0">
-            <Outlet />
-          </main>
+        <div className="space-y-10">
+          <section id="config" className="scroll-mt-24">
+            <GeneralSettings />
+          </section>
+          <section id="projects" className="scroll-mt-24">
+            <ProjectSettings />
+          </section>
+          <section id="mcp" className="scroll-mt-24">
+            <McpSettings />
+          </section>
         </div>
       </div>
     </div>
