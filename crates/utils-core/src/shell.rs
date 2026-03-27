@@ -7,6 +7,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use directories::BaseDirs;
+
 use crate::tokio::block_on;
 
 /// Returns the appropriate shell command and argument for the current platform.
@@ -126,7 +128,7 @@ impl UnixShell {
         }
     }
     pub fn config_file(&self) -> Option<PathBuf> {
-        let home = dirs::home_dir()?;
+        let home = BaseDirs::new()?.home_dir().to_path_buf();
         let config_file = match self {
             UnixShell::Zsh => Some(home.join(".zshrc")),
             UnixShell::Bash => Some(home.join(".bashrc")),

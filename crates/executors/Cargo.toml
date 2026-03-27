@@ -13,7 +13,7 @@ utils-assets = { path = "../utils-assets" }
 async-trait = { workspace = true }
 command-group = { version = "5.0", features = ["with-tokio"] }
 convert_case = "0.6"
-dirs = "5.0"
+directories = "6.0.0"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 schemars = { workspace = true }

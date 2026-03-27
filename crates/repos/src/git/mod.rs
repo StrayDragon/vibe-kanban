@@ -2027,8 +2027,10 @@ impl GitService {
                 }
 
                 // Fallback to key file (~/.ssh/id_rsa)
-                let home = dirs::home_dir()
-                    .ok_or_else(|| git2::Error::from_str("Could not find home directory"))?;
+                let home = directories::BaseDirs::new()
+                    .ok_or_else(|| git2::Error::from_str("Could not find home directory"))?
+                    .home_dir()
+                    .to_path_buf();
                 let key_path = home.join(".ssh").join("id_rsa");
                 Cred::ssh_key(username_from_url.unwrap_or("git"), None, &key_path, None)
             });

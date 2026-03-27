@@ -24,6 +24,36 @@ fn default_git_branch_prefix() -> String {
     "vk".to_string()
 }
 
+fn is_valid_branch_prefix(prefix: &str) -> bool {
+    if prefix.is_empty() {
+        return true;
+    }
+
+    // Prefix is expected to be a single path component (we'll append `/<suffix>` later).
+    if prefix.contains('/') {
+        return false;
+    }
+
+    // Match `git check-ref-format` style constraints for a single ref component.
+    if prefix.starts_with('.') || prefix.contains("..") || prefix.contains("@{") {
+        return false;
+    }
+
+    if prefix.ends_with(".lock") {
+        return false;
+    }
+
+    if prefix.bytes().any(|b| b < 0x20 || b == 0x7f) {
+        return false;
+    }
+
+    if prefix.contains(['\\', ' ', '~', '^', ':', '?', '*', '[']) {
+        return false;
+    }
+
+    true
+}
+
 fn default_pr_auto_description_enabled() -> bool {
     true
 }
@@ -434,7 +464,7 @@ impl Config {
             self.config_version = CURRENT_CONFIG_VERSION.to_string();
         }
 
-        if !utils_git::is_valid_branch_prefix(&self.git_branch_prefix) {
+        if !is_valid_branch_prefix(&self.git_branch_prefix) {
             tracing::warn!(
                 "Invalid git branch prefix '{}', resetting to default",
                 self.git_branch_prefix

@@ -195,7 +195,90 @@ fn parse_openai_error(body: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_system_prompt, format_openai_url};
+    use std::sync::OnceLock;
+
+    use axum::{Json, Router, routing::post};
+    use tokio::{net::TcpListener, sync::Mutex};
+
+    use super::{
+        KANBAN_OPENAI_API_BASE, KANBAN_OPENAI_API_KEY, KANBAN_OPENAI_DEFAULT_MODEL, ResponseJson,
+        TranslationRequest, build_system_prompt, format_openai_url, translate,
+    };
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_lock() -> &'static Mutex<()> {
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var_os(key);
+            // SAFETY: tests using EnvVarGuard are serialized by env_lock().
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: tests using EnvVarGuard are serialized by env_lock().
+            unsafe {
+                match &self.prev {
+                    Some(value) => std::env::set_var(self.key, value),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn translate_smoke_round_trip() {
+        let _guard = env_lock().lock().await;
+
+        async fn completions_handler() -> Json<serde_json::Value> {
+            Json(serde_json::json!({
+                "choices": [
+                    { "message": { "content": "hello translated" } }
+                ]
+            }))
+        }
+
+        let app = Router::new().route("/v1/chat/completions", post(completions_handler));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server_task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let base_url = format!("http://{addr}");
+        let _base_guard = EnvVarGuard::set(KANBAN_OPENAI_API_BASE, &base_url);
+        let _key_guard = EnvVarGuard::set(KANBAN_OPENAI_API_KEY, "test-key");
+        let _model_guard = EnvVarGuard::set(KANBAN_OPENAI_DEFAULT_MODEL, "test-model");
+
+        let payload = TranslationRequest {
+            text: "hello".to_string(),
+            source_lang: "en".to_string(),
+            target_lang: "fr".to_string(),
+        };
+
+        let ResponseJson(api_response) = translate(Json(payload)).await.unwrap();
+        assert!(api_response.is_success());
+        assert_eq!(
+            api_response.into_data().unwrap().translated_text,
+            "hello translated"
+        );
+
+        server_task.abort();
+    }
 
     #[test]
     fn format_openai_url_appends_v1() {

@@ -31,7 +31,7 @@ toml = "0.8"
 tracing = { workspace = true }
 ts-rs = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
-dirs = "5.0"
+directories = "6.0.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 
 agent-client-protocol = { version = "0.8", features = ["unstable"] }

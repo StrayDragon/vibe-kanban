@@ -84,3 +84,28 @@ jobs:
           npm run prepare-db:check
           cargo test --workspace
           cargo clippy --all --all-targets -- -D warnings  
+
+  optional-executors:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: buildjet-4vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        env:
+          RUST_CACHE_DEBUG: true
+        with:
+          workspaces: "."
+          cache-provider: "buildjet"
+          cache-on-failure: true
+          shared-key: "shared"
+          cache-all-crates: true
+
+      - name: Compile optional executors
+        run: cargo check -p executors --all-features

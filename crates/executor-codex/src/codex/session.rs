@@ -6,6 +6,7 @@ use std::{
 
 use chrono::Local;
 use codex_protocol::protocol::SessionSource;
+use directories::BaseDirs;
 use regex::Regex;
 use serde_json::{Map, Value};
 use thiserror::Error;
@@ -172,8 +173,10 @@ impl SessionHandler {
     }
 
     fn sessions_root() -> Result<PathBuf, SessionError> {
-        let home_dir = dirs::home_dir()
-            .ok_or_else(|| SessionError::Io("Could not determine home directory".to_string()))?;
+        let home_dir = BaseDirs::new()
+            .ok_or_else(|| SessionError::Io("Could not determine home directory".to_string()))?
+            .home_dir()
+            .to_path_buf();
         Ok(home_dir.join(".codex").join("sessions"))
     }
 

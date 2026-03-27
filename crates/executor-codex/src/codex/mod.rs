@@ -17,6 +17,7 @@ use codex_app_server_protocol::{
 };
 use command_group::AsyncCommandGroup;
 use derivative::Derivative;
+use directories::BaseDirs;
 use executors_core::{
     agent_command::{AgentCommandKey, agent_command_resolver, command_identity_for_agent},
     approvals::ExecutorApprovalService,
@@ -195,12 +196,19 @@ impl StandardCodingAgentExecutor for Codex {
     }
 
     fn default_mcp_config_path(&self) -> Option<PathBuf> {
-        dirs::home_dir().map(|home| home.join(".codex").join("config.toml"))
+        Some(
+            BaseDirs::new()?
+                .home_dir()
+                .join(".codex")
+                .join("config.toml"),
+        )
     }
 
     fn get_availability_info(&self) -> AvailabilityInfo {
-        if let Some(timestamp) = dirs::home_dir()
-            .and_then(|home| std::fs::metadata(home.join(".codex").join("auth.json")).ok())
+        if let Some(timestamp) = BaseDirs::new()
+            .and_then(|dirs| {
+                std::fs::metadata(dirs.home_dir().join(".codex").join("auth.json")).ok()
+            })
             .and_then(|m| m.modified().ok())
             .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs() as i64)
@@ -215,8 +223,8 @@ impl StandardCodingAgentExecutor for Codex {
             .map(|p| p.exists())
             .unwrap_or(false);
 
-        let installation_indicator_found = dirs::home_dir()
-            .map(|home| home.join(".codex").join("version.json").exists())
+        let installation_indicator_found = BaseDirs::new()
+            .map(|dirs| dirs.home_dir().join(".codex").join("version.json").exists())
             .unwrap_or(false);
 
         if mcp_config_found || installation_indicator_found {

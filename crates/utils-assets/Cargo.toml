@@ -3,8 +3,11 @@ name = "utils-assets"
 version = "0.0.143"
 edition = "2024"
 
+[features]
+default = ["embed-sounds"]
+embed-sounds = []
+
 [dependencies]
 utils-core = { path = "../utils-core" }
 directories = "6.0.0"
 rust-embed = "8.2"
-

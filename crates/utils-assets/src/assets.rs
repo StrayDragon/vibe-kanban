@@ -41,9 +41,24 @@ pub fn credentials_path() -> std::path::PathBuf {
 }
 
 #[derive(RustEmbed)]
+#[folder = "../../assets/scripts"]
+pub struct ScriptAssets;
+
+#[cfg(feature = "embed-sounds")]
+#[derive(RustEmbed)]
 #[folder = "../../assets/sounds"]
 pub struct SoundAssets;
 
-#[derive(RustEmbed)]
-#[folder = "../../assets/scripts"]
-pub struct ScriptAssets;
+#[cfg(not(feature = "embed-sounds"))]
+pub struct SoundAssets;
+
+#[cfg(not(feature = "embed-sounds"))]
+impl SoundAssets {
+    pub fn get(_path: &str) -> Option<rust_embed::EmbeddedFile> {
+        None
+    }
+
+    pub fn iter() -> rust_embed::Filenames {
+        [].iter()
+    }
+}

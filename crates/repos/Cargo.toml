@@ -19,9 +19,10 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 ts-rs = { workspace = true }
 git2 = "0.18"
+openssl-sys = { workspace = true }
 tempfile = "3.21"
 ignore = "0.4"
-dirs = "5.0"
+directories = "6.0.0"
 regex = "1.11.1"
 shlex = "1.3.0"
 thiserror = { workspace = true }

@@ -3,12 +3,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use directories::BaseDirs;
 use tokio::fs;
 
 use crate::executors::ExecutorError;
 
 pub fn default_claude_code_config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("llman").join("claude-code.toml"))
+    Some(
+        BaseDirs::new()?
+            .config_dir()
+            .join("llman")
+            .join("claude-code.toml"),
+    )
 }
 
 pub fn resolve_claude_code_config_path(override_path: Option<&str>) -> Option<PathBuf> {
@@ -59,12 +65,14 @@ pub fn parse_claude_code_groups(
 }
 
 fn expand_tilde(path: &str) -> PathBuf {
+    let home_dir = BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf());
+
     if path == "~" {
-        return dirs::home_dir().unwrap_or_else(|| PathBuf::from(path));
+        return home_dir.unwrap_or_else(|| PathBuf::from(path));
     }
 
     if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\"))
-        && let Some(home) = dirs::home_dir()
+        && let Some(home) = home_dir.as_ref()
     {
         return home.join(rest);
     }

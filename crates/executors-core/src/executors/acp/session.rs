@@ -5,6 +5,7 @@ use std::{
     str::FromStr,
 };
 
+use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::executors::acp::AcpEvent;
@@ -18,8 +19,9 @@ impl SessionManager {
     /// Create a new session manager with the given namespace
     pub fn new(namespace: impl Into<String>) -> Result<Self> {
         let namespace = namespace.into();
-        let mut vk_dir = dirs::home_dir()
+        let mut vk_dir = BaseDirs::new()
             .ok_or_else(|| io::Error::other("Could not determine home directory"))?
+            .home_dir()
             .join(".vibe-kanban");
 
         if cfg!(debug_assertions) {

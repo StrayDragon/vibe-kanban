@@ -7,7 +7,6 @@ edition = "2024"
 executors = { path = "../executors" }
 executors-core = { path = "../executors-core" }
 executors-protocol = { path = "../executors-protocol" }
-utils-git = { path = "../utils-git" }
 utils-core = { path = "../utils-core" }
 utils-assets = { path = "../utils-assets" }
 serde = { workspace = true }

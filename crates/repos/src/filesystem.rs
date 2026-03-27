@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use directories::{BaseDirs, UserDirs};
 use ignore::WalkBuilder;
 use serde::Serialize;
 use thiserror::Error;
@@ -48,6 +49,12 @@ impl FilesystemService {
         FilesystemService {}
     }
 
+    fn executable_dir() -> Option<PathBuf> {
+        std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(|dir| dir.to_path_buf()))
+    }
+
     fn get_directories_to_skip() -> HashSet<String> {
         let mut skip_dirs = HashSet::from(
             [
@@ -68,20 +75,33 @@ impl FilesystemService {
             .map(String::from),
         );
 
-        [
-            dirs::executable_dir(),
-            dirs::data_dir(),
-            dirs::download_dir(),
-            dirs::picture_dir(),
-            dirs::video_dir(),
-            dirs::audio_dir(),
-        ]
-        .into_iter()
-        .flatten()
-        .filter_map(|path| path.file_name()?.to_str().map(String::from))
-        .for_each(|name| {
+        let mut candidates = Vec::new();
+        candidates.extend(Self::executable_dir());
+
+        if let Some(base_dirs) = BaseDirs::new() {
+            candidates.push(base_dirs.data_dir().to_path_buf());
+        }
+
+        if let Some(user_dirs) = UserDirs::new() {
+            for dir in [
+                user_dirs.download_dir(),
+                user_dirs.picture_dir(),
+                user_dirs.video_dir(),
+                user_dirs.audio_dir(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                candidates.push(dir.to_path_buf());
+            }
+        }
+
+        for name in candidates
+            .iter()
+            .filter_map(|path| path.file_name()?.to_str().map(String::from))
+        {
             skip_dirs.insert(name);
-        });
+        }
 
         skip_dirs
     }
@@ -299,9 +319,22 @@ impl FilesystemService {
     }
 
     fn get_home_directory() -> PathBuf {
-        dirs::home_dir()
-            .or_else(dirs::desktop_dir)
-            .or_else(dirs::document_dir)
+        let base_dirs = BaseDirs::new();
+        let user_dirs = UserDirs::new();
+
+        base_dirs
+            .as_ref()
+            .map(|dirs| dirs.home_dir().to_path_buf())
+            .or_else(|| {
+                user_dirs
+                    .as_ref()
+                    .and_then(|dirs| dirs.desktop_dir().map(|dir| dir.to_path_buf()))
+            })
+            .or_else(|| {
+                user_dirs
+                    .as_ref()
+                    .and_then(|dirs| dirs.document_dir().map(|dir| dir.to_path_buf()))
+            })
             .unwrap_or_else(|| {
                 if cfg!(windows) {
                     std::env::var("USERPROFILE")

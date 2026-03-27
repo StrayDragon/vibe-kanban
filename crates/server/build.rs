@@ -1,8 +1,6 @@
 use std::{fs, path::Path};
 
 fn main() {
-    println!("cargo:rerun-if-changed=../../frontend/dist");
-    println!("cargo:rerun-if-changed=../../frontend/dist/index.html");
     dotenv::dotenv().ok();
 
     if let Ok(api_key) = std::env::var("POSTHOG_API_KEY") {
@@ -14,6 +12,13 @@ fn main() {
     if let Ok(vk_shared_api_base) = std::env::var("VK_SHARED_API_BASE") {
         println!("cargo:rustc-env=VK_SHARED_API_BASE={}", vk_shared_api_base);
     }
+
+    if std::env::var_os("CARGO_FEATURE_EMBED_FRONTEND").is_none() {
+        return;
+    }
+
+    println!("cargo:rerun-if-changed=../../frontend/dist");
+    println!("cargo:rerun-if-changed=../../frontend/dist/index.html");
 
     // Create frontend/dist directory if it doesn't exist
     let dist_path = Path::new("../../frontend/dist");

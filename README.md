@@ -28,6 +28,8 @@ tasks. Vibe Kanban streamlines this process, enabling you to:
 - MCP: `docs/mcp.md`
 - Environment variables: `docs/env.gen.md`
 - Fake agent scenarios: `docs/fake-agent.md`
+- Server-only mode: `docs/server-only.md`
+- Git strategy decision: `docs/decisions/git-strategy.md`
 
 ## License
 

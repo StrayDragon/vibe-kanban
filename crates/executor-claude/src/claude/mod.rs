@@ -8,6 +8,7 @@ use std::{collections::HashMap, path::Path, process::Stdio, sync::Arc};
 use async_trait::async_trait;
 use command_group::AsyncCommandGroup;
 use derivative::Derivative;
+use directories::BaseDirs;
 use executors_core::{
     agent_command::{
         AgentCommandKey, agent_command_resolver, claude_router_identity, command_identity_for_agent,
@@ -216,11 +217,11 @@ impl StandardCodingAgentExecutor for ClaudeCode {
 
     // MCP configuration methods
     fn default_mcp_config_path(&self) -> Option<std::path::PathBuf> {
-        dirs::home_dir().map(|home| home.join(".claude.json"))
+        Some(BaseDirs::new()?.home_dir().join(".claude.json"))
     }
 
     fn get_availability_info(&self) -> AvailabilityInfo {
-        let auth_file_path = dirs::home_dir().map(|home| home.join(".claude.json"));
+        let auth_file_path = BaseDirs::new().map(|dirs| dirs.home_dir().join(".claude.json"));
 
         if let Some(path) = auth_file_path
             && let Some(timestamp) = std::fs::metadata(&path)

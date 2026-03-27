@@ -1,6 +1,6 @@
 use std::{env, sync::OnceLock};
 
-use directories::ProjectDirs;
+use directories::{BaseDirs, ProjectDirs};
 
 pub mod approvals;
 pub mod browser;
@@ -62,7 +62,7 @@ pub fn cache_dir() -> std::path::PathBuf {
 ///
 /// - Override: `VK_CONFIG_DIR=/path/to/dir`
 /// - Unix (Linux/macOS): `${XDG_CONFIG_HOME:-$HOME/.config}/vk`
-/// - Windows: `%APPDATA%\\vk` (via `dirs::config_dir()`), falling back to temp dir
+/// - Windows: `%APPDATA%\\vk` (via `directories::BaseDirs::config_dir()`), falling back to temp dir
 pub fn vk_config_dir() -> std::path::PathBuf {
     fn ensure_dir_exists(path: std::path::PathBuf) -> std::path::PathBuf {
         if let Err(err) = std::fs::create_dir_all(&path) {
@@ -81,14 +81,8 @@ pub fn vk_config_dir() -> std::path::PathBuf {
         }
     }
 
-    if cfg!(windows) {
-        let base = dirs::config_dir().unwrap_or_else(std::env::temp_dir);
-        return ensure_dir_exists(base.join("vk"));
-    }
-
-    let base = env::var_os("XDG_CONFIG_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|home| home.join(".config")))
+    let base = BaseDirs::new()
+        .map(|dirs| dirs.config_dir().to_path_buf())
         .unwrap_or_else(std::env::temp_dir);
     ensure_dir_exists(base.join("vk"))
 }
