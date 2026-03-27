@@ -6,7 +6,7 @@
 - `frontend/`: React + TypeScript app (Vite, Tailwind). Source in `frontend/src`.
 - `frontend/src/components/dialogs`: Dialog components for the frontend.
 - `shared/`: Generated TypeScript types (`shared/types.ts`). Do not edit directly.
-- `assets/`, `dev_assets_seed/`, `dev_assets/`: Packaged and local dev assets.
+- `assets/`, `dev_assets/`: Packaged and local dev assets.
 - `scripts/`: Dev helpers (ports, DB preparation).
 
 ## Managing Shared Types Between Rust and TypeScript

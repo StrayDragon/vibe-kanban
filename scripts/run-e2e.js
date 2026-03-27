@@ -33,20 +33,6 @@ function writeConfigYaml(filePath, value) {
   writeJson(filePath, value);
 }
 
-function shouldCopySeedAsset(srcPath) {
-  const stat = fs.statSync(srcPath);
-  if (stat.isDirectory()) {
-    return true;
-  }
-
-  const lowerName = path.basename(srcPath).toLowerCase();
-  return !(
-    lowerName.endsWith('.db') ||
-    lowerName.endsWith('.sqlite') ||
-    lowerName.endsWith('.sqlite3')
-  );
-}
-
 function spawnLogged(command, args, options) {
   const child = spawn(command, args, options);
   child.on('exit', (code, signal) => {
@@ -136,19 +122,10 @@ async function main() {
   rmDirIfExists(assetDir);
   rmDirIfExists(configDir);
   rmDirIfExists(reposDir);
+  fs.mkdirSync(assetDir, { recursive: true });
   fs.mkdirSync(reposDir, { recursive: true });
   // Some UI flows expect user-provided parent directories to already exist.
   fs.mkdirSync(path.join(reposDir, 'worktrees'), { recursive: true });
-
-  const seedAssetsDir = path.join(repoRoot, 'dev_assets_seed');
-  if (fs.existsSync(seedAssetsDir)) {
-    fs.cpSync(seedAssetsDir, assetDir, {
-      recursive: true,
-      filter: shouldCopySeedAsset,
-    });
-  } else {
-    fs.mkdirSync(assetDir, { recursive: true });
-  }
 
   // Deterministic, non-interactive config for E2E.
   writeConfigYaml(path.join(configDir, 'config.yaml'), {

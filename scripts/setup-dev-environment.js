@@ -5,7 +5,6 @@ const path = require("path");
 const net = require("net");
 
 const PORTS_FILE = path.join(__dirname, "..", ".dev-ports.json");
-const DEV_ASSETS_SEED = path.join(__dirname, "..", "dev_assets_seed");
 const DEV_ASSETS = path.join(__dirname, "..", "dev_assets");
 
 /**
@@ -150,25 +149,20 @@ async function allocatePorts() {
  */
 async function getPorts() {
   const ports = await allocatePorts();
-  copyDevAssets();
+  ensureDevAssetsDir();
   return ports;
 }
 
 /**
- * Copy dev_assets_seed to dev_assets
+ * Ensure dev_assets exists (debug default for VIBE_ASSET_DIR).
  */
-function copyDevAssets() {
+function ensureDevAssetsDir() {
   try {
     if (!fs.existsSync(DEV_ASSETS)) {
-      // Copy dev_assets_seed to dev_assets
-      fs.cpSync(DEV_ASSETS_SEED, DEV_ASSETS, { recursive: true });
-
-      if (process.argv[2] === "get") {
-        console.log("Copied dev_assets_seed to dev_assets");
-      }
+      fs.mkdirSync(DEV_ASSETS, { recursive: true });
     }
   } catch (error) {
-    console.error("Failed to copy dev assets:", error.message);
+    console.error("Failed to ensure dev assets directory:", error.message);
   }
 }
 
