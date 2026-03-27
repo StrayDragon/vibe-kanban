@@ -5,6 +5,7 @@
 - **access control 存在 fail-open**：当 `accessControl.mode=TOKEN` 但 token 为空时，中间件会把它当作 disabled 放行，从而把所有 `/api/**` 暴露出去。
 - **secret 展开结果仍可能经由 API 回传**：部分 API 直接回传运行时结构（例如 ExecutionProcess、project repo 的 setup/cleanup script 等），这些字段可能包含 `{{secret.*}}`/`{{env.*}}` 展开后的敏感值或用户直接写入的 secrets。
 - **文件/资源边界存在可利用面**：repo register/init 接口允许提交任意绝对路径；图片上传允许 SVG 且通过同源 `/api/**` 以 `image/svg+xml` + 长期 public cache 提供，存在 stored XSS/缓存投毒/敏感内容缓存等风险。
+- **本地脚本生成存在注入风险**：部分 helper 会把 `program + args` 直接拼成 bash 字符串执行，若参数可被配置覆盖，可能形成 shell injection 面。
 - **一致性与稳定性问题**：配置 reload 与多文件加载（`config.yaml`、`projects.yaml`、`projects.d/*`、`secret.env`）仍可能出现混合快照/TOCTOU；部分测试依赖 sleep/全局 env 修改，存在 flaky 风险。
 
 需要在“不增加新的可远程触发本机副作用能力”的前提下，对访问控制、API 输出、文件边界与 reload 语义做一次系统性加固。
@@ -20,6 +21,7 @@
 - 图片上传/服务加固：
   - 禁止 SVG 上传（或以安全的下载方式提供而非同源 inline 渲染）。
   - 修正 `/api/images/*` 与 attempt image proxy 的缓存与安全响应头（不使用 `Cache-Control: public`，增加 `X-Content-Type-Options: nosniff` 等）。
+- 修复 helper 脚本生成的 shell injection 风险：对 `program/args` 做安全 quote，或改为不经 shell 的结构化执行（优先保证“参数不可注入”）。
 - 配置 reload 与多文件加载的一致性增强：reload 串行化、提交原子化（单次 reload 生成单一快照并一次性切换），并降低多文件读取的 TOCTOU 风险。
 - 测试稳定性清理：减少基于 sleep/墙钟的断言，统一 env 修改的 RAII guard，补充并行测试下的隔离。
 
@@ -36,12 +38,14 @@
 - `filesystem-api-boundary`: repo register/init 等入口必须受 workspace roots 约束，禁止任意绝对路径越界。
 - `frontend-security-cleanup`: 前端上传与渲染链路对不安全格式（SVG）做约束，并确保 UI 不依赖敏感配置字段直出。
 - `static-asset-caching`: `/api/**` 下的用户/任务相关资源（例如上传图片）不应以 `public` 长期缓存方式提供。
+- `task-runtime-quality`: 任何由服务端生成并交由 executor 执行的脚本/命令必须避免 shell injection（安全 quote 或结构化执行）。
 
 ## Impact
 
 - Backend:
   - `crates/server/src/http/auth.rs`（认证中间件）
   - `crates/server/src/routes/execution_processes.rs`、`crates/server/src/routes/projects.rs`、`crates/server/src/routes/repo.rs`、`crates/server/src/routes/images.rs`、`crates/server/src/routes/task_attempts/images.rs`
+  - `crates/server/src/routes/task_attempts/codex_setup.rs`（helper 脚本生成）
   - `crates/app-runtime`/`crates/config`（reload 与 public_config 边界、多文件加载一致性）
 - Frontend:
   - TS types（由 `ts-rs` 生成的 DTO 变更）
@@ -81,4 +85,3 @@
   - repo register/init 对越界路径返回 `403`。
   - 图片上传拒绝 SVG；图片服务响应头不使用 `Cache-Control: public` 且含 `nosniff`。
   - reload 并发触发时序列化且提交快照原子切换（不出现混合状态）。
-

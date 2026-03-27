@@ -5,6 +5,7 @@ VK 在近期完成了以 OS config dir 为根的 file-first YAML 配置重构，
 - 访问控制在配置错误时存在 fail-open（`mode=TOKEN` + 空 token 等于 disabled）。
 - secret 展开（`{{secret.*}}`/`{{env.*}}`）会作用于 YAML 的所有字符串字段，若内部结构被 API 原样序列化（ExecutionProcess、project repo 脚本等），则可能把展开后的敏感值回传。
 - 文件/资源边界：repo register/init 允许任意绝对路径；图片上传允许 SVG，并在同源 `/api/**` 以 `image/svg+xml` + `Cache-Control: public` 提供，存在 stored XSS/敏感内容缓存等风险。
+- 本地脚本生成：部分 helper 会把 `program + args` 直接拼接成 bash 字符串执行，若参数可被配置覆盖，存在 shell injection 风险。
 - reload/多文件加载与测试存在一致性与稳定性问题（混合快照/TOCTOU、sleep 断言、env 串扰）。
 
 本设计以“删除能力面 + 明确 DTO 边界 + fail-closed”为核心原则：对外 API 只返回 public-safe 的视图，任何可能携带 secrets 的内部字段不得出现在响应中；访问控制配置错误不得导致放行。
@@ -85,12 +86,23 @@ VK 在近期完成了以 OS config dir 为根的 file-first YAML 配置重构，
 - A) 依赖多个锁的顺序约定：容易死锁或遗漏（不选）。
 - B) 读侧加锁读全量：会扩大锁粒度并影响吞吐（不选为主方案）。
 
+### Decision 7: 生成脚本/命令必须避免 shell injection
+
+**Choice**: 当需要通过 bash 执行 “program + args” 时，必须对每个 argv 做安全的 shell quoting（或改为不经 shell 的结构化执行，如果 protocol/执行层支持）。
+
+**Why**: 参数来源可能被配置覆盖或包含空格/特殊字符；直接 `args.join(" ")` 会形成注入面，且风险会在后续演进中被放大。
+
+**Alternatives**:
+- A) 依赖“参数永远可信/不含特殊字符”的约定：不可持续（不选）。
+- B) 对整段脚本做黑名单过滤：容易绕过且误伤（不选）。
+
 ## Risks / Trade-offs
 
 - [API Breaking] DTO 化与字段移除会影响前端与外部脚本 → 同步更新前端、`pnpm run generate-types`、并加回归测试覆盖常用路由。
 - [可用性] TOKEN 模式 token 为空会导致所有 `/api/**` 不可用 → 在错误信息中明确提示如何修复（设置 token 或切换为 disabled），并在 `/api/config/status` 或 `/api/info` 的可观测字段中体现“当前是 misconfigured”。
 - [性能] reload 快照化可能增加少量 clone/copy → 以结构化 snapshot（Arc/共享）降低复制成本；只在 reload 时发生，可接受。
 - [功能回退] 禁止 SVG 可能影响少数用户 → 明确变更说明；如确有需要，后续可引入“仅下载”模式作为 opt-in。
+- [兼容性] 对 helper 脚本生成进行严格 quoting 可能改变少数边缘参数的表现（例如依赖 shell 展开） → 以 argv 语义为准；必要时在文档中说明不再支持隐式 shell 展开。
 
 ## Migration Plan
 
@@ -108,4 +120,3 @@ VK 在近期完成了以 OS config dir 为根的 file-first YAML 配置重构，
 
 - ExecutionProcess DTO 的最小必要字段集合：前端实际依赖哪些字段（例如 executor_action 的哪些子字段）？是否需要 “debug-only” 的本地开关（仍需 token-gated）用于查看更详细信息。
 - 图片缓存策略取舍：`private, max-age=31536000, immutable` vs `private, max-age=3600` vs `no-store`，需要结合 UI 使用频率与内容敏感度确定默认值。
-
