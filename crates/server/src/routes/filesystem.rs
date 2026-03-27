@@ -71,7 +71,7 @@ fn canonicalize_directory(path: &Path) -> Result<PathBuf, ApiError> {
     fs::canonicalize(path).map_err(ApiError::Io)
 }
 
-async fn allowed_workspace_roots<D>(deployment: &D) -> Result<Vec<PathBuf>, ApiError>
+pub(crate) async fn allowed_workspace_roots<D>(deployment: &D) -> Result<Vec<PathBuf>, ApiError>
 where
     D: FilesystemRouteDeps,
 {

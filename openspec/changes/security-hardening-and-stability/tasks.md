@@ -31,8 +31,8 @@ Verification:
 
 ## 4. Repo Register/Init 的 Workspace Roots 约束
 
-- [ ] 4.1 为 `POST /api/repos` 与 `POST /api/repos/init` 增加 canonicalize + containment check，仅允许在允许的 workspace roots 下注册/初始化 repo；越界返回 `403`
-- [ ] 4.2 为 4.1 增加回归测试（inside roots 成功、outside roots 失败、symlink/traversal 失败）
+- [x] 4.1 为 `POST /api/repos` 与 `POST /api/repos/init` 增加 canonicalize + containment check，仅允许在允许的 workspace roots 下注册/初始化 repo；越界返回 `403`
+- [x] 4.2 为 4.1 增加回归测试（inside roots 成功、outside roots 失败、symlink/traversal 失败）
 
 Verification:
 - `cargo test -p server repo`
