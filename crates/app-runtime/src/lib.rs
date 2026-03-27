@@ -1041,6 +1041,10 @@ mod tests {
                 .await
         });
 
+        // Give the watcher time to subscribe before mutating files, otherwise we can miss the
+        // initial filesystem event on slower machines/CI.
+        tokio::time::sleep(super::CONFIG_WATCH_DEBOUNCE + Duration::from_millis(50)).await;
+
         std::fs::write(&config_path, "git_branch_prefix: new\n").unwrap();
 
         tokio::time::timeout(Duration::from_secs(3), async {

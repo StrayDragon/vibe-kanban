@@ -138,7 +138,7 @@ The list below shows where each env var name appears in the repo (best-effort).
 - `KANBAN_OPENAI_API_KEY`: `crates/server/src/routes/translation.rs`
 - `KANBAN_OPENAI_DEFAULT_MODEL`: `crates/server/src/routes/translation.rs`
 - `OPENAI_API_BASE`: `crates/server/src/routes/translation.rs`
-- `OPENAI_API_KEY`: `crates/server/src/routes/translation.rs`, `crates/vk/src/migrate/asset_config.rs`
+- `OPENAI_API_KEY`: `crates/config/src/lib.rs`, `crates/config/src/schema.rs`, `crates/server/src/routes/translation.rs`, `crates/vk/src/migrate/asset_config.rs`
 - `OPENAI_DEFAULT_MODEL`: `crates/server/src/routes/translation.rs`
 - `PORT`: `crates/server/src/main.rs`, `justfile`, `scripts/run-e2e-just-run.js`, `scripts/run-e2e.js`, `scripts/setup-dev-environment.js`
 - `POSTHOG_API_ENDPOINT`: `crates/server/build.rs`

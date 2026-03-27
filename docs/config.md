@@ -19,7 +19,7 @@ VK 采用 **file-first** 的配置模型：以 OS 用户配置目录下的 YAML 
 
 ## secrets 与模板注入
 
-VK 会自动加载 `secret.env`，并按以下优先级解析所有已加载 YAML（`config.yaml` / `projects.yaml` / `projects.d/*`）中字符串值的模板：
+VK 会自动加载 `secret.env`，并按以下优先级解析 **白名单字段** 中的模板：
 
 1. `secret.env`
 2. 进程 / 系统环境变量
@@ -35,6 +35,8 @@ VK 会自动加载 `secret.env`，并按以下优先级解析所有已加载 YAM
 - `{{env.NAME}}` 会按 `secret.env` → 系统 env 的顺序解析（即 `secret.env` 覆盖系统变量）。
 - `{{secret.NAME}}` 仅从 `secret.env` 解析。
 - 当缺失且未提供默认值时，配置校验失败；reload 会保留 last-known-good 配置并记录 last error。
+- 模板仅允许出现在明确白名单字段中（例如 token/script/executor profile env 等）。如果在非白名单字段中写入 `{{...}}`，配置校验会 fail-closed 并给出字段路径与迁移提示。
+- 具体哪些字段支持模板：以 `config.schema.json` / `projects.schema.json` 的字段描述为准。
 
 ## YAML LSP（校验 / Hover / 补全）
 

@@ -149,16 +149,37 @@ impl TemplateEnv {
     }
 }
 
+const MAX_TEMPLATE_REPLACEMENTS: usize = 128;
+const MAX_TEMPLATE_OUTPUT_BYTES: usize = 64 * 1024;
+
 fn resolve_templates_in_string(input: &str, env: &TemplateEnv) -> Result<String, ConfigError> {
     if !input.contains("{{") {
         return Ok(input.to_string());
     }
 
+    fn ensure_room(output: &str, additional: &str) -> Result<(), ConfigError> {
+        if output.len().saturating_add(additional.len()) > MAX_TEMPLATE_OUTPUT_BYTES {
+            return Err(ConfigError::ValidationError(format!(
+                "Template expansion exceeds max output length ({MAX_TEMPLATE_OUTPUT_BYTES} bytes)"
+            )));
+        }
+        Ok(())
+    }
+
     let mut output = String::with_capacity(input.len());
     let mut cursor = 0;
+    let mut replacements = 0usize;
     while let Some(start_rel) = input[cursor..].find("{{") {
+        if replacements >= MAX_TEMPLATE_REPLACEMENTS {
+            return Err(ConfigError::ValidationError(format!(
+                "Template expansion exceeds max replacements ({MAX_TEMPLATE_REPLACEMENTS})"
+            )));
+        }
+
         let start = cursor + start_rel;
-        output.push_str(&input[cursor..start]);
+        let prefix = &input[cursor..start];
+        ensure_room(&output, prefix)?;
+        output.push_str(prefix);
 
         let after = start + 2;
         let Some(end_rel) = input[after..].find("}}") else {
@@ -193,6 +214,12 @@ fn resolve_templates_in_string(input: &str, env: &TemplateEnv) -> Result<String,
             ));
         }
 
+        if namespace == "secret" && default.is_some() {
+            return Err(ConfigError::ValidationError(
+                "Invalid template: secret placeholders do not support default values".to_string(),
+            ));
+        }
+
         let resolved = match namespace {
             // env placeholders use secret.env precedence over system env.
             "env" => env.lookup_env(name),
@@ -216,41 +243,152 @@ fn resolve_templates_in_string(input: &str, env: &TemplateEnv) -> Result<String,
             },
         };
 
+        ensure_room(&output, &resolved)?;
         output.push_str(&resolved);
+        replacements += 1;
         cursor = end + 2;
     }
 
-    output.push_str(&input[cursor..]);
+    let suffix = &input[cursor..];
+    ensure_room(&output, suffix)?;
+    output.push_str(suffix);
     Ok(output)
 }
 
-fn resolve_yaml_templates(
-    value: &mut serde_yaml::Value,
-    env: &TemplateEnv,
-) -> Result<(), ConfigError> {
-    match value {
-        serde_yaml::Value::Null | serde_yaml::Value::Bool(_) | serde_yaml::Value::Number(_) => {
-            Ok(())
-        }
-        serde_yaml::Value::String(s) => {
-            let resolved = resolve_templates_in_string(s, env)?;
-            *s = resolved;
-            Ok(())
-        }
-        serde_yaml::Value::Sequence(items) => {
-            for item in items {
-                resolve_yaml_templates(item, env)?;
+#[derive(Clone, Debug)]
+enum TemplatePathSegment {
+    Key(String),
+    Index(usize),
+}
+
+fn template_path_to_string(path: &[TemplatePathSegment]) -> String {
+    let mut out = String::new();
+    for segment in path {
+        match segment {
+            TemplatePathSegment::Key(key) => {
+                if out.is_empty() {
+                    out.push_str(key);
+                } else {
+                    out.push('.');
+                    out.push_str(key);
+                }
             }
-            Ok(())
-        }
-        serde_yaml::Value::Mapping(map) => {
-            for (_k, v) in map.iter_mut() {
-                resolve_yaml_templates(v, env)?;
+            TemplatePathSegment::Index(index) => {
+                out.push('[');
+                out.push_str(&index.to_string());
+                out.push(']');
             }
-            Ok(())
         }
-        serde_yaml::Value::Tagged(tagged) => resolve_yaml_templates(&mut tagged.value, env),
     }
+    out
+}
+
+fn is_template_allowed_for_path(path: &[TemplatePathSegment]) -> bool {
+    use TemplatePathSegment::{Index, Key};
+
+    match path {
+        [Key(a), Key(b)] if a == "github" && b == "pat" => true,
+        [Key(a), Key(b)] if a == "github" && b == "oauth_token" => true,
+        [Key(a), Key(b)] if a == "access_control" && b == "token" => true,
+
+        [Key(a), Index(_), Key(b)] if a == "projects" && b == "dev_script" => true,
+        [Key(a), Index(_), Key(b), Index(_), Key(c)]
+            if a == "projects"
+                && b == "repos"
+                && matches!(c.as_str(), "setup_script" | "cleanup_script") =>
+        {
+            true
+        }
+        [Key(a), Index(_), Key(b), Key(c)]
+            if a == "projects"
+                && matches!(b.as_str(), "after_prepare_hook" | "before_cleanup_hook")
+                && c == "command" =>
+        {
+            true
+        }
+
+        [
+            Key(a),
+            Key(b),
+            Key(_executor),
+            Key(_variant),
+            Key(_agent),
+            Key(c),
+            Key(_env_key),
+        ] if a == "executor_profiles" && b == "executors" && c == "env" => true,
+
+        _ => false,
+    }
+}
+
+fn collect_template_paths(
+    value: &serde_json::Value,
+    path: &mut Vec<TemplatePathSegment>,
+    found: &mut Vec<Vec<TemplatePathSegment>>,
+) {
+    match value {
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+        serde_json::Value::String(s) => {
+            if s.contains("{{") {
+                found.push(path.clone());
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for (idx, item) in items.iter().enumerate() {
+                path.push(TemplatePathSegment::Index(idx));
+                collect_template_paths(item, path, found);
+                path.pop();
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (k, v) in map {
+                path.push(TemplatePathSegment::Key(k.clone()));
+                collect_template_paths(v, path, found);
+                path.pop();
+            }
+        }
+    }
+}
+
+const TEMPLATE_WHITELIST_DOCS: &str = concat!(
+    "Allowed template fields:\n",
+    "- github.pat\n",
+    "- github.oauth_token\n",
+    "- access_control.token\n",
+    "- projects[*].dev_script\n",
+    "- projects[*].repos[*].setup_script\n",
+    "- projects[*].repos[*].cleanup_script\n",
+    "- projects[*].after_prepare_hook.command\n",
+    "- projects[*].before_cleanup_hook.command\n",
+    "- executor_profiles.executors.<EXECUTOR>.<VARIANT>.<EXECUTOR>.env.<NAME>\n",
+);
+
+fn validate_templates_are_whitelisted(config: &Config) -> Result<(), ConfigError> {
+    let value = serde_json::to_value(config).map_err(|err| {
+        ConfigError::ValidationError(format!(
+            "Failed to serialize config for template validation: {err}"
+        ))
+    })?;
+
+    let mut all_template_paths = Vec::new();
+    collect_template_paths(&value, &mut Vec::new(), &mut all_template_paths);
+
+    let mut non_whitelisted = all_template_paths
+        .iter()
+        .filter(|path| !is_template_allowed_for_path(path))
+        .map(|path| template_path_to_string(path))
+        .collect::<Vec<_>>();
+
+    non_whitelisted.sort();
+    non_whitelisted.dedup();
+
+    let Some(first) = non_whitelisted.first() else {
+        return Ok(());
+    };
+
+    Err(ConfigError::ValidationError(format!(
+        "Template syntax is only allowed in specific fields, but was found at '{first}'.\n\n{TEMPLATE_WHITELIST_DOCS}\nMigration hint: move secrets into secret.env and reference them via {{{{secret.NAME}}}} in a whitelisted field (or pass them via executor profile env)."
+    )))
 }
 
 fn read_optional_file(path: &Path) -> Result<Option<String>, std::io::Error> {
@@ -361,13 +499,63 @@ fn read_config_disk_inputs_stable(
     read_stable_with_retries(|| read_config_disk_inputs_once(config_path, include_secret_env))
 }
 
-fn yaml_from_raw_with_templates(
-    raw: &str,
+fn resolve_templates_in_option_string(
+    value: &mut Option<String>,
     env: &TemplateEnv,
-) -> Result<serde_yaml::Value, ConfigError> {
-    let mut value = serde_yaml::from_str::<serde_yaml::Value>(raw)?;
-    resolve_yaml_templates(&mut value, env)?;
-    Ok(value)
+) -> Result<(), ConfigError> {
+    let Some(input) = value.as_deref() else {
+        return Ok(());
+    };
+    *value = Some(resolve_templates_in_string(input, env)?);
+    Ok(())
+}
+
+fn resolve_templates_in_executor_profiles_env(
+    profiles: &mut executors::profile::ExecutorConfigs,
+    env: &TemplateEnv,
+) -> Result<(), ConfigError> {
+    for executor_config in profiles.executors.values_mut() {
+        for agent in executor_config.configurations.values_mut() {
+            let Some(env_map) = agent.cmd_env_mut() else {
+                continue;
+            };
+            for value in env_map.values_mut() {
+                *value = resolve_templates_in_string(value, env)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn resolve_whitelisted_templates(
+    config: &mut Config,
+    env: &TemplateEnv,
+) -> Result<(), ConfigError> {
+    resolve_templates_in_option_string(&mut config.github.pat, env)?;
+    resolve_templates_in_option_string(&mut config.github.oauth_token, env)?;
+    resolve_templates_in_option_string(&mut config.access_control.token, env)?;
+
+    if let Some(profiles) = config.executor_profiles.as_mut() {
+        resolve_templates_in_executor_profiles_env(profiles, env)?;
+    }
+
+    for project in config.projects.iter_mut() {
+        resolve_templates_in_option_string(&mut project.dev_script, env)?;
+
+        if let Some(hook) = project.after_prepare_hook.as_mut() {
+            hook.command = resolve_templates_in_string(&hook.command, env)?;
+        }
+        if let Some(hook) = project.before_cleanup_hook.as_mut() {
+            hook.command = resolve_templates_in_string(&hook.command, env)?;
+        }
+
+        for repo in project.repos.iter_mut() {
+            resolve_templates_in_option_string(&mut repo.setup_script, env)?;
+            resolve_templates_in_option_string(&mut repo.cleanup_script, env)?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Load config.yaml + optional projects.yaml/projects.d without resolving `{{secret.*}}`/`{{env.*}}`
@@ -416,10 +604,7 @@ pub fn try_load_config_from_file(config_path: &Path) -> Result<Config, ConfigErr
     };
 
     let mut config = match disk.config_raw.as_deref() {
-        Some(raw) => {
-            let value = yaml_from_raw_with_templates(raw, &env)?;
-            serde_yaml::from_value::<Config>(value)?
-        }
+        Some(raw) => serde_yaml::from_str::<Config>(raw)?,
         None => Config::default(),
     };
 
@@ -429,16 +614,14 @@ pub fn try_load_config_from_file(config_path: &Path) -> Result<Config, ConfigErr
     let mut has_projects_override = false;
 
     if let Some(raw) = disk.projects_raw.as_deref() {
-        let value = yaml_from_raw_with_templates(raw, &env)?;
-        let file = serde_yaml::from_value::<ProjectsFile>(value)?;
+        let file = serde_yaml::from_str::<ProjectsFile>(raw)?;
         projects_override.extend(file.projects);
         has_projects_override = true;
     }
 
     for (_path, raw) in disk.projects_extra.into_iter() {
         let Some(raw) = raw else { continue };
-        let value = yaml_from_raw_with_templates(&raw, &env)?;
-        let file = serde_yaml::from_value::<ProjectsFile>(value)?;
+        let file = serde_yaml::from_str::<ProjectsFile>(&raw)?;
         projects_override.extend(file.projects);
         has_projects_override = true;
     }
@@ -446,6 +629,9 @@ pub fn try_load_config_from_file(config_path: &Path) -> Result<Config, ConfigErr
     if has_projects_override {
         config.projects = projects_override;
     }
+
+    validate_templates_are_whitelisted(&config)?;
+    resolve_whitelisted_templates(&mut config, &env)?;
 
     let config = config.normalized();
     config
@@ -509,10 +695,7 @@ fn build_runtime_config_from_disk(
     env: &TemplateEnv,
 ) -> Result<Config, ConfigError> {
     let mut config = match disk.config_raw.as_deref() {
-        Some(raw) => {
-            let value = yaml_from_raw_with_templates(raw, env)?;
-            serde_yaml::from_value::<Config>(value)?
-        }
+        Some(raw) => serde_yaml::from_str::<Config>(raw)?,
         None => Config::default(),
     };
 
@@ -522,8 +705,7 @@ fn build_runtime_config_from_disk(
     let mut has_projects_override = false;
 
     if let Some(raw) = disk.projects_raw.as_deref() {
-        let value = yaml_from_raw_with_templates(raw, env)?;
-        let file = serde_yaml::from_value::<ProjectsFile>(value)?;
+        let file = serde_yaml::from_str::<ProjectsFile>(raw)?;
         projects_override.extend(file.projects);
         has_projects_override = true;
     }
@@ -532,8 +714,7 @@ fn build_runtime_config_from_disk(
         let Some(raw) = raw.as_deref() else {
             continue;
         };
-        let value = yaml_from_raw_with_templates(raw, env)?;
-        let file = serde_yaml::from_value::<ProjectsFile>(value)?;
+        let file = serde_yaml::from_str::<ProjectsFile>(raw)?;
         projects_override.extend(file.projects);
         has_projects_override = true;
     }
@@ -541,6 +722,9 @@ fn build_runtime_config_from_disk(
     if has_projects_override {
         config.projects = projects_override;
     }
+
+    validate_templates_are_whitelisted(&config)?;
+    resolve_whitelisted_templates(&mut config, env)?;
 
     let config = config.normalized();
     config
@@ -761,7 +945,8 @@ projects:
   - id: 00000000-0000-0000-0000-000000000002
     name: "from_projects_yaml"
     repos:
-      - path: "{{env.PROJECT_ROOT}}/repo"
+      - path: "/tmp/repo"
+        setup_script: "echo {{env.PROJECT_ROOT}}/repo"
 "#,
         );
 
@@ -776,14 +961,175 @@ projects:
         assert_eq!(pair.runtime.projects[0].name, "from_projects_yaml");
         assert_eq!(pair.runtime.projects[0].repos.len(), 1);
         assert_eq!(pair.runtime.projects[0].repos[0].path, "/tmp/repo");
+        assert_eq!(
+            pair.runtime.projects[0].repos[0].setup_script.as_deref(),
+            Some("echo /tmp/repo")
+        );
 
         assert_eq!(pair.public.projects.len(), 1);
         assert_eq!(pair.public.projects[0].name, "from_projects_yaml");
         assert_eq!(pair.public.projects[0].repos.len(), 1);
+        assert_eq!(pair.public.projects[0].repos[0].path, "/tmp/repo");
         assert_eq!(
-            pair.public.projects[0].repos[0].path,
-            "{{env.PROJECT_ROOT}}/repo"
+            pair.public.projects[0].repos[0].setup_script.as_deref(),
+            Some("echo {{env.PROJECT_ROOT}}/repo")
         );
+    }
+
+    #[test]
+    fn template_in_non_whitelisted_field_is_rejected() {
+        let _guard = env_lock().lock().unwrap();
+        let _env = EnvVarGuard::set("PROJECT_ROOT", Some("/tmp"));
+
+        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
+        let config_path = dir.join("config.yaml");
+
+        write_file(
+            &config_path,
+            r#"
+projects:
+  - id: 00000000-0000-0000-0000-000000000001
+    name: "test"
+    repos:
+      - path: "{{env.PROJECT_ROOT}}/repo"
+"#,
+        );
+
+        let err = try_load_config_from_file(&config_path).expect_err("expected error");
+        match err {
+            ConfigError::ValidationError(message) => {
+                assert!(message.contains("projects[0].repos[0].path"));
+                assert!(message.contains("Migration hint"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn executor_profile_env_templates_are_resolved() {
+        let _guard = env_lock().lock().unwrap();
+        let _env = EnvVarGuard::set("OPENAI_API_KEY", Some("from_system"));
+
+        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
+        let config_path = dir.join("config.yaml");
+        let secret_path = dir.join("secret.env");
+
+        write_file(
+            &config_path,
+            r#"
+executor_profiles:
+  executors:
+    CLAUDE_CODE:
+      DEFAULT:
+        CLAUDE_CODE:
+          env:
+            OPENAI_API_KEY: "{{env.OPENAI_API_KEY}}"
+"#,
+        );
+        write_file(&secret_path, "OPENAI_API_KEY=from_secret\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600))
+                .expect("chmod secret.env");
+        }
+
+        let loaded = try_load_config_from_file(&config_path).expect("load config");
+        let profiles = loaded
+            .executor_profiles
+            .as_ref()
+            .expect("executor profiles");
+        let executor = profiles
+            .executors
+            .get(&executors_protocol::BaseCodingAgent::ClaudeCode)
+            .expect("CLAUDE_CODE config");
+        let default = executor.configurations.get("DEFAULT").expect("DEFAULT");
+        match default {
+            executors::executors::CodingAgent::ClaudeCode(cfg) => {
+                let env_map = cfg.cmd.env.as_ref().expect("env map");
+                assert_eq!(env_map.get("OPENAI_API_KEY").unwrap(), "from_secret");
+            }
+            other => panic!("unexpected agent: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn executor_profile_non_env_template_is_rejected() {
+        let _guard = env_lock().lock().unwrap();
+        let _env = EnvVarGuard::set("OPENAI_MODEL", Some("model"));
+
+        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
+        let config_path = dir.join("config.yaml");
+
+        write_file(
+            &config_path,
+            r#"
+executor_profiles:
+  executors:
+    CLAUDE_CODE:
+      DEFAULT:
+        CLAUDE_CODE:
+          model: "{{env.OPENAI_MODEL}}"
+"#,
+        );
+
+        let err = try_load_config_from_file(&config_path).expect_err("expected error");
+        match err {
+            ConfigError::ValidationError(message) => {
+                assert!(
+                    message.contains(
+                        "executor_profiles.executors.CLAUDE_CODE.DEFAULT.CLAUDE_CODE.model"
+                    )
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn template_replacement_limit_is_enforced() {
+        let _guard = env_lock().lock().unwrap();
+        let _env = EnvVarGuard::set("GITHUB_PAT", Some("x"));
+
+        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
+        let config_path = dir.join("config.yaml");
+
+        let pat = "{{env.GITHUB_PAT}}".repeat(MAX_TEMPLATE_REPLACEMENTS + 1);
+        write_file(&config_path, &format!("github:\n  pat: \"{pat}\"\n"));
+
+        let err = try_load_config_from_file(&config_path).expect_err("expected error");
+        match err {
+            ConfigError::ValidationError(message) => {
+                assert!(message.contains("max replacements"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn template_output_limit_is_enforced() {
+        let _guard = env_lock().lock().unwrap();
+        let huge = "a".repeat(MAX_TEMPLATE_OUTPUT_BYTES + 1);
+        let _env = EnvVarGuard::set("GITHUB_PAT", Some(&huge));
+
+        let dir = std::env::temp_dir().join(format!("vk-config-test-{}", uuid::Uuid::new_v4()));
+        let config_path = dir.join("config.yaml");
+
+        write_file(
+            &config_path,
+            r#"
+github:
+  pat: "{{env.GITHUB_PAT}}"
+"#,
+        );
+
+        let err = try_load_config_from_file(&config_path).expect_err("expected error");
+        match err {
+            ConfigError::ValidationError(message) => {
+                assert!(message.contains("max output length"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]

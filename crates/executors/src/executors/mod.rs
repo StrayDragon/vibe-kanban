@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use async_trait::async_trait;
 pub use executors_core::executors::{
@@ -146,6 +146,31 @@ impl CodingAgent {
 
     pub fn validate_auto_retry(&self) -> Result<(), String> {
         self.auto_retry_config().validate()
+    }
+
+    pub fn cmd_env_mut(&mut self) -> Option<&mut HashMap<String, String>> {
+        match self {
+            #[cfg(feature = "claude")]
+            Self::ClaudeCode(cfg) => cfg.cmd.env.as_mut(),
+            #[cfg(feature = "amp")]
+            Self::Amp(cfg) => cfg.cmd.env.as_mut(),
+            #[cfg(feature = "gemini")]
+            Self::Gemini(cfg) => cfg.cmd.env.as_mut(),
+            #[cfg(feature = "codex")]
+            Self::Codex(cfg) => cfg.cmd.env.as_mut(),
+            #[cfg(feature = "fake-agent")]
+            Self::FakeAgent(cfg) => cfg.cmd.env.as_mut(),
+            #[cfg(feature = "opencode")]
+            Self::Opencode(cfg) => cfg.cmd.env.as_mut(),
+            #[cfg(feature = "cursor")]
+            Self::CursorAgent(cfg) => cfg.cmd.env.as_mut(),
+            #[cfg(feature = "qwen")]
+            Self::QwenCode(cfg) => cfg.cmd.env.as_mut(),
+            #[cfg(feature = "copilot")]
+            Self::Copilot(cfg) => cfg.cmd.env.as_mut(),
+            #[cfg(feature = "droid")]
+            Self::Droid(cfg) => cfg.cmd.env.as_mut(),
+        }
     }
 
     fn preconfigured_mcp(&self) -> serde_json::Value {

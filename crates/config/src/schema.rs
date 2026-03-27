@@ -102,12 +102,12 @@ impl Default for NotificationConfig {
 #[serde(default)]
 pub struct GitHubConfig {
     #[schemars(
-        description = "GitHub PAT（推荐通过 secret.env 注入，例如在 config.yaml 中使用 `{{secret.GITHUB_PAT}}`）。"
+        description = "GitHub PAT（支持模板：`{{secret.GITHUB_PAT}}` / `{{env.GITHUB_PAT}}`；推荐通过 secret.env 注入；仅白名单字段允许模板）。"
     )]
     pub pat: Option<String>,
     #[serde(alias = "oauthToken")]
     #[schemars(
-        description = "GitHub OAuth Token（推荐通过 secret.env 注入，例如 `{{secret.GITHUB_OAUTH_TOKEN}}`）。"
+        description = "GitHub OAuth Token（支持模板：`{{secret.GITHUB_OAUTH_TOKEN}}` / `{{env.GITHUB_OAUTH_TOKEN}}`；推荐通过 secret.env 注入；仅白名单字段允许模板）。"
     )]
     pub oauth_token: Option<String>,
     #[schemars(description = "GitHub 用户名（可选）。")]
@@ -229,7 +229,7 @@ pub struct AccessControlConfig {
     #[schemars(description = "访问控制模式。DISABLED 表示不启用；TOKEN 表示要求提供 token。")]
     pub mode: AccessControlMode,
     #[schemars(
-        description = "访问 token（当 mode=TOKEN 时必填；推荐通过 secret.env 注入，例如 `{{secret.VK_ACCESS_TOKEN}}`）。"
+        description = "访问 token（当 mode=TOKEN 时必填；支持模板 `{{secret.VK_ACCESS_TOKEN}}` / `{{env.VK_ACCESS_TOKEN}}`；推荐通过 secret.env 注入；仅白名单字段允许模板）。"
     )]
     pub token: Option<String>,
     #[serde(alias = "allowLocalhostBypass")]
@@ -279,7 +279,9 @@ pub enum WorkspaceLifecycleHookRunMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, schemars::JsonSchema)]
 pub struct WorkspaceLifecycleHookConfig {
-    #[schemars(description = "Hook 命令（单一命令，不支持 shell 操作符拼接）。")]
+    #[schemars(
+        description = "Hook 命令（单一命令，不支持 shell 操作符拼接；支持模板 `{{env.NAME}}` / `{{env.NAME:-default}}` / `{{secret.NAME}}`）。"
+    )]
     pub command: String,
     #[schemars(description = "工作目录（相对 workspace root）。")]
     pub working_dir: Option<String>,
@@ -295,9 +297,13 @@ pub struct ProjectRepoConfig {
     pub path: String,
     #[schemars(description = "显示名称（可选，仅用于 UI 展示）。")]
     pub display_name: Option<String>,
-    #[schemars(description = "可选：在 coding agent 前运行的 setup 脚本（单一命令）。")]
+    #[schemars(
+        description = "可选：在 coding agent 前运行的 setup 脚本（单一命令；支持模板 `{{env.NAME}}` / `{{env.NAME:-default}}` / `{{secret.NAME}}`）。"
+    )]
     pub setup_script: Option<String>,
-    #[schemars(description = "可选：在 workspace 清理前运行的 cleanup 脚本（单一命令）。")]
+    #[schemars(
+        description = "可选：在 workspace 清理前运行的 cleanup 脚本（单一命令；支持模板 `{{env.NAME}}` / `{{env.NAME:-default}}` / `{{secret.NAME}}`）。"
+    )]
     pub cleanup_script: Option<String>,
     #[schemars(description = "可选：复制文件规则（legacy 字段；建议逐步移除）。")]
     pub copy_files: Option<String>,
@@ -328,7 +334,9 @@ pub struct ProjectConfig {
     #[schemars(description = "项目 repos（至少一个）。")]
     #[serde(default)]
     pub repos: Vec<ProjectRepoConfig>,
-    #[schemars(description = "可选：项目 dev server 脚本（单一命令）。")]
+    #[schemars(
+        description = "可选：项目 dev server 脚本（单一命令；支持模板 `{{env.NAME}}` / `{{env.NAME:-default}}` / `{{secret.NAME}}`）。"
+    )]
     pub dev_script: Option<String>,
     #[schemars(description = "可选：dev script 工作目录（相对 workspace root）。")]
     pub dev_script_working_dir: Option<String>,
@@ -368,7 +376,7 @@ pub struct Config {
     #[serde(default)]
     #[serde(alias = "executorProfiles")]
     #[schemars(
-        description = "Executor profiles 覆盖（可选，按需配置）。\n\n该字段会与内置 defaults 合并后作为运行时可用 profiles。\n当某个 executor/variant 在本次构建中不可用时，引用会导致配置校验失败。"
+        description = "Executor profiles 覆盖（可选，按需配置）。\n\n该字段会与内置 defaults 合并后作为运行时可用 profiles。\n当某个 executor/variant 在本次构建中不可用时，引用会导致配置校验失败。\n\n模板支持：仅允许在 profile 的 env map 值中使用 `{{env.*}}/{{secret.*}}`（例如 `executor_profiles.executors.CLAUDE_CODE.DEFAULT.CLAUDE_CODE.env.OPENAI_API_KEY: \"{{secret.OPENAI_API_KEY}}\"`）。其它字段不支持模板。"
     )]
     pub executor_profiles: Option<ExecutorConfigs>,
     #[serde(alias = "disclaimerAcknowledged")]

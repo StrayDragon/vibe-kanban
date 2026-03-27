@@ -283,7 +283,7 @@ export function GeneralSettings() {
               <div className="text-xs text-muted-foreground">
                 {t(
                   'settings.config.secretHint',
-                  'Use {{secret.NAME}} to reference values from secret.env (higher priority than system env).'
+                  'Use {{secret.NAME}} to reference values from secret.env (higher priority than system env). Templates are only supported in specific whitelisted fields (see schema).'
                 )}
               </div>
             </div>
