@@ -27,6 +27,25 @@ use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};
 
+pub(crate) const IMAGE_FILE_CACHE_CONTROL: &str = "private, max-age=31536000, immutable";
+
+pub(crate) fn build_image_file_response(
+    body: Body,
+    content_type: &str,
+    content_length: u64,
+) -> Result<Response, ApiError> {
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_LENGTH, content_length)
+        .header(header::CACHE_CONTROL, IMAGE_FILE_CACHE_CONTROL)
+        .header("X-Content-Type-Options", "nosniff")
+        .body(body)
+        .map_err(|e| ApiError::Image(ImageError::ResponseBuildError(e.to_string())))?;
+
+    Ok(response)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ImageResponse {
     pub id: Uuid,
@@ -153,15 +172,7 @@ pub async fn serve_image(
         .as_deref()
         .unwrap_or("application/octet-stream");
 
-    let response = Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, content_type)
-        .header(header::CONTENT_LENGTH, metadata.len())
-        .header(header::CACHE_CONTROL, "public, max-age=31536000") // Cache for 1 year
-        .body(body)
-        .map_err(|e| ApiError::Image(ImageError::ResponseBuildError(e.to_string())))?;
-
-    Ok(response)
+    build_image_file_response(body, content_type, metadata.len())
 }
 
 pub async fn delete_image(
@@ -259,4 +270,138 @@ pub fn routes() -> Router<DeploymentImpl> {
             "/task/{task_id}/upload",
             post(upload_task_image).layer(DefaultBodyLimit::max(20 * 1024 * 1024)),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use app_runtime::Deployment;
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode, header},
+    };
+    use tower::ServiceExt;
+    use uuid::Uuid;
+
+    use crate::{DeploymentImpl, http, test_support::TestEnvGuard};
+
+    async fn setup_deployment() -> (TestEnvGuard, DeploymentImpl) {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let env_guard = TestEnvGuard::new(&temp_root, db_url);
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+
+        (env_guard, deployment)
+    }
+
+    fn multipart_body(filename: &str, content_type: &str, data: &[u8]) -> (String, Vec<u8>) {
+        let boundary = format!("vk-boundary-{}", Uuid::new_v4());
+        let mut body = Vec::new();
+
+        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+        body.extend_from_slice(
+            format!(
+                "Content-Disposition: form-data; name=\"image\"; filename=\"{filename}\"\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(format!("Content-Type: {content_type}\r\n\r\n").as_bytes());
+        body.extend_from_slice(data);
+        body.extend_from_slice(b"\r\n");
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+
+        (boundary, body)
+    }
+
+    #[tokio::test]
+    async fn svg_upload_is_rejected() {
+        let (_env_guard, deployment) = setup_deployment().await;
+        let app = http::router(deployment);
+
+        let (boundary, body) = multipart_body(
+            "evil.svg",
+            "image/svg+xml",
+            br#"<svg xmlns="http://www.w3.org/2000/svg"></svg>"#,
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/images/upload")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn uploaded_images_are_not_publicly_cacheable_and_nosniff() {
+        let (_env_guard, deployment) = setup_deployment().await;
+        let app = http::router(deployment);
+
+        let (boundary, body) = multipart_body("ok.png", "image/png", b"not-a-real-png");
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/images/upload")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let image_id = json
+            .pointer("/data/id")
+            .and_then(|v| v.as_str())
+            .expect("upload response should include image id");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/images/{image_id}/file"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let cache_control = response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert!(!cache_control.contains("public"));
+
+        assert_eq!(
+            response
+                .headers()
+                .get("X-Content-Type-Options")
+                .and_then(|v| v.to_str().ok()),
+            Some("nosniff")
+        );
+    }
 }

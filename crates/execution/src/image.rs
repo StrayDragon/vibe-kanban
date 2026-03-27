@@ -11,6 +11,17 @@ use db::{
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+fn mime_type_for_extension(extension: &str) -> Option<&'static str> {
+    match extension.to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "bmp" => Some("image/bmp"),
+        _ => None,
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ImageError {
     #[error("IO error: {0}")]
@@ -69,15 +80,7 @@ impl ImageService {
             .and_then(|e| e.to_str())
             .unwrap_or("png");
 
-        let mime_type = match extension.to_lowercase().as_str() {
-            "png" => Some("image/png".to_string()),
-            "jpg" | "jpeg" => Some("image/jpeg".to_string()),
-            "gif" => Some("image/gif".to_string()),
-            "webp" => Some("image/webp".to_string()),
-            "bmp" => Some("image/bmp".to_string()),
-            "svg" => Some("image/svg+xml".to_string()),
-            _ => None,
-        };
+        let mime_type = mime_type_for_extension(extension).map(|mime| mime.to_string());
 
         if mime_type.is_none() {
             return Err(ImageError::InvalidFormat);
@@ -245,5 +248,26 @@ impl ImageService {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mime_type_for_extension;
+
+    #[test]
+    fn svg_is_not_an_allowed_upload_format() {
+        assert_eq!(mime_type_for_extension("svg"), None);
+        assert_eq!(mime_type_for_extension("SVG"), None);
+    }
+
+    #[test]
+    fn common_image_formats_are_allowed() {
+        assert_eq!(mime_type_for_extension("png"), Some("image/png"));
+        assert_eq!(mime_type_for_extension("jpg"), Some("image/jpeg"));
+        assert_eq!(mime_type_for_extension("jpeg"), Some("image/jpeg"));
+        assert_eq!(mime_type_for_extension("gif"), Some("image/gif"));
+        assert_eq!(mime_type_for_extension("webp"), Some("image/webp"));
+        assert_eq!(mime_type_for_extension("bmp"), Some("image/bmp"));
     }
 }

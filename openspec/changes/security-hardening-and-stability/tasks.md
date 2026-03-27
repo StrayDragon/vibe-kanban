@@ -39,9 +39,9 @@ Verification:
 
 ## 5. 图片上传/服务安全化（禁 SVG + 私有缓存）
 
-- [ ] 5.1 在 `crates/execution/src/image.rs` 中禁止 SVG（上传 `.svg`/`image/svg+xml` 返回 4xx），并为该行为增加测试
-- [ ] 5.2 修正 `/api/images/{id}/file` 与 attempt image proxy 的响应头：移除 `Cache-Control: public`，改为 `private` 或 `no-store`，并添加 `X-Content-Type-Options: nosniff`
-- [ ] 5.3 增加端到端回归测试：上传图片后可正常在 UI 渲染；SVG 上传被拒绝；图片响应头符合预期
+- [x] 5.1 在 `crates/execution/src/image.rs` 中禁止 SVG（上传 `.svg`/`image/svg+xml` 返回 4xx），并为该行为增加测试
+- [x] 5.2 修正 `/api/images/{id}/file` 与 attempt image proxy 的响应头：移除 `Cache-Control: public`，改为 `private` 或 `no-store`，并添加 `X-Content-Type-Options: nosniff`
+- [x] 5.3 增加端到端回归测试：上传图片后可正常在 UI 渲染；SVG 上传被拒绝；图片响应头符合预期
 
 Verification:
 - `cargo test -p execution image`

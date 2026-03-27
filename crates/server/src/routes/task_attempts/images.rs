@@ -5,7 +5,7 @@ use axum::{
     Extension, Router,
     body::Body,
     extract::{DefaultBodyLimit, Multipart, Query, Request, State},
-    http::{StatusCode, header},
+    http::StatusCode,
     middleware::{Next, from_fn_with_state},
     response::{Json as ResponseJson, Response},
     routing::{get, post},
@@ -22,7 +22,7 @@ use crate::{
     DeploymentImpl,
     error::ApiError,
     middleware::load_workspace_middleware,
-    routes::images::{ImageMetadata, ImageResponse, process_image_upload},
+    routes::images::{ImageMetadata, ImageResponse, build_image_file_response, process_image_upload},
 };
 
 #[derive(Debug, Deserialize)]
@@ -253,15 +253,7 @@ pub async fn serve_image(
         })
         .unwrap_or("application/octet-stream");
 
-    let response = Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, content_type)
-        .header(header::CONTENT_LENGTH, metadata.len())
-        .header(header::CACHE_CONTROL, "public, max-age=31536000")
-        .body(body)
-        .map_err(|e| ApiError::Image(ImageError::ResponseBuildError(e.to_string())))?;
-
-    Ok(response)
+    build_image_file_response(body, content_type, metadata.len())
 }
 
 /// Middleware to load Workspace for routes with wildcard path params.
