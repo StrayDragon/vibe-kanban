@@ -21,7 +21,7 @@ Verification:
 
 ## 3. Schema 生成改为 CLI upsert（移除启动写盘副作用）
 
-- [ ] 3.1 新增 CLI：`server config schema upsert`（或等价命令），写入/更新 `config.schema.json` 与 `projects.schema.json`
+- [ ] 3.1 新增 CLI：`vk config schema upsert`，写入/更新 `config.schema.json` 与 `projects.schema.json`
 - [ ] 3.2 移除服务启动路径中对 schema 的写盘（避免只读目录持续 warn）
 - [ ] 3.3 更新文案/指引：告诉用户用 CLI 生成 schema（并提供可复制命令）
 - [ ] 3.4 增加回归测试：CLI upsert 生成文件且不包含 secrets；只读 config dir 下 server 仍可启动（schema 生成失败不阻塞）
@@ -39,4 +39,3 @@ Verification:
 Verification:
 - `cargo test -p server projects tasks`
 - `pnpm -C frontend run check`
-
