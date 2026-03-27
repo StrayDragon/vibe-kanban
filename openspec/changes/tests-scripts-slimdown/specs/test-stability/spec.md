@@ -1,0 +1,26 @@
+# test-stability Specification (Delta)
+
+## ADDED Requirements
+
+### Requirement: Tests avoid repo-local temporary artifacts
+The test and development workflows SHALL avoid writing temporary databases or run-state directories into the repository working tree by default.
+
+#### Scenario: prepare-db uses OS temp paths
+- **WHEN** a developer runs the DB preparation script
+- **THEN** any temporary SQLite database is created under an OS temp directory (or a unique run directory)
+- **AND** the repository working tree is not polluted by leftover DB files
+
+### Requirement: E2E runs use unique run directories and clean up
+The E2E runner SHALL create a unique run directory per invocation and SHALL clean it up during teardown.
+
+#### Scenario: Aborted run does not poison the next run
+- **WHEN** an E2E run is interrupted or fails
+- **THEN** the next E2E run starts from a fresh run directory and does not reuse stale state
+
+### Requirement: Global environment mutations are RAII-guarded and serialized
+Tests that mutate process-global environment variables SHALL use RAII guards and SHALL serialize such tests to prevent cross-test interference.
+
+#### Scenario: Env is restored after a test
+- **WHEN** a test sets process-global environment variables
+- **THEN** those variables are restored to their prior values when the test completes (including on panic)
+
