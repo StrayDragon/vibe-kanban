@@ -22,9 +22,8 @@
 1. **prepare-db 临时 SQLite 使用 OS temp + 随机路径**
    - 选择：使用 `mkdtemp` 风格目录或随机文件名，避免在 repo 内写入 `prepare_db.sqlite`。
 
-2. **E2E runner 合并与唯一运行目录**
-   - 选择：`run-e2e.js` 支持 `--mode=dev|just-run`；每次运行生成唯一 `.e2e/<run-id>` 或 OS temp 目录。\n     teardown 强清理，避免脏状态。
-   - 备选：改用 Playwright `webServer` + globalSetup/Teardown 完全接管生命周期（后续可做）。
+2. **E2E 生命周期完全交给 Playwright（webServer + globalSetup/Teardown）**
+   - 选择：使用 Playwright 的 `webServer` 启动被测服务（dev/just-run 由环境变量选择），并通过 `globalSetup/globalTeardown` 负责：\n     - 创建唯一运行目录（OS temp 或 `.e2e/<run-id>`）\n     - 生成配置/资产/测试 repo\n     - 注入 `VK_CONFIG_DIR`/`VIBE_ASSET_DIR`/端口等环境变量\n     - teardown 强清理，避免脏状态\n   - 原因：减少自写进程管理/等待/信号处理代码，降低 flaky 与长期漂移。
 
 3. **check-i18n 改为 Node/TS**
    - 选择：将 jq/perl/diff 的逻辑内聚到 Node 脚本，保证跨平台一致性。
@@ -42,11 +41,6 @@
 ## Migration Plan
 
 1. prepare-db 与 E2E 目录唯一化先落地（收益最大、改动集中）。
-2. 合并 runner 脚本与 qa 去重。
+2. 引入 Playwright `webServer` + globalSetup/Teardown 并删除旧 runner；随后更新 `package.json` scripts 与 CI 调用。
 3. check-i18n 重写。
 4. 引入 `crates/test-support` 并逐步迁移 Rust tests（优先 server/config/app-runtime）。
-
-## Open Questions
-
-- E2E 生命周期是否要完全交给 Playwright `webServer`（可进一步减少自写进程管理）。
-

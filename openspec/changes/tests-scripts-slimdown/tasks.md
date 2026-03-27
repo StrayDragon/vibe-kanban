@@ -14,15 +14,15 @@ Verification:
 Verification:
 - `pnpm run qa`（或 CI 对应命令）
 
-## 3. E2E runner 合并 + 唯一运行目录
+## 3. E2E 生命周期交给 Playwright（webServer + Setup/Teardown）
 
-- [ ] 3.1 合并 `scripts/run-e2e.js` 与 `scripts/run-e2e-just-run.js`：统一为一个脚本，支持 `--mode=dev|just-run`
-- [ ] 3.2 `.e2e/` 改为每次运行唯一目录（例如 `.e2e/<pid>-<ts>` 或 OS temp），并在 teardown 强清理
-- [ ] 3.3 清理/等待逻辑统一抽取，减少自写进程管理重复代码
+- [ ] 3.1 配置 `playwright.config.ts` 的 `webServer`：根据 `VK_E2E_MODE=dev|just-run` 选择启动命令，并设置 `url/timeout` 等待就绪
+- [ ] 3.2 新增 `e2e/global-setup.ts` / `e2e/global-teardown.ts`：创建每次唯一运行目录（OS temp 或 `.e2e/<run-id>`），生成 config/projects/测试 repo，并在 teardown 强清理
+- [ ] 3.3 删除 `scripts/run-e2e.js` 与 `scripts/run-e2e-just-run.js`，并更新 `package.json` scripts：用环境变量选择模式后直接运行 `playwright test`
 
 Verification:
-- `node scripts/run-e2e.js --mode=dev`
-- `node scripts/run-e2e.js --mode=just-run`
+- `pnpm run e2e:test`
+- `VK_E2E_MODE=just-run pnpm run e2e:test`
 
 ## 4. check-i18n 改为 Node/TS 单脚本
 
@@ -40,4 +40,3 @@ Verification:
 
 Verification:
 - `cargo test --workspace`
-
