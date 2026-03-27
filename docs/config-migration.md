@@ -107,8 +107,6 @@ curl -s -X POST http://localhost:<BACKEND_PORT>/api/config/reload
 cargo run --bin server -- legacy export-db-projects-yaml --install
 ```
 
-注意：旧的 `cargo run --bin export_db_projects_yaml -- ...` 入口属于过渡期遗留，将在未来版本移除。
-
 ---
 
 # 迁移 legacy `config.json` / `profiles.json` → `config.yaml` + `secret.env`
