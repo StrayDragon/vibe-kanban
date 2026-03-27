@@ -261,6 +261,100 @@ fn read_optional_file(path: &Path) -> Result<Option<String>, std::io::Error> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ConfigDiskInputs {
+    secret_env: HashMap<String, String>,
+    config_raw: Option<String>,
+    projects_raw: Option<String>,
+    projects_extra: Vec<(PathBuf, Option<String>)>,
+}
+
+fn list_projects_extra_paths(projects_dir: &Path) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(projects_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let is_yaml = matches!(
+                path.extension().and_then(|ext| ext.to_str()),
+                Some("yaml") | Some("yml")
+            );
+            if is_yaml {
+                paths.push(path);
+            }
+        }
+    }
+    paths.sort();
+    paths
+}
+
+fn read_config_disk_inputs_once(
+    config_path: &PathBuf,
+    include_secret_env: bool,
+) -> Result<ConfigDiskInputs, ConfigError> {
+    let config_dir = config_path
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(utils_core::vk_config_dir);
+
+    let secret_env_path = config_dir.join("secret.env");
+    let secret_env = if include_secret_env {
+        load_secret_env(&secret_env_path)?
+    } else {
+        HashMap::new()
+    };
+
+    let projects_path = config_dir.join("projects.yaml");
+    let projects_dir = config_dir.join("projects.d");
+
+    let projects_extra_paths = list_projects_extra_paths(&projects_dir);
+
+    let config_raw = read_optional_file(config_path)?;
+    let projects_raw = read_optional_file(&projects_path)?;
+
+    let mut projects_extra = Vec::with_capacity(projects_extra_paths.len());
+    for path in projects_extra_paths {
+        let raw = read_optional_file(&path)?;
+        projects_extra.push((path, raw));
+    }
+
+    Ok(ConfigDiskInputs {
+        secret_env,
+        config_raw,
+        projects_raw,
+        projects_extra,
+    })
+}
+
+fn read_stable_with_retries<T, F>(mut read_once: F) -> Result<T, ConfigError>
+where
+    T: PartialEq,
+    F: FnMut() -> Result<T, ConfigError>,
+{
+    const MAX_ATTEMPTS: usize = 3;
+
+    for _ in 0..MAX_ATTEMPTS {
+        let first = read_once()?;
+        let second = read_once()?;
+        if first == second {
+            return Ok(first);
+        }
+    }
+
+    Err(ConfigError::ValidationError(
+        "Config files changed during load. Please retry.".to_string(),
+    ))
+}
+
+fn read_config_disk_inputs_stable(
+    config_path: &PathBuf,
+    include_secret_env: bool,
+) -> Result<ConfigDiskInputs, ConfigError> {
+    read_stable_with_retries(|| read_config_disk_inputs_once(config_path, include_secret_env))
+}
+
 fn yaml_from_raw_with_templates(
     raw: &str,
     env: &TemplateEnv,
@@ -273,61 +367,9 @@ fn yaml_from_raw_with_templates(
 /// Load config.yaml + optional projects.yaml/projects.d without resolving `{{secret.*}}`/`{{env.*}}`
 /// templates. This is intended for *display* and API responses to avoid leaking expanded secrets.
 pub fn try_load_public_config_from_file(config_path: &PathBuf) -> Result<Config, ConfigError> {
-    let config_dir = config_path
-        .parent()
-        .map(PathBuf::from)
-        .unwrap_or_else(utils_core::vk_config_dir);
+    let disk = read_config_disk_inputs_stable(config_path, false)?;
 
-    let projects_path = config_dir.join("projects.yaml");
-    let projects_dir = config_dir.join("projects.d");
-
-    let mut projects_extra_paths = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&projects_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let is_yaml = matches!(
-                path.extension().and_then(|ext| ext.to_str()),
-                Some("yaml") | Some("yml")
-            );
-            if is_yaml {
-                projects_extra_paths.push(path);
-            }
-        }
-    }
-    projects_extra_paths.sort();
-
-    let (raw, projects_raw, projects_extra_raws) = std::thread::scope(|scope| {
-        let config_handle = scope.spawn(|| read_optional_file(config_path));
-        let projects_handle = scope.spawn(|| read_optional_file(&projects_path));
-        let extra_handles = projects_extra_paths
-            .iter()
-            .map(|path| scope.spawn(move || read_optional_file(path)))
-            .collect::<Vec<_>>();
-
-        let config_raw = config_handle
-            .join()
-            .expect("config file read thread panicked");
-        let projects_raw = projects_handle
-            .join()
-            .expect("projects.yaml read thread panicked");
-        let extra_raws = extra_handles
-            .into_iter()
-            .map(|handle| handle.join().expect("projects.d read thread panicked"))
-            .collect::<Vec<_>>();
-
-        (config_raw, projects_raw, extra_raws)
-    });
-
-    let raw = raw?;
-    let projects_raw = projects_raw?;
-    let projects_extra_raws = projects_extra_raws
-        .into_iter()
-        .collect::<Result<Vec<_>, std::io::Error>>()?;
-
-    let mut config = match raw.as_deref() {
+    let mut config = match disk.config_raw.as_deref() {
         Some(raw) => serde_yaml::from_str::<Config>(raw)?,
         None => Config::default(),
     };
@@ -337,13 +379,14 @@ pub fn try_load_public_config_from_file(config_path: &PathBuf) -> Result<Config,
     let mut projects_override = Vec::new();
     let mut has_projects_override = false;
 
-    if let Some(raw) = projects_raw.as_deref() {
+    if let Some(raw) = disk.projects_raw.as_deref() {
         let file = serde_yaml::from_str::<ProjectsFile>(raw)?;
         projects_override.extend(file.projects);
         has_projects_override = true;
     }
 
-    for raw in projects_extra_raws.into_iter().flatten() {
+    for (_path, raw) in disk.projects_extra.into_iter() {
+        let Some(raw) = raw else { continue };
         let file = serde_yaml::from_str::<ProjectsFile>(&raw)?;
         projects_override.extend(file.projects);
         has_projects_override = true;
@@ -361,64 +404,12 @@ pub fn try_load_public_config_from_file(config_path: &PathBuf) -> Result<Config,
 }
 
 pub fn try_load_config_from_file(config_path: &PathBuf) -> Result<Config, ConfigError> {
-    let config_dir = config_path
-        .parent()
-        .map(PathBuf::from)
-        .unwrap_or_else(utils_core::vk_config_dir);
-    let secret_env_path = config_dir.join("secret.env");
-    let secret = load_secret_env(&secret_env_path)?;
-    let env = TemplateEnv { secret };
+    let disk = read_config_disk_inputs_stable(config_path, true)?;
+    let env = TemplateEnv {
+        secret: disk.secret_env,
+    };
 
-    let projects_path = config_dir.join("projects.yaml");
-    let projects_dir = config_dir.join("projects.d");
-
-    let mut projects_extra_paths = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&projects_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let is_yaml = matches!(
-                path.extension().and_then(|ext| ext.to_str()),
-                Some("yaml") | Some("yml")
-            );
-            if is_yaml {
-                projects_extra_paths.push(path);
-            }
-        }
-    }
-    projects_extra_paths.sort();
-
-    let (raw, projects_raw, projects_extra_raws) = std::thread::scope(|scope| {
-        let config_handle = scope.spawn(|| read_optional_file(config_path));
-        let projects_handle = scope.spawn(|| read_optional_file(&projects_path));
-        let extra_handles = projects_extra_paths
-            .iter()
-            .map(|path| scope.spawn(move || read_optional_file(path)))
-            .collect::<Vec<_>>();
-
-        let config_raw = config_handle
-            .join()
-            .expect("config file read thread panicked");
-        let projects_raw = projects_handle
-            .join()
-            .expect("projects.yaml read thread panicked");
-        let extra_raws = extra_handles
-            .into_iter()
-            .map(|handle| handle.join().expect("projects.d read thread panicked"))
-            .collect::<Vec<_>>();
-
-        (config_raw, projects_raw, extra_raws)
-    });
-
-    let raw = raw?;
-    let projects_raw = projects_raw?;
-    let projects_extra_raws = projects_extra_raws
-        .into_iter()
-        .collect::<Result<Vec<_>, std::io::Error>>()?;
-
-    let mut config = match raw.as_deref() {
+    let mut config = match disk.config_raw.as_deref() {
         Some(raw) => {
             let value = yaml_from_raw_with_templates(raw, &env)?;
             serde_yaml::from_value::<Config>(value)?
@@ -431,14 +422,15 @@ pub fn try_load_config_from_file(config_path: &PathBuf) -> Result<Config, Config
     let mut projects_override = Vec::new();
     let mut has_projects_override = false;
 
-    if let Some(raw) = projects_raw.as_deref() {
+    if let Some(raw) = disk.projects_raw.as_deref() {
         let value = yaml_from_raw_with_templates(raw, &env)?;
         let file = serde_yaml::from_value::<ProjectsFile>(value)?;
         projects_override.extend(file.projects);
         has_projects_override = true;
     }
 
-    for raw in projects_extra_raws.into_iter().flatten() {
+    for (_path, raw) in disk.projects_extra.into_iter() {
+        let Some(raw) = raw else { continue };
         let value = yaml_from_raw_with_templates(&raw, &env)?;
         let file = serde_yaml::from_value::<ProjectsFile>(value)?;
         projects_override.extend(file.projects);
@@ -538,6 +530,36 @@ mod tests {
             std::fs::create_dir_all(parent).expect("create dir");
         }
         std::fs::write(path, contents).expect("write file");
+    }
+
+    #[test]
+    fn stable_read_retries_until_two_consecutive_reads_match() {
+        let mut calls = 0;
+        let got = read_stable_with_retries(|| {
+            calls += 1;
+            Ok(match calls {
+                1 => "a",
+                2 => "b",
+                3 => "c",
+                4 => "c",
+                _ => unreachable!("unexpected call count"),
+            })
+        })
+        .expect("stable value");
+
+        assert_eq!(got, "c");
+    }
+
+    #[test]
+    fn stable_read_errors_if_inputs_never_stabilize() {
+        let mut calls = 0;
+        let err = read_stable_with_retries(|| {
+            calls += 1;
+            Ok(calls)
+        })
+        .expect_err("should error");
+
+        assert!(matches!(err, ConfigError::ValidationError(_)));
     }
 
     #[test]

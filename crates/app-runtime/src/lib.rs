@@ -740,16 +740,19 @@ impl AppRuntime {
                     utils_core::version::APP_VERSION,
                 );
 
+                let loaded_at = SystemTime::now();
+
+                // Commit all config-derived state under a single "snapshot" boundary to avoid
+                // readers observing mixed generations across config/public_config/status.
                 let mut config = self.config.write().await;
-                *config = new_config;
                 let mut public_config = self.public_config.write().await;
+                let mut status = self.config_status.write().await;
+
+                *config = new_config;
                 *public_config = new_public_config;
                 ExecutorConfigs::set_cached(profiles);
-                let mut status = self.config_status.write().await;
-                status.loaded_at = SystemTime::now();
+                status.loaded_at = loaded_at;
                 status.last_error = None;
-                drop(status);
-                drop(config);
                 Ok(())
             }
             Err(err) => {
@@ -944,9 +947,83 @@ impl AppRuntime {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        path::Path,
+        sync::{Mutex, MutexGuard, OnceLock},
+        time::Duration,
+    };
+
+    use super::Deployment;
     use config::Config;
+    use uuid::Uuid;
 
     use super::AppRuntime;
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvGuard {
+        _lock: MutexGuard<'static, ()>,
+        prev_database_url: Option<String>,
+        prev_asset_dir: Option<String>,
+        prev_disable_background_tasks: Option<String>,
+        prev_vk_config_dir: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn new(temp_root: &Path, db_url: String) -> Self {
+            let lock = env_lock().lock().unwrap_or_else(|err| err.into_inner());
+            let prev_database_url = std::env::var("DATABASE_URL").ok();
+            let prev_asset_dir = std::env::var("VIBE_ASSET_DIR").ok();
+            let prev_disable_background_tasks = std::env::var("VIBE_DISABLE_BACKGROUND_TASKS").ok();
+            let prev_vk_config_dir = std::env::var("VK_CONFIG_DIR").ok();
+
+            let vk_config_dir = temp_root.join("vk-config");
+            std::fs::create_dir_all(&vk_config_dir).unwrap();
+
+            // SAFETY: tests using EnvGuard are serialized by env_lock.
+            unsafe {
+                std::env::set_var("VIBE_ASSET_DIR", temp_root);
+                std::env::set_var("DATABASE_URL", db_url);
+                std::env::set_var("VIBE_DISABLE_BACKGROUND_TASKS", "1");
+                std::env::set_var("VK_CONFIG_DIR", &vk_config_dir);
+            }
+
+            Self {
+                _lock: lock,
+                prev_database_url,
+                prev_asset_dir,
+                prev_disable_background_tasks,
+                prev_vk_config_dir,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: tests using EnvGuard are serialized by env_lock.
+            unsafe {
+                match &self.prev_database_url {
+                    Some(value) => std::env::set_var("DATABASE_URL", value),
+                    None => std::env::remove_var("DATABASE_URL"),
+                }
+                match &self.prev_asset_dir {
+                    Some(value) => std::env::set_var("VIBE_ASSET_DIR", value),
+                    None => std::env::remove_var("VIBE_ASSET_DIR"),
+                }
+                match &self.prev_disable_background_tasks {
+                    Some(value) => std::env::set_var("VIBE_DISABLE_BACKGROUND_TASKS", value),
+                    None => std::env::remove_var("VIBE_DISABLE_BACKGROUND_TASKS"),
+                }
+                match &self.prev_vk_config_dir {
+                    Some(value) => std::env::set_var("VK_CONFIG_DIR", value),
+                    None => std::env::remove_var("VK_CONFIG_DIR"),
+                }
+            }
+        }
+    }
 
     #[test]
     fn update_app_version_state_clears_release_notes_flag() {
@@ -974,5 +1051,33 @@ mod tests {
 
         assert_eq!(config.last_app_version.as_deref(), Some("0.0.101"));
         assert!(!config.show_release_notes);
+    }
+
+    #[tokio::test]
+    async fn reload_user_config_is_serialized_by_reload_lock() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let _env_guard = EnvGuard::new(&temp_root, db_url);
+
+        let deployment = <AppRuntime as Deployment>::new().await.unwrap();
+
+        let lock_guard = deployment.config_reload_lock.lock().await;
+
+        let deployment_clone = deployment.clone();
+        let handle = tokio::spawn(async move { deployment_clone.reload_user_config().await });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!handle.is_finished());
+
+        drop(lock_guard);
+
+        tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("reload should finish after lock release")
+            .expect("join should succeed")
+            .expect("reload should succeed");
     }
 }

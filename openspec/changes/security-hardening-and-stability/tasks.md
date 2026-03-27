@@ -58,9 +58,9 @@ Verification:
 
 ## 7. Reload 原子化与多文件一致性
 
-- [ ] 7.1 将 reload 的“写入/提交”改为单快照原子切换（runtime config + public_config + status/diagnostics + executor cache 等不出现混合代）
-- [ ] 7.2 watcher 自动 reload 与手动 reload 串行化（并发触发不竞态、不出现“旧覆盖新”）
-- [ ] 7.3 降低多文件加载 TOCTOU 风险：对 `projects.d/*` 枚举/读取与 `secret.env`/`projects.yaml` 并行读取提供一致性策略（例如 generation/retry 或失败即保留 last-known-good）
+- [x] 7.1 将 reload 的“写入/提交”改为单快照原子切换（runtime config + public_config + status/diagnostics + executor cache 等不出现混合代）
+- [x] 7.2 watcher 自动 reload 与手动 reload 串行化（并发触发不竞态、不出现“旧覆盖新”）
+- [x] 7.3 降低多文件加载 TOCTOU 风险：对 `projects.d/*` 枚举/读取与 `secret.env`/`projects.yaml` 并行读取提供一致性策略（例如 generation/retry 或失败即保留 last-known-good）
 
 Verification:
 - `cargo test -p app-runtime reload`
