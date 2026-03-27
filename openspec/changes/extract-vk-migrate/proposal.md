@@ -5,14 +5,14 @@
 - 迁移工具包含大量文件 IO、YAML merge、备份、权限处理等边缘逻辑，长期维护成本高。
 - deprecated 能力应当易于拆除，但当前拆除成本偏高（强耦合在 server 中）。
 
-我们希望把迁移工具从主服务剥离成独立二进制 `vk-migrate`，并强简化写入逻辑（默认只生成输出文件，用户手工合并），同时提供一段可复制的 AI prompt（Claude Code/Codex）帮助用户低摩擦完成迁移。
+我们希望把迁移工具从主服务剥离成独立的 **operator CLI**：`vk`（后续也可扩展为统一入口），并强简化写入逻辑（默认只生成输出文件，用户手工合并），同时提供一段可复制的 AI prompt（Claude Code/Codex）帮助用户低摩擦完成迁移。
 
 ## What Changes
 
-- **BREAKING**: 将 `server legacy ...` 迁移命令从主 `server` 二进制剥离，改为独立 `vk-migrate`（或等价命名）二进制提供。
+- **BREAKING**: 将 `server legacy ...` 迁移命令从主 `server` 二进制剥离，改为 `vk migrate ...` 子命令提供。
 - **BREAKING**: 强简化 `--install`：默认仅输出迁移结果文件（例如 `config.migrated.<ts>.yaml` / `projects.migrated.<ts>.yaml` / `secret.env.migrated.<ts>`），不再做复杂的 YAML merge 写入；如需合并由用户手工或借助 AI 完成。
 - 迁移逻辑模块化拆分（db projects / asset config / secrets / io），并尽可能复用 `crates/config` 的校验作为“唯一真相”。
-- 为 `vk-migrate` 增加 `prompt` 子命令：打印一段针对 Claude Code/Codex 的迁移提示词（指导用户如何把 legacy 文件合并到新 YAML）。
+- 为 `vk migrate prompt` 增加一键复制提示词：打印一段针对 Claude Code/Codex 的迁移提示词（指导用户如何把 legacy 文件合并到新 YAML）。
 
 Goals:
 - 让主 `server` 更小、更纯：不编译/不暴露 deprecated 迁移能力。
@@ -31,7 +31,7 @@ Risks:
 
 Verification:
 - `cargo test --workspace`
-- 手动：`vk-migrate --help`、核心导出命令可运行、输出文件权限正确（secret.env 0600）
+- 手动：`vk --help`、核心导出命令可运行、输出文件权限正确（secret 输出 0600）
 
 ## Capabilities
 
@@ -44,8 +44,7 @@ Verification:
 ## Impact
 
 - Rust workspace:
-  - 新增 `vk-migrate` crate/bin
+  - 新增 `vk` crate/bin（operator CLI）
   - `crates/server/src/main.rs` 移除 legacy 子命令 wiring
   - `crates/server/src/legacy_migrations.rs` 拆分/迁移
 - 文档与脚本：安装/迁移说明需要更新
-
