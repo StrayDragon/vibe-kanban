@@ -10,7 +10,7 @@ Verification:
 
 - [ ] 2.1 根 `Cargo.toml` 调整 workspace members：默认只包含核心 executors（Claude Code + Codex）相关实现
 - [ ] 2.2 确保 `crates/executors` 的 feature-gating 仍可显式启用非核心 executors（路径依赖可用，但不进入默认 `--workspace`）
-- [ ] 2.3 CI/脚本调整：\n  - core job 只验证默认 features\n  - 增加可选 job（手动/定期）验证非核心 executors 不腐烂（可选）
+- [ ] 2.3 CI/脚本调整：core job 只验证默认 features；增加可选 job（手动/定期）验证非核心 executors 不腐烂（可选）
 
 Verification:
 - `cargo test --workspace`
@@ -37,7 +37,7 @@ Verification:
 
 - [ ] 5.1 `crates/server`：前端 embed 放入 `embed-frontend` feature（默认开启）
 - [ ] 5.2 `crates/utils-assets`：音频 embed 放入 `embed-sounds` feature（默认开启）
-- [ ] 5.3 server-only 形态行为：\n  - API/MCP 正常\n  - UI 路由返回 404（不依赖 frontend/dist 存在）
+- [ ] 5.3 server-only 形态行为：API/MCP 正常；UI 路由返回 404（不依赖 frontend/dist 存在）
 - [ ] 5.4 文档更新：新增 server-only 构建/运行说明（集群场景）
 
 Verification:
@@ -46,5 +46,5 @@ Verification:
 ## 6. Git 依赖策略调研与决策（git2 vs git CLI）
 
 - [ ] 6.1 盘点当前 git 能力点：哪些功能必须依赖 git2，哪些可用 git CLI 等价替换
-- [ ] 6.2 比较两条路线：\n  - 兼容性（不同 git 版本差异）\n  - 依赖/构建复杂度（libgit2/openssl）\n  - 行为一致性与可测试性
+- [ ] 6.2 比较两条路线：兼容性（不同 git 版本差异）；依赖/构建复杂度（libgit2/openssl）；行为一致性与可测试性
 - [ ] 6.3 输出 decision 文档（例如 `docs/decisions/git-strategy.md`）：明确推荐路线与分阶段拆除计划（避免长期双实现）
