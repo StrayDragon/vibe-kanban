@@ -345,7 +345,7 @@ Avoid: Guessing project_id (use list_projects)."#,
                 "Project not found",
                 Some(json!({
                     "project_id": project_id,
-                    "hint": "Projects are file-backed. Edit config.yaml and reload (POST /api/config/reload)."
+                    "hint": "Projects are file-backed. Edit projects.yaml (or projects.d/*.yaml) and reload (POST /api/config/reload)."
                 })),
             ));
         }
@@ -408,7 +408,7 @@ Avoid: Archiving tasks with running execution processes."#,
                 "Project not found",
                 Some(json!({
                     "project_id": project_id,
-                    "hint": "Projects are file-backed. Edit config.yaml and reload (POST /api/config/reload)."
+                    "hint": "Projects are file-backed. Edit projects.yaml (or projects.d/*.yaml) and reload (POST /api/config/reload)."
                 })),
             )
         })?;

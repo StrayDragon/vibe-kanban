@@ -103,7 +103,7 @@ export function ProjectSettings() {
         : [`    - path: ${yamlString('/abs/path/to/repo')}`];
 
     return [
-      '# Paste this under `projects:` in projects.yaml (create the file if missing)',
+      '# Paste this under `projects:` in projects.yaml (or a file under projects.d/)',
       `- id: ${snippetProjectId}`,
       `  name: ${yamlString(name)}`,
       '  repos:',
@@ -132,7 +132,7 @@ export function ProjectSettings() {
           <CardDescription>
             {t(
               'settings.projects.description',
-              'Edit projects.yaml on disk, then reload to apply changes.'
+              'Edit projects.yaml (or projects.d/*.yaml) on disk, then reload to apply changes.'
             )}
           </CardDescription>
         </CardHeader>
@@ -164,7 +164,7 @@ export function ProjectSettings() {
           <CardDescription>
             {t(
               'settings.projects.snippetDescription',
-              'Generate a minimal projects entry, then paste it into projects.yaml and reload.'
+              'Generate a minimal projects entry, then paste it into projects.yaml (or a file under projects.d/) and reload.'
             )}
           </CardDescription>
         </CardHeader>
@@ -260,7 +260,7 @@ export function ProjectSettings() {
             <div className="text-sm text-muted-foreground">
               {t(
                 'settings.projects.empty',
-                'No projects configured. Add a projects entry to projects.yaml and reload.'
+                'No projects configured. Add a projects entry to projects.yaml (or projects.d/*.yaml) and reload.'
               )}
             </div>
           )}

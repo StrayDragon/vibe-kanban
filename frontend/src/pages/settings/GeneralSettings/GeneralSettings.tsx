@@ -115,7 +115,7 @@ export function GeneralSettings() {
           <CardDescription>
             {t(
               'settings.config.description',
-              'Edit config.yaml / projects.yaml on disk, then reload to apply changes.'
+              'Edit config.yaml / projects.yaml / projects.d/*.yaml on disk, then reload to apply changes.'
             )}
           </CardDescription>
         </CardHeader>
@@ -312,7 +312,7 @@ export function GeneralSettings() {
               <div className="text-xs text-muted-foreground">
                 {t(
                   'settings.config.projectsSchemaHint',
-                  'Add this line to the top of projects.yaml to enable YAML LSP validation:'
+                  'Add this line to the top of projects.yaml (or projects.d/*.yaml) to enable YAML LSP validation:'
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
