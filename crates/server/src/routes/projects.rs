@@ -524,7 +524,16 @@ async fn load_project_from_config_middleware(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use axum::http::StatusCode;
+    use axum::{
+        body::{Body, to_bytes},
+        http::Request,
+    };
+    use db::models::repo::Repo;
+    use tower::ServiceExt;
+    use uuid::Uuid;
 
     use super::*;
 
@@ -538,6 +547,108 @@ mod tests {
                 .message()
                 .unwrap_or_default()
                 .contains("projects.yaml")
+            );
+    }
+
+    #[tokio::test]
+    async fn project_routes_do_not_leak_expanded_secrets() {
+        let secret = "sekrit-value-123";
+
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let _env_guard = crate::test_support::TestEnvGuard::new(&temp_root, db_url);
+
+        // Set up a projects.yaml that references a secret placeholder in fields that may be
+        // returned by API routes (dev_script) and in repo setup_script (should not be exposed).
+        let vk_config_dir = temp_root.join("vk-config");
+        let repo_path = temp_root.join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+
+        let secret_env_path = vk_config_dir.join("secret.env");
+        fs::write(&secret_env_path, format!("MY_SECRET={secret}\n")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut perms = fs::metadata(&secret_env_path).unwrap().permissions();
+            perms.set_mode(0o600);
+            fs::set_permissions(&secret_env_path, perms).unwrap();
+        }
+
+        let project_id = Uuid::new_v4();
+        let projects_yaml = format!(
+            r#"projects:
+  - id: "{project_id}"
+    name: "SecretTest"
+    dev_script: "echo {{{{secret.MY_SECRET}}}}"
+    repos:
+      - path: "{}"
+        display_name: "Repo"
+        setup_script: "echo {{{{secret.MY_SECRET}}}}"
+"#,
+            repo_path.to_string_lossy()
         );
+        fs::write(vk_config_dir.join("projects.yaml"), projects_yaml).unwrap();
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+
+        let repo = Repo::find_or_create(&deployment.db().pool, &repo_path, "Repo")
+            .await
+            .unwrap();
+
+        let app = crate::http::router(deployment);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/projects")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body_str = String::from_utf8_lossy(&body);
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        // Public config should preserve placeholders (no template expansion) and must not contain
+        // the expanded secret value.
+        let dev_script = json
+            .pointer("/data/0/dev_script")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        assert!(
+            dev_script.contains("{{secret.MY_SECRET}}"),
+            "dev_script did not preserve placeholders: {dev_script:?}\nbody: {body_str}"
+        );
+        assert!(
+            !body_str.contains(secret),
+            "response leaked expanded secret value\nbody: {body_str}"
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/projects/{project_id}/repositories/{}",
+                        repo.id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body_str = String::from_utf8_lossy(&body);
+        assert!(!body_str.contains(secret));
+
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json.pointer("/data/has_setup_script"), Some(&serde_json::Value::Bool(true)));
     }
 }

@@ -68,7 +68,7 @@ Verification:
 
 ## 8. 安全回归与测试稳定性清理
 
-- [ ] 8.1 增加“secret 不外泄”回归测试：将 `{{secret.*}}` 注入到可配置字段中，验证相关 API 响应不包含展开后的 secret 值（ExecutionProcess、project repo 等重点覆盖）
+- [x] 8.1 增加“secret 不外泄”回归测试：将 `{{secret.*}}` 注入到可配置字段中，验证相关 API 响应不包含展开后的 secret 值（ExecutionProcess、project repo 等重点覆盖）
 - [ ] 8.2 清理剩余 flaky 测试：移除脆弱 sleep/墙钟阈值断言；确保 env 修改使用 RAII guard，避免 panic 后污染后续用例
 - [ ] 8.3 文案/指引检查：确保用户提示统一指向 `projects.yaml` / `projects.d/*.yaml` 的最新配置路径（避免过时指向 `config.yaml` only）
 

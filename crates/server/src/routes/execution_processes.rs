@@ -546,3 +546,139 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
 
     Router::new().nest("/execution-processes", workspaces_router)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use app_runtime::Deployment;
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode},
+    };
+    use db::models::{
+        execution_process::{CreateExecutionProcess, ExecutionProcessRunReason},
+        project::{CreateProject, Project},
+        session::{CreateSession, Session},
+        task::{CreateTask, Task},
+        workspace::{CreateWorkspace, Workspace},
+    };
+    use executors_protocol::actions::{
+        ExecutorAction, ExecutorActionType,
+        script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
+    };
+    use tower::ServiceExt;
+    use uuid::Uuid;
+
+    use crate::{DeploymentImpl, http, test_support::TestEnvGuard};
+
+    #[tokio::test]
+    async fn execution_process_api_does_not_expose_script_contents() {
+        let temp_root = std::env::temp_dir().join(format!("vk-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_root).unwrap();
+
+        let db_path = temp_root.join("db.sqlite");
+        let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+        let _env_guard = TestEnvGuard::new(&temp_root, db_url);
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let pool = &deployment.db().pool;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            pool,
+            &CreateProject {
+                name: "Redaction".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            pool,
+            &CreateTask::from_title_description(project_id, "T".to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let workspace_id = Uuid::new_v4();
+        Workspace::create(
+            pool,
+            &CreateWorkspace {
+                branch: "main".to_string(),
+                agent_working_dir: None,
+            },
+            workspace_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let session_id = Uuid::new_v4();
+        let session = Session::create(
+            pool,
+            &CreateSession {
+                executor: Some("test".to_string()),
+            },
+            session_id,
+            workspace_id,
+        )
+        .await
+        .unwrap();
+
+        let secret = "sekrit-value-123";
+        let process_id = Uuid::new_v4();
+        db::models::execution_process::ExecutionProcess::create(
+            pool,
+            &CreateExecutionProcess {
+                session_id: session.id,
+                executor_action: ExecutorAction::new(
+                    ExecutorActionType::ScriptRequest(ScriptRequest {
+                        script: format!("echo {secret}"),
+                        language: ScriptRequestLanguage::Bash,
+                        context: ScriptContext::SetupScript,
+                        working_dir: None,
+                    }),
+                    None,
+                ),
+                run_reason: ExecutionProcessRunReason::CodingAgent,
+            },
+            process_id,
+            &[],
+        )
+        .await
+        .unwrap();
+
+        let app = http::router(deployment);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/execution-processes/{process_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body_str = String::from_utf8_lossy(&body);
+        assert!(!body_str.contains(secret));
+
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json.pointer("/data/executor_action/typ/type")
+                .and_then(|v| v.as_str()),
+            Some("ScriptRequest")
+        );
+        assert_eq!(
+            json.pointer("/data/executor_action/typ/script")
+                .and_then(|v| v.as_str()),
+            Some("<redacted>")
+        );
+    }
+}
