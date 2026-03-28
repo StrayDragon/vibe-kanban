@@ -1,9 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Operation } from 'rfc6902';
 import { useJsonPatchWsStream } from '../useJsonPatchWsStream';
 import { normalizeIdMapPatches } from '../jsonPatchUtils';
 import type { TaskStatus, TaskWithAttemptStatus } from 'shared/types';
 import { useOptimisticTasksStore } from '@/stores/useOptimisticTasksStore';
+import {
+  applyTaskDerivationChanges,
+  buildTaskDerivationCache,
+  EMPTY_TASKS_BY_STATUS,
+  type TaskDerivationCache,
+} from './taskDerivation';
 
 type TasksState = {
   tasks: Record<string, TaskWithAttemptStatus>;
@@ -16,6 +22,10 @@ const taskStatusRank: Record<TaskStatus, number> = {
   done: 3,
   cancelled: 4,
 };
+
+const EMPTY_TASKS_BY_ID: Record<string, TaskWithAttemptStatus> = {};
+
+type TasksDerivationCache = TaskDerivationCache & { includeArchived: boolean };
 
 export interface UseAllTasksResult {
   tasks: TaskWithAttemptStatus[];
@@ -41,6 +51,8 @@ export const useAllTasks = (
 ): UseAllTasksResult => {
   const includeArchived = options?.includeArchived ?? false;
   const [optimisticStaleTick, setOptimisticStaleTick] = useState(0);
+  const invalidatedTaskIdsRef = useRef<Set<string>>(new Set());
+  const derivedCacheRef = useRef<TasksDerivationCache | null>(null);
   const endpoint = includeArchived
     ? '/api/tasks/stream/ws?include_archived=true'
     : '/api/tasks/stream/ws';
@@ -52,8 +64,22 @@ export const useAllTasks = (
     []
   );
 
+  const onInvalidate = useCallback((invalidate: unknown) => {
+    if (!invalidate || typeof invalidate !== 'object') return;
+    const record = invalidate as Record<string, unknown>;
+    const taskIds = record.taskIds;
+    if (!Array.isArray(taskIds)) return;
+    taskIds.forEach((id) => {
+      if (typeof id !== 'string') return;
+      invalidatedTaskIdsRef.current.add(id);
+    });
+  }, []);
+
   const { data, isConnected, isResyncing, error, resync } =
-    useJsonPatchWsStream(endpoint, true, initialData, { deduplicatePatches });
+    useJsonPatchWsStream(endpoint, true, initialData, {
+      deduplicatePatches,
+      onInvalidate,
+    });
 
   const inserts = useOptimisticTasksStore((state) => state.inserts);
   const overrides = useOptimisticTasksStore((state) => state.overrides);
@@ -68,7 +94,10 @@ export const useAllTasks = (
     (state) => state.markResyncAttempt
   );
 
-  const streamTasksById = useMemo(() => data?.tasks ?? {}, [data?.tasks]);
+  const streamTasksById = useMemo(
+    () => data?.tasks ?? EMPTY_TASKS_BY_ID,
+    [data?.tasks]
+  );
 
   const hasOptimisticState = useMemo(() => {
     return (
@@ -86,61 +115,130 @@ export const useAllTasks = (
     return () => window.clearTimeout(timer);
   }, [hasOptimisticState, optimisticStaleTick]);
 
-  const mergedTasksById = useMemo(() => {
-    const merged: Record<string, TaskWithAttemptStatus> = {
-      ...streamTasksById,
-    };
-
-    Object.values(inserts).forEach(({ task }) => {
-      if (!includeArchived && task.archived_kanban_id) return;
-      merged[task.id] = task;
-    });
-
-    Object.entries(overrides).forEach(([taskId, { patch }]) => {
-      const base = merged[taskId];
-      if (!base) return;
-      merged[taskId] = { ...base, ...patch };
-    });
-
-    Object.keys(tombstones).forEach((taskId) => {
-      delete merged[taskId];
-    });
-
-    return merged;
-  }, [includeArchived, inserts, overrides, streamTasksById, tombstones]);
-
   const { tasks, tasksById, tasksByStatus } = useMemo(() => {
-    const merged: Record<string, TaskWithAttemptStatus> = {
-      ...mergedTasksById,
-    };
-    const byStatus: Record<TaskStatus, TaskWithAttemptStatus[]> = {
-      todo: [],
-      inprogress: [],
-      inreview: [],
-      done: [],
-      cancelled: [],
-    };
+    if (!data) {
+      derivedCacheRef.current = null;
+      return {
+        tasks: [],
+        tasksById: EMPTY_TASKS_BY_ID,
+        tasksByStatus: EMPTY_TASKS_BY_STATUS,
+      };
+    }
 
-    Object.values(merged).forEach((task) => {
-      byStatus[task.status]?.push(task);
+    const tombstonedIds = new Set(Object.keys(tombstones));
+
+    const insertedById: Record<string, TaskWithAttemptStatus> = {};
+    Object.values(inserts).forEach(({ task }) => {
+      if (tombstonedIds.has(task.id)) return;
+      if (!includeArchived && task.archived_kanban_id) return;
+      insertedById[task.id] = task;
     });
 
-    const sorted = Object.values(merged).sort(
-      (a, b) =>
-        new Date(b.created_at as string).getTime() -
-        new Date(a.created_at as string).getTime()
+    const overridePatchesById: Record<
+      string,
+      Partial<TaskWithAttemptStatus>
+    > = {};
+    Object.entries(overrides).forEach(([taskId, entry]) => {
+      if (tombstonedIds.has(taskId)) return;
+      overridePatchesById[taskId] = entry.patch;
+    });
+
+    const getEffectiveTask = (taskId: string) => {
+      if (tombstonedIds.has(taskId)) return null;
+      const base = insertedById[taskId] ?? streamTasksById[taskId];
+      if (!base) return null;
+      const patch = overridePatchesById[taskId];
+      if (!patch) return base;
+      return { ...base, ...patch } satisfies TaskWithAttemptStatus;
+    };
+
+    const tasksById = Object.create(streamTasksById) as Record<
+      string,
+      TaskWithAttemptStatus
+    >;
+    Object.keys(tombstones).forEach((taskId) => {
+      (tasksById as Record<string, unknown>)[taskId] = undefined;
+    });
+    Object.entries(insertedById).forEach(([taskId]) => {
+      const effective = getEffectiveTask(taskId);
+      if (effective) {
+        tasksById[taskId] = effective;
+      }
+    });
+    Object.entries(overridePatchesById).forEach(([taskId]) => {
+      if (tombstonedIds.has(taskId)) return;
+      if (Object.prototype.hasOwnProperty.call(insertedById, taskId)) return;
+      const effective = getEffectiveTask(taskId);
+      if (effective) {
+        tasksById[taskId] = effective;
+      }
+    });
+
+    const changedIds = new Set<string>();
+    invalidatedTaskIdsRef.current.forEach((id) => changedIds.add(id));
+    invalidatedTaskIdsRef.current.clear();
+    Object.keys(insertedById).forEach((id) => changedIds.add(id));
+    Object.keys(overridePatchesById).forEach((id) => changedIds.add(id));
+    Object.keys(tombstones).forEach((id) => changedIds.add(id));
+
+    const prev = derivedCacheRef.current;
+    const needsFullRebuild =
+      !prev ||
+      prev.includeArchived !== includeArchived ||
+      changedIds.size === 0;
+
+    const rebuild = () => {
+      const tasks: TaskWithAttemptStatus[] = [];
+      const insertIds = new Set(Object.keys(insertedById));
+      Object.keys(insertedById).forEach((id) => {
+        const effective = getEffectiveTask(id);
+        if (effective) tasks.push(effective);
+      });
+      Object.entries(streamTasksById).forEach(([id]) => {
+        if (insertIds.has(id)) return;
+        const effective = getEffectiveTask(id);
+        if (effective) tasks.push(effective);
+      });
+
+      const baseCache = buildTaskDerivationCache(tasks);
+      const nextCache: TasksDerivationCache = {
+        includeArchived,
+        ...baseCache,
+      };
+      derivedCacheRef.current = nextCache;
+      return nextCache;
+    };
+
+    if (needsFullRebuild) {
+      const nextCache = rebuild();
+      return {
+        tasks: nextCache.tasks,
+        tasksById,
+        tasksByStatus: nextCache.tasksByStatus,
+      };
+    }
+
+    const cache = prev;
+    const applied = applyTaskDerivationChanges(
+      cache,
+      changedIds,
+      getEffectiveTask
     );
+    if (!applied) {
+      const nextCache = rebuild();
+      return {
+        tasks: nextCache.tasks,
+        tasksById,
+        tasksByStatus: nextCache.tasksByStatus,
+      };
+    }
 
-    (Object.values(byStatus) as TaskWithAttemptStatus[][]).forEach((list) => {
-      list.sort(
-        (a, b) =>
-          new Date(b.created_at as string).getTime() -
-          new Date(a.created_at as string).getTime()
-      );
-    });
-
-    return { tasks: sorted, tasksById: merged, tasksByStatus: byStatus };
-  }, [mergedTasksById]);
+    return {
+      tasks: cache.tasks,
+      tasksById,
+      tasksByStatus: cache.tasksByStatus,
+    };
+  }, [data, includeArchived, inserts, overrides, streamTasksById, tombstones]);
 
   const isLoading = !data && !error; // until first snapshot
 

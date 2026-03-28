@@ -7,6 +7,6 @@ edition = "2024"
 axum = { workspace = true }
 serde_json = { workspace = true }
 futures = "0.3.31"
+json-patch = "2.0"
 logs-protocol = { path = "../logs-protocol" }
 logs-store = { path = "../logs-store" }
-

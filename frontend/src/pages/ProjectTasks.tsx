@@ -378,14 +378,6 @@ export function ProjectTasks() {
       }
     );
 
-    const getTimestamp = (item: KanbanColumnItem) => {
-      return new Date(item.created_at).getTime();
-    };
-
-    TASK_STATUSES.forEach((status) => {
-      columns[status].sort((a, b) => getTimestamp(b) - getTimestamp(a));
-    });
-
     return columns;
   }, [matchesTaskSearch, tasksByStatus]);
 

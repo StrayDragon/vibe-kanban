@@ -11,6 +11,12 @@ type WsJsonPatchMsg = WsBaseMsg & {
 type WsFinishedMsg = WsBaseMsg & { finished: boolean };
 type WsMsg = WsJsonPatchMsg | WsFinishedMsg;
 
+type PendingPatchEntry = {
+  seq: number | null;
+  invalidate?: unknown;
+  patches: Operation[];
+};
+
 interface UseJsonPatchStreamOptions<T> {
   /**
    * Called once when the stream starts to inject initial data
@@ -33,6 +39,12 @@ interface UseJsonPatchStreamOptions<T> {
    * Defaults to true to allow recovery from transient failures.
    */
   reconnectOnError?: boolean;
+  /**
+   * Optional hint hook for consumers to receive server-side invalidation metadata.
+   * This is meant for performance optimizations (cache invalidation / selective recompute),
+   * and MUST NOT be used as the sole correctness mechanism.
+   */
+  onInvalidate?: (invalidate: unknown, meta: { seq: number | null }) => void;
 }
 
 interface UseJsonPatchStreamResult<T> {
@@ -42,6 +54,82 @@ interface UseJsonPatchStreamResult<T> {
   error: string | null;
   resync: (reason?: string) => void;
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const decodePointerSegment = (segment: string) =>
+  segment.replace(/~1/g, '/').replace(/~0/g, '~');
+
+const splitPointerPath = (path: string) =>
+  path
+    .split('/')
+    .filter((segment) => segment.length > 0)
+    .map(decodePointerSegment);
+
+const tryApplyIdMapPatches = <TCurrent extends object>(
+  current: TCurrent,
+  patches: Operation[]
+): TCurrent | null => {
+  if (!isRecord(current)) return null;
+
+  let nextRoot: Record<string, unknown> | null = null;
+  const clonedMaps = new Map<string, Record<string, unknown>>();
+
+  const ensureRootClone = () => {
+    if (nextRoot) return nextRoot;
+    nextRoot = { ...current };
+    return nextRoot;
+  };
+
+  const ensureMapClone = (mapKey: string): Record<string, unknown> | null => {
+    const existing = clonedMaps.get(mapKey);
+    if (existing) return existing;
+
+    const baseValue =
+      nextRoot && Object.prototype.hasOwnProperty.call(nextRoot, mapKey)
+        ? nextRoot[mapKey]
+        : current[mapKey];
+    if (!isRecord(baseValue)) return null;
+
+    const clone = { ...baseValue };
+    clonedMaps.set(mapKey, clone);
+    ensureRootClone()[mapKey] = clone;
+    return clone;
+  };
+
+  for (const patch of patches) {
+    const segments = splitPointerPath(patch.path);
+    if (segments.length === 0) return null;
+
+    // Snapshot shape: replace /<mapKey> with a full object
+    if (segments.length === 1) {
+      if (patch.op !== 'replace') return null;
+      if (!isRecord(patch.value)) return null;
+      ensureRootClone()[segments[0]] = patch.value;
+      continue;
+    }
+
+    // Delta shape: add/replace/remove /<mapKey>/<id>
+    if (segments.length !== 2) return null;
+    const [mapKey, id] = segments;
+    const map = ensureMapClone(mapKey);
+    if (!map) return null;
+
+    if (patch.op === 'remove') {
+      delete map[id];
+      continue;
+    }
+    if (patch.op === 'add' || patch.op === 'replace') {
+      map[id] = patch.value;
+      continue;
+    }
+
+    return null;
+  }
+
+  return nextRoot ? (nextRoot as TCurrent) : current;
+};
 
 /**
  * Generic hook for consuming WebSocket streams that send JSON messages with patches
@@ -68,17 +156,104 @@ export const useJsonPatchWsStream = <T extends object>(
   const closeForResyncRef = useRef<boolean>(false);
   const closeOnOpenForResyncRef = useRef<boolean>(false);
   const lastSeqRef = useRef<number | null>(null);
+  const maxSeqQueuedRef = useRef<number | null>(null);
+  const pendingPatchesRef = useRef<PendingPatchEntry[]>([]);
+  const flushScheduledRef = useRef<boolean>(false);
+  const flushHandleRef = useRef<number | null>(null);
+  const flushHandleKindRef = useRef<'raf' | 'timeout' | null>(null);
 
   const injectInitialEntry = options?.injectInitialEntry;
   const deduplicatePatches = options?.deduplicatePatches;
   const reconnectOnCleanClose = options?.reconnectOnCleanClose ?? true;
   const reconnectOnError = options?.reconnectOnError ?? true;
+  const onInvalidate = options?.onInvalidate;
 
   const clearRetryTimer = useCallback(() => {
     if (!retryTimerRef.current) return;
     window.clearTimeout(retryTimerRef.current);
     retryTimerRef.current = null;
   }, []);
+
+  const cancelFlush = useCallback(() => {
+    if (!flushHandleRef.current) return;
+    const handle = flushHandleRef.current;
+    flushHandleRef.current = null;
+    flushScheduledRef.current = false;
+    const kind = flushHandleKindRef.current;
+    flushHandleKindRef.current = null;
+    if (kind === 'raf') {
+      window.cancelAnimationFrame(handle);
+      return;
+    }
+    window.clearTimeout(handle);
+  }, []);
+
+  const flushPendingPatches = useCallback(() => {
+    cancelFlush();
+
+    const entries = pendingPatchesRef.current;
+    if (entries.length === 0) return;
+    pendingPatchesRef.current = [];
+
+    const initial = dataRef.current;
+    if (initial === undefined) return;
+    let current = initial as T;
+
+    try {
+      for (const entry of entries) {
+        const patches = entry.patches;
+        if (!patches.length) continue;
+
+        const nextFast: T | null = tryApplyIdMapPatches(current, patches);
+        if (nextFast) {
+          current = nextFast;
+        } else {
+          const next = structuredClone(current);
+          applyPatch(next, patches);
+          current = next;
+        }
+
+        if (typeof entry.seq === 'number') {
+          lastSeqRef.current = entry.seq;
+          maxSeqQueuedRef.current = entry.seq;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to apply queued patches:', err);
+      setError('Failed to process stream update');
+      pendingPatchesRef.current = [];
+      closeForResyncRef.current = true;
+      wsRef.current?.close(4000, 'resync:stream_error');
+      return;
+    }
+
+    dataRef.current = current;
+    setData(current);
+  }, [cancelFlush]);
+
+  const scheduleFlush = useCallback(() => {
+    if (flushScheduledRef.current) return;
+    flushScheduledRef.current = true;
+
+    if (typeof window.requestAnimationFrame === 'function') {
+      flushHandleKindRef.current = 'raf';
+      flushHandleRef.current = window.requestAnimationFrame(() => {
+        flushHandleRef.current = null;
+        flushHandleKindRef.current = null;
+        flushScheduledRef.current = false;
+        flushPendingPatches();
+      });
+      return;
+    }
+
+    flushHandleKindRef.current = 'timeout';
+    flushHandleRef.current = window.setTimeout(() => {
+      flushHandleRef.current = null;
+      flushHandleKindRef.current = null;
+      flushScheduledRef.current = false;
+      flushPendingPatches();
+    }, 0);
+  }, [flushPendingPatches]);
 
   const scheduleReconnect = useCallback(() => {
     // Exponential backoff with cap: 1s, 2s, 4s, 8s (max), then stay at 8s
@@ -123,12 +298,15 @@ export const useJsonPatchWsStream = <T extends object>(
         closeWebSocket(wsRef.current);
         wsRef.current = null;
       }
+      cancelFlush();
+      pendingPatchesRef.current = [];
       clearRetryTimer();
       retryAttemptsRef.current = 0;
       finishedRef.current = false;
       closeForResyncRef.current = false;
       closeOnOpenForResyncRef.current = false;
       lastSeqRef.current = null;
+      maxSeqQueuedRef.current = null;
       setData(undefined);
       setIsConnected(false);
       setIsResyncing(false);
@@ -197,8 +375,9 @@ export const useJsonPatchWsStream = <T extends object>(
 
           if (
             typeof seq === 'number' &&
-            typeof lastSeqRef.current === 'number' &&
-            seq < lastSeqRef.current
+            typeof (maxSeqQueuedRef.current ?? lastSeqRef.current) ===
+              'number' &&
+            seq < (maxSeqQueuedRef.current ?? lastSeqRef.current)!
           ) {
             // Seq going backwards is not expected; force a full resync.
             closeForResyncRef.current = true;
@@ -216,17 +395,23 @@ export const useJsonPatchWsStream = <T extends object>(
             const current = dataRef.current;
             if (!filtered.length || !current) return;
 
-            // Deep clone the current state before mutating it
-            const next = structuredClone(current);
-
-            // Apply patch (mutates the clone in place)
-            applyPatch(next, filtered);
-
             if (typeof seq === 'number') {
-              lastSeqRef.current = seq;
+              maxSeqQueuedRef.current = seq;
             }
-            dataRef.current = next;
-            setData(next);
+
+            if (
+              typeof onInvalidate === 'function' &&
+              msg.invalidate !== undefined
+            ) {
+              onInvalidate(msg.invalidate, { seq });
+            }
+
+            pendingPatchesRef.current.push({
+              seq,
+              invalidate: msg.invalidate,
+              patches: filtered,
+            });
+            scheduleFlush();
           }
 
           // Handle finished messages ({finished: true})
@@ -234,6 +419,7 @@ export const useJsonPatchWsStream = <T extends object>(
           if ('finished' in msg) {
             if (typeof seq === 'number') {
               lastSeqRef.current = seq;
+              maxSeqQueuedRef.current = seq;
             }
             finishedRef.current = true;
             ws.close(1000, 'finished');
@@ -253,6 +439,9 @@ export const useJsonPatchWsStream = <T extends object>(
       };
 
       ws.onclose = (evt) => {
+        // Best-effort: apply any queued patches before deciding how to reconnect.
+        flushPendingPatches();
+
         setIsConnected(false);
         wsRef.current = null;
 
@@ -310,11 +499,14 @@ export const useJsonPatchWsStream = <T extends object>(
         closeWebSocket(wsRef.current);
         wsRef.current = null;
       }
+      cancelFlush();
+      pendingPatchesRef.current = [];
       clearRetryTimer();
       finishedRef.current = false;
       closeForResyncRef.current = false;
       closeOnOpenForResyncRef.current = false;
       lastSeqRef.current = null;
+      maxSeqQueuedRef.current = null;
       dataRef.current = undefined;
       setData(undefined);
       setIsResyncing(false);
@@ -327,14 +519,19 @@ export const useJsonPatchWsStream = <T extends object>(
     deduplicatePatches,
     reconnectOnCleanClose,
     reconnectOnError,
+    onInvalidate,
     requestReconnect,
     clearRetryTimer,
+    cancelFlush,
+    flushPendingPatches,
+    scheduleFlush,
   ]);
 
   const resync = useCallback(
     (reason?: string) => {
       if (!enabled || !endpoint) return;
 
+      flushPendingPatches();
       clearRetryTimer();
       retryAttemptsRef.current = 0;
 
@@ -354,7 +551,7 @@ export const useJsonPatchWsStream = <T extends object>(
       const closeReason = reason ? `resync:${reason}` : 'resync';
       wsRef.current.close(4000, closeReason.slice(0, 120));
     },
-    [clearRetryTimer, enabled, endpoint]
+    [clearRetryTimer, enabled, endpoint, flushPendingPatches]
   );
 
   return { data, isConnected, isResyncing, error, resync };

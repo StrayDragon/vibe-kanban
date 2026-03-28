@@ -628,6 +628,42 @@ export function TasksOverview() {
     return grouped;
   }, [filteredTasks]);
 
+  const projectTaskDerivations = useMemo(() => {
+    const derived: Record<
+      string,
+      {
+        statusCounts: Record<TaskStatus, number>;
+        tasksByStatus: Record<TaskStatus, Task[]>;
+      }
+    > = {};
+
+    Object.entries(tasksByProject).forEach(([projectId, projectTasks]) => {
+      const statusCounts: Record<TaskStatus, number> = {
+        todo: 0,
+        inprogress: 0,
+        inreview: 0,
+        done: 0,
+        cancelled: 0,
+      };
+      const tasksByStatus = STATUS_ORDER.reduce(
+        (acc, status) => {
+          acc[status] = [];
+          return acc;
+        },
+        {} as Record<TaskStatus, Task[]>
+      );
+
+      projectTasks.forEach((task) => {
+        statusCounts[task.status] += 1;
+        tasksByStatus[task.status].push(task);
+      });
+
+      derived[projectId] = { statusCounts, tasksByStatus };
+    });
+
+    return derived;
+  }, [tasksByProject]);
+
   const orderedProjectIds = useMemo(() => {
     const idsWithTasks = new Set(Object.keys(tasksByProject));
     const ordered = projects
@@ -908,36 +944,26 @@ export function TasksOverview() {
           const project = projectsById[projectIdKey];
           const projectTasks = tasksByProject[projectIdKey] ?? [];
           if (projectTasks.length === 0) return null;
+          const projectDerivation = projectTaskDerivations[projectIdKey];
+          const statusCounts = projectDerivation?.statusCounts ?? {
+            todo: 0,
+            inprogress: 0,
+            inreview: 0,
+            done: 0,
+            cancelled: 0,
+          };
+          const tasksByStatus = projectDerivation?.tasksByStatus ?? {
+            todo: [],
+            inprogress: [],
+            inreview: [],
+            done: [],
+            cancelled: [],
+          };
           const isCollapsed = collapsedProjects.has(projectIdKey);
           const projectName = project?.name ?? 'Unknown Project';
           const collapseLabel = isCollapsed
             ? t('overview.expandProject')
             : t('overview.collapseProject');
-
-          const statusCounts = projectTasks.reduce(
-            (acc, task) => {
-              acc[task.status] += 1;
-              return acc;
-            },
-            {
-              todo: 0,
-              inprogress: 0,
-              inreview: 0,
-              done: 0,
-              cancelled: 0,
-            } as Record<TaskStatus, number>
-          );
-          const tasksByStatus = STATUS_ORDER.reduce(
-            (acc, status) => {
-              acc[status] = [];
-              return acc;
-            },
-            {} as Record<TaskStatus, Task[]>
-          );
-
-          projectTasks.forEach((task) => {
-            tasksByStatus[task.status].push(task);
-          });
 
           return (
             <section key={projectIdKey} className="space-y-3">

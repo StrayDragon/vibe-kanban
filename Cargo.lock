@@ -3161,6 +3161,7 @@ version = "0.0.143"
 dependencies = [
  "axum",
  "futures",
+ "json-patch",
  "logs-protocol",
  "logs-store",
  "serde_json",

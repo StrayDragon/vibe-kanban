@@ -246,18 +246,7 @@ impl EventService {
             return Ok(());
         }
 
-        // Prefer the "active task list" view so automation diagnostics remain consistent,
-        // but fall back to fetching by id so archived task updates still broadcast.
-        let mut task =
-            Task::find_by_project_id_with_attempt_status(&self.db.pool, payload.project_id)
-                .await?
-                .into_iter()
-                .find(|t| t.id == payload.task_id);
-
-        if task.is_none() {
-            task = Task::find_by_id_with_attempt_status(&self.db.pool, payload.task_id).await?;
-        }
-
+        let task = Task::find_by_id_with_attempt_status(&self.db.pool, payload.task_id).await?;
         if let Some(task) = task {
             match kind {
                 PatchKind::Add => {

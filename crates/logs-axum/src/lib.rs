@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use axum::{extract::ws::Message, response::sse::Event};
 use futures::{StreamExt, TryStreamExt};
+use json_patch::{Patch, PatchOperation};
 use logs_protocol::{
     LogMsg,
     log_msg::{EV_FINISHED, EV_INVALIDATE, EV_JSON_PATCH, EV_SESSION_ID, EV_STDERR, EV_STDOUT},
@@ -57,19 +58,13 @@ fn split_pointer_path(path: &str) -> Vec<String> {
         .collect()
 }
 
-fn invalidation_hints_from_patch_json(patch: &Value) -> Option<Value> {
-    let Value::Array(ops) = patch else {
-        return None;
-    };
-
+fn invalidation_hints_from_patch(patch: &Patch) -> Option<Value> {
     let mut task_ids: BTreeSet<String> = BTreeSet::new();
     let mut workspace_ids: BTreeSet<String> = BTreeSet::new();
     let mut has_execution_process = false;
 
-    for op in ops {
-        let Some(path) = op.get("path").and_then(|v| v.as_str()) else {
-            continue;
-        };
+    for op in patch.iter() {
+        let path = op.path();
         if path.is_empty() {
             continue;
         }
@@ -90,14 +85,19 @@ fn invalidation_hints_from_patch_json(patch: &Value) -> Option<Value> {
                     workspace_ids.insert(id.clone());
                 }
 
-                let op_kind = op.get("op").and_then(|v| v.as_str());
-                if matches!(op_kind, Some("add" | "replace"))
-                    && let Some(task_id) = op
-                        .get("value")
-                        .and_then(|v| v.get("task_id"))
-                        .and_then(|v| v.as_str())
-                {
-                    task_ids.insert(task_id.to_string());
+                match op {
+                    PatchOperation::Add(add) => {
+                        if let Some(task_id) = add.value.get("task_id").and_then(|v| v.as_str()) {
+                            task_ids.insert(task_id.to_string());
+                        }
+                    }
+                    PatchOperation::Replace(replace) => {
+                        if let Some(task_id) = replace.value.get("task_id").and_then(|v| v.as_str())
+                        {
+                            task_ids.insert(task_id.to_string());
+                        }
+                    }
+                    _ => {}
                 }
             }
             "execution_processes" => {
@@ -134,8 +134,7 @@ impl SequencedLogMsgAxumExt for SequencedLogMsg {
             return None;
         };
 
-        let patch_value = serde_json::to_value(patch).ok()?;
-        let hints = invalidation_hints_from_patch_json(&patch_value)?;
+        let hints = invalidation_hints_from_patch(patch)?;
         let data = serde_json::to_string(&hints).ok()?;
 
         Some(
@@ -151,15 +150,17 @@ impl SequencedLogMsgAxumExt for SequencedLogMsg {
             return Message::Text(format!(r#"{{"seq":{},"finished":true}}"#, self.seq).into());
         }
 
+        let hints = match &self.msg {
+            LogMsg::JsonPatch(patch) => invalidation_hints_from_patch(patch),
+            _ => None,
+        };
+
         let value = serde_json::to_value(&self.msg)
             .unwrap_or_else(|_| serde_json::json!({ "error": "serialization_failed" }));
 
         let value = match value {
             Value::Object(mut map) => {
-                if matches!(self.msg, LogMsg::JsonPatch(_))
-                    && let Some(patch) = map.get("JsonPatch")
-                    && let Some(hints) = invalidation_hints_from_patch_json(patch)
-                {
+                if let Some(hints) = hints {
                     map.insert("invalidate".to_string(), hints);
                 }
                 map.insert("seq".to_string(), Value::from(self.seq));
@@ -247,6 +248,7 @@ mod tests {
             msg: log_msg,
         };
         let value = decode_text_message(msg.to_ws_message_unchecked());
+        assert_eq!(value["seq"], 1);
 
         let invalidate = value
             .get("invalidate")
@@ -279,6 +281,7 @@ mod tests {
             msg: log_msg,
         };
         let value = decode_text_message(msg.to_ws_message_unchecked());
+        assert_eq!(value["seq"], 1);
 
         let invalidate = value
             .get("invalidate")
@@ -313,6 +316,7 @@ mod tests {
             msg: log_msg,
         };
         let value = decode_text_message(msg.to_ws_message_unchecked());
+        assert_eq!(value["seq"], 1);
 
         let invalidate = value
             .get("invalidate")
@@ -323,6 +327,38 @@ mod tests {
         assert_eq!(
             invalidate.get("hasExecutionProcess"),
             Some(&serde_json::json!(true))
+        );
+    }
+
+    #[test]
+    fn invalidate_hints_decode_json_pointer_segments() {
+        let task_id = "foo~1bar";
+        let workspace_id = "baz~0qux";
+        let log_msg: LogMsg = serde_json::from_value(serde_json::json!({
+            "JsonPatch": [
+                { "op": "replace", "path": format!("/tasks/{task_id}"), "value": {} },
+                { "op": "add", "path": format!("/workspaces/{workspace_id}"), "value": { "task_id": "ignored" } }
+            ]
+        }))
+        .expect("valid JsonPatch log msg");
+
+        let msg = SequencedLogMsg {
+            seq: 2,
+            msg: log_msg,
+        };
+        let value = decode_text_message(msg.to_ws_message_unchecked());
+
+        let invalidate = value
+            .get("invalidate")
+            .and_then(|v| v.as_object())
+            .expect("invalidate hints missing");
+        assert_eq!(
+            invalidate.get("taskIds"),
+            Some(&serde_json::json!(["foo/bar", "ignored"]))
+        );
+        assert_eq!(
+            invalidate.get("workspaceIds"),
+            Some(&serde_json::json!(["baz~qux"]))
         );
     }
 }

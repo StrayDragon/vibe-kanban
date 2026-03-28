@@ -1,9 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Operation } from 'rfc6902';
 import { useJsonPatchWsStream } from '../useJsonPatchWsStream';
 import { normalizeIdMapPatches } from '../jsonPatchUtils';
 import type { TaskStatus, TaskWithAttemptStatus } from 'shared/types';
 import { useOptimisticTasksStore } from '@/stores/useOptimisticTasksStore';
+import {
+  applyTaskDerivationChanges,
+  buildTaskDerivationCache,
+  EMPTY_TASKS_BY_STATUS,
+  type TaskDerivationCache,
+} from '../tasks/taskDerivation';
 
 type TasksState = {
   tasks: Record<string, TaskWithAttemptStatus>;
@@ -16,6 +22,10 @@ const taskStatusRank: Record<TaskStatus, number> = {
   done: 3,
   cancelled: 4,
 };
+
+const EMPTY_TASKS_BY_ID: Record<string, TaskWithAttemptStatus> = {};
+
+type TasksDerivationCache = TaskDerivationCache & { projectId: string };
 
 export interface UseProjectTasksResult {
   tasks: TaskWithAttemptStatus[];
@@ -38,8 +48,12 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
   const endpoint = `/api/tasks/stream/ws?project_id=${encodeURIComponent(projectId)}`;
   const [connectEnabled, setConnectEnabled] = useState(false);
   const [optimisticStaleTick, setOptimisticStaleTick] = useState(0);
+  const invalidatedTaskIdsRef = useRef<Set<string>>(new Set());
+  const derivedCacheRef = useRef<TasksDerivationCache | null>(null);
 
   useEffect(() => {
+    invalidatedTaskIdsRef.current.clear();
+    derivedCacheRef.current = null;
     setConnectEnabled(false);
     if (!projectId) return;
     const timer = window.setTimeout(() => setConnectEnabled(true), 200);
@@ -53,9 +67,21 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
     []
   );
 
+  const onInvalidate = useCallback((invalidate: unknown) => {
+    if (!invalidate || typeof invalidate !== 'object') return;
+    const record = invalidate as Record<string, unknown>;
+    const taskIds = record.taskIds;
+    if (!Array.isArray(taskIds)) return;
+    taskIds.forEach((id) => {
+      if (typeof id !== 'string') return;
+      invalidatedTaskIdsRef.current.add(id);
+    });
+  }, []);
+
   const { data, isConnected, isResyncing, error, resync } =
     useJsonPatchWsStream(endpoint, connectEnabled, initialData, {
       deduplicatePatches,
+      onInvalidate,
     });
 
   const inserts = useOptimisticTasksStore((state) => state.inserts);
@@ -71,7 +97,10 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
     (state) => state.markResyncAttempt
   );
 
-  const streamTasksById = useMemo(() => data?.tasks ?? {}, [data?.tasks]);
+  const streamTasksById = useMemo(
+    () => data?.tasks ?? EMPTY_TASKS_BY_ID,
+    [data?.tasks]
+  );
 
   const hasOptimisticState = useMemo(() => {
     return (
@@ -90,62 +119,126 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
     return () => window.clearTimeout(timer);
   }, [connectEnabled, hasOptimisticState, optimisticStaleTick]);
 
-  const mergedTasksById = useMemo(() => {
-    const merged: Record<string, TaskWithAttemptStatus> = {
-      ...streamTasksById,
-    };
+  const { tasks, tasksById, tasksByStatus } = useMemo(() => {
+    if (!data) {
+      derivedCacheRef.current = null;
+      return {
+        tasks: [],
+        tasksById: EMPTY_TASKS_BY_ID,
+        tasksByStatus: EMPTY_TASKS_BY_STATUS,
+      };
+    }
 
+    const tombstonedIds = new Set(Object.keys(tombstones));
+
+    const insertedById: Record<string, TaskWithAttemptStatus> = {};
     Object.values(inserts).forEach(({ task }) => {
+      if (tombstonedIds.has(task.id)) return;
       if (task.project_id !== projectId) return;
       if (task.archived_kanban_id) return;
-      merged[task.id] = task;
+      insertedById[task.id] = task;
     });
 
-    Object.entries(overrides).forEach(([taskId, { patch }]) => {
-      const base = merged[taskId];
-      if (!base) return;
-      merged[taskId] = { ...base, ...patch };
+    const overridePatchesById: Record<
+      string,
+      Partial<TaskWithAttemptStatus>
+    > = {};
+    Object.entries(overrides).forEach(([taskId, entry]) => {
+      if (tombstonedIds.has(taskId)) return;
+      overridePatchesById[taskId] = entry.patch;
     });
 
+    const getEffectiveTask = (taskId: string) => {
+      if (tombstonedIds.has(taskId)) return null;
+      const base = insertedById[taskId] ?? streamTasksById[taskId];
+      if (!base) return null;
+      const patch = overridePatchesById[taskId];
+      if (!patch) return base;
+      return { ...base, ...patch } satisfies TaskWithAttemptStatus;
+    };
+
+    const tasksById = Object.create(streamTasksById) as Record<
+      string,
+      TaskWithAttemptStatus
+    >;
     Object.keys(tombstones).forEach((taskId) => {
-      delete merged[taskId];
+      (tasksById as Record<string, unknown>)[taskId] = undefined;
+    });
+    Object.entries(insertedById).forEach(([taskId]) => {
+      const effective = getEffectiveTask(taskId);
+      if (effective) {
+        tasksById[taskId] = effective;
+      }
+    });
+    Object.entries(overridePatchesById).forEach(([taskId]) => {
+      if (tombstonedIds.has(taskId)) return;
+      if (Object.prototype.hasOwnProperty.call(insertedById, taskId)) return;
+      const effective = getEffectiveTask(taskId);
+      if (effective) {
+        tasksById[taskId] = effective;
+      }
     });
 
-    return merged;
-  }, [inserts, overrides, projectId, streamTasksById, tombstones]);
+    const changedIds = new Set<string>();
+    invalidatedTaskIdsRef.current.forEach((id) => changedIds.add(id));
+    invalidatedTaskIdsRef.current.clear();
+    Object.keys(insertedById).forEach((id) => changedIds.add(id));
+    Object.keys(overridePatchesById).forEach((id) => changedIds.add(id));
+    Object.keys(tombstones).forEach((id) => changedIds.add(id));
 
-  const { tasks, tasksById, tasksByStatus } = useMemo(() => {
-    const merged: Record<string, TaskWithAttemptStatus> = {
-      ...mergedTasksById,
+    const prev = derivedCacheRef.current;
+    const needsFullRebuild =
+      !prev || prev.projectId !== projectId || changedIds.size === 0;
+
+    const rebuild = () => {
+      const tasks: TaskWithAttemptStatus[] = [];
+      const insertIds = new Set(Object.keys(insertedById));
+      Object.keys(insertedById).forEach((id) => {
+        const effective = getEffectiveTask(id);
+        if (effective) tasks.push(effective);
+      });
+      Object.entries(streamTasksById).forEach(([id]) => {
+        if (insertIds.has(id)) return;
+        const effective = getEffectiveTask(id);
+        if (effective) tasks.push(effective);
+      });
+
+      const baseCache = buildTaskDerivationCache(tasks);
+      const nextCache: TasksDerivationCache = { projectId, ...baseCache };
+      derivedCacheRef.current = nextCache;
+      return nextCache;
     };
-    const byStatus: Record<TaskStatus, TaskWithAttemptStatus[]> = {
-      todo: [],
-      inprogress: [],
-      inreview: [],
-      done: [],
-      cancelled: [],
-    };
 
-    Object.values(merged).forEach((task) => {
-      byStatus[task.status]?.push(task);
-    });
+    if (needsFullRebuild) {
+      const nextCache = rebuild();
+      return {
+        tasks: nextCache.tasks,
+        tasksById,
+        tasksByStatus: nextCache.tasksByStatus,
+      };
+    }
 
-    const sorted = Object.values(merged).sort(
-      (a, b) =>
-        new Date(b.created_at as string).getTime() -
-        new Date(a.created_at as string).getTime()
+    const cache = prev;
+    const applied = applyTaskDerivationChanges(
+      cache,
+      changedIds,
+      getEffectiveTask
     );
+    if (!applied) {
+      const nextCache = rebuild();
+      return {
+        tasks: nextCache.tasks,
+        tasksById,
+        tasksByStatus: nextCache.tasksByStatus,
+      };
+    }
 
-    (Object.values(byStatus) as TaskWithAttemptStatus[][]).forEach((list) => {
-      list.sort(
-        (a, b) =>
-          new Date(b.created_at as string).getTime() -
-          new Date(a.created_at as string).getTime()
-      );
-    });
-
-    return { tasks: sorted, tasksById: merged, tasksByStatus: byStatus };
-  }, [mergedTasksById]);
+    return {
+      tasks: cache.tasks,
+      tasksById,
+      tasksByStatus: cache.tasksByStatus,
+    };
+  }, [data, inserts, overrides, projectId, streamTasksById, tombstones]);
 
   const isLoading = !!projectId && !data && !error; // until first snapshot
 
