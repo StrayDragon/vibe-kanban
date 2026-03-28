@@ -49,7 +49,11 @@ static GIT_EXECUTABLE: OnceLock<Option<PathBuf>> = OnceLock::new();
 fn resolve_git_executable() -> Option<PathBuf> {
     let git = resolve_executable_path_blocking("git")?;
     let out = Command::new(&git).arg("--version").output().ok()?;
-    if out.status.success() { Some(git) } else { None }
+    if out.status.success() {
+        Some(git)
+    } else {
+        None
+    }
 }
 
 fn redact_sensitive_text(input: &str) -> String {
