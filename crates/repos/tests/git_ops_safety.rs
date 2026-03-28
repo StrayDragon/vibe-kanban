@@ -4,10 +4,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use git2::{PushOptions, Repository, build::CheckoutBuilder};
 use repos::git::{DiffContentPolicy, DiffTarget, GitCli, GitCliError, GitService};
 use tempfile::TempDir;
-// Avoid direct git CLI usage in tests; exercise GitService instead.
+
+mod git_test_utils;
+use git_test_utils::{
+    git_branch_force, git_checkout, git_clone, git_commit_all, git_config_user, git_init_bare,
+    git_push, git_remote_add, git_rev_parse, git_set_symbolic_head,
+};
 
 fn write_file<P: AsRef<Path>>(base: P, rel: &str, content: &str) {
     let path = base.as_ref().join(rel);
@@ -18,55 +22,25 @@ fn write_file<P: AsRef<Path>>(base: P, rel: &str, content: &str) {
     f.write_all(content.as_bytes()).unwrap();
 }
 
-fn commit_all(repo: &Repository, message: &str) {
-    let mut index = repo.index().unwrap();
-    index
-        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
-        .unwrap();
-    index.write().unwrap();
-    let tree_id = index.write_tree().unwrap();
-    let tree = repo.find_tree(tree_id).unwrap();
-    let sig = repo.signature().unwrap();
-    let parents: Vec<git2::Commit> = match repo.head() {
-        Ok(h) => vec![h.peel_to_commit().unwrap()],
-        Err(e) if e.code() == git2::ErrorCode::UnbornBranch => vec![],
-        Err(e) => panic!("failed to read HEAD: {e}"),
-    };
-    let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
-    let update_ref = if repo.head().is_ok() {
-        Some("HEAD")
-    } else {
-        None
-    };
-    repo.commit(update_ref, &sig, &sig, message, &tree, &parent_refs)
-        .unwrap();
+fn commit_all(repo_path: &Path, message: &str) {
+    git_commit_all(repo_path, message);
 }
 
-fn checkout_branch(repo: &Repository, name: &str) {
-    repo.set_head(&format!("refs/heads/{name}")).unwrap();
-    let mut co = CheckoutBuilder::new();
-    co.force();
-    repo.checkout_head(Some(&mut co)).unwrap();
+fn checkout_branch(repo_path: &Path, name: &str) {
+    git_checkout(repo_path, name);
 }
 
-fn create_branch_from_head(repo: &Repository, name: &str) {
-    let head = repo.head().unwrap().peel_to_commit().unwrap();
-    let _ = repo.branch(name, &head, true).unwrap();
+fn create_branch_from_head(repo_path: &Path, name: &str) {
+    git_branch_force(repo_path, name, "HEAD");
 }
 
-fn configure_user(repo: &Repository) {
-    let mut cfg = repo.config().unwrap();
-    cfg.set_str("user.name", "Test User").unwrap();
-    cfg.set_str("user.email", "test@example.com").unwrap();
+fn configure_user(repo_path: &Path) {
+    git_config_user(repo_path, "Test User", "test@example.com");
 }
 
-fn push_ref(repo: &Repository, local: &str, remote: &str) {
-    let mut remote_handle = repo.find_remote("origin").unwrap();
-    let mut opts = PushOptions::new();
+fn push_ref(repo_path: &Path, local: &str, remote: &str) {
     let spec = format!("+{local}:{remote}");
-    remote_handle
-        .push(&[spec.as_str()], Some(&mut opts))
-        .unwrap();
+    git_push(repo_path, "origin", &spec);
 }
 
 fn add_path(repo_path: &Path, path: &str) {
@@ -84,34 +58,32 @@ fn setup_repo_with_worktree(root: &TempDir) -> (PathBuf, PathBuf) {
         .initialize_repo_with_main_branch(&repo_path)
         .expect("init repo");
 
-    let repo = Repository::open(&repo_path).unwrap();
-    configure_user(&repo);
-    checkout_branch(&repo, "main");
+    configure_user(&repo_path);
+    checkout_branch(&repo_path, "main");
 
     write_file(&repo_path, "common.txt", "base\n");
-    commit_all(&repo, "initial main commit");
+    commit_all(&repo_path, "initial main commit");
 
-    create_branch_from_head(&repo, "old-base");
-    checkout_branch(&repo, "old-base");
+    create_branch_from_head(&repo_path, "old-base");
+    checkout_branch(&repo_path, "old-base");
     write_file(&repo_path, "base.txt", "from old-base\n");
-    commit_all(&repo, "old-base commit");
+    commit_all(&repo_path, "old-base commit");
 
-    checkout_branch(&repo, "main");
-    create_branch_from_head(&repo, "new-base");
-    checkout_branch(&repo, "new-base");
+    checkout_branch(&repo_path, "main");
+    create_branch_from_head(&repo_path, "new-base");
+    checkout_branch(&repo_path, "new-base");
     write_file(&repo_path, "base.txt", "from new-base\n");
-    commit_all(&repo, "new-base commit");
+    commit_all(&repo_path, "new-base commit");
 
-    checkout_branch(&repo, "old-base");
-    create_branch_from_head(&repo, "feature");
+    checkout_branch(&repo_path, "old-base");
+    create_branch_from_head(&repo_path, "feature");
 
     let svc = GitService::new();
     svc.add_worktree(&repo_path, &worktree_path, "feature")
         .expect("create worktree");
 
     write_file(&worktree_path, "feat.txt", "feat change\n");
-    let wt_repo = Repository::open(&worktree_path).unwrap();
-    commit_all(&wt_repo, "feature commit");
+    commit_all(&worktree_path, "feature commit");
 
     (repo_path, worktree_path)
 }
@@ -126,36 +98,34 @@ fn setup_conflict_repo_with_worktree(root: &TempDir) -> (PathBuf, PathBuf) {
         .initialize_repo_with_main_branch(&repo_path)
         .expect("init repo");
 
-    let repo = Repository::open(&repo_path).unwrap();
-    configure_user(&repo);
-    checkout_branch(&repo, "main");
+    configure_user(&repo_path);
+    checkout_branch(&repo_path, "main");
 
     write_file(&repo_path, "conflict.txt", "base\n");
-    commit_all(&repo, "initial main commit");
+    commit_all(&repo_path, "initial main commit");
 
     // old-base modifies conflict.txt one way
-    create_branch_from_head(&repo, "old-base");
-    checkout_branch(&repo, "old-base");
+    create_branch_from_head(&repo_path, "old-base");
+    checkout_branch(&repo_path, "old-base");
     write_file(&repo_path, "conflict.txt", "old-base version\n");
-    commit_all(&repo, "old-base change");
+    commit_all(&repo_path, "old-base change");
 
     // feature builds on old-base and modifies same lines differently
-    create_branch_from_head(&repo, "feature");
+    create_branch_from_head(&repo_path, "feature");
 
     // new-base modifies in a conflicting way
-    checkout_branch(&repo, "main");
-    create_branch_from_head(&repo, "new-base");
-    checkout_branch(&repo, "new-base");
+    checkout_branch(&repo_path, "main");
+    create_branch_from_head(&repo_path, "new-base");
+    checkout_branch(&repo_path, "new-base");
     write_file(&repo_path, "conflict.txt", "new-base version\n");
-    commit_all(&repo, "new-base change");
+    commit_all(&repo_path, "new-base change");
 
     // add a worktree for feature and create the conflicting commit
     let svc = GitService::new();
     svc.add_worktree(&repo_path, &worktree_path, "feature")
         .expect("create worktree");
-    let wt_repo = Repository::open(&worktree_path).unwrap();
     write_file(&worktree_path, "conflict.txt", "feature version\n");
-    commit_all(&wt_repo, "feature conflicting change");
+    commit_all(&worktree_path, "feature conflicting change");
 
     (repo_path, worktree_path)
 }
@@ -170,25 +140,24 @@ fn setup_no_unique_feature_repo(root: &TempDir) -> (PathBuf, PathBuf) {
         .initialize_repo_with_main_branch(&repo_path)
         .expect("init repo");
 
-    let repo = Repository::open(&repo_path).unwrap();
-    configure_user(&repo);
-    checkout_branch(&repo, "main");
+    configure_user(&repo_path);
+    checkout_branch(&repo_path, "main");
 
     write_file(&repo_path, "base.txt", "main base\n");
-    commit_all(&repo, "initial main commit");
+    commit_all(&repo_path, "initial main commit");
 
     // Create old-base at this point
-    create_branch_from_head(&repo, "old-base");
+    create_branch_from_head(&repo_path, "old-base");
     // Create new-base diverging
-    checkout_branch(&repo, "main");
-    create_branch_from_head(&repo, "new-base");
-    checkout_branch(&repo, "new-base");
+    checkout_branch(&repo_path, "main");
+    create_branch_from_head(&repo_path, "new-base");
+    checkout_branch(&repo_path, "new-base");
     write_file(&repo_path, "advance.txt", "new base\n");
-    commit_all(&repo, "advance new-base");
+    commit_all(&repo_path, "advance new-base");
 
     // Create feature equal to old-base (no unique commits)
-    checkout_branch(&repo, "old-base");
-    create_branch_from_head(&repo, "feature");
+    checkout_branch(&repo_path, "old-base");
+    create_branch_from_head(&repo_path, "feature");
     let svc = GitService::new();
     svc.add_worktree(&repo_path, &worktree_path, "feature")
         .expect("create worktree");
@@ -206,26 +175,24 @@ fn setup_direct_conflict_repo(root: &TempDir) -> (PathBuf, PathBuf) {
         .initialize_repo_with_main_branch(&repo_path)
         .expect("init repo");
 
-    let repo = Repository::open(&repo_path).unwrap();
-    configure_user(&repo);
-    checkout_branch(&repo, "main");
+    configure_user(&repo_path);
+    checkout_branch(&repo_path, "main");
 
     write_file(&repo_path, "conflict.txt", "base\n");
-    commit_all(&repo, "initial main commit");
+    commit_all(&repo_path, "initial main commit");
 
     // Create feature and commit conflicting change
-    create_branch_from_head(&repo, "feature");
+    create_branch_from_head(&repo_path, "feature");
     let svc = GitService::new();
     svc.add_worktree(&repo_path, &worktree_path, "feature")
         .expect("create worktree");
-    let wt_repo = Repository::open(&worktree_path).unwrap();
     write_file(&worktree_path, "conflict.txt", "feature change\n");
-    commit_all(&wt_repo, "feature change");
+    commit_all(&worktree_path, "feature change");
 
     // Change main in a conflicting way
-    checkout_branch(&repo, "main");
+    checkout_branch(&repo_path, "main");
     write_file(&repo_path, "conflict.txt", "main change\n");
-    commit_all(&repo, "main change");
+    commit_all(&repo_path, "main change");
 
     (repo_path, worktree_path)
 }
@@ -234,7 +201,7 @@ fn setup_direct_conflict_repo(root: &TempDir) -> (PathBuf, PathBuf) {
 fn push_reports_non_fast_forward() {
     let temp_dir = TempDir::new().unwrap();
     let remote_path = temp_dir.path().join("remote.git");
-    Repository::init_bare(&remote_path).expect("init bare remote");
+    git_init_bare(&remote_path);
     let remote_url = remote_path.to_str().expect("remote path str");
 
     // Seed the bare repo with an initial main branch commit
@@ -243,38 +210,33 @@ fn push_reports_non_fast_forward() {
     service
         .initialize_repo_with_main_branch(&seed_path)
         .expect("init seed repo");
-    let seed_repo = Repository::open(&seed_path).expect("open seed repo");
-    configure_user(&seed_repo);
-    seed_repo.remote("origin", remote_url).expect("add remote");
-    push_ref(&seed_repo, "refs/heads/main", "refs/heads/main");
-    Repository::open_bare(&remote_path)
-        .expect("open bare remote")
-        .set_head("refs/heads/main")
-        .expect("set remote HEAD");
+    configure_user(&seed_path);
+    git_remote_add(&seed_path, "origin", remote_url);
+    push_ref(&seed_path, "refs/heads/main", "refs/heads/main");
+    git_set_symbolic_head(&remote_path, "refs/heads/main");
 
     // Local clone that will attempt the push later
     let local_path = temp_dir.path().join("local");
-    let local_repo = Repository::clone(remote_url, &local_path).expect("clone local");
-    configure_user(&local_repo);
-    checkout_branch(&local_repo, "main");
+    git_clone(remote_url, &local_path);
+    configure_user(&local_path);
+    checkout_branch(&local_path, "main");
     write_file(&local_path, "file.txt", "initial local\n");
-    commit_all(&local_repo, "initial local commit");
-    push_ref(&local_repo, "refs/heads/main", "refs/heads/main");
+    commit_all(&local_path, "initial local commit");
+    push_ref(&local_path, "refs/heads/main", "refs/heads/main");
 
     // Separate clone simulates someone else pushing first
     let updater_path = temp_dir.path().join("updater");
-    let updater_repo = Repository::clone(remote_url, &updater_path).expect("clone updater");
-    configure_user(&updater_repo);
-    checkout_branch(&updater_repo, "main");
+    git_clone(remote_url, &updater_path);
+    configure_user(&updater_path);
+    checkout_branch(&updater_path, "main");
     write_file(&updater_path, "file.txt", "upstream change\n");
-    commit_all(&updater_repo, "upstream commit");
-    push_ref(&updater_repo, "refs/heads/main", "refs/heads/main");
+    commit_all(&updater_path, "upstream commit");
+    push_ref(&updater_path, "refs/heads/main", "refs/heads/main");
 
     // Local branch diverges but has not fetched the updater's commit
     write_file(&local_path, "file.txt", "local change\n");
-    commit_all(&local_repo, "local commit");
-    let remote = local_repo.find_remote("origin").expect("origin remote");
-    let remote_url_string = remote.url().expect("origin url").to_string();
+    commit_all(&local_path, "local commit");
+    let remote_url_string = remote_url.to_string();
 
     let git_cli = GitCli::new();
     let result = git_cli.push(&local_path, &remote_url_string, "main", false);
@@ -295,7 +257,7 @@ fn push_reports_non_fast_forward() {
 fn fetch_with_missing_ref_returns_error() {
     let temp_dir = TempDir::new().unwrap();
     let remote_path = temp_dir.path().join("remote.git");
-    Repository::init_bare(&remote_path).expect("init bare remote");
+    git_init_bare(&remote_path);
     let remote_url = remote_path.to_str().expect("remote path str");
 
     let seed_path = temp_dir.path().join("seed");
@@ -303,17 +265,13 @@ fn fetch_with_missing_ref_returns_error() {
     service
         .initialize_repo_with_main_branch(&seed_path)
         .expect("init seed repo");
-    let seed_repo = Repository::open(&seed_path).expect("open seed repo");
-    configure_user(&seed_repo);
-    seed_repo.remote("origin", remote_url).expect("add remote");
-    push_ref(&seed_repo, "refs/heads/main", "refs/heads/main");
-    Repository::open_bare(&remote_path)
-        .expect("open bare remote")
-        .set_head("refs/heads/main")
-        .expect("set remote HEAD");
+    configure_user(&seed_path);
+    git_remote_add(&seed_path, "origin", remote_url);
+    push_ref(&seed_path, "refs/heads/main", "refs/heads/main");
+    git_set_symbolic_head(&remote_path, "refs/heads/main");
 
     let local_path = temp_dir.path().join("local");
-    Repository::clone(remote_url, &local_path).expect("clone local");
+    git_clone(remote_url, &local_path);
 
     let git_cli = GitCli::new();
     let refspec = "+refs/heads/missing:refs/remotes/origin/missing";
@@ -335,7 +293,7 @@ fn fetch_with_missing_ref_returns_error() {
 fn push_and_fetch_roundtrip_updates_tracking_branch() {
     let temp_dir = TempDir::new().unwrap();
     let remote_path = temp_dir.path().join("remote.git");
-    Repository::init_bare(&remote_path).expect("init bare remote");
+    git_init_bare(&remote_path);
     let remote_url = remote_path.to_str().expect("remote path str");
 
     let seed_path = temp_dir.path().join("seed");
@@ -343,46 +301,32 @@ fn push_and_fetch_roundtrip_updates_tracking_branch() {
     service
         .initialize_repo_with_main_branch(&seed_path)
         .expect("init seed repo");
-    let seed_repo = Repository::open(&seed_path).expect("open seed repo");
-    configure_user(&seed_repo);
-    seed_repo.remote("origin", remote_url).expect("add remote");
-    push_ref(&seed_repo, "refs/heads/main", "refs/heads/main");
-    Repository::open_bare(&remote_path)
-        .expect("open bare remote")
-        .set_head("refs/heads/main")
-        .expect("set remote HEAD");
+    configure_user(&seed_path);
+    git_remote_add(&seed_path, "origin", remote_url);
+    push_ref(&seed_path, "refs/heads/main", "refs/heads/main");
+    git_set_symbolic_head(&remote_path, "refs/heads/main");
 
     let producer_path = temp_dir.path().join("producer");
-    let producer_repo = Repository::clone(remote_url, &producer_path).expect("clone producer");
-    configure_user(&producer_repo);
-    checkout_branch(&producer_repo, "main");
+    git_clone(remote_url, &producer_path);
+    configure_user(&producer_path);
+    checkout_branch(&producer_path, "main");
 
     let consumer_path = temp_dir.path().join("consumer");
-    let consumer_repo = Repository::clone(remote_url, &consumer_path).expect("clone consumer");
-    configure_user(&consumer_repo);
-    checkout_branch(&consumer_repo, "main");
-    let old_oid = consumer_repo
-        .find_reference("refs/remotes/origin/main")
-        .expect("consumer tracking ref")
-        .target()
-        .expect("consumer tracking ref");
+    git_clone(remote_url, &consumer_path);
+    configure_user(&consumer_path);
+    checkout_branch(&consumer_path, "main");
+    let old_oid = git_rev_parse(&consumer_path, "refs/remotes/origin/main");
 
     write_file(&producer_path, "file.txt", "new work\n");
-    commit_all(&producer_repo, "producer commit");
-
-    let remote = producer_repo.find_remote("origin").expect("origin remote");
-    let remote_url_string = remote.url().expect("origin url").to_string();
+    commit_all(&producer_path, "producer commit");
+    let remote_url_string = remote_url.to_string();
 
     let git_cli = GitCli::new();
     git_cli
         .push(&producer_path, &remote_url_string, "main", false)
         .expect("push succeeded");
 
-    let new_oid = producer_repo
-        .head()
-        .expect("producer head")
-        .target()
-        .expect("producer head oid");
+    let new_oid = git_rev_parse(&producer_path, "HEAD");
     assert_ne!(old_oid, new_oid, "producer created new commit");
 
     git_cli
@@ -393,11 +337,7 @@ fn push_and_fetch_roundtrip_updates_tracking_branch() {
         )
         .expect("fetch succeeded");
 
-    let updated_oid = consumer_repo
-        .find_reference("refs/remotes/origin/main")
-        .expect("updated tracking ref")
-        .target()
-        .expect("updated tracking ref");
+    let updated_oid = git_rev_parse(&consumer_path, "refs/remotes/origin/main");
     assert_eq!(
         updated_oid, new_oid,
         "tracking branch advanced to remote head"
@@ -477,12 +417,10 @@ fn merge_does_not_overwrite_main_repo_untracked_files() {
     let (repo_path, worktree_path) = setup_repo_with_worktree(&td);
 
     write_file(&worktree_path, "danger.txt", "tracked from feature\n");
-    let wt_repo = Repository::open(&worktree_path).unwrap();
-    commit_all(&wt_repo, "add danger.txt in feature");
+    commit_all(&worktree_path, "add danger.txt in feature");
 
     write_file(&repo_path, "danger.txt", "my untracked data\n");
-    let main_repo = Repository::open(&repo_path).unwrap();
-    checkout_branch(&main_repo, "main");
+    checkout_branch(&repo_path, "main");
 
     let service = GitService::new();
     let res = service.merge_changes(
@@ -508,7 +446,6 @@ fn merge_does_not_touch_tracked_uncommitted_changes_in_base_worktree() {
     let (repo_path, worktree_path) = setup_repo_with_worktree(&td);
 
     // Prepare: modify a tracked file in the base worktree (main) without committing
-    let _main_repo = Repository::open(&repo_path).unwrap();
     // Base branch commits will be advanced by the merge operation; record before via service
     let g = GitService::new();
     let before_oid = g.get_branch_oid(&repo_path, "main").unwrap();
@@ -523,8 +460,7 @@ fn merge_does_not_touch_tracked_uncommitted_changes_in_base_worktree() {
 
     // Feature adds a change and is committed in worktree
     write_file(&worktree_path, "danger2.txt", "feature tracked\n");
-    let wt_repo = Repository::open(&worktree_path).unwrap();
-    commit_all(&wt_repo, "feature adds danger2.txt");
+    commit_all(&worktree_path, "feature adds danger2.txt");
 
     // Merge via service (squash into main) should not modify files in the main worktree
     let service = GitService::new();
@@ -555,12 +491,10 @@ fn merge_refuses_with_staged_changes_on_base() {
     let (repo_path, worktree_path) = setup_repo_with_worktree(&td);
     let s = GitService::new();
     // ensure main is checked out
-    let repo = Repository::open(&repo_path).unwrap();
-    checkout_branch(&repo, "main");
+    checkout_branch(&repo_path, "main");
     // feature adds change and commits
     write_file(&worktree_path, "m.txt", "feature\n");
-    let wt_repo = Repository::open(&worktree_path).unwrap();
-    commit_all(&wt_repo, "feat change");
+    commit_all(&worktree_path, "feat change");
     // main has staged change
     write_file(&repo_path, "staged.txt", "staged\n");
     add_path(&repo_path, "staged.txt");
@@ -576,14 +510,12 @@ fn merge_preserves_unstaged_changes_on_base() {
     let td = TempDir::new().unwrap();
     let (repo_path, worktree_path) = setup_repo_with_worktree(&td);
     let s = GitService::new();
-    let repo = Repository::open(&repo_path).unwrap();
-    checkout_branch(&repo, "main");
+    checkout_branch(&repo_path, "main");
     // modify unstaged
     write_file(&repo_path, "common.txt", "local edited\n");
     // feature modifies a different file
     write_file(&worktree_path, "merged.txt", "merged content\n");
-    let wt_repo = Repository::open(&worktree_path).unwrap();
-    commit_all(&wt_repo, "feature merged");
+    commit_all(&worktree_path, "feature merged");
 
     let _sha = s
         .merge_changes(&repo_path, &worktree_path, "feature", "main", "squash")
@@ -601,13 +533,11 @@ fn update_ref_does_not_destroy_feature_worktree_dirty_state() {
     let td = TempDir::new().unwrap();
     let (repo_path, worktree_path) = setup_repo_with_worktree(&td);
     let s = GitService::new();
-    let repo = Repository::open(&repo_path).unwrap();
     // ensure main is checked out
-    checkout_branch(&repo, "main");
+    checkout_branch(&repo_path, "main");
     // feature makes an initial change and commits
     write_file(&worktree_path, "f.txt", "feat\n");
-    let wt_repo = Repository::open(&worktree_path).unwrap();
-    commit_all(&wt_repo, "feat commit");
+    commit_all(&worktree_path, "feat commit");
     // dirty change in feature worktree (uncommitted)
     write_file(&worktree_path, "dirty.txt", "unstaged\n");
     // merge from feature into main (CLI path updates task ref via update-ref)
@@ -737,16 +667,14 @@ fn rebase_fast_forwards_when_no_unique_commits() {
 fn rebase_applies_multiple_commits_onto_ahead_base() {
     let td = TempDir::new().unwrap();
     let (repo_path, worktree_path) = setup_repo_with_worktree(&td);
-    let repo = Repository::open(&repo_path).unwrap();
     // Advance new-base further
-    checkout_branch(&repo, "new-base");
+    checkout_branch(&repo_path, "new-base");
     write_file(&repo_path, "base_more.txt", "nb more\n");
-    commit_all(&repo, "advance new-base more");
+    commit_all(&repo_path, "advance new-base more");
 
     // Add another commit to feature
     write_file(&worktree_path, "feat2.txt", "second change\n");
-    let wt_repo = Repository::open(&worktree_path).unwrap();
-    commit_all(&wt_repo, "feature second commit");
+    commit_all(&worktree_path, "feature second commit");
 
     // Rebase feature onto new-base
     let service = GitService::new();
@@ -771,16 +699,14 @@ fn rebase_applies_multiple_commits_onto_ahead_base() {
 fn merge_when_base_ahead_and_feature_ahead_fails() {
     let td = TempDir::new().unwrap();
     let (repo_path, worktree_path) = setup_repo_with_worktree(&td);
-    let repo = Repository::open(&repo_path).unwrap();
     // Advance base (main) after feature was created
-    checkout_branch(&repo, "main");
+    checkout_branch(&repo_path, "main");
     write_file(&repo_path, "base_ahead.txt", "base ahead\n");
-    commit_all(&repo, "base ahead commit");
+    commit_all(&repo_path, "base ahead commit");
 
     // Feature adds its own file (already has feat.txt from setup) and commit another
     write_file(&worktree_path, "another.txt", "feature ahead\n");
-    let wt_repo = Repository::open(&worktree_path).unwrap();
-    commit_all(&wt_repo, "feature ahead extra");
+    commit_all(&worktree_path, "feature ahead extra");
 
     let g = GitService::new();
     let before_main = g.get_branch_oid(&repo_path, "main").unwrap();
@@ -814,7 +740,6 @@ fn merge_conflict_does_not_move_base_ref() {
     let (repo_path, worktree_path) = setup_direct_conflict_repo(&td);
 
     // Record main ref before
-    let _repo = Repository::open(&repo_path).unwrap();
     let g = GitService::new();
     let before = g.get_branch_oid(&repo_path, "main").unwrap();
 
@@ -844,29 +769,27 @@ fn merge_cleans_stale_squash_state_on_base() {
         .initialize_repo_with_main_branch(&repo_path)
         .expect("init repo");
 
-    let repo = Repository::open(&repo_path).unwrap();
-    configure_user(&repo);
-    checkout_branch(&repo, "main");
+    configure_user(&repo_path);
+    checkout_branch(&repo_path, "main");
 
     write_file(&repo_path, "conflict.txt", "base\n");
-    commit_all(&repo, "base");
+    commit_all(&repo_path, "base");
 
-    create_branch_from_head(&repo, "conflict-branch");
-    checkout_branch(&repo, "conflict-branch");
+    create_branch_from_head(&repo_path, "conflict-branch");
+    checkout_branch(&repo_path, "conflict-branch");
     write_file(&repo_path, "conflict.txt", "conflict change\n");
-    commit_all(&repo, "conflict change");
+    commit_all(&repo_path, "conflict change");
 
-    checkout_branch(&repo, "main");
+    checkout_branch(&repo_path, "main");
     write_file(&repo_path, "conflict.txt", "main change\n");
-    commit_all(&repo, "main change");
+    commit_all(&repo_path, "main change");
 
-    create_branch_from_head(&repo, "feature");
+    create_branch_from_head(&repo_path, "feature");
     service
         .add_worktree(&repo_path, &worktree_path, "feature")
         .expect("create worktree");
-    let wt_repo = Repository::open(&worktree_path).unwrap();
     write_file(&worktree_path, "feature.txt", "feature\n");
-    commit_all(&wt_repo, "feature change");
+    commit_all(&worktree_path, "feature change");
 
     let git_cli = GitCli::new();
     assert!(
@@ -913,24 +836,22 @@ fn merge_delete_vs_modify_conflict_behaves_safely() {
     // main modifies file, feature deletes it -> but now blocked by branch ahead check
     let td = TempDir::new().unwrap();
     let (repo_path, worktree_path) = setup_repo_with_worktree(&td);
-    let repo = Repository::open(&repo_path).unwrap();
 
     // start from main with a file
-    checkout_branch(&repo, "main");
+    checkout_branch(&repo_path, "main");
     write_file(&repo_path, "conflict_dm.txt", "base\n");
-    commit_all(&repo, "add conflict file");
+    commit_all(&repo_path, "add conflict file");
 
     // feature deletes it and commits
-    let wt_repo = Repository::open(&worktree_path).unwrap();
     let path = worktree_path.join("conflict_dm.txt");
     if path.exists() {
         std::fs::remove_file(&path).unwrap();
     }
-    commit_all(&wt_repo, "delete in feature");
+    commit_all(&worktree_path, "delete in feature");
 
     // main modifies same file (this puts main ahead of feature)
     write_file(&repo_path, "conflict_dm.txt", "main modify\n");
-    commit_all(&repo, "modify in main");
+    commit_all(&repo_path, "modify in main");
 
     // Capture main state AFTER all setup commits
     let g = GitService::new();
@@ -965,8 +886,7 @@ fn rebase_preserves_rename_changes() {
         worktree_path.join("feat_renamed.txt"),
     )
     .unwrap();
-    let wt_repo = Repository::open(&worktree_path).unwrap();
-    commit_all(&wt_repo, "rename feat");
+    commit_all(&worktree_path, "rename feat");
 
     // rebase onto new-base
     let service = GitService::new();
@@ -991,15 +911,14 @@ fn merge_refreshes_main_worktree_when_on_base() {
     let repo_path = td.path().join("repo_refresh");
     let s = GitService::new();
     s.initialize_repo_with_main_branch(&repo_path).unwrap();
-    let repo = Repository::open(&repo_path).unwrap();
-    configure_user(&repo);
-    checkout_branch(&repo, "main");
+    configure_user(&repo_path);
+    checkout_branch(&repo_path, "main");
     // Baseline file
     write_file(&repo_path, "file.txt", "base\n");
     let _ = s.commit(&repo_path, "add base").unwrap();
 
     // Create feature branch and worktree
-    create_branch_from_head(&repo, "feature");
+    create_branch_from_head(&repo_path, "feature");
     let wt = td.path().join("wt_refresh");
     s.add_worktree(&repo_path, &wt, "feature").unwrap();
     // Modify file in worktree and commit
@@ -1024,9 +943,8 @@ fn sparse_checkout_respected_in_worktree_diffs_and_commit() {
     let repo_path = td.path().join("repo_sparse");
     let s = GitService::new();
     s.initialize_repo_with_main_branch(&repo_path).unwrap();
-    let repo = Repository::open(&repo_path).unwrap();
-    configure_user(&repo);
-    checkout_branch(&repo, "main");
+    configure_user(&repo_path);
+    checkout_branch(&repo_path, "main");
     // baseline content
     write_file(&repo_path, "included/a.txt", "A\n");
     write_file(&repo_path, "excluded/b.txt", "B\n");
@@ -1040,7 +958,7 @@ fn sparse_checkout_respected_in_worktree_diffs_and_commit() {
         .unwrap();
 
     // create feature branch and worktree
-    create_branch_from_head(&repo, "feature");
+    create_branch_from_head(&repo_path, "feature");
     let wt = td.path().join("wt_sparse");
     s.add_worktree(&repo_path, &wt, "feature").unwrap();
 
@@ -1106,14 +1024,13 @@ fn worktree_diff_ignores_commits_where_base_branch_is_ahead() {
     let repo_path = td.path().join("repo_base_ahead");
     let s = GitService::new();
     s.initialize_repo_with_main_branch(&repo_path).unwrap();
-    let repo = Repository::open(&repo_path).unwrap();
-    configure_user(&repo);
-    checkout_branch(&repo, "main");
+    configure_user(&repo_path);
+    checkout_branch(&repo_path, "main");
 
     write_file(&repo_path, "shared.txt", "base\n");
     let _ = s.commit(&repo_path, "add shared").unwrap();
 
-    create_branch_from_head(&repo, "feature");
+    create_branch_from_head(&repo_path, "feature");
     let wt = td.path().join("wt_base_ahead");
     s.add_worktree(&repo_path, &wt, "feature").unwrap();
 
@@ -1150,9 +1067,8 @@ fn init_repo_only_service(root: &TempDir) -> PathBuf {
     let repo_path = root.path().join("repo_svc");
     let s = GitService::new();
     s.initialize_repo_with_main_branch(&repo_path).unwrap();
-    let repo = Repository::open(&repo_path).unwrap();
-    configure_user(&repo);
-    checkout_branch(&repo, "main");
+    configure_user(&repo_path);
+    checkout_branch(&repo_path, "main");
     repo_path
 }
 
@@ -1160,12 +1076,11 @@ fn init_repo_only_service(root: &TempDir) -> PathBuf {
 fn merge_binary_conflict_does_not_move_ref() {
     let td = TempDir::new().unwrap();
     let repo_path = init_repo_only_service(&td);
-    let repo = Repository::open(&repo_path).unwrap();
     let s = GitService::new();
     // seed
     let _ = s.commit(&repo_path, "seed").unwrap();
     // create feature branch and worktree
-    create_branch_from_head(&repo, "feature");
+    create_branch_from_head(&repo_path, "feature");
     let worktree_path = td.path().join("wt_bin");
     s.add_worktree(&repo_path, &worktree_path, "feature")
         .unwrap();
@@ -1191,12 +1106,11 @@ fn merge_binary_conflict_does_not_move_ref() {
 fn merge_rename_vs_modify_conflict_does_not_move_ref() {
     let td = TempDir::new().unwrap();
     let repo_path = init_repo_only_service(&td);
-    let repo = Repository::open(&repo_path).unwrap();
     let s = GitService::new();
     // base file
     fs::write(repo_path.join("conflict.txt"), b"base\n").unwrap();
     let _ = s.commit(&repo_path, "base").unwrap();
-    create_branch_from_head(&repo, "feature");
+    create_branch_from_head(&repo_path, "feature");
     let worktree_path = td.path().join("wt_ren");
     s.add_worktree(&repo_path, &worktree_path, "feature")
         .unwrap();
@@ -1259,14 +1173,12 @@ fn merge_leaves_no_staged_changes_on_target_branch() {
 
     // Ensure main repo is on the base branch (triggers CLI merge path)
     let s = GitService::new();
-    let repo = Repository::open(&repo_path).unwrap();
-    checkout_branch(&repo, "main");
+    checkout_branch(&repo_path, "main");
 
     // Feature branch makes some changes
     write_file(&worktree_path, "feature_file.txt", "feature content\n");
     write_file(&worktree_path, "common.txt", "modified by feature\n");
-    let wt_repo = Repository::open(&worktree_path).unwrap();
-    commit_all(&wt_repo, "feature changes");
+    commit_all(&worktree_path, "feature changes");
 
     // Perform the merge
     let _merge_sha = s
@@ -1309,15 +1221,14 @@ fn worktree_to_worktree_merge_leaves_no_staged_changes() {
     service
         .initialize_repo_with_main_branch(&repo_path)
         .expect("init repo");
-    let repo = Repository::open(&repo_path).unwrap();
-    configure_user(&repo);
+    configure_user(&repo_path);
 
     write_file(&repo_path, "base.txt", "base content\n");
-    commit_all(&repo, "initial commit");
+    commit_all(&repo_path, "initial commit");
 
     // Create two feature branches
-    create_branch_from_head(&repo, "feature-a");
-    create_branch_from_head(&repo, "feature-b");
+    create_branch_from_head(&repo_path, "feature-a");
+    create_branch_from_head(&repo_path, "feature-b");
 
     // Create worktrees for both feature branches
     service
@@ -1334,11 +1245,10 @@ fn worktree_to_worktree_merge_leaves_no_staged_changes() {
         "content from feature A\n",
     );
     write_file(&worktree_a_path, "base.txt", "modified by feature A\n");
-    let wt_a_repo = Repository::open(&worktree_a_path).unwrap();
-    commit_all(&wt_a_repo, "feature A changes");
+    commit_all(&worktree_a_path, "feature A changes");
 
     // Ensure main repo is on different branch (neither feature-a nor feature-b)
-    checkout_branch(&repo, "main");
+    checkout_branch(&repo_path, "main");
 
     let _sha = service.merge_changes(
         &repo_path,
@@ -1374,15 +1284,12 @@ fn merge_into_orphaned_branch_uses_libgit2_fallback() {
 
     // Create an "orphaned" target branch that exists as ref but isn't checked out anywhere
     let service = GitService::new();
-    let repo = Repository::open(&repo_path).unwrap();
 
     // Create orphaned-feature branch from current main HEAD but don't check it out
-    let main_commit = repo.head().unwrap().peel_to_commit().unwrap();
-    repo.branch("orphaned-feature", &main_commit, false)
-        .unwrap();
+    create_branch_from_head(&repo_path, "orphaned-feature");
 
     // Ensure main repo is on different branch and no worktree has orphaned-feature
-    checkout_branch(&repo, "main");
+    checkout_branch(&repo_path, "main");
 
     // Make changes in source worktree
     write_file(
@@ -1390,8 +1297,7 @@ fn merge_into_orphaned_branch_uses_libgit2_fallback() {
         "feature_content.txt",
         "content from feature\n",
     );
-    let wt_repo = Repository::open(&worktree_path).unwrap();
-    commit_all(&wt_repo, "feature changes");
+    commit_all(&worktree_path, "feature changes");
 
     // orphaned-feature is not checked out anywhere, so should trigger libgit2 path
 
@@ -1441,30 +1347,28 @@ fn merge_base_ahead_of_task_should_error() {
     service
         .initialize_repo_with_main_branch(&repo_path)
         .expect("init repo");
-    let repo = Repository::open(&repo_path).unwrap();
-    configure_user(&repo);
+    configure_user(&repo_path);
 
     // Initial commit on main
     write_file(&repo_path, "base.txt", "initial content\n");
-    commit_all(&repo, "initial commit");
+    commit_all(&repo_path, "initial commit");
 
     // Create feature branch from this point
-    create_branch_from_head(&repo, "feature");
+    create_branch_from_head(&repo_path, "feature");
     service
         .add_worktree(&repo_path, &worktree_path, "feature")
         .expect("create worktree");
 
     // Feature makes a change and commits
     write_file(&worktree_path, "feature.txt", "feature content\n");
-    let wt_repo = Repository::open(&worktree_path).unwrap();
-    commit_all(&wt_repo, "feature change");
+    commit_all(&worktree_path, "feature change");
 
     // Main branch advances ahead of feature (this is the key scenario)
-    checkout_branch(&repo, "main");
+    checkout_branch(&repo_path, "main");
     write_file(&repo_path, "main_advance.txt", "main advanced\n");
-    commit_all(&repo, "main advances ahead");
+    commit_all(&repo_path, "main advances ahead");
     write_file(&repo_path, "main_advance2.txt", "main advanced more\n");
-    commit_all(&repo, "main advances further");
+    commit_all(&repo_path, "main advances further");
 
     // Attempt to merge feature into main when main is ahead
     // This should error because base branch has moved ahead of task branch

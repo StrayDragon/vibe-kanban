@@ -18,8 +18,6 @@ tracing = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 ts-rs = { workspace = true }
-git2 = "0.18"
-openssl-sys = { workspace = true }
 tempfile = "3.21"
 ignore = "0.4"
 directories = "6.0.0"

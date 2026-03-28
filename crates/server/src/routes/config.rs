@@ -478,6 +478,51 @@ async fn check_agent_compatibility(
     Ok(ResponseJson(ApiResponse::success(compat)))
 }
 
+fn now_unix_timestamp() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+fn program_runnable(program: &str, args: &[&str], path_override: Option<&std::ffi::OsStr>) -> bool {
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    if let Some(path) = path_override {
+        cmd.env("PATH", path);
+    }
+    cmd.output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+fn git_availability(path_override: Option<&std::ffi::OsStr>) -> AvailabilityInfo {
+    if program_runnable("git", &["--version"], path_override) {
+        AvailabilityInfo::InstallationFound
+    } else {
+        AvailabilityInfo::NotFound
+    }
+}
+
+fn gh_availability(path_override: Option<&std::ffi::OsStr>) -> AvailabilityInfo {
+    if !program_runnable("gh", &["--version"], path_override) {
+        return AvailabilityInfo::NotFound;
+    }
+
+    // Treat "installed but unauthenticated" as InstallationFound.
+    // When authenticated, report LoginDetected with best-effort timestamp.
+    if program_runnable("gh", &["auth", "status"], path_override) {
+        AvailabilityInfo::LoginDetected {
+            last_auth_timestamp: now_unix_timestamp(),
+        }
+    } else {
+        AvailabilityInfo::InstallationFound
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, TS)]
 pub struct CliDependencyPreflightQuery {
     pub executor: BaseCodingAgent,
@@ -486,6 +531,8 @@ pub struct CliDependencyPreflightQuery {
 #[derive(Debug, Serialize, Deserialize, TS)]
 pub struct CliDependencyPreflightResponse {
     pub agent: AvailabilityInfo,
+    pub git: AvailabilityInfo,
+    pub gh: AvailabilityInfo,
 }
 
 async fn cli_dependency_preflight(
@@ -501,11 +548,17 @@ async fn cli_dependency_preflight(
 
     ResponseJson(ApiResponse::success(CliDependencyPreflightResponse {
         agent,
+        git: git_availability(None),
+        gh: gh_availability(None),
     }))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{ffi::OsString, fs};
+
+    use test_support::TestEnv;
+
     use super::*;
 
     #[test]
@@ -545,5 +598,124 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("1")
         );
+    }
+
+    #[test]
+    fn cli_preflight_reports_git_unavailable_when_not_on_path() {
+        let env_guard = TestEnv::new("vk-test-");
+        let empty_dir = env_guard.temp_root().join("empty-path");
+        fs::create_dir_all(&empty_dir).unwrap();
+
+        let path = OsString::from(empty_dir.as_os_str());
+        assert!(matches!(
+            git_availability(Some(&path)),
+            AvailabilityInfo::NotFound
+        ));
+    }
+
+    #[test]
+    fn cli_preflight_reports_gh_not_found_when_missing() {
+        let env_guard = TestEnv::new("vk-test-");
+        let empty_dir = env_guard.temp_root().join("empty-path-gh");
+        fs::create_dir_all(&empty_dir).unwrap();
+
+        let path = OsString::from(empty_dir.as_os_str());
+        assert!(matches!(
+            gh_availability(Some(&path)),
+            AvailabilityInfo::NotFound
+        ));
+    }
+
+    #[test]
+    fn cli_preflight_reports_gh_unauthenticated_when_installed_but_not_logged_in() {
+        let env_guard = TestEnv::new("vk-test-");
+        let bin_dir = env_guard.temp_root().join("fake-gh-unauth");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        #[cfg(windows)]
+        let gh_path = bin_dir.join("gh.bat");
+        #[cfg(not(windows))]
+        let gh_path = bin_dir.join("gh");
+
+        #[cfg(windows)]
+        fs::write(
+            &gh_path,
+            "@echo off\r\nif \"%1\"==\"--version\" exit /b 0\r\nif \"%1\"==\"auth\" exit /b 1\r\nexit /b 0\r\n",
+        )
+        .unwrap();
+
+        #[cfg(not(windows))]
+        {
+            fs::write(
+                &gh_path,
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nif [ \"$1\" = \"auth\" ]; then exit 1; fi\nexit 0\n",
+            )
+            .unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&gh_path).unwrap().permissions();
+            perms.set_mode(0o700);
+            fs::set_permissions(&gh_path, perms).unwrap();
+        }
+
+        let path = OsString::from(bin_dir.as_os_str());
+        assert!(matches!(
+            gh_availability(Some(&path)),
+            AvailabilityInfo::InstallationFound
+        ));
+    }
+
+    #[test]
+    fn cli_preflight_reports_gh_authenticated_when_logged_in() {
+        let env_guard = TestEnv::new("vk-test-");
+        let bin_dir = env_guard.temp_root().join("fake-gh-auth");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        #[cfg(windows)]
+        let gh_path = bin_dir.join("gh.bat");
+        #[cfg(not(windows))]
+        let gh_path = bin_dir.join("gh");
+
+        #[cfg(windows)]
+        fs::write(
+            &gh_path,
+            "@echo off\r\nif \"%1\"==\"--version\" exit /b 0\r\nif \"%1\"==\"auth\" exit /b 0\r\nexit /b 0\r\n",
+        )
+        .unwrap();
+
+        #[cfg(not(windows))]
+        {
+            fs::write(
+                &gh_path,
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nif [ \"$1\" = \"auth\" ]; then exit 0; fi\nexit 0\n",
+            )
+            .unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&gh_path).unwrap().permissions();
+            perms.set_mode(0o700);
+            fs::set_permissions(&gh_path, perms).unwrap();
+        }
+
+        let path = OsString::from(bin_dir.as_os_str());
+        assert!(matches!(
+            gh_availability(Some(&path)),
+            AvailabilityInfo::LoginDetected { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn cli_preflight_endpoint_includes_git_and_gh() {
+        let ResponseJson(resp) = cli_dependency_preflight(Query(CliDependencyPreflightQuery {
+            executor: BaseCodingAgent::Codex,
+        }))
+        .await;
+        assert!(resp.is_success());
+        let data = resp.into_data().expect("data");
+        assert!(matches!(data.git, AvailabilityInfo::InstallationFound));
+        assert!(matches!(
+            data.gh,
+            AvailabilityInfo::NotFound
+                | AvailabilityInfo::InstallationFound
+                | AvailabilityInfo::LoginDetected { .. }
+        ));
     }
 }

@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use git2::{Repository, build::CheckoutBuilder};
 use repos::{
     GitHubRepoInfo, GitHubRepoInfoError,
     git::{DiffContentPolicy, DiffTarget, GitCli, GitService},
@@ -12,32 +11,24 @@ use repos::{
 use tempfile::TempDir;
 use utils_core::diff::DiffChangeKind;
 
+mod git_test_utils;
+use git_test_utils::{
+    git_branch_force, git_checkout, git_config_user, git_detach_head, git_rev_parse,
+    git_show_author,
+};
+
 fn add_path(repo_path: &Path, path: &str) {
     let git = GitCli::new();
     git.git(repo_path, ["add", path]).unwrap();
 }
 
 fn get_commit_author(repo_path: &Path, commit_sha: &str) -> (Option<String>, Option<String>) {
-    let repo = git2::Repository::open(repo_path).unwrap();
-    let oid = git2::Oid::from_str(commit_sha).unwrap();
-    let commit = repo.find_commit(oid).unwrap();
-    let author = commit.author();
-    (
-        author.name().map(|s| s.to_string()),
-        author.email().map(|s| s.to_string()),
-    )
+    git_show_author(repo_path, commit_sha)
 }
 
 fn get_head_author(repo_path: &Path) -> (Option<String>, Option<String>) {
-    let repo = git2::Repository::open(repo_path).unwrap();
-    let head = repo.head().unwrap();
-    let oid = head.target().unwrap();
-    let commit = repo.find_commit(oid).unwrap();
-    let author = commit.author();
-    (
-        author.name().map(|s| s.to_string()),
-        author.email().map(|s| s.to_string()),
-    )
+    let head = git_rev_parse(repo_path, "HEAD");
+    git_show_author(repo_path, &head)
 }
 
 fn write_file<P: AsRef<Path>>(base: P, rel: &str, content: &str) {
@@ -50,10 +41,7 @@ fn write_file<P: AsRef<Path>>(base: P, rel: &str, content: &str) {
 }
 
 fn configure_user(repo_path: &Path, name: &str, email: &str) {
-    let repo = git2::Repository::open(repo_path).unwrap();
-    let mut cfg = repo.config().unwrap();
-    cfg.set_str("user.name", name).unwrap();
-    cfg.set_str("user.email", email).unwrap();
+    git_config_user(repo_path, name, email);
 }
 
 fn init_repo_main(root: &TempDir) -> PathBuf {
@@ -66,17 +54,11 @@ fn init_repo_main(root: &TempDir) -> PathBuf {
 }
 
 fn checkout_branch(repo_path: &Path, name: &str) {
-    let repo = Repository::open(repo_path).unwrap();
-    repo.set_head(&format!("refs/heads/{name}")).unwrap();
-    let mut co = CheckoutBuilder::new();
-    co.force();
-    repo.checkout_head(Some(&mut co)).unwrap();
+    git_checkout(repo_path, name);
 }
 
 fn create_branch(repo_path: &Path, name: &str) {
-    let repo = Repository::open(repo_path).unwrap();
-    let head = repo.head().unwrap().peel_to_commit().unwrap();
-    let _ = repo.branch(name, &head, true).unwrap();
+    git_branch_force(repo_path, name, "HEAD");
 }
 
 #[test]
@@ -95,12 +77,17 @@ fn commit_empty_message_behaviour() {
 }
 
 fn has_global_git_identity() -> bool {
-    if let Ok(cfg) = git2::Config::open_default() {
-        let has_name = cfg.get_string("user.name").is_ok();
-        let has_email = cfg.get_string("user.email").is_ok();
-        return has_name && has_email;
-    }
-    false
+    let name_ok = std::process::Command::new("git")
+        .args(["config", "--global", "--get", "user.name"])
+        .output()
+        .map(|o| o.status.success() && !o.stdout.is_empty())
+        .unwrap_or(false);
+    let email_ok = std::process::Command::new("git")
+        .args(["config", "--global", "--get", "user.email"])
+        .output()
+        .map(|o| o.status.success() && !o.stdout.is_empty())
+        .unwrap_or(false);
+    name_ok && email_ok
 }
 
 #[test]
@@ -270,9 +257,8 @@ fn commit_in_detached_head_succeeds_via_service() {
     let s = GitService::new();
     let _ = s.commit(&repo_path, "add a").unwrap();
     // detach via service
-    let repo = git2::Repository::open(&repo_path).unwrap();
-    let oid = repo.head().unwrap().target().unwrap();
-    repo.set_head_detached(oid).unwrap();
+    let head = git_rev_parse(&repo_path, "HEAD");
+    git_detach_head(&repo_path, &head);
     // commit while detached
     write_file(&repo_path, "b.txt", "b\n");
     let ok = s.commit(&repo_path, "detached commit").unwrap();
@@ -403,6 +389,48 @@ fn worktree_diff_respects_path_filter() {
 }
 
 #[test]
+fn worktree_diff_and_summary_include_untracked_files() {
+    let td = TempDir::new().unwrap();
+    let repo_path = init_repo_main(&td);
+
+    // baseline
+    write_file(&repo_path, "tracked.txt", "base\n");
+    let s = GitService::new();
+    let _ = s.commit(&repo_path, "baseline").unwrap();
+
+    // branch ref exists for base-commit computation; worktree remains on main
+    create_branch(&repo_path, "feature");
+
+    // untracked change
+    write_file(&repo_path, "untracked.txt", "l1\nl2\nl3\n");
+
+    let base_commit = s.get_base_commit(&repo_path, "feature", "main").unwrap();
+    let diffs = s
+        .get_diffs(
+            DiffTarget::Worktree {
+                worktree_path: Path::new(&repo_path),
+                base_commit: &base_commit,
+            },
+            None,
+            DiffContentPolicy::Full,
+        )
+        .unwrap();
+
+    let d = diffs
+        .iter()
+        .find(|d| d.new_path.as_deref() == Some("untracked.txt"))
+        .expect("untracked diff present");
+    assert_eq!(d.old_content, None);
+    assert_eq!(d.new_content.as_deref(), Some("l1\nl2\nl3\n"));
+
+    let summary = s
+        .get_worktree_diff_summary(&repo_path, &base_commit, None)
+        .unwrap();
+    assert!(summary.file_count >= 1);
+    assert!(summary.added >= 3);
+}
+
+#[test]
 fn get_branch_oid_nonexistent_errors() {
     let td = TempDir::new().unwrap();
     let repo_path = init_repo_main(&td);
@@ -492,9 +520,7 @@ fn github_repo_info_parses_https_and_ssh_urls() {
 
 #[test]
 fn squash_merge_libgit2_sets_author_without_user() {
-    // Verify merge_changes (libgit2 path) uses fallback author when no config exists
-    use git2::Repository;
-
+    // Verify merge_changes uses fallback author when no config exists
     let td = TempDir::new().unwrap();
     let repo_path = td.path().join("repo_fallback_merge");
     let worktree_path = td.path().join("wt_feature");
@@ -508,24 +534,33 @@ fn squash_merge_libgit2_sets_author_without_user() {
     s.add_worktree(&repo_path, &worktree_path, "feature")
         .unwrap();
 
-    // Make a feature commit in the worktree via libgit2 using an explicit signature
+    // Make a feature commit in the worktree using an explicit author identity
     write_file(&worktree_path, "f.txt", "feat\n");
-    {
-        let repo = Repository::open(&worktree_path).unwrap();
-        // stage all
-        let mut index = repo.index().unwrap();
-        index
-            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
-            .unwrap();
-        index.write().unwrap();
-        let tree_id = index.write_tree().unwrap();
-        let tree = repo.find_tree(tree_id).unwrap();
-        let sig = git2::Signature::now("Other Author", "other@example.com").unwrap();
-        let parent = repo.head().unwrap().peel_to_commit().unwrap();
-        let _cid = repo
-            .commit(Some("HEAD"), &sig, &sig, "feat", &tree, &[&parent])
-            .unwrap();
-    }
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(&worktree_path)
+        .arg("add")
+        .arg("-A")
+        .status()
+        .expect("git add")
+        .success()
+        .then_some(())
+        .expect("git add ok");
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("-C").arg(&worktree_path);
+    cmd.env("GIT_AUTHOR_NAME", "Other Author");
+    cmd.env("GIT_AUTHOR_EMAIL", "other@example.com");
+    cmd.env("GIT_COMMITTER_NAME", "Other Author");
+    cmd.env("GIT_COMMITTER_EMAIL", "other@example.com");
+    let out = cmd
+        .args(["commit", "-m", "feat"])
+        .output()
+        .expect("git commit");
+    assert!(
+        out.status.success(),
+        "git commit failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     // Ensure main repo is NOT on base branch so merge_changes takes libgit2 path
     create_branch(&repo_path, "dev");

@@ -135,6 +135,11 @@ check_no_source_match \
   crates/server/src
 
 check_no_source_match \
+  '\brepos::git::GitCli\b|\bGitCli::new\b' \
+  'server/runtime/domain crates must not use GitCli directly' \
+  crates/server crates/app-runtime crates/tasks crates/config crates/events
+
+check_no_source_match \
   'git2::|Repository::open|WalkBuilder|notify::' \
   'blocking repo/filesystem primitives must stay inside repos or execution' \
   crates/server crates/app-runtime crates/tasks crates/config crates/events

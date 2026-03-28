@@ -539,7 +539,6 @@ fn process_file_changes(
 
 #[cfg(test)]
 mod tests {
-    use git2::Oid;
     use json_patch::PatchOperation;
     use tempfile::TempDir;
 
@@ -636,7 +635,7 @@ mod tests {
         git.initialize_repo_with_main_branch(&repo_path).unwrap();
 
         let head = git.get_head_info(&repo_path).unwrap();
-        let base_commit = Commit::new(Oid::from_str(&head.oid).unwrap());
+        let base_commit = Commit::new(head.oid.clone());
 
         let cumulative = Arc::new(AtomicUsize::new(0));
         let full_sent = Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));
@@ -666,7 +665,7 @@ mod tests {
         git.initialize_repo_with_main_branch(&repo_path).unwrap();
 
         let head = git.get_head_info(&repo_path).unwrap();
-        let base_commit = Commit::new(Oid::from_str(&head.oid).unwrap());
+        let base_commit = Commit::new(head.oid.clone());
 
         let cumulative = Arc::new(AtomicUsize::new(0));
         let full_sent = Arc::new(std::sync::RwLock::new(std::collections::HashSet::new()));

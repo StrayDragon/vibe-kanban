@@ -5,12 +5,11 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
-use git2::{BranchType, Error as GitError, Repository};
 use thiserror::Error;
 use tracing::{debug, info, trace};
 use utils_core::{path::normalize_macos_private_alias, shell::resolve_executable_path};
 
-use super::git::{GitService, GitServiceError};
+use super::git::{GitCli, GitCliError, GitService, GitServiceError};
 
 // Global synchronization for worktree creation to prevent race conditions
 static WORKTREE_CREATION_LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
@@ -33,8 +32,6 @@ impl WorktreeCleanup {
 
 #[derive(Debug, Error)]
 pub enum WorktreeError {
-    #[error(transparent)]
-    Git(#[from] GitError),
     #[error(transparent)]
     GitService(#[from] GitServiceError),
     #[error("Git CLI error: {0}")]
@@ -67,24 +64,55 @@ impl WorktreeManager {
             let branch_name_owned = branch_name.to_string();
             let base_branch_owned = base_branch.to_string();
 
-            tokio::task::spawn_blocking(move || {
-                let repo = Repository::open(&repo_path_owned)?;
+            tokio::task::spawn_blocking(move || -> Result<(), WorktreeError> {
+                let git = GitCli::new();
+
                 // `create_worktree` is used by both initial creation and "ensure" flows.
                 // Only create the attempt branch if it does not already exist.
-                if repo
-                    .find_branch(&branch_name_owned, BranchType::Local)
+                let attempt_ref = format!("refs/heads/{branch_name_owned}");
+                if git
+                    .git(
+                        &repo_path_owned,
+                        ["show-ref", "--verify", "--quiet", &attempt_ref],
+                    )
                     .is_ok()
                 {
-                    return Ok::<(), GitServiceError>(());
+                    return Ok(());
                 }
-                let base_branch_ref =
-                    GitService::find_branch(&repo, &base_branch_owned)?.into_reference();
-                repo.branch(
-                    &branch_name_owned,
-                    &base_branch_ref.peel_to_commit()?,
-                    false,
-                )?;
-                Ok::<(), GitServiceError>(())
+
+                let base = base_branch_owned.trim();
+                if base.is_empty() {
+                    return Err(WorktreeError::BranchNotFound(
+                        "base branch cannot be empty".to_string(),
+                    ));
+                }
+
+                // Resolve base ref. If base is not a remote-qualified name, also try origin/<base>.
+                let mut base_ref = base.to_string();
+                if git.rev_parse(&repo_path_owned, base).is_err() {
+                    if !base.contains('/') {
+                        let candidate = format!("origin/{base}");
+                        if git.rev_parse(&repo_path_owned, &candidate).is_ok() {
+                            base_ref = candidate;
+                        } else {
+                            return Err(WorktreeError::BranchNotFound(base.to_string()));
+                        }
+                    } else {
+                        return Err(WorktreeError::BranchNotFound(base.to_string()));
+                    }
+                }
+
+                match git.git(&repo_path_owned, ["branch", &branch_name_owned, &base_ref]) {
+                    Ok(_) => {}
+                    Err(GitCliError::CommandFailed(msg))
+                        if msg.to_ascii_lowercase().contains("already exists") =>
+                    {
+                        // Another concurrent ensure may have created it between our check and create.
+                    }
+                    Err(e) => return Err(WorktreeError::GitCli(e.to_string())),
+                }
+
+                Ok(())
             })
             .await
             .map_err(|e| WorktreeError::TaskJoin(format!("Task join error: {e}")))??;
@@ -178,19 +206,28 @@ impl WorktreeManager {
                 return Ok(false);
             }
 
-            // Check 2: Worktree must be registered in git metadata using find_worktree
-            let repo = Repository::open(&repo_path).map_err(WorktreeError::Git)?;
-            let Some(worktree_name) =
-                Self::find_worktree_git_internal_name(&repo_path, &worktree_path)?
-            else {
+            // Check 2: Worktree marker must exist.
+            // A worktree has a `.git` file marker (the main repo has a `.git` directory).
+            if !worktree_path.join(".git").is_file() {
                 return Ok(false);
-            };
-
-            // Try to find the worktree - if it exists and is valid, we're good
-            match repo.find_worktree(&worktree_name) {
-                Ok(_) => Ok(true),
-                Err(_) => Ok(false),
             }
+
+            // Check 3: Worktree must be registered in Git metadata.
+            // Use `git worktree list --porcelain` instead of libgit2.
+            let git = GitCli::new();
+            let worktrees = git
+                .list_worktrees(&repo_path)
+                .map_err(|e| WorktreeError::GitCli(e.to_string()))?;
+
+            let expected = normalize_macos_private_alias(&worktree_path).to_path_buf();
+            for wt in worktrees {
+                let wt_path = normalize_macos_private_alias(Path::new(&wt.path)).to_path_buf();
+                if wt_path == expected {
+                    return Ok(true);
+                }
+            }
+
+            Ok(false)
         })
         .await
         .map_err(|e| WorktreeError::TaskJoin(format!("{e}")))?
@@ -236,23 +273,21 @@ impl WorktreeManager {
 
     /// Comprehensive cleanup of worktree path and metadata to prevent "path exists" errors (blocking)
     fn comprehensive_worktree_cleanup(
-        repo: &Repository,
+        git_repo_path: &Path,
         worktree_path: &Path,
     ) -> Result<(), WorktreeError> {
         let worktree_display_name = worktree_path.to_string_lossy().to_string();
         debug!("Performing cleanup for worktree: {worktree_display_name}");
 
-        let git_repo_path = Self::get_git_repo_path(repo)?;
-
         // Step 1: Use GitService to remove the worktree registration (force) if present
         // The Git CLI is more robust than libgit2 for mutable worktree operations
         let git_service = GitService::new();
-        if let Err(e) = git_service.remove_worktree(&git_repo_path, worktree_path, true) {
+        if let Err(e) = git_service.remove_worktree(git_repo_path, worktree_path, true) {
             debug!("git worktree remove non-fatal error: {}", e);
         }
 
         // Step 2: Always force cleanup metadata directory (proactive cleanup)
-        if let Err(e) = Self::force_cleanup_worktree_metadata(&git_repo_path, worktree_path) {
+        if let Err(e) = Self::force_cleanup_worktree_metadata(git_repo_path, worktree_path) {
             debug!("Metadata cleanup failed (non-fatal): {}", e);
         }
 
@@ -266,7 +301,7 @@ impl WorktreeManager {
         }
 
         // Step 4: Good-practice to clean up any other stale admin entries
-        if let Err(e) = git_service.prune_worktrees(&git_repo_path) {
+        if let Err(e) = git_service.prune_worktrees(git_repo_path) {
             debug!("git worktree prune non-fatal error: {}", e);
         }
 
@@ -282,35 +317,24 @@ impl WorktreeManager {
         let git_repo_path_owned = git_repo_path.to_path_buf();
         let worktree_path_owned = worktree_path.to_path_buf();
 
-        // First, try to open the repository to see if it exists
-        let repo_result = tokio::task::spawn_blocking({
-            let git_repo_path = git_repo_path_owned.clone();
-            move || Repository::open(&git_repo_path)
-        })
-        .await;
-
-        match repo_result {
-            Ok(Ok(repo)) => {
-                // Repository exists, perform comprehensive cleanup
-                tokio::task::spawn_blocking(move || {
-                    Self::comprehensive_worktree_cleanup(&repo, &worktree_path_owned)
-                })
-                .await
-                .map_err(|e| WorktreeError::TaskJoin(format!("Task join error: {e}")))?
-            }
-            Ok(Err(e)) => {
-                // Repository doesn't exist (likely deleted project), fall back to simple cleanup
-                debug!(
-                    "Failed to open repository at {:?}: {}. Falling back to simple cleanup for worktree at {}",
-                    git_repo_path_owned,
-                    e,
-                    worktree_path_owned.display()
-                );
-                Self::simple_worktree_cleanup(&worktree_path_owned).await?;
-                Ok(())
-            }
-            Err(e) => Err(WorktreeError::TaskJoin(format!("{e}"))),
+        // If the repo no longer exists (or isn't a git repo), fall back to simple cleanup.
+        let has_git_marker = git_repo_path_owned.join(".git").exists();
+        if !(git_repo_path_owned.exists() && has_git_marker) {
+            debug!(
+                "Repository missing or invalid at {:?}. Falling back to simple cleanup for worktree at {}",
+                git_repo_path_owned,
+                worktree_path_owned.display()
+            );
+            Self::simple_worktree_cleanup(&worktree_path_owned).await?;
+            return Ok(());
         }
+
+        // Repository exists, perform comprehensive cleanup
+        tokio::task::spawn_blocking(move || {
+            Self::comprehensive_worktree_cleanup(&git_repo_path_owned, &worktree_path_owned)
+        })
+        .await
+        .map_err(|e| WorktreeError::TaskJoin(format!("Task join error: {e}")))?
     }
 
     /// Create worktree with retry logic in non-blocking manner
@@ -373,19 +397,6 @@ impl WorktreeManager {
         })
         .await
         .map_err(|e| WorktreeError::TaskJoin(format!("{e}")))?
-    }
-
-    /// Get the git repository path
-    fn get_git_repo_path(repo: &Repository) -> Result<PathBuf, WorktreeError> {
-        repo.workdir()
-            .ok_or_else(|| {
-                WorktreeError::Repository("Repository has no working directory".to_string())
-            })?
-            .to_str()
-            .ok_or_else(|| {
-                WorktreeError::InvalidPath("Repository path is not valid UTF-8".to_string())
-            })
-            .map(PathBuf::from)
     }
 
     /// Force cleanup worktree metadata directory

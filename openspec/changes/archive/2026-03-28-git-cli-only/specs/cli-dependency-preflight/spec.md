@@ -1,8 +1,7 @@
-# cli-dependency-preflight Specification
+# cli-dependency-preflight Specification (Delta)
 
-## Purpose
-TBD - created by archiving change add-stability-hardening-ops. Update Purpose after archive.
-## Requirements
+## MODIFIED Requirements
+
 ### Requirement: CLI dependency preflight
 The system SHALL provide a preflight check that reports availability and authentication status for the selected coding agent CLI and the GitHub CLI, and SHALL report availability for the Git CLI (`git`).
 

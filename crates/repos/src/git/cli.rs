@@ -11,10 +11,9 @@
 //!   between WSL and Windows in scenarios where the `git` CLI did not. Delegating
 //!   working‑tree mutations to the CLI has proven more reliable in practice.
 //!
-//! Given these reasons, this module centralizes destructive or working‑tree‑
-//! touching operations (rebase, merge, checkout, add/commit, etc.) through the
-//! `git` CLI, while keeping libgit2 for read‑only graph queries and credentialed
-//! network operations when useful.
+//! Given these reasons, this module centralizes Git operations through the
+//! `git` CLI (including read-only graph queries). This keeps behavior aligned
+//! with the `git` executable and reduces dependency surface area.
 use std::{
     ffi::{OsStr, OsString},
     io::Write as _,
@@ -44,6 +43,40 @@ pub enum GitCliError {
     RebaseInProgress,
 }
 
+fn redact_sensitive_text(input: &str) -> String {
+    // Redact embedded credentials in URLs, for example:
+    // - https://token@github.com/org/repo.git
+    // - https://user:token@github.com/org/repo.git
+    //
+    // This is intentionally heuristic-based and prefers safety over precision.
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+
+    while let Some(scheme_idx) = rest.find("://") {
+        let (before, after_scheme_marker) = rest.split_at(scheme_idx + 3);
+        out.push_str(before);
+
+        // Find end of the authority segment.
+        let authority_end = after_scheme_marker
+            .find(|c: char| c == '/' || c.is_whitespace())
+            .unwrap_or(after_scheme_marker.len());
+        let (authority, after_authority) = after_scheme_marker.split_at(authority_end);
+
+        if let Some(at_idx) = authority.find('@') {
+            // Replace the userinfo portion with a marker.
+            out.push_str("***@");
+            out.push_str(&authority[at_idx + 1..]);
+        } else {
+            out.push_str(authority);
+        }
+
+        rest = after_authority;
+    }
+
+    out.push_str(rest);
+    out
+}
+
 #[derive(Clone, Default)]
 pub struct GitCli;
 
@@ -64,6 +97,15 @@ pub enum ChangeType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusDiffEntry {
     pub change: ChangeType,
+    pub path: String,
+    pub old_path: Option<String>,
+}
+
+/// One entry from `git diff --numstat -z` output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NumstatEntry {
+    pub additions: Option<usize>,
+    pub deletions: Option<usize>,
     pub path: String,
     pub old_path: Option<String>,
 }
@@ -224,11 +266,12 @@ impl GitCli {
             "--cached".into(),
             "-M".into(),
             "--name-status".into(),
+            "-z".into(),
             OsString::from(base_commit.to_string()),
         ];
         args = Self::apply_pathspec_filter(args, opts.path_filter.as_ref());
-        let out = self.git_with_env(worktree_path, args, &envs)?;
-        Ok(Self::parse_name_status(&out))
+        let out = self.git_impl(worktree_path, args, Some(&envs), None)?;
+        Ok(Self::parse_name_status_z(&out))
     }
 
     /// Return total line additions/deletions for the worktree diff.
@@ -285,12 +328,122 @@ impl GitCli {
             "diff".into(),
             "--cached".into(),
             "--numstat".into(),
+            "-z".into(),
             OsString::from(base_commit.to_string()),
         ];
         args = Self::apply_pathspec_filter(args, opts.path_filter.as_ref());
-        let out = self.git_with_env(worktree_path, args, &envs)?;
+        let out = self.git_impl(worktree_path, args, Some(&envs), None)?;
 
-        Ok(Self::parse_numstat_summary(&out))
+        Ok(Self::parse_numstat_summary_z(&out))
+    }
+
+    /// Return `git diff --numstat -z` parsed entries for a worktree vs a base commit.
+    ///
+    /// This uses a temporary index to include untracked changes, mirroring `diff_status`.
+    pub fn diff_numstat_entries(
+        &self,
+        worktree_path: &Path,
+        base_commit: &Commit,
+        opts: StatusDiffOptions,
+    ) -> Result<Vec<NumstatEntry>, GitCliError> {
+        // Create a temp index file
+        let tmp_dir = tempfile::TempDir::new()
+            .map_err(|e| GitCliError::CommandFailed(format!("temp dir create failed: {e}")))?;
+        let tmp_index = tmp_dir.path().join("index");
+        let envs = vec![(
+            OsString::from("GIT_INDEX_FILE"),
+            tmp_index.as_os_str().to_os_string(),
+        )];
+
+        // Use a temp index from HEAD to accurately track renames in untracked files
+        let _ = self.git_with_env(worktree_path, ["read-tree", "HEAD"], &envs)?;
+
+        // Stage changed and untracked files explicitly.
+        let status = self.get_worktree_status(worktree_path)?;
+        let mut paths_to_add: Vec<Vec<u8>> = Vec::new();
+        for entry in status.entries {
+            paths_to_add.push(entry.path);
+            if let Some(orig) = entry.orig_path {
+                paths_to_add.push(orig);
+            }
+        }
+        if !paths_to_add.is_empty() {
+            paths_to_add.extend(
+                Self::get_default_pathspec_excludes()
+                    .iter()
+                    .map(|s| s.as_encoded_bytes().to_vec()),
+            );
+            let mut input = Vec::new();
+            for p in paths_to_add {
+                input.extend_from_slice(&p);
+                input.push(0);
+            }
+            let args = vec![
+                OsString::from("add"),
+                OsString::from("-A"),
+                OsString::from("--pathspec-from-file=-"),
+                OsString::from("--pathspec-file-nul"),
+            ];
+            self.git_with_stdin(worktree_path, args, Some(&envs), &input)?;
+        }
+
+        let mut args: Vec<OsString> = vec![
+            "-c".into(),
+            "core.quotepath=false".into(),
+            "diff".into(),
+            "--cached".into(),
+            "--numstat".into(),
+            "-z".into(),
+            OsString::from(base_commit.to_string()),
+        ];
+        args = Self::apply_pathspec_filter(args, opts.path_filter.as_ref());
+        let out = self.git_impl(worktree_path, args, Some(&envs), None)?;
+        Ok(Self::parse_numstat_z(&out))
+    }
+
+    /// Return `git diff --name-status -z` parsed entries between two revisions.
+    pub fn diff_name_status_between(
+        &self,
+        repo_path: &Path,
+        from_rev: &str,
+        to_rev: &str,
+        path_filter: Option<&[&str]>,
+    ) -> Result<Vec<StatusDiffEntry>, GitCliError> {
+        let mut args: Vec<OsString> = vec![
+            "-c".into(),
+            "core.quotepath=false".into(),
+            "diff".into(),
+            "-M".into(),
+            "--name-status".into(),
+            "-z".into(),
+            OsString::from(format!("{from_rev}..{to_rev}")),
+        ];
+        let filter = path_filter.map(|fs| fs.iter().map(|s| s.to_string()).collect());
+        args = Self::apply_pathspec_filter(args, filter.as_ref());
+        let out = self.git_impl(repo_path, args, None, None)?;
+        Ok(Self::parse_name_status_z(&out))
+    }
+
+    /// Return `git diff --numstat -z` parsed entries between two revisions.
+    pub fn diff_numstat_between(
+        &self,
+        repo_path: &Path,
+        from_rev: &str,
+        to_rev: &str,
+        path_filter: Option<&[&str]>,
+    ) -> Result<Vec<NumstatEntry>, GitCliError> {
+        let mut args: Vec<OsString> = vec![
+            "-c".into(),
+            "core.quotepath=false".into(),
+            "diff".into(),
+            "--numstat".into(),
+            "-z".into(),
+            OsString::from(format!("{from_rev}..{to_rev}")),
+        ];
+        let filter = path_filter.map(|fs| fs.iter().map(|s| s.to_string()).collect());
+        args = Self::apply_pathspec_filter(args, filter.as_ref());
+        let out = self.git_impl(repo_path, args, None, None)?;
+        Ok(Self::parse_numstat_z(&out))
     }
 
     /// Return `git status --porcelain` parsed into a structured summary
@@ -418,8 +571,23 @@ impl GitCli {
         if options.no_verify {
             args.push("--no-verify".into());
         }
-        self.git(worktree_path, args)?;
-        Ok(())
+        self.run_commit_like_command(worktree_path, args)
+    }
+
+    pub fn commit_allow_empty(
+        &self,
+        worktree_path: &Path,
+        message: &str,
+    ) -> Result<(), GitCliError> {
+        self.run_commit_like_command(
+            worktree_path,
+            vec![
+                "commit".into(),
+                "--allow-empty".into(),
+                "-m".into(),
+                message.into(),
+            ],
+        )
     }
     /// Fetch a branch to the given remote using native git authentication.
     pub fn fetch_with_refspec(
@@ -494,18 +662,64 @@ impl GitCli {
         }
     }
 
-    // Parse `git diff --name-status` output into structured entries.
+    pub fn remote_names(&self, repo_path: &Path) -> Result<Vec<String>, GitCliError> {
+        let out = self.git(repo_path, ["remote"])?;
+        Ok(out
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect())
+    }
+
+    pub fn remote_get_url(&self, repo_path: &Path, remote: &str) -> Result<String, GitCliError> {
+        let out = self.git(repo_path, ["remote", "get-url", remote])?;
+        Ok(out.trim().to_string())
+    }
+
+    pub fn rev_list_left_right_count(
+        &self,
+        repo_path: &Path,
+        left: &str,
+        right: &str,
+    ) -> Result<(usize, usize), GitCliError> {
+        let out = self.git(
+            repo_path,
+            [
+                "rev-list",
+                "--left-right",
+                "--count",
+                &format!("{left}...{right}"),
+            ],
+        )?;
+        let out = out.trim();
+        let mut parts = out.split_whitespace();
+        let ahead = parts
+            .next()
+            .ok_or_else(|| GitCliError::CommandFailed("invalid rev-list output".to_string()))?
+            .parse::<usize>()
+            .map_err(|e| GitCliError::CommandFailed(format!("invalid rev-list count: {e}")))?;
+        let behind = parts
+            .next()
+            .ok_or_else(|| GitCliError::CommandFailed("invalid rev-list output".to_string()))?
+            .parse::<usize>()
+            .map_err(|e| GitCliError::CommandFailed(format!("invalid rev-list count: {e}")))?;
+        Ok((ahead, behind))
+    }
+
+    // Parse `git diff --name-status -z` output into structured entries.
     // Handles rename/copy scores like `R100` by matching the first letter.
-    fn parse_name_status(output: &str) -> Vec<StatusDiffEntry> {
+    fn parse_name_status_z(output: &[u8]) -> Vec<StatusDiffEntry> {
         let mut out = Vec::new();
-        for line in output.lines() {
-            let line = line.trim_end();
-            if line.is_empty() {
+        let mut parts = output.split(|b| *b == 0);
+
+        while let Some(code_bytes) = parts.next() {
+            if code_bytes.is_empty() {
                 continue;
             }
-            let mut parts = line.split('\t');
-            let code = parts.next().unwrap_or("");
-            let change = match code.chars().next().unwrap_or('?') {
+
+            let code = String::from_utf8_lossy(code_bytes);
+            let kind = match code.chars().next().unwrap_or('?') {
                 'A' => ChangeType::Added,
                 'M' => ChangeType::Modified,
                 'D' => ChangeType::Deleted,
@@ -513,66 +727,261 @@ impl GitCli {
                 'C' => ChangeType::Copied,
                 'T' => ChangeType::TypeChanged,
                 'U' => ChangeType::Unmerged,
-                other => ChangeType::Unknown(other.to_string()),
+                _ => ChangeType::Unknown(code.to_string()),
             };
 
-            match change {
+            match kind {
                 ChangeType::Renamed | ChangeType::Copied => {
-                    if let (Some(old), Some(newp)) = (parts.next(), parts.next()) {
-                        out.push(StatusDiffEntry {
-                            change,
-                            path: newp.to_string(),
-                            old_path: Some(old.to_string()),
-                        });
+                    let Some(old_path) = parts.next() else { break };
+                    let Some(new_path) = parts.next() else { break };
+                    if old_path.is_empty() || new_path.is_empty() {
+                        continue;
                     }
+                    out.push(StatusDiffEntry {
+                        change: kind,
+                        path: String::from_utf8_lossy(new_path).to_string(),
+                        old_path: Some(String::from_utf8_lossy(old_path).to_string()),
+                    });
                 }
                 _ => {
-                    if let Some(p) = parts.next() {
-                        out.push(StatusDiffEntry {
-                            change,
-                            path: p.to_string(),
-                            old_path: None,
-                        });
+                    let Some(path) = parts.next() else { break };
+                    if path.is_empty() {
+                        continue;
                     }
+                    out.push(StatusDiffEntry {
+                        change: kind,
+                        path: String::from_utf8_lossy(path).to_string(),
+                        old_path: None,
+                    });
                 }
             }
         }
+
         out
     }
 
-    fn parse_numstat_summary(output: &str) -> DiffNumstatSummary {
+    fn parse_numstat_summary_z(output: &[u8]) -> DiffNumstatSummary {
         let mut summary = DiffNumstatSummary::default();
-        for line in output.lines() {
-            let line = line.trim_end();
-            if line.is_empty() {
+        for entry in output.split(|b| *b == 0) {
+            if entry.is_empty() {
                 continue;
             }
-            let mut parts = line.split('\t');
-            let add = parts.next().unwrap_or("");
-            let del = parts.next().unwrap_or("");
+            let mut cols = entry.splitn(3, |b| *b == b'\t');
+            let add = cols.next().unwrap_or_default();
+            let del = cols.next().unwrap_or_default();
 
-            let parse_count = |value: &str| -> usize {
-                if value == "-" {
+            let parse_count = |value: &[u8]| -> usize {
+                if value == b"-" {
                     0
                 } else {
-                    value.parse::<usize>().unwrap_or(0)
+                    std::str::from_utf8(value)
+                        .ok()
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .unwrap_or(0)
                 }
             };
 
             summary.additions = summary.additions.saturating_add(parse_count(add));
             summary.deletions = summary.deletions.saturating_add(parse_count(del));
         }
-
         summary
+    }
+
+    fn parse_numstat_z(output: &[u8]) -> Vec<NumstatEntry> {
+        fn parse_count(value: &str) -> Option<usize> {
+            let value = value.trim();
+            if value == "-" {
+                None
+            } else {
+                value.parse::<usize>().ok()
+            }
+        }
+
+        let mut out = Vec::new();
+        let mut parts = output.split(|b| *b == 0);
+
+        while let Some(header) = parts.next() {
+            if header.is_empty() {
+                continue;
+            }
+
+            let header = String::from_utf8_lossy(header);
+            let mut fields = header.splitn(3, '\t');
+            let add = fields.next().unwrap_or("");
+            let del = fields.next().unwrap_or("");
+            let path_part = fields.next().unwrap_or("");
+
+            let additions = parse_count(add);
+            let deletions = parse_count(del);
+
+            if path_part.is_empty() {
+                // Renames/copies: old and new paths are provided as subsequent NUL-separated fields.
+                let Some(old) = parts.next() else { break };
+                let Some(new) = parts.next() else { break };
+                let old = String::from_utf8_lossy(old)
+                    .trim_start_matches('\n')
+                    .to_string();
+                let new = String::from_utf8_lossy(new)
+                    .trim_start_matches('\n')
+                    .to_string();
+                if !new.is_empty() {
+                    out.push(NumstatEntry {
+                        additions,
+                        deletions,
+                        path: new,
+                        old_path: Some(old),
+                    });
+                }
+                continue;
+            }
+
+            let path = path_part.trim_start_matches('\n').to_string();
+            if path.is_empty() {
+                continue;
+            }
+
+            out.push(NumstatEntry {
+                additions,
+                deletions,
+                path,
+                old_path: None,
+            });
+        }
+
+        out
     }
 
     /// Return the merge base commit sha of two refs in the given worktree.
     /// If `git merge-base --fork-point` fails, falls back to regular `merge-base`.
-    fn merge_base(&self, worktree_path: &Path, a: &str, b: &str) -> Result<String, GitCliError> {
+    pub fn merge_base(
+        &self,
+        worktree_path: &Path,
+        a: &str,
+        b: &str,
+    ) -> Result<String, GitCliError> {
         let out = self
             .git(worktree_path, ["merge-base", "--fork-point", a, b])
             .unwrap_or(self.git(worktree_path, ["merge-base", a, b])?);
         Ok(out.trim().to_string())
+    }
+
+    pub fn rev_parse(&self, repo_path: &Path, rev: &str) -> Result<String, GitCliError> {
+        let out = self.git(repo_path, ["rev-parse", "--verify", rev])?;
+        Ok(out.trim().to_string())
+    }
+
+    pub fn for_each_ref(
+        &self,
+        repo_path: &Path,
+        refs: &[&str],
+        format: &str,
+    ) -> Result<String, GitCliError> {
+        self.ensure_available()?;
+        let fmt = format!("--format={format}");
+        let mut args: Vec<OsString> = vec!["for-each-ref".into(), fmt.into()];
+        args.extend(refs.iter().map(|r| OsString::from(*r)));
+        self.git(repo_path, args)
+    }
+
+    pub fn show_format(
+        &self,
+        repo_path: &Path,
+        rev: &str,
+        format: &str,
+    ) -> Result<String, GitCliError> {
+        self.ensure_available()?;
+        let fmt = format!("--format={format}");
+        let out = self.git(repo_path, ["show", "-s", "--no-patch", &fmt, rev])?;
+        Ok(out.trim_end().to_string())
+    }
+
+    pub fn cat_file_size(&self, repo_path: &Path, oid: &str) -> Result<usize, GitCliError> {
+        let out = self.git(repo_path, ["cat-file", "-s", oid])?;
+        out.trim()
+            .parse::<usize>()
+            .map_err(|e| GitCliError::CommandFailed(format!("invalid cat-file size: {e}")))
+    }
+
+    pub fn cat_file_blob(&self, repo_path: &Path, oid: &str) -> Result<Vec<u8>, GitCliError> {
+        self.git_impl(repo_path, ["cat-file", "-p", oid], None, None)
+    }
+
+    pub fn show_file_at_rev(
+        &self,
+        repo_path: &Path,
+        rev: &str,
+        path: &str,
+    ) -> Result<Vec<u8>, GitCliError> {
+        let spec = format!("{rev}:{path}");
+        self.git_impl(repo_path, ["show", "--no-color", &spec], None, None)
+    }
+
+    pub fn init(&self, repo_path: &Path, initial_branch: &str) -> Result<(), GitCliError> {
+        self.ensure_available()?;
+        std::fs::create_dir_all(repo_path)
+            .map_err(|e| GitCliError::CommandFailed(format!("mkdir failed: {e}")))?;
+        self.git(repo_path, ["init"])?;
+        let head_ref = format!("refs/heads/{initial_branch}");
+        self.git(repo_path, ["symbolic-ref", "HEAD", &head_ref])?;
+        Ok(())
+    }
+
+    pub fn check_ref_format_branch(&self, name: &str) -> Result<bool, GitCliError> {
+        self.ensure_available()?;
+        let git = resolve_executable_path_blocking("git").ok_or(GitCliError::NotAvailable)?;
+        let out = Command::new(&git)
+            .arg("check-ref-format")
+            .arg("--branch")
+            .arg(name)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|e| GitCliError::CommandFailed(e.to_string()))?;
+        Ok(out.status.success())
+    }
+
+    pub fn branch_force(
+        &self,
+        repo_path: &Path,
+        branch: &str,
+        target: &str,
+    ) -> Result<(), GitCliError> {
+        self.git(repo_path, ["branch", "-f", branch, target])
+            .map(|_| ())
+    }
+
+    pub fn clone(&self, remote_url: &str, target_path: &Path) -> Result<(), GitCliError> {
+        self.ensure_available()?;
+
+        if let Some(parent) = target_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| GitCliError::CommandFailed(format!("mkdir failed: {e}")))?;
+        }
+
+        let git = resolve_executable_path_blocking("git").ok_or(GitCliError::NotAvailable)?;
+        let out = Command::new(&git)
+            .arg("clone")
+            .arg(remote_url)
+            .arg(target_path)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| GitCliError::CommandFailed(e.to_string()))?;
+
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let combined = match (stdout.is_empty(), stderr.is_empty()) {
+                (true, true) => "Command failed with no output".to_string(),
+                (false, false) => format!("--- stderr\n{stderr}\n--- stdout\n{stdout}"),
+                (false, true) => format!("--- stderr\n{stdout}"),
+                (true, false) => format!("--- stdout\n{stderr}"),
+            };
+            return Err(self.classify_cli_error(redact_sensitive_text(&combined)));
+        }
+
+        Ok(())
     }
 
     /// Perform `git rebase --onto <new_base> <old_base>` on <task_branch> in `worktree_path`.
@@ -593,10 +1002,21 @@ impl GitCli {
             .merge_base(worktree_path, old_base, task_branch)
             .unwrap_or(old_base.to_string());
 
-        self.git(
-            worktree_path,
-            ["rebase", "--onto", new_base, &merge_base, task_branch],
-        )?;
+        let args = vec![
+            OsString::from("rebase"),
+            OsString::from("--onto"),
+            OsString::from(new_base),
+            OsString::from(merge_base),
+            OsString::from(task_branch),
+        ];
+        match self.git(worktree_path, &args) {
+            Ok(_) => {}
+            Err(GitCliError::CommandFailed(msg)) if Self::is_identity_missing_error(&msg) => {
+                let retry_args = Self::prepend_fallback_identity_config(args);
+                self.git(worktree_path, retry_args)?;
+            }
+            Err(e) => return Err(e),
+        }
         Ok(())
     }
 
@@ -721,7 +1141,7 @@ impl GitCli {
         if options.no_verify {
             commit_args.push("--no-verify".into());
         }
-        if let Err(err) = self.git(repo_path, commit_args) {
+        if let Err(err) = self.run_commit_like_command(repo_path, commit_args) {
             let _ = self.reset_merge(repo_path);
             return Err(err);
         }
@@ -788,6 +1208,7 @@ impl GitCli {
 // Private methods
 impl GitCli {
     fn classify_cli_error(&self, msg: String) -> GitCliError {
+        let msg = redact_sensitive_text(&msg);
         let lower = msg.to_ascii_lowercase();
         if lower.contains("authentication failed")
             || lower.contains("could not read username")
@@ -802,6 +1223,39 @@ impl GitCli {
             GitCliError::PushRejected(msg)
         } else {
             GitCliError::CommandFailed(msg)
+        }
+    }
+
+    fn is_identity_missing_error(msg: &str) -> bool {
+        let lower = msg.to_ascii_lowercase();
+        lower.contains("please tell me who you are")
+            || lower.contains("unable to auto-detect email address")
+            || (lower.contains("user.name") && lower.contains("user.email"))
+    }
+
+    fn prepend_fallback_identity_config(mut args: Vec<OsString>) -> Vec<OsString> {
+        let mut prefix = vec![
+            OsString::from("-c"),
+            OsString::from("user.name=Vibe Kanban"),
+            OsString::from("-c"),
+            OsString::from("user.email=noreply@localhost"),
+        ];
+        prefix.append(&mut args);
+        prefix
+    }
+
+    fn run_commit_like_command(
+        &self,
+        repo_path: &Path,
+        args: Vec<OsString>,
+    ) -> Result<(), GitCliError> {
+        match self.git(repo_path, &args) {
+            Ok(_) => Ok(()),
+            Err(GitCliError::CommandFailed(msg)) if Self::is_identity_missing_error(&msg) => {
+                let retry_args = Self::prepend_fallback_identity_config(args);
+                self.git(repo_path, retry_args).map(|_| ())
+            }
+            Err(e) => Err(e),
         }
     }
 
@@ -854,7 +1308,11 @@ impl GitCli {
             }
         }
 
-        for a in args {
+        let args = args
+            .into_iter()
+            .map(|a| a.as_ref().to_os_string())
+            .collect::<Vec<_>>();
+        for a in &args {
             cmd.arg(a);
         }
 
@@ -867,11 +1325,15 @@ impl GitCli {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
+        let redacted_args = args
+            .iter()
+            .map(|a| redact_sensitive_text(&a.to_string_lossy()))
+            .collect::<Vec<_>>();
         tracing::trace!(
             stdin = ?stdin.as_ref().map(|s| String::from_utf8_lossy(s)),
             repo = ?repo_path,
-            "Running git command: {:?}",
-            cmd
+            args = ?redacted_args,
+            "Running git command"
         );
 
         let mut child = cmd
@@ -899,7 +1361,7 @@ impl GitCli {
                 (false, true) => format!("--- stderr\n{stdout}"),
                 (true, false) => format!("--- stdout\n{stderr}"),
             };
-            return Err(GitCliError::CommandFailed(combined));
+            return Err(GitCliError::CommandFailed(redact_sensitive_text(&combined)));
         }
         if let Some(Err(e)) = stdin_write_result {
             return Err(GitCliError::CommandFailed(format!(
@@ -1014,4 +1476,60 @@ pub struct WorktreeStatus {
     pub uncommitted_tracked: usize,
     pub untracked: usize,
     pub entries: Vec<StatusEntry>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redact_sensitive_text_redacts_url_userinfo() {
+        let input =
+            "fatal: repository 'https://x-access-token:SECRET@github.com/org/repo.git/' not found";
+        let redacted = redact_sensitive_text(input);
+        assert!(!redacted.contains("SECRET"));
+        assert!(redacted.contains("https://***@github.com"));
+    }
+
+    #[test]
+    fn parse_name_status_z_parses_rename_and_modify() {
+        let raw = b"R100\0old.txt\0new.txt\0M\0file.txt\0";
+        let entries = GitCli::parse_name_status_z(raw);
+        assert_eq!(entries.len(), 2);
+        assert!(matches!(entries[0].change, ChangeType::Renamed));
+        assert_eq!(entries[0].old_path.as_deref(), Some("old.txt"));
+        assert_eq!(entries[0].path, "new.txt");
+        assert!(matches!(entries[1].change, ChangeType::Modified));
+        assert_eq!(entries[1].path, "file.txt");
+    }
+
+    #[test]
+    fn parse_numstat_summary_z_sums_counts_and_treats_dash_as_zero() {
+        let raw = b"3\t1\tfile.txt\0-\t-\tbinary.bin\0";
+        let summary = GitCli::parse_numstat_summary_z(raw);
+        assert_eq!(summary.additions, 3);
+        assert_eq!(summary.deletions, 1);
+    }
+
+    #[test]
+    fn classify_cli_error_redacts_and_maps_auth_failed() {
+        let git = GitCli::new();
+        let err = git.classify_cli_error(
+            "Authentication failed for 'https://TOKEN@github.com/org/repo.git'".to_string(),
+        );
+        match err {
+            GitCliError::AuthFailed(msg) => {
+                assert!(!msg.contains("TOKEN"));
+                assert!(msg.contains("https://***@github.com"));
+            }
+            other => panic!("expected auth failed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_cli_error_maps_push_rejected() {
+        let git = GitCli::new();
+        let err = git.classify_cli_error("non-fast-forward".to_string());
+        assert!(matches!(err, GitCliError::PushRejected(_)));
+    }
 }

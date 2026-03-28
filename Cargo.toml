@@ -42,7 +42,6 @@ tower-http = { version = "0.5", features = ["cors", "request-id", "trace", "fs"]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 anyhow = "1.0"
-openssl-sys = { version = "0.9", features = ["vendored"] }
 thiserror = "2.0.12"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }

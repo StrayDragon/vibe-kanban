@@ -273,7 +273,7 @@ export type CheckAgentCompatibilityQuery = { executor: BaseCodingAgent, variant:
 
 export type CliDependencyPreflightQuery = { executor: BaseCodingAgent, };
 
-export type CliDependencyPreflightResponse = { agent: AvailabilityInfo, };
+export type CliDependencyPreflightResponse = { agent: AvailabilityInfo, git: AvailabilityInfo, gh: AvailabilityInfo, };
 
 export type ImportLlmanProfilesResponse = { path: string, imported: number, updated: number, skipped: number, };
 
