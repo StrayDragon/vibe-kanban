@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{LazyLock, RwLock},
+};
 
 use app_runtime::{Deployment, DeploymentError};
 use axum::{
@@ -101,6 +104,28 @@ fn redacted_executor_configs_for_api(profiles: &ExecutorConfigs) -> ExecutorConf
     })
 }
 
+static REDACTED_EXECUTOR_CONFIGS_CACHE: LazyLock<RwLock<Option<(u64, ExecutorConfigs)>>> =
+    LazyLock::new(|| RwLock::new(None));
+
+fn redacted_executor_configs_for_api_cached(
+    loaded_at_unix_ms: u64,
+    profiles: &ExecutorConfigs,
+) -> ExecutorConfigs {
+    {
+        let cache = REDACTED_EXECUTOR_CONFIGS_CACHE.read().unwrap();
+        if let Some((cached_loaded_at, cached_redacted)) = cache.as_ref()
+            && *cached_loaded_at == loaded_at_unix_ms
+        {
+            return cached_redacted.clone();
+        }
+    }
+
+    let redacted = redacted_executor_configs_for_api(profiles);
+    let mut cache = REDACTED_EXECUTOR_CONFIGS_CACHE.write().unwrap();
+    *cache = Some((loaded_at_unix_ms, redacted.clone()));
+    redacted
+}
+
 pub fn router() -> Router<DeploymentImpl> {
     Router::new()
         .route("/info", get(get_user_system_info))
@@ -123,7 +148,7 @@ pub fn router() -> Router<DeploymentImpl> {
         .route("/preflight/cli", get(cli_dependency_preflight))
 }
 
-#[derive(Debug, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct Environment {
     pub os_type: String,
     pub os_version: String,
@@ -146,6 +171,11 @@ impl Environment {
             os_architecture: info.architecture().unwrap_or("unknown").to_string(),
             bitness: info.bitness().to_string(),
         }
+    }
+
+    pub fn cached() -> Self {
+        static ENV: LazyLock<Environment> = LazyLock::new(Environment::new);
+        ENV.clone()
     }
 }
 
@@ -173,13 +203,14 @@ async fn get_user_system_info(
     redacted_config.github.pat = None;
     redacted_config.github.oauth_token = None;
 
+    let loaded_at_unix_ms = to_unix_ms(deployment.config_status().read().await.loaded_at);
     let profiles = ExecutorConfigs::get_cached();
-    let redacted_profiles = redacted_executor_configs_for_api(&profiles);
+    let redacted_profiles = redacted_executor_configs_for_api_cached(loaded_at_unix_ms, &profiles);
 
     let user_system_info = UserSystemInfo {
         config: redacted_config,
         profiles: redacted_profiles,
-        environment: Environment::new(),
+        environment: Environment::cached(),
         capabilities: {
             let mut caps: HashMap<String, Vec<BaseAgentCapability>> = HashMap::new();
             for key in profiles.executors.keys() {
@@ -317,13 +348,14 @@ pub struct ImportLlmanProfilesResponse {
 }
 
 async fn get_profiles(
-    State(_deployment): State<DeploymentImpl>,
+    State(deployment): State<DeploymentImpl>,
 ) -> ResponseJson<ApiResponse<ProfilesContent>> {
     let profiles_path = utils_core::vk_config_yaml_path();
 
     // Use cached data to ensure consistency with runtime and PUT updates
+    let loaded_at_unix_ms = to_unix_ms(deployment.config_status().read().await.loaded_at);
     let profiles = ExecutorConfigs::get_cached();
-    let redacted = redacted_executor_configs_for_api(&profiles);
+    let redacted = redacted_executor_configs_for_api_cached(loaded_at_unix_ms, &profiles);
 
     let content = serde_json::to_string_pretty(&redacted).unwrap_or_else(|e| {
         tracing::error!("Failed to serialize profiles to JSON: {}", e);
