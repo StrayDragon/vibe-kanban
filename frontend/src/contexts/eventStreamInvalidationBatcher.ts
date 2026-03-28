@@ -14,17 +14,21 @@ export type InvalidationBatcher = {
   reset: () => void;
 };
 
+const MAX_UNIQUE_IDS_PER_BATCH = 512;
+
+type FlushHandle =
+  | { kind: 'timeout'; id: ReturnType<typeof setTimeout> }
+  | { kind: 'raf'; id: number };
+
 export function createInvalidationBatcher(
   queryClient: InvalidatableQueryClient
 ): InvalidationBatcher {
   const taskIds = new Set<string>();
   const workspaceIds = new Set<string>();
   let hasExecutionProcess = false;
-  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+  let flushHandle: FlushHandle | null = null;
 
   const flush = () => {
-    flushTimer = null;
-
     if (taskIds.size === 0 && workspaceIds.size === 0 && !hasExecutionProcess) {
       return;
     }
@@ -43,8 +47,27 @@ export function createInvalidationBatcher(
   };
 
   const scheduleFlush = () => {
-    if (flushTimer !== null) return;
-    flushTimer = setTimeout(flush, 0);
+    if (flushHandle !== null) return;
+
+    const canUseRaf =
+      typeof document !== 'undefined' &&
+      document.visibilityState === 'visible' &&
+      typeof requestAnimationFrame === 'function';
+
+    if (canUseRaf) {
+      const id = requestAnimationFrame(() => {
+        flushHandle = null;
+        flush();
+      });
+      flushHandle = { kind: 'raf', id };
+      return;
+    }
+
+    const id = setTimeout(() => {
+      flushHandle = null;
+      flush();
+    }, 0);
+    flushHandle = { kind: 'timeout', id };
   };
 
   const enqueueHints = (hints: InvalidationHints) => {
@@ -79,6 +102,12 @@ export function createInvalidationBatcher(
       changed = true;
     }
 
+    if (taskIds.size + workspaceIds.size > MAX_UNIQUE_IDS_PER_BATCH) {
+      reset();
+      queryClient.invalidateQueries();
+      return;
+    }
+
     if (changed) {
       scheduleFlush();
     }
@@ -89,9 +118,14 @@ export function createInvalidationBatcher(
   };
 
   const reset = () => {
-    if (flushTimer !== null) {
-      clearTimeout(flushTimer);
-      flushTimer = null;
+    if (flushHandle?.kind === 'timeout') {
+      clearTimeout(flushHandle.id);
+      flushHandle = null;
+    } else if (flushHandle?.kind === 'raf') {
+      if (typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(flushHandle.id);
+      }
+      flushHandle = null;
     }
     taskIds.clear();
     workspaceIds.clear();

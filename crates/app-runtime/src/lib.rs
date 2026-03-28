@@ -1152,6 +1152,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stream_events_live_emits_only_invalidate_for_execution_process_patch() {
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
+
+        let deployment = <AppRuntime as Deployment>::new().await.unwrap();
+        let stream = deployment.stream_events(None).await;
+
+        let patch: Patch = serde_json::from_value(serde_json::json!([
+            { "op": "add", "path": "/execution_processes/process-1", "value": { "id": "process-1" } }
+        ]))
+        .expect("valid json patch");
+        deployment.events().msg_store().push_patch(patch);
+
+        let (chunk, mut body_stream) = next_sse_event_text(stream).await;
+        let (event, id, data) = parse_sse_chunk(&chunk);
+
+        assert_eq!(event, Some("invalidate"));
+        assert_eq!(id, Some("1"));
+        let data = data.expect("expected invalidate payload");
+        let value: Value = serde_json::from_str(&data).expect("valid invalidate payload json");
+        assert_eq!(value["taskIds"], serde_json::json!([]));
+        assert_eq!(value["workspaceIds"], serde_json::json!([]));
+        assert_eq!(value["hasExecutionProcess"], serde_json::json!(true));
+
+        let second = tokio::time::timeout(Duration::from_millis(100), body_stream.next()).await;
+        assert!(
+            second.is_err(),
+            "expected no second SSE event for the same seq"
+        );
+    }
+
+    #[tokio::test]
     async fn stream_events_resume_unavailable_emits_invalidate_all_with_watermark_id() {
         let temp_root = TempRoot::new("vk-test-");
         let db = TestDb::sqlite_file(&temp_root);

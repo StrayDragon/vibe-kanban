@@ -1,8 +1,7 @@
-# refresh-task-attempts Specification
+# refresh-task-attempts Specification (Delta)
 
-## Purpose
-TBD - created by archiving change update-sse-cache-invalidation. Update Purpose after archive.
-## Requirements
+## MODIFIED Requirements
+
 ### Requirement: SSE-driven task attempt invalidation
 The UI SHALL listen to the `/events` SSE stream and invalidate task attempt and branch status queries when relevant updates are received.
 
@@ -31,15 +30,4 @@ To protect the UI under extreme invalidation bursts, the UI MUST cap the number 
 #### Scenario: Oversized batches degrade to invalidate_all
 - **WHEN** the UI receives `invalidate` events within a short window that reference more than 512 unique identifiers across `taskIds` and `workspaceIds`
 - **THEN** the UI invalidates all queries at most once and clears the pending invalidation batch
-
-### Requirement: Visibility-aware fallback polling
-The UI SHALL poll task attempt and branch status queries only when the SSE stream is disconnected and the document is visible.
-
-#### Scenario: SSE connected
-- **WHEN** the SSE connection is open
-- **THEN** periodic polling for task attempts and branch status is disabled
-
-#### Scenario: SSE disconnected while visible
-- **WHEN** the SSE connection is closed and the document is visible
-- **THEN** the UI polls those queries at the configured fallback interval
 

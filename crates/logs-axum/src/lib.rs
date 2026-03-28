@@ -413,4 +413,150 @@ mod tests {
             Some(&serde_json::json!(["baz~qux"]))
         );
     }
+
+    #[test]
+    fn invalidation_hints_from_patch_table() {
+        struct Case {
+            name: &'static str,
+            patch: serde_json::Value,
+            expected: Option<serde_json::Value>,
+        }
+
+        let cases = [
+            Case {
+                name: "tasks add uses id from path",
+                patch: serde_json::json!([
+                    { "op": "add", "path": "/tasks/task-1", "value": {} }
+                ]),
+                expected: Some(serde_json::json!({
+                    "taskIds": ["task-1"],
+                    "workspaceIds": [],
+                    "hasExecutionProcess": false,
+                })),
+            },
+            Case {
+                name: "tasks replace uses id from path",
+                patch: serde_json::json!([
+                    { "op": "replace", "path": "/tasks/task-2", "value": {} }
+                ]),
+                expected: Some(serde_json::json!({
+                    "taskIds": ["task-2"],
+                    "workspaceIds": [],
+                    "hasExecutionProcess": false,
+                })),
+            },
+            Case {
+                name: "tasks remove uses id from path",
+                patch: serde_json::json!([{ "op": "remove", "path": "/tasks/task-3" }]),
+                expected: Some(serde_json::json!({
+                    "taskIds": ["task-3"],
+                    "workspaceIds": [],
+                    "hasExecutionProcess": false,
+                })),
+            },
+            Case {
+                name: "workspaces add includes workspace id and task_id injection",
+                patch: serde_json::json!([
+                    {
+                        "op": "add",
+                        "path": "/workspaces/workspace-1",
+                        "value": { "task_id": "task-1" }
+                    }
+                ]),
+                expected: Some(serde_json::json!({
+                    "taskIds": ["task-1"],
+                    "workspaceIds": ["workspace-1"],
+                    "hasExecutionProcess": false,
+                })),
+            },
+            Case {
+                name: "workspaces replace includes workspace id and task_id injection",
+                patch: serde_json::json!([
+                    {
+                        "op": "replace",
+                        "path": "/workspaces/workspace-2",
+                        "value": { "task_id": "task-2" }
+                    }
+                ]),
+                expected: Some(serde_json::json!({
+                    "taskIds": ["task-2"],
+                    "workspaceIds": ["workspace-2"],
+                    "hasExecutionProcess": false,
+                })),
+            },
+            Case {
+                name: "workspaces remove includes workspace id only",
+                patch: serde_json::json!([{ "op": "remove", "path": "/workspaces/workspace-3" }]),
+                expected: Some(serde_json::json!({
+                    "taskIds": [],
+                    "workspaceIds": ["workspace-3"],
+                    "hasExecutionProcess": false,
+                })),
+            },
+            Case {
+                name: "execution_processes add sets hasExecutionProcess",
+                patch: serde_json::json!([
+                    {
+                        "op": "add",
+                        "path": "/execution_processes/process-1",
+                        "value": { "id": "process-1" }
+                    }
+                ]),
+                expected: Some(serde_json::json!({
+                    "taskIds": [],
+                    "workspaceIds": [],
+                    "hasExecutionProcess": true,
+                })),
+            },
+            Case {
+                name: "execution_processes replace sets hasExecutionProcess",
+                patch: serde_json::json!([
+                    {
+                        "op": "replace",
+                        "path": "/execution_processes/process-2",
+                        "value": { "id": "process-2" }
+                    }
+                ]),
+                expected: Some(serde_json::json!({
+                    "taskIds": [],
+                    "workspaceIds": [],
+                    "hasExecutionProcess": true,
+                })),
+            },
+            Case {
+                name: "execution_processes remove sets hasExecutionProcess",
+                patch: serde_json::json!([
+                    { "op": "remove", "path": "/execution_processes/process-3" }
+                ]),
+                expected: Some(serde_json::json!({
+                    "taskIds": [],
+                    "workspaceIds": [],
+                    "hasExecutionProcess": true,
+                })),
+            },
+            Case {
+                name: "json pointer segments are decoded",
+                patch: serde_json::json!([
+                    { "op": "replace", "path": "/tasks/foo~1bar", "value": {} },
+                    { "op": "add", "path": "/workspaces/baz~0qux", "value": { "task_id": "ignored" } }
+                ]),
+                expected: Some(serde_json::json!({
+                    "taskIds": ["foo/bar", "ignored"],
+                    "workspaceIds": ["baz~qux"],
+                    "hasExecutionProcess": false,
+                })),
+            },
+            Case {
+                name: "unrelated patch returns None",
+                patch: serde_json::json!([{ "op": "replace", "path": "/unrelated", "value": {} }]),
+                expected: None,
+            },
+        ];
+
+        for case in cases {
+            let patch: Patch = serde_json::from_value(case.patch).expect("valid patch");
+            let hints = invalidation_hints_from_patch(&patch);
+            assert_eq!(hints, case.expected, "case: {}", case.name);
+        }
+    }
 }
