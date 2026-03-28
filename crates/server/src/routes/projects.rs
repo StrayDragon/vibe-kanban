@@ -16,6 +16,7 @@ use axum::{
 use chrono::Utc;
 use db::models::{project::ProjectFileSearchResponse, repo::Repo};
 use futures_util::{SinkExt, StreamExt};
+use json_patch::{PatchOperation, ReplaceOperation};
 use logs_axum::SequencedLogMsgAxumExt;
 use logs_protocol::LogMsg;
 use logs_store::SequencedLogMsg;
@@ -161,21 +162,12 @@ async fn send_projects_snapshot(
         })
         .collect();
 
-    let patch = serde_json::json!([
-        {
-            "op": "replace",
-            "path": "/projects",
-            "value": projects_map
-        }
-    ]);
-
-    let patch = match serde_json::from_value(patch) {
-        Ok(patch) => patch,
-        Err(err) => {
-            tracing::error!(error = %err, "failed to build projects snapshot patch");
-            json_patch::Patch(vec![])
-        }
-    };
+    let patch = json_patch::Patch(vec![PatchOperation::Replace(ReplaceOperation {
+        path: "/projects"
+            .try_into()
+            .expect("projects snapshot path should be valid"),
+        value: serde_json::Value::Object(projects_map),
+    })]);
 
     let seq = next_ws_seq(last_seq);
     let msg = SequencedLogMsg {

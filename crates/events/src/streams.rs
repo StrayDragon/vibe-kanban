@@ -17,10 +17,9 @@ use db::{
     },
 };
 use futures::StreamExt;
-use json_patch::{PatchOperation, RemoveOperation};
+use json_patch::{PatchOperation, RemoveOperation, ReplaceOperation};
 use logs_protocol::LogMsg;
 use logs_store::{SequencedHistoryMetadata, SequencedLogMsg};
-use serde_json::json;
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use uuid::Uuid;
@@ -69,21 +68,14 @@ impl EventService {
                 })
                 .collect();
 
-            let patch = json!([
-                {
-                    "op": "replace",
-                    "path": "/tasks",
-                    "value": tasks_map
-                }
-            ]);
-
-            match serde_json::from_value(patch) {
-                Ok(patch) => LogMsg::JsonPatch(patch),
-                Err(err) => {
-                    tracing::error!(error = %err, "failed to build tasks snapshot patch");
-                    LogMsg::JsonPatch(json_patch::Patch(vec![]))
-                }
-            }
+            LogMsg::JsonPatch(json_patch::Patch(vec![PatchOperation::Replace(
+                ReplaceOperation {
+                    path: "/tasks"
+                        .try_into()
+                        .expect("tasks snapshot path should be valid"),
+                    value: serde_json::Value::Object(tasks_map),
+                },
+            )]))
         }
 
         fn filter_task_patch(
@@ -92,13 +84,31 @@ impl EventService {
             include_archived: bool,
             archived_kanban_id: Option<Uuid>,
         ) -> Option<LogMsg> {
-            let matches_filter = |task: &TaskWithAttemptStatus| {
-                let project_ok = project_id.is_none_or(|id| task.project_id == id);
-                let archived_ok = match archived_kanban_id {
-                    Some(want) => task.archived_kanban_id == Some(want),
-                    None => include_archived || task.archived_kanban_id.is_none(),
+            let project_id_str = project_id.map(|id| id.to_string());
+            let archived_kanban_id_str = archived_kanban_id.map(|id| id.to_string());
+
+            let matches_filter_value = |task_value: &serde_json::Value| -> Option<bool> {
+                let value_project_id = task_value.get("project_id").and_then(|v| v.as_str())?;
+
+                if let Some(want_project_id) = project_id_str.as_deref()
+                    && value_project_id != want_project_id
+                {
+                    return Some(false);
+                }
+
+                let archived_kanban_value = task_value.get("archived_kanban_id");
+                let archived_kanban_value = match archived_kanban_value {
+                    None | Some(serde_json::Value::Null) => None,
+                    Some(serde_json::Value::String(s)) => Some(s.as_str()),
+                    _ => return None,
                 };
-                project_ok && archived_ok
+
+                match archived_kanban_id_str.as_deref() {
+                    Some(want_archived_kanban_id) => {
+                        Some(archived_kanban_value == Some(want_archived_kanban_id))
+                    }
+                    None => Some(include_archived || archived_kanban_value.is_none()),
+                }
             };
 
             if let Some(patch_op) = patch.0.first()
@@ -106,34 +116,28 @@ impl EventService {
             {
                 match patch_op {
                     json_patch::PatchOperation::Add(op) => {
-                        if let Ok(task) =
-                            serde_json::from_value::<TaskWithAttemptStatus>(op.value.clone())
-                        {
-                            if matches_filter(&task) {
-                                return Some(LogMsg::JsonPatch(patch));
-                            }
-
-                            let remove_patch =
-                                json_patch::Patch(vec![PatchOperation::Remove(RemoveOperation {
-                                    path: op.path.clone(),
-                                })]);
-                            return Some(LogMsg::JsonPatch(remove_patch));
+                        let matches = matches_filter_value(&op.value)?;
+                        if matches {
+                            return Some(LogMsg::JsonPatch(patch));
                         }
+
+                        let remove_patch =
+                            json_patch::Patch(vec![PatchOperation::Remove(RemoveOperation {
+                                path: op.path.clone(),
+                            })]);
+                        return Some(LogMsg::JsonPatch(remove_patch));
                     }
                     json_patch::PatchOperation::Replace(op) => {
-                        if let Ok(task) =
-                            serde_json::from_value::<TaskWithAttemptStatus>(op.value.clone())
-                        {
-                            if matches_filter(&task) {
-                                return Some(LogMsg::JsonPatch(patch));
-                            }
-
-                            let remove_patch =
-                                json_patch::Patch(vec![PatchOperation::Remove(RemoveOperation {
-                                    path: op.path.clone(),
-                                })]);
-                            return Some(LogMsg::JsonPatch(remove_patch));
+                        let matches = matches_filter_value(&op.value)?;
+                        if matches {
+                            return Some(LogMsg::JsonPatch(patch));
                         }
+
+                        let remove_patch =
+                            json_patch::Patch(vec![PatchOperation::Remove(RemoveOperation {
+                                path: op.path.clone(),
+                            })]);
+                        return Some(LogMsg::JsonPatch(remove_patch));
                     }
                     json_patch::PatchOperation::Remove(_) => {
                         return Some(LogMsg::JsonPatch(patch));
@@ -290,21 +294,14 @@ impl EventService {
                 })
                 .collect();
 
-            let patch = json!([
-                {
-                    "op": "replace",
-                    "path": "/projects",
-                    "value": projects_map
-                }
-            ]);
-
-            match serde_json::from_value(patch) {
-                Ok(patch) => LogMsg::JsonPatch(patch),
-                Err(err) => {
-                    tracing::error!(error = %err, "failed to build projects snapshot patch");
-                    LogMsg::JsonPatch(json_patch::Patch(vec![]))
-                }
-            }
+            LogMsg::JsonPatch(json_patch::Patch(vec![PatchOperation::Replace(
+                ReplaceOperation {
+                    path: "/projects"
+                        .try_into()
+                        .expect("projects snapshot path should be valid"),
+                    value: serde_json::Value::Object(projects_map),
+                },
+            )]))
         }
 
         fn patch_is_projects(patch: &json_patch::Patch) -> bool {
@@ -476,21 +473,14 @@ impl EventService {
                 })
                 .collect();
 
-            let initial_patch = json!([{
-                "op": "replace",
-                "path": "/execution_processes",
-                "value": processes_map
-            }]);
-            let initial_msg = match serde_json::from_value(initial_patch) {
-                Ok(patch) => LogMsg::JsonPatch(patch),
-                Err(err) => {
-                    tracing::error!(
-                        error = %err,
-                        "failed to build execution processes snapshot patch"
-                    );
-                    LogMsg::JsonPatch(json_patch::Patch(vec![]))
-                }
-            };
+            let initial_msg = LogMsg::JsonPatch(json_patch::Patch(vec![PatchOperation::Replace(
+                ReplaceOperation {
+                    path: "/execution_processes"
+                        .try_into()
+                        .expect("execution_processes snapshot path should be valid"),
+                    value: serde_json::Value::Object(processes_map),
+                },
+            )]));
 
             Ok((initial_msg, session_ids))
         }
@@ -529,6 +519,39 @@ impl EventService {
                 .is_some_and(|op| op.path().starts_with("/execution_processes/"))
         }
 
+        fn decode_pointer_segment(segment: &str) -> String {
+            segment.replace("~1", "/").replace("~0", "~")
+        }
+
+        fn parse_execution_process_session_and_dropped(
+            value: &serde_json::Value,
+        ) -> Option<(Uuid, bool)> {
+            let session_id = value
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok())?;
+            let dropped = value.get("dropped").and_then(|v| v.as_bool())?;
+            Some((session_id, dropped))
+        }
+
+        fn parse_execution_process_id(value: &serde_json::Value, path: &str) -> Option<Uuid> {
+            let encoded = path.strip_prefix("/execution_processes/")?;
+            let encoded = encoded.split('/').next().unwrap_or(encoded);
+            let parsed = if encoded.contains('~') {
+                let decoded = decode_pointer_segment(encoded);
+                Uuid::parse_str(&decoded).ok()
+            } else {
+                Uuid::parse_str(encoded).ok()
+            };
+
+            parsed.or_else(|| {
+                value
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| Uuid::parse_str(s).ok())
+            })
+        }
+
         let (history, receiver, meta) = self.msg_store.subscribe_sequenced_from(after_seq);
         let snapshot_seq = snapshot_seq_from_meta(meta);
         let needs_snapshot = after_seq.is_none() || !can_resume_from(after_seq.unwrap_or(0), meta);
@@ -565,55 +588,65 @@ impl EventService {
 
                         match op {
                             json_patch::PatchOperation::Add(add) => {
-                                if let Ok(process) = serde_json::from_value::<ExecutionProcessPublic>(
-                                    add.value.clone(),
-                                ) && session_matches_workspace(
-                                    &session_ids,
-                                    &self.db.pool,
-                                    workspace_id,
-                                    process.session_id,
-                                )
-                                .await
+                                if let Some((session_id, dropped)) =
+                                    parse_execution_process_session_and_dropped(&add.value)
+                                    && session_matches_workspace(
+                                        &session_ids,
+                                        &self.db.pool,
+                                        workspace_id,
+                                        session_id,
+                                    )
+                                    .await
                                 {
-                                    if !show_soft_deleted && process.dropped {
-                                        initial_msgs.push(SequencedLogMsg {
-                                            seq: item.seq,
-                                            msg: LogMsg::JsonPatch(
-                                                execution_process_patch::remove(process.id),
-                                            ),
-                                        });
-                                    } else {
-                                        initial_msgs.push(SequencedLogMsg {
-                                            seq: item.seq,
-                                            msg: LogMsg::JsonPatch(patch),
-                                        });
+                                    if !show_soft_deleted && dropped {
+                                        if let Some(process_id) =
+                                            parse_execution_process_id(&add.value, op.path())
+                                        {
+                                            initial_msgs.push(SequencedLogMsg {
+                                                seq: item.seq,
+                                                msg: LogMsg::JsonPatch(
+                                                    execution_process_patch::remove(process_id),
+                                                ),
+                                            });
+                                        }
+                                        continue;
                                     }
+
+                                    initial_msgs.push(SequencedLogMsg {
+                                        seq: item.seq,
+                                        msg: LogMsg::JsonPatch(patch),
+                                    });
                                 }
                             }
                             json_patch::PatchOperation::Replace(replace) => {
-                                if let Ok(process) = serde_json::from_value::<ExecutionProcessPublic>(
-                                    replace.value.clone(),
-                                ) && session_matches_workspace(
-                                    &session_ids,
-                                    &self.db.pool,
-                                    workspace_id,
-                                    process.session_id,
-                                )
-                                .await
+                                if let Some((session_id, dropped)) =
+                                    parse_execution_process_session_and_dropped(&replace.value)
+                                    && session_matches_workspace(
+                                        &session_ids,
+                                        &self.db.pool,
+                                        workspace_id,
+                                        session_id,
+                                    )
+                                    .await
                                 {
-                                    if !show_soft_deleted && process.dropped {
-                                        initial_msgs.push(SequencedLogMsg {
-                                            seq: item.seq,
-                                            msg: LogMsg::JsonPatch(
-                                                execution_process_patch::remove(process.id),
-                                            ),
-                                        });
-                                    } else {
-                                        initial_msgs.push(SequencedLogMsg {
-                                            seq: item.seq,
-                                            msg: LogMsg::JsonPatch(patch),
-                                        });
+                                    if !show_soft_deleted && dropped {
+                                        if let Some(process_id) =
+                                            parse_execution_process_id(&replace.value, op.path())
+                                        {
+                                            initial_msgs.push(SequencedLogMsg {
+                                                seq: item.seq,
+                                                msg: LogMsg::JsonPatch(
+                                                    execution_process_patch::remove(process_id),
+                                                ),
+                                            });
+                                        }
+                                        continue;
                                     }
+
+                                    initial_msgs.push(SequencedLogMsg {
+                                        seq: item.seq,
+                                        msg: LogMsg::JsonPatch(patch),
+                                    });
                                 }
                             }
                             json_patch::PatchOperation::Remove(_) => {
@@ -664,24 +697,26 @@ impl EventService {
 
                                 match op {
                                     json_patch::PatchOperation::Add(add) => {
-                                        if let Ok(process) =
-                                            serde_json::from_value::<ExecutionProcessPublic>(
-                                                add.value.clone(),
-                                            )
+                                        if let Some((session_id, dropped)) =
+                                            parse_execution_process_session_and_dropped(&add.value)
                                             && session_matches_workspace(
                                                 &session_ids,
                                                 &db_pool,
                                                 workspace_id,
-                                                process.session_id,
+                                                session_id,
                                             )
                                             .await
                                         {
                                             last_seq.store(item.seq, Ordering::Relaxed);
-                                            if !show_soft_deleted && process.dropped {
+                                            if !show_soft_deleted && dropped {
+                                                let process_id = parse_execution_process_id(
+                                                    &add.value,
+                                                    op.path(),
+                                                )?;
                                                 return Some(Ok(SequencedLogMsg {
                                                     seq: item.seq,
                                                     msg: LogMsg::JsonPatch(
-                                                        execution_process_patch::remove(process.id),
+                                                        execution_process_patch::remove(process_id),
                                                     ),
                                                 }));
                                             }
@@ -692,24 +727,28 @@ impl EventService {
                                         }
                                     }
                                     json_patch::PatchOperation::Replace(replace) => {
-                                        if let Ok(process) =
-                                            serde_json::from_value::<ExecutionProcessPublic>(
-                                                replace.value.clone(),
+                                        if let Some((session_id, dropped)) =
+                                            parse_execution_process_session_and_dropped(
+                                                &replace.value,
                                             )
                                             && session_matches_workspace(
                                                 &session_ids,
                                                 &db_pool,
                                                 workspace_id,
-                                                process.session_id,
+                                                session_id,
                                             )
                                             .await
                                         {
                                             last_seq.store(item.seq, Ordering::Relaxed);
-                                            if !show_soft_deleted && process.dropped {
+                                            if !show_soft_deleted && dropped {
+                                                let process_id = parse_execution_process_id(
+                                                    &replace.value,
+                                                    op.path(),
+                                                )?;
                                                 return Some(Ok(SequencedLogMsg {
                                                     seq: item.seq,
                                                     msg: LogMsg::JsonPatch(
-                                                        execution_process_patch::remove(process.id),
+                                                        execution_process_patch::remove(process_id),
                                                     ),
                                                 }));
                                             }
@@ -794,19 +833,22 @@ impl EventService {
         EventError,
     > {
         fn build_scratch_snapshot(scratch: Option<Scratch>) -> LogMsg {
-            let patch = json!([{
-                "op": "replace",
-                "path": "/scratch",
-                "value": scratch
-            }]);
-
-            match serde_json::from_value(patch) {
-                Ok(patch) => LogMsg::JsonPatch(patch),
+            let value = match serde_json::to_value(scratch) {
+                Ok(value) => value,
                 Err(err) => {
-                    tracing::error!(error = %err, "failed to build scratch snapshot patch");
-                    LogMsg::JsonPatch(json_patch::Patch(vec![]))
+                    tracing::error!(error = %err, "failed to serialize scratch for snapshot");
+                    serde_json::Value::Null
                 }
-            }
+            };
+
+            LogMsg::JsonPatch(json_patch::Patch(vec![PatchOperation::Replace(
+                ReplaceOperation {
+                    path: "/scratch"
+                        .try_into()
+                        .expect("scratch snapshot path should be valid"),
+                    value,
+                },
+            )]))
         }
 
         fn patch_matches_scratch(

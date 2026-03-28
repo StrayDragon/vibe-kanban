@@ -3164,6 +3164,7 @@ dependencies = [
  "json-patch",
  "logs-protocol",
  "logs-store",
+ "serde",
  "serde_json",
 ]
 

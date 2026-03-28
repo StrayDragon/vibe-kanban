@@ -374,6 +374,8 @@ impl EventService {
 
 #[cfg(test)]
 mod tests {
+    use futures::StreamExt;
+    use json_patch::{AddOperation, Patch, PatchOperation as JsonPatchOp};
     use logs_protocol::LogMsg;
     use sea_orm::{ActiveModelTrait, ColumnTrait, Database, EntityTrait, QueryFilter, Set};
     use sea_orm_migration::MigratorTrait;
@@ -582,5 +584,296 @@ mod tests {
         });
 
         assert!(emitted, "expected task patch for archived task update");
+    }
+
+    #[tokio::test]
+    async fn tasks_stream_snapshot_is_single_replace_op() {
+        let db = setup_db().await;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &db.pool,
+            &db::models::project::CreateProject {
+                name: "Snapshot project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &db.pool,
+            &db::models::task::CreateTask::from_title_description(
+                project_id,
+                "Snapshot task".to_string(),
+                None,
+            ),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let msg_store = Arc::new(MsgStore::new());
+        let service = EventService {
+            msg_store,
+            db: db.clone(),
+            entry_count: Arc::new(RwLock::new(0)),
+            shutdown_token: CancellationToken::new(),
+        };
+
+        let mut stream = service
+            .stream_tasks_raw(Some(project_id), false, None, None)
+            .await
+            .unwrap();
+
+        let first = stream.next().await.expect("snapshot msg").unwrap();
+        assert_eq!(first.seq, 0);
+        let LogMsg::JsonPatch(patch) = first.msg else {
+            panic!("expected JsonPatch snapshot msg");
+        };
+        assert_eq!(patch.0.len(), 1, "snapshot patch must be single-op");
+
+        let JsonPatchOp::Replace(replace) = &patch.0[0] else {
+            panic!("expected replace op for snapshot");
+        };
+        assert_eq!(replace.path.as_str(), "/tasks");
+        let map = replace
+            .value
+            .as_object()
+            .expect("snapshot replace value must be an object");
+        assert!(map.contains_key(&task_id.to_string()));
+    }
+
+    #[tokio::test]
+    async fn tasks_stream_history_translates_non_matching_updates_to_remove() {
+        let pool = Database::connect("sqlite::memory:").await.unwrap();
+        let db = DBService { pool };
+
+        let msg_store = Arc::new(MsgStore::new());
+        let service = EventService {
+            msg_store: msg_store.clone(),
+            db,
+            entry_count: Arc::new(RwLock::new(0)),
+            shutdown_token: CancellationToken::new(),
+        };
+
+        let want_project_id = Uuid::new_v4();
+        let other_project_id = Uuid::new_v4();
+
+        let want_task_id = Uuid::new_v4();
+        msg_store.push_patch(Patch(vec![JsonPatchOp::Add(AddOperation {
+            path: format!("/tasks/{want_task_id}")
+                .try_into()
+                .expect("valid task patch path"),
+            value: serde_json::json!({
+                "project_id": want_project_id.to_string(),
+                "archived_kanban_id": null,
+            }),
+        })]));
+
+        let other_task_id = Uuid::new_v4();
+        msg_store.push_patch(Patch(vec![JsonPatchOp::Add(AddOperation {
+            path: format!("/tasks/{other_task_id}")
+                .try_into()
+                .expect("valid task patch path"),
+            value: serde_json::json!({
+                "project_id": other_project_id.to_string(),
+                "archived_kanban_id": null,
+            }),
+        })]));
+
+        let stream = service
+            .stream_tasks_raw(Some(want_project_id), false, None, Some(0))
+            .await
+            .unwrap();
+        let items: Vec<_> = stream.take(2).collect().await;
+        assert_eq!(items.len(), 2);
+
+        let first = items[0].as_ref().unwrap();
+        assert_eq!(first.seq, 1);
+        let LogMsg::JsonPatch(first_patch) = &first.msg else {
+            panic!("expected json patch");
+        };
+        let expected_path = format!("/tasks/{want_task_id}");
+        assert!(
+            first_patch
+                .0
+                .first()
+                .is_some_and(|op| op.path() == expected_path.as_str()),
+            "expected original matching patch"
+        );
+
+        let second = items[1].as_ref().unwrap();
+        assert_eq!(second.seq, 2);
+        let LogMsg::JsonPatch(second_patch) = &second.msg else {
+            panic!("expected json patch");
+        };
+        let Some(JsonPatchOp::Remove(remove)) = second_patch.0.first() else {
+            panic!("expected remove patch for non-matching task update");
+        };
+        let expected_path = format!("/tasks/{other_task_id}");
+        assert_eq!(remove.path.as_str(), expected_path.as_str());
+    }
+
+    #[tokio::test]
+    async fn execution_processes_stream_snapshot_is_single_replace_op() {
+        let db = setup_db().await;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &db.pool,
+            &db::models::project::CreateProject {
+                name: "Process snapshot project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &db.pool,
+            &db::models::task::CreateTask::from_title_description(
+                project_id,
+                "Process snapshot task".to_string(),
+                None,
+            ),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let workspace_id = Uuid::new_v4();
+        Workspace::create(
+            &db.pool,
+            &db::models::workspace::CreateWorkspace {
+                branch: "main".to_string(),
+                agent_working_dir: None,
+            },
+            workspace_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let msg_store = Arc::new(MsgStore::new());
+        let service = EventService {
+            msg_store,
+            db: db.clone(),
+            entry_count: Arc::new(RwLock::new(0)),
+            shutdown_token: CancellationToken::new(),
+        };
+
+        let mut stream = service
+            .stream_execution_processes_for_workspace_raw(workspace_id, false, None)
+            .await
+            .unwrap();
+
+        let first = stream.next().await.expect("snapshot msg").unwrap();
+        assert_eq!(first.seq, 0);
+        let LogMsg::JsonPatch(patch) = first.msg else {
+            panic!("expected JsonPatch snapshot msg");
+        };
+        assert_eq!(patch.0.len(), 1, "snapshot patch must be single-op");
+
+        let JsonPatchOp::Replace(replace) = &patch.0[0] else {
+            panic!("expected replace op for snapshot");
+        };
+        assert_eq!(replace.path.as_str(), "/execution_processes");
+        assert!(
+            replace.value.as_object().is_some_and(|map| map.is_empty()),
+            "empty snapshot should replace with object"
+        );
+    }
+
+    #[tokio::test]
+    async fn execution_processes_history_translates_dropped_to_remove_when_hidden() {
+        let db = setup_db().await;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &db.pool,
+            &db::models::project::CreateProject {
+                name: "Dropped project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &db.pool,
+            &db::models::task::CreateTask::from_title_description(
+                project_id,
+                "Dropped task".to_string(),
+                None,
+            ),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let workspace_id = Uuid::new_v4();
+        Workspace::create(
+            &db.pool,
+            &db::models::workspace::CreateWorkspace {
+                branch: "main".to_string(),
+                agent_working_dir: None,
+            },
+            workspace_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let session_id = Uuid::new_v4();
+        Session::create(
+            &db.pool,
+            &db::models::session::CreateSession { executor: None },
+            session_id,
+            workspace_id,
+        )
+        .await
+        .unwrap();
+
+        let msg_store = Arc::new(MsgStore::new());
+        let process_id = Uuid::new_v4();
+        msg_store.push_patch(Patch(vec![JsonPatchOp::Add(AddOperation {
+            path: format!("/execution_processes/{process_id}")
+                .try_into()
+                .expect("valid execution process path"),
+            value: serde_json::json!({
+                "id": process_id.to_string(),
+                "session_id": session_id.to_string(),
+                "dropped": true,
+            }),
+        })]));
+
+        let service = EventService {
+            msg_store: msg_store.clone(),
+            db: db.clone(),
+            entry_count: Arc::new(RwLock::new(0)),
+            shutdown_token: CancellationToken::new(),
+        };
+
+        let mut stream = service
+            .stream_execution_processes_for_workspace_raw(workspace_id, false, Some(0))
+            .await
+            .unwrap();
+        let first = stream.next().await.expect("history msg").unwrap();
+        assert_eq!(first.seq, 1);
+        let LogMsg::JsonPatch(patch) = first.msg else {
+            panic!("expected JsonPatch msg");
+        };
+        let Some(JsonPatchOp::Remove(remove)) = patch.0.first() else {
+            panic!("expected remove op when dropped is hidden");
+        };
+        let expected_path = format!("/execution_processes/{process_id}");
+        assert_eq!(remove.path.as_str(), expected_path.as_str());
     }
 }

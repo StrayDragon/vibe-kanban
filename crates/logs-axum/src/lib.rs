@@ -8,6 +8,7 @@ use logs_protocol::{
     log_msg::{EV_FINISHED, EV_INVALIDATE, EV_JSON_PATCH, EV_SESSION_ID, EV_STDERR, EV_STDOUT},
 };
 use logs_store::{MsgStore, SequencedLogMsg};
+use serde::Serialize;
 use serde_json::Value;
 
 pub trait LogMsgAxumExt {
@@ -48,14 +49,34 @@ impl LogMsgAxumExt for LogMsg {
 }
 
 fn decode_pointer_segment(segment: &str) -> String {
-    segment.replace("~1", "/").replace("~0", "~")
-}
+    if !segment.contains('~') {
+        return segment.to_string();
+    }
 
-fn split_pointer_path(path: &str) -> Vec<String> {
-    path.split('/')
-        .filter(|s| !s.is_empty())
-        .map(decode_pointer_segment)
-        .collect()
+    let bytes = segment.as_bytes();
+    let mut out = String::with_capacity(segment.len());
+    let mut idx = 0;
+    while idx < bytes.len() {
+        if bytes[idx] == b'~' && idx + 1 < bytes.len() {
+            match bytes[idx + 1] {
+                b'0' => {
+                    out.push('~');
+                    idx += 2;
+                    continue;
+                }
+                b'1' => {
+                    out.push('/');
+                    idx += 2;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
+        out.push(bytes[idx] as char);
+        idx += 1;
+    }
+    out
 }
 
 fn invalidation_hints_from_patch(patch: &Patch) -> Option<Value> {
@@ -69,20 +90,22 @@ fn invalidation_hints_from_patch(patch: &Patch) -> Option<Value> {
             continue;
         }
 
-        let segments = split_pointer_path(path);
-        if segments.is_empty() {
+        let Some(stripped) = path.strip_prefix('/') else {
             continue;
-        }
+        };
+        let (root, rest) = stripped.split_once('/').unwrap_or((stripped, ""));
 
-        match segments[0].as_str() {
+        match root {
             "tasks" => {
-                if let Some(id) = segments.get(1) {
-                    task_ids.insert(id.clone());
+                let id = rest.split('/').next().unwrap_or(rest);
+                if !id.is_empty() {
+                    task_ids.insert(decode_pointer_segment(id));
                 }
             }
             "workspaces" => {
-                if let Some(id) = segments.get(1) {
-                    workspace_ids.insert(id.clone());
+                let id = rest.split('/').next().unwrap_or(rest);
+                if !id.is_empty() {
+                    workspace_ids.insert(decode_pointer_segment(id));
                 }
 
                 match op {
@@ -146,33 +169,62 @@ impl SequencedLogMsgAxumExt for SequencedLogMsg {
     }
 
     fn to_ws_message_unchecked(&self) -> Message {
-        if matches!(self.msg, LogMsg::Finished) {
-            return Message::Text(format!(r#"{{"seq":{},"finished":true}}"#, self.seq).into());
+        #[derive(Serialize)]
+        #[serde(untagged)]
+        enum WsMsg<'a> {
+            Finished {
+                seq: u64,
+                finished: bool,
+            },
+            Stdout {
+                seq: u64,
+                #[serde(rename = "Stdout")]
+                stdout: &'a str,
+            },
+            Stderr {
+                seq: u64,
+                #[serde(rename = "Stderr")]
+                stderr: &'a str,
+            },
+            SessionId {
+                seq: u64,
+                #[serde(rename = "SessionId")]
+                session_id: &'a str,
+            },
+            JsonPatch {
+                seq: u64,
+                #[serde(rename = "JsonPatch")]
+                json_patch: &'a Patch,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                invalidate: Option<Value>,
+            },
         }
 
-        let hints = match &self.msg {
-            LogMsg::JsonPatch(patch) => invalidation_hints_from_patch(patch),
-            _ => None,
+        let msg = match &self.msg {
+            LogMsg::Finished => WsMsg::Finished {
+                seq: self.seq,
+                finished: true,
+            },
+            LogMsg::Stdout(s) => WsMsg::Stdout {
+                seq: self.seq,
+                stdout: s,
+            },
+            LogMsg::Stderr(s) => WsMsg::Stderr {
+                seq: self.seq,
+                stderr: s,
+            },
+            LogMsg::SessionId(s) => WsMsg::SessionId {
+                seq: self.seq,
+                session_id: s,
+            },
+            LogMsg::JsonPatch(patch) => WsMsg::JsonPatch {
+                seq: self.seq,
+                json_patch: patch,
+                invalidate: invalidation_hints_from_patch(patch),
+            },
         };
 
-        let value = serde_json::to_value(&self.msg)
-            .unwrap_or_else(|_| serde_json::json!({ "error": "serialization_failed" }));
-
-        let value = match value {
-            Value::Object(mut map) => {
-                if let Some(hints) = hints {
-                    map.insert("invalidate".to_string(), hints);
-                }
-                map.insert("seq".to_string(), Value::from(self.seq));
-                Value::Object(map)
-            }
-            other => serde_json::json!({
-                "seq": self.seq,
-                "msg": other,
-            }),
-        };
-
-        let json = serde_json::to_string(&value)
+        let json = serde_json::to_string(&msg)
             .unwrap_or_else(|_| r#"{"error":"serialization_failed"}"#.to_string());
 
         Message::Text(json.into())
