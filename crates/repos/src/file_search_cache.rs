@@ -124,8 +124,7 @@ impl FileSearchCache {
         let build_queue_capacity = budgets
             .file_search_cache_max_repos
             .saturating_mul(4)
-            .max(1)
-            .min(1024);
+            .clamp(1, 1024);
         let (build_sender, build_receiver) = mpsc::channel(build_queue_capacity);
         let mut cache_builder =
             Cache::builder().max_capacity(budgets.file_search_cache_max_repos as u64);
@@ -373,13 +372,11 @@ impl FileSearchCache {
         }
 
         fn last_path_segment(path: &str) -> &str {
-            path.rsplit(|c| c == '/' || c == '\\')
-                .next()
-                .unwrap_or(path)
+            path.rsplit(['/', '\\']).next().unwrap_or(path)
         }
 
         fn parent_dir_name(path: &str) -> Option<&str> {
-            let parent_end = path.rfind(|c| c == '/' || c == '\\')?;
+            let parent_end = path.rfind(['/', '\\'])?;
             let parent = &path[..parent_end];
             if parent.is_empty() {
                 return None;
@@ -549,10 +546,9 @@ impl FileSearchCache {
             // `git check-ignore` exits with 1 when no paths are ignored.
             if !out.status.success() && out.status.code() != Some(1) {
                 let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("git check-ignore failed: {stderr}"),
-                ));
+                return Err(std::io::Error::other(format!(
+                    "git check-ignore failed: {stderr}"
+                )));
             }
 
             let mut ignored = HashSet::new();
