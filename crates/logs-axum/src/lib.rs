@@ -182,9 +182,10 @@ pub trait MsgStoreAxumExt {
     fn sse_stream(&self) -> futures::stream::BoxStream<'static, Result<Event, std::io::Error>>;
 }
 
-impl MsgStoreAxumExt for MsgStore {
+impl MsgStoreAxumExt for std::sync::Arc<MsgStore> {
     fn sse_stream(&self) -> futures::stream::BoxStream<'static, Result<Event, std::io::Error>> {
-        self.history_plus_stream()
+        self.clone()
+            .history_plus_stream()
             .map_ok(|m| m.to_sse_event())
             .boxed()
     }

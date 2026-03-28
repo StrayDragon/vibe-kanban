@@ -35,6 +35,7 @@ pub fn normalize_logs(
         let worktree_path_str = worktree_path.to_string_lossy();
 
         let mut lines_stream = msg_store
+            .clone()
             .stdout_lines_stream()
             .filter_map(|res| ready(res.ok()));
 
@@ -661,7 +662,7 @@ pub fn normalize_logs(
 
 fn normalize_stderr_logs(msg_store: Arc<MsgStore>, entry_index_provider: EntryIndexProvider) {
     tokio::spawn(async move {
-        let mut stderr = msg_store.stderr_chunked_stream();
+        let mut stderr = msg_store.clone().stderr_chunked_stream();
 
         let mut processor = PlainTextLogProcessor::builder()
             .normalized_entry_producer(Box::new(|content: String| NormalizedEntry {

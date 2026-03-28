@@ -367,7 +367,7 @@ impl ClaudeLogProcessor {
     ) {
         let current_dir_clone = current_dir.to_owned();
         tokio::spawn(async move {
-            let mut stream = msg_store.history_plus_stream();
+            let mut stream = msg_store.clone().history_plus_stream();
             let mut buffer = String::new();
             let worktree_path = current_dir_clone.to_string_lossy().to_string();
             let mut session_id_extracted = false;

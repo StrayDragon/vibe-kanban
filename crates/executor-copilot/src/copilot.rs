@@ -207,7 +207,7 @@ impl StandardCodingAgentExecutor for Copilot {
 
         // Normalize Agent logs
         tokio::spawn(async move {
-            let mut stdout_lines = msg_store.stdout_lines_stream();
+            let mut stdout_lines = msg_store.clone().stdout_lines_stream();
 
             let mut processor = Self::create_simple_stdout_normalizer(entry_index_counter);
 

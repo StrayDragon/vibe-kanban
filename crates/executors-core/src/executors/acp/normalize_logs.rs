@@ -38,7 +38,7 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
         let mut streaming: StreamingState = StreamingState::default();
         let mut tool_states: ToolStates = HashMap::new();
 
-        let mut stdout_lines = msg_store.stdout_lines_stream();
+        let mut stdout_lines = msg_store.clone().stdout_lines_stream();
         while let Some(Ok(line)) = stdout_lines.next().await {
             if let Some(parsed) = AcpEventParser::parse_line(&line) {
                 tracing::trace!("Parsed ACP line: {:?}", parsed);

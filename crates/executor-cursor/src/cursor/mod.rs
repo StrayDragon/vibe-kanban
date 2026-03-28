@@ -164,7 +164,7 @@ impl StandardCodingAgentExecutor for CursorAgent {
         let msg_store_stderr = msg_store.clone();
         let entry_index_provider_stderr = entry_index_provider.clone();
         tokio::spawn(async move {
-            let mut stderr = msg_store_stderr.stderr_chunked_stream();
+            let mut stderr = msg_store_stderr.clone().stderr_chunked_stream();
             let mut processor = PlainTextLogProcessor::builder()
                 .normalized_entry_producer(Box::new(|content: String| {
                     let content = strip_ansi_escapes::strip_str(&content);
@@ -208,7 +208,7 @@ impl StandardCodingAgentExecutor for CursorAgent {
         // Process Cursor stdout JSONL with typed serde models
         let current_dir = worktree_path.to_path_buf();
         tokio::spawn(async move {
-            let mut lines = msg_store.stdout_lines_stream();
+            let mut lines = msg_store.clone().stdout_lines_stream();
 
             // Assistant streaming coalescer state
             let mut model_reported = false;

@@ -162,6 +162,15 @@ const ENV_VARS = [
   },
   {
     category: 'Logs',
+    name: 'VK_LOG_BROADCAST_CAPACITY',
+    type: 'int',
+    defaultValue: '1024',
+    appliesTo: ['server'],
+    description:
+      'Capacity (messages) of in-memory realtime log broadcast buffers. When unset, invalid, or 0, falls back to the default capacity.',
+  },
+  {
+    category: 'Logs',
     name: 'VK_NORMALIZED_LOG_HISTORY_PAGE_SIZE',
     type: 'int',
     defaultValue: '20',

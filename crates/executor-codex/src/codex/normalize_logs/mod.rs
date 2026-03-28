@@ -497,7 +497,7 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
     let worktree_path_str = worktree_path.to_string_lossy().to_string();
     tokio::spawn(async move {
         let mut state = LogState::new(entry_index.clone());
-        let mut stdout_lines = msg_store.stdout_lines_stream();
+        let mut stdout_lines = msg_store.clone().stdout_lines_stream();
 
         while let Some(Ok(line)) = stdout_lines.next().await {
             if let Ok(error) = serde_json::from_str::<Error>(&line) {
@@ -1368,7 +1368,7 @@ pub fn normalize_logs(msg_store: Arc<MsgStore>, worktree_path: &Path) {
 
 fn normalize_codex_stderr_logs(msg_store: Arc<MsgStore>, entry_index_provider: EntryIndexProvider) {
     tokio::spawn(async move {
-        let mut stderr = msg_store.stderr_chunked_stream();
+        let mut stderr = msg_store.clone().stderr_chunked_stream();
 
         let mut processor = PlainTextLogProcessor::builder()
             .normalized_entry_producer(Box::new(|content: String| NormalizedEntry {

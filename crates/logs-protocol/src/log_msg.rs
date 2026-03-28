@@ -1,6 +1,8 @@
 use json_patch::Patch;
 use serde::{Deserialize, Serialize};
 
+use crate::approx_json::approx_json_patch_len;
+
 pub const EV_STDOUT: &str = "stdout";
 pub const EV_STDERR: &str = "stderr";
 pub const EV_JSON_PATCH: &str = "json_patch";
@@ -35,8 +37,7 @@ impl LogMsg {
             LogMsg::Stdout(s) => EV_STDOUT.len() + s.len() + OVERHEAD,
             LogMsg::Stderr(s) => EV_STDERR.len() + s.len() + OVERHEAD,
             LogMsg::JsonPatch(patch) => {
-                let json_len = serde_json::to_string(patch).map(|s| s.len()).unwrap_or(2);
-                EV_JSON_PATCH.len() + json_len + OVERHEAD
+                EV_JSON_PATCH.len() + approx_json_patch_len(patch) + OVERHEAD
             }
             LogMsg::SessionId(s) => EV_SESSION_ID.len() + s.len() + OVERHEAD,
             LogMsg::Finished => EV_FINISHED.len() + OVERHEAD,

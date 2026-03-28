@@ -72,6 +72,7 @@ Notes:
 | `VK_LOG_BACKFILL_COMPLETION_MAX_ENTRIES` | int | 10000 | server | In-memory cache size for log backfill completion tracking (entries). |
 | `VK_LOG_BACKFILL_COMPLETION_TTL_SECS` | duration-secs | 86400 (24h) | server | TTL for log backfill completion tracking cache. |
 | `VK_LOG_BACKFILL_CONCURRENCY` | int | 4 | server | Concurrency for log backfill jobs. |
+| `VK_LOG_BROADCAST_CAPACITY` | int | 1024 | server | Capacity (messages) of in-memory realtime log broadcast buffers. When unset, invalid, or 0, falls back to the default capacity. |
 | `VK_LOG_HISTORY_MAX_BYTES` | int | 8388608 (8 MiB) | server | Maximum in-memory log history size per MsgStore (bytes). Values of 0 are normalized to 1. |
 | `VK_LOG_HISTORY_MAX_ENTRIES` | int | 5000 | server | Maximum in-memory log history entries per MsgStore. Values of 0 are normalized to 1. |
 | `VK_LOG_PERSISTENCE_MODE` | string | auto | server | Controls log persistence backend ('auto' | 'log_entries' | 'legacy_jsonl'). |
@@ -169,6 +170,7 @@ The list below shows where each env var name appears in the repo (best-effort).
 - `VK_LOG_BACKFILL_COMPLETION_MAX_ENTRIES`: `crates/config/src/cache_budget.rs`
 - `VK_LOG_BACKFILL_COMPLETION_TTL_SECS`: `crates/config/src/cache_budget.rs`
 - `VK_LOG_BACKFILL_CONCURRENCY`: `crates/execution/src/container/mod.rs`
+- `VK_LOG_BROADCAST_CAPACITY`: `crates/logs-store/src/msg_store.rs`
 - `VK_LOG_HISTORY_MAX_BYTES`: `crates/logs-store/src/msg_store.rs`
 - `VK_LOG_HISTORY_MAX_ENTRIES`: `crates/logs-store/src/msg_store.rs`
 - `VK_LOG_PERSISTENCE_MODE`: `crates/execution/src/container/mod.rs`

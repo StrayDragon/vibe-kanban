@@ -5,15 +5,15 @@ use std::{
 
 use futures::{StreamExt, future};
 use json_patch::{Patch, PatchOperation};
-use logs_protocol::LogMsg;
+use logs_protocol::{LogMsg, approx_json::approx_json_value_len};
 use serde_json::Value;
 use tokio::{sync::broadcast, task::JoinHandle};
-use tokio_stream::wrappers::BroadcastStream;
 
 use crate::stream_lines::LinesStreamExt;
 
 const DEFAULT_HISTORY_MAX_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_HISTORY_MAX_ENTRIES: usize = 5000;
+const DEFAULT_BROADCAST_CAPACITY: usize = 1024;
 
 struct LogHistoryConfig {
     max_bytes: usize,
@@ -21,6 +21,7 @@ struct LogHistoryConfig {
 }
 
 static LOG_HISTORY_CONFIG: OnceLock<LogHistoryConfig> = OnceLock::new();
+static LOG_BROADCAST_CAPACITY: OnceLock<usize> = OnceLock::new();
 
 fn log_history_config() -> &'static LogHistoryConfig {
     LOG_HISTORY_CONFIG.get_or_init(|| {
@@ -34,6 +35,13 @@ fn log_history_config() -> &'static LogHistoryConfig {
     })
 }
 
+fn log_broadcast_capacity() -> usize {
+    *LOG_BROADCAST_CAPACITY.get_or_init(|| {
+        let capacity = read_env_usize("VK_LOG_BROADCAST_CAPACITY", DEFAULT_BROADCAST_CAPACITY);
+        normalize_broadcast_capacity(capacity)
+    })
+}
+
 fn read_env_usize(name: &str, default: usize) -> usize {
     match std::env::var(name) {
         Ok(value) => match value.parse::<usize>() {
@@ -44,6 +52,17 @@ fn read_env_usize(name: &str, default: usize) -> usize {
             }
         },
         Err(_) => default,
+    }
+}
+
+fn normalize_broadcast_capacity(value: usize) -> usize {
+    if value == 0 {
+        tracing::warn!(
+            "VK_LOG_BROADCAST_CAPACITY set to 0. Using default {DEFAULT_BROADCAST_CAPACITY}."
+        );
+        DEFAULT_BROADCAST_CAPACITY
+    } else {
+        value
     }
 }
 
@@ -120,7 +139,6 @@ struct Inner {
 
 pub struct MsgStore {
     inner: RwLock<Inner>,
-    sender: broadcast::Sender<LogMsg>,
     sequenced_sender: broadcast::Sender<SequencedLogMsg>,
     raw_sender: broadcast::Sender<LogEntryEvent>,
     normalized_sender: broadcast::Sender<LogEntryEvent>,
@@ -134,10 +152,10 @@ impl Default for MsgStore {
 
 impl MsgStore {
     pub fn new() -> Self {
-        let (sender, _) = broadcast::channel(10000);
-        let (sequenced_sender, _) = broadcast::channel(10000);
-        let (raw_sender, _) = broadcast::channel(10000);
-        let (normalized_sender, _) = broadcast::channel(10000);
+        let capacity = log_broadcast_capacity();
+        let (sequenced_sender, _) = broadcast::channel(capacity);
+        let (raw_sender, _) = broadcast::channel(capacity);
+        let (normalized_sender, _) = broadcast::channel(capacity);
         Self {
             inner: RwLock::new(Inner {
                 next_seq: 1,
@@ -155,7 +173,6 @@ impl MsgStore {
                 normalized_evicted: false,
                 finished: false,
             }),
-            sender,
             sequenced_sender,
             raw_sender,
             normalized_sender,
@@ -164,6 +181,17 @@ impl MsgStore {
 
     pub fn push(&self, msg: LogMsg) {
         let bytes = msg.approx_bytes();
+
+        let raw_entry = match &msg {
+            LogMsg::Stdout(content) => Some((content.clone(), true)),
+            LogMsg::Stderr(content) => Some((content.clone(), false)),
+            _ => None,
+        };
+
+        let normalized_updates = match &msg {
+            LogMsg::JsonPatch(patch) => extract_normalized_updates(patch),
+            _ => Vec::new(),
+        };
 
         let mut raw_events: Vec<LogEntryEvent> = Vec::new();
         let mut normalized_events: Vec<LogEntryEvent> = Vec::new();
@@ -175,41 +203,28 @@ impl MsgStore {
             inner.next_seq = inner.next_seq.saturating_add(1);
             inner.max_seq = Some(seq);
             inner.push_msg(seq, msg.clone(), bytes);
-            sequenced_msg = SequencedLogMsg {
-                seq,
-                msg: msg.clone(),
-            };
+            sequenced_msg = SequencedLogMsg { seq, msg };
 
-            match &msg {
-                LogMsg::Stdout(content) => {
-                    if let Some(event) = inner.push_raw_entry(content.clone(), true) {
-                        raw_events.push(event);
-                    }
+            if let Some((content, stdout)) = raw_entry
+                && let Some(event) = inner.push_raw_entry(content, stdout)
+            {
+                raw_events.push(event);
+            }
+
+            for update in normalized_updates {
+                if let Some(event) = inner.upsert_normalized_entry(update) {
+                    normalized_events.push(event);
                 }
-                LogMsg::Stderr(content) => {
-                    if let Some(event) = inner.push_raw_entry(content.clone(), false) {
-                        raw_events.push(event);
-                    }
-                }
-                LogMsg::JsonPatch(patch) => {
-                    let updates = extract_normalized_updates(patch);
-                    for update in updates {
-                        if let Some(event) = inner.upsert_normalized_entry(update) {
-                            normalized_events.push(event);
-                        }
-                    }
-                }
-                LogMsg::Finished => {
-                    inner.finished = true;
-                    raw_events.push(LogEntryEvent::Finished);
-                    normalized_events.push(LogEntryEvent::Finished);
-                }
-                _ => {}
+            }
+
+            if matches!(sequenced_msg.msg, LogMsg::Finished) {
+                inner.finished = true;
+                raw_events.push(LogEntryEvent::Finished);
+                normalized_events.push(LogEntryEvent::Finished);
             }
         }
 
         let _ = self.sequenced_sender.send(sequenced_msg);
-        let _ = self.sender.send(msg.clone());
 
         for event in raw_events {
             let _ = self.raw_sender.send(event);
@@ -237,10 +252,6 @@ impl MsgStore {
 
     pub fn push_finished(&self) {
         self.push(LogMsg::Finished);
-    }
-
-    pub fn get_receiver(&self) -> broadcast::Receiver<LogMsg> {
-        self.sender.subscribe()
     }
 
     pub fn get_sequenced_receiver(&self) -> broadcast::Receiver<SequencedLogMsg> {
@@ -575,23 +586,82 @@ impl MsgStore {
         }
     }
 
-    /// History then live, as `LogMsg`.
+    /// History then live, as `LogMsg`. Resynchronizes on broadcast lag when possible.
     pub fn history_plus_stream(
-        &self,
+        self: Arc<Self>,
     ) -> futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>> {
-        let (history, rx) = (self.get_history(), self.get_receiver());
+        let (history, rx, _meta) = self.subscribe_sequenced_from(None);
+        let pending: VecDeque<SequencedLogMsg> = history.into();
 
-        let hist = futures::stream::iter(history.into_iter().map(Ok::<_, std::io::Error>));
-        let live = BroadcastStream::new(rx)
-            .filter_map(|res| async move { res.ok().map(Ok::<_, std::io::Error>) });
+        let stream = futures::stream::unfold(
+            (self, pending, rx, 0u64, false),
+            |(store, mut pending, mut rx, mut last_seq, finished)| async move {
+                if finished {
+                    return None;
+                }
 
-        Box::pin(hist.chain(live))
+                loop {
+                    if let Some(item) = pending.pop_front() {
+                        if item.seq <= last_seq {
+                            continue;
+                        }
+                        last_seq = item.seq;
+                        let done = matches!(item.msg, LogMsg::Finished);
+                        return Some((
+                            Ok::<_, std::io::Error>(item.msg),
+                            (store, pending, rx, last_seq, done),
+                        ));
+                    }
+
+                    match rx.recv().await {
+                        Ok(item) => {
+                            if item.seq <= last_seq {
+                                continue;
+                            }
+                            last_seq = item.seq;
+                            let done = matches!(item.msg, LogMsg::Finished);
+                            return Some((
+                                Ok::<_, std::io::Error>(item.msg),
+                                (store, pending, rx, last_seq, done),
+                            ));
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            let (snapshot, meta) = store.sequenced_history_snapshot(Some(last_seq));
+                            if meta.evicted && meta.min_seq.is_some_and(|min| last_seq < min) {
+                                tracing::warn!(
+                                    skipped = skipped,
+                                    last_seq = last_seq,
+                                    min_seq = meta.min_seq,
+                                    max_seq = meta.max_seq,
+                                    "log msg stream lagged beyond retained history; resyncing from newest retained"
+                                );
+                            } else {
+                                tracing::warn!(
+                                    skipped = skipped,
+                                    last_seq = last_seq,
+                                    max_seq = meta.max_seq,
+                                    "log msg stream lagged; resyncing from history"
+                                );
+                            }
+
+                            for item in snapshot {
+                                pending.push_back(item);
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                    }
+                }
+            },
+        );
+
+        Box::pin(stream)
     }
 
     pub fn stdout_chunked_stream(
-        &self,
+        self: Arc<Self>,
     ) -> futures::stream::BoxStream<'static, Result<String, std::io::Error>> {
-        self.history_plus_stream()
+        self.clone()
+            .history_plus_stream()
             .take_while(|res| future::ready(!matches!(res, Ok(LogMsg::Finished))))
             .filter_map(|res| async move {
                 match res {
@@ -603,15 +673,16 @@ impl MsgStore {
     }
 
     pub fn stdout_lines_stream(
-        &self,
+        self: Arc<Self>,
     ) -> futures::stream::BoxStream<'static, std::io::Result<String>> {
         self.stdout_chunked_stream().lines()
     }
 
     pub fn stderr_chunked_stream(
-        &self,
+        self: Arc<Self>,
     ) -> futures::stream::BoxStream<'static, Result<String, std::io::Error>> {
-        self.history_plus_stream()
+        self.clone()
+            .history_plus_stream()
             .take_while(|res| future::ready(!matches!(res, Ok(LogMsg::Finished))))
             .filter_map(|res| async move {
                 match res {
@@ -623,7 +694,7 @@ impl MsgStore {
     }
 
     pub fn stderr_lines_stream(
-        &self,
+        self: Arc<Self>,
     ) -> futures::stream::BoxStream<'static, std::io::Result<String>> {
         self.stderr_chunked_stream().lines()
     }
@@ -814,7 +885,7 @@ fn normalize_patch_entry(path: &str, value: &Value) -> Option<NormalizedEntryJso
 }
 
 fn approx_json_bytes(value: &Value) -> usize {
-    serde_json::to_string(value).map(|s| s.len()).unwrap_or(2)
+    approx_json_value_len(value)
 }
 
 struct NormalizedEntryJson {
@@ -829,7 +900,6 @@ mod tests {
     use super::*;
 
     fn store_with_broadcast_capacity(capacity: usize) -> MsgStore {
-        let (sender, _) = broadcast::channel(capacity);
         let (sequenced_sender, _) = broadcast::channel(capacity);
         let (raw_sender, _) = broadcast::channel(capacity);
         let (normalized_sender, _) = broadcast::channel(capacity);
@@ -850,7 +920,6 @@ mod tests {
                 normalized_evicted: false,
                 finished: false,
             }),
-            sender,
             sequenced_sender,
             raw_sender,
             normalized_sender,
@@ -865,6 +934,39 @@ mod tests {
             .expect("stream stalled")
             .expect("stream ended")
             .expect("stream error")
+    }
+
+    async fn next_log_msg(
+        stream: &mut futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>,
+    ) -> LogMsg {
+        tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("stream stalled")
+            .expect("stream ended")
+            .expect("stream error")
+    }
+
+    #[test]
+    fn approx_json_bytes_matches_serde_json_for_typical_values() {
+        let value = serde_json::json!({
+            "type": "STDOUT",
+            "content": "needs\"escape\\and\ncontrol",
+            "nested": {
+                "arr": [1, true, false, null],
+                "obj": { "k": "v" }
+            }
+        });
+
+        let expected = serde_json::to_string(&value).unwrap().len();
+        let got = approx_json_bytes(&value);
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn normalize_broadcast_capacity_falls_back_to_default() {
+        assert_eq!(normalize_broadcast_capacity(0), DEFAULT_BROADCAST_CAPACITY);
+        assert_eq!(normalize_broadcast_capacity(1), 1);
+        assert_eq!(normalize_broadcast_capacity(123), 123);
     }
 
     #[test]
@@ -1102,5 +1204,35 @@ mod tests {
             next_event(&mut stream).await,
             LogEntryEvent::Finished
         ));
+    }
+
+    #[tokio::test]
+    async fn logmsg_stream_resyncs_after_lag_and_continues() {
+        let store = Arc::new(store_with_broadcast_capacity(4));
+        let mut stream = store.clone().history_plus_stream();
+
+        for idx in 0..10 {
+            store.push_stdout(format!("msg {idx}"));
+        }
+
+        for idx in 0..10 {
+            match next_log_msg(&mut stream).await {
+                LogMsg::Stdout(s) => assert_eq!(s, format!("msg {idx}")),
+                other => panic!("expected stdout msg, got {other:?}"),
+            }
+        }
+
+        store.push_stdout("after");
+        match next_log_msg(&mut stream).await {
+            LogMsg::Stdout(s) => assert_eq!(s, "after"),
+            other => panic!("expected stdout msg, got {other:?}"),
+        }
+
+        store.push_finished();
+        assert!(matches!(next_log_msg(&mut stream).await, LogMsg::Finished));
+        assert!(
+            stream.next().await.is_none(),
+            "stream should end after Finished"
+        );
     }
 }
