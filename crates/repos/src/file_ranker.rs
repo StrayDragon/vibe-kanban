@@ -96,21 +96,21 @@ impl FileRanker {
     /// Re-rank search results based on git history statistics
     pub fn rerank(&self, results: &mut [SearchResult], stats: &FileStats) {
         results.sort_by(|a, b| {
-            let score_a = self.calculate_score(a, stats);
-            let score_b = self.calculate_score(b, stats);
+            let score_a = self.score(&a.match_type, &a.path, stats);
+            let score_b = self.score(&b.match_type, &b.path, stats);
             score_b.cmp(&score_a) // Higher scores first
         });
     }
 
     /// Calculate relevance score for a search result
-    fn calculate_score(&self, result: &SearchResult, stats: &FileStats) -> i64 {
-        let base_score = match result.match_type {
+    pub(crate) fn score(&self, match_type: &SearchMatchType, path: &str, stats: &FileStats) -> i64 {
+        let base_score = match match_type {
             SearchMatchType::FileName => BASE_MATCH_SCORE_FILENAME,
             SearchMatchType::DirectoryName => BASE_MATCH_SCORE_DIRNAME,
             SearchMatchType::FullPath => BASE_MATCH_SCORE_FULLPATH,
         };
 
-        if let Some(stat) = stats.get(&result.path) {
+        if let Some(stat) = stats.get(path) {
             let recency_bonus = (100 - stat.last_index.min(99) as i64) * RECENCY_WEIGHT;
             let frequency_bonus = stat.commit_count as i64 * FREQUENCY_WEIGHT;
 
