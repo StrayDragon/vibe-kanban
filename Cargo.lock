@@ -204,6 +204,7 @@ dependencies = [
  "executors",
  "executors-core",
  "futures",
+ "json-patch",
  "logs-axum",
  "logs-store",
  "notify-rust",

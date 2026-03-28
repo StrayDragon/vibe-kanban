@@ -223,12 +223,13 @@ pub trait Deployment: Clone + Send + Sync + 'static {
                 initial_last_seq = watermark;
             } else {
                 for msg in history {
-                    // Prefer the targeted backend hints when possible. The frontend can then skip
-                    // (potentially expensive) patch-based invalidation for the same seq.
+                    // Prefer the targeted backend hints when possible. When hints are available,
+                    // avoid also sending the (potentially large) json patch for the same seq.
                     if let Some(invalidate) = msg.to_invalidate_sse_event() {
                         initial_events.push(invalidate);
+                    } else {
+                        initial_events.push(msg.to_sse_event());
                     }
-                    initial_events.push(msg.to_sse_event());
                 }
                 initial_last_seq = last_history_seq.unwrap_or(requested_after_seq);
             }
@@ -236,8 +237,9 @@ pub trait Deployment: Clone + Send + Sync + 'static {
             for msg in history {
                 if let Some(invalidate) = msg.to_invalidate_sse_event() {
                     initial_events.push(invalidate);
+                } else {
+                    initial_events.push(msg.to_sse_event());
                 }
-                initial_events.push(msg.to_sse_event());
             }
             initial_last_seq = last_history_seq.unwrap_or(initial_last_seq);
         }
@@ -271,8 +273,9 @@ pub trait Deployment: Clone + Send + Sync + 'static {
                             state.last_seq = msg.seq;
                             if let Some(invalidate) = msg.to_invalidate_sse_event() {
                                 state.pending.push_back(invalidate);
+                            } else {
+                                state.pending.push_back(msg.to_sse_event());
                             }
-                            state.pending.push_back(msg.to_sse_event());
                             if let Some(event) = state.pending.pop_front() {
                                 return Some((Ok::<_, std::io::Error>(event), state));
                             }
@@ -877,11 +880,63 @@ impl AppRuntime {
 mod tests {
     use std::time::Duration;
 
+    use axum::response::{IntoResponse, Sse};
     use config::Config;
+    use futures::StreamExt;
+    use json_patch::Patch;
+    use serde_json::Value;
     use test_support::{TempRoot, TestDb, TestEnvGuard};
     use tokio_util::sync::CancellationToken;
 
     use super::{AppRuntime, Deployment};
+
+    fn parse_sse_chunk(chunk: &str) -> (Option<&str>, Option<&str>, Option<String>) {
+        let mut event = None;
+        let mut id = None;
+        let mut data_lines: Vec<&str> = Vec::new();
+
+        for line in chunk.lines() {
+            if let Some(value) = line.strip_prefix("event: ") {
+                event = Some(value);
+                continue;
+            }
+            if let Some(value) = line.strip_prefix("id: ") {
+                id = Some(value);
+                continue;
+            }
+            if let Some(value) = line.strip_prefix("data: ") {
+                data_lines.push(value);
+                continue;
+            }
+        }
+
+        let data = if data_lines.is_empty() {
+            None
+        } else {
+            Some(data_lines.join("\n"))
+        };
+
+        (event, id, data)
+    }
+
+    async fn next_sse_event_text(
+        stream: futures::stream::BoxStream<
+            'static,
+            Result<axum::response::sse::Event, std::io::Error>,
+        >,
+    ) -> (String, axum::body::BodyDataStream) {
+        let response = Sse::new(stream).into_response();
+        let mut body_stream = response.into_body().into_data_stream();
+
+        let bytes = tokio::time::timeout(Duration::from_secs(1), body_stream.next())
+            .await
+            .expect("expected SSE event within timeout")
+            .expect("expected SSE body chunk")
+            .expect("expected SSE body chunk ok");
+
+        let text = std::str::from_utf8(&bytes).expect("valid utf8 SSE chunk");
+        (text.to_string(), body_stream)
+    }
 
     #[test]
     fn update_app_version_state_clears_release_notes_flag() {
@@ -1002,5 +1057,153 @@ mod tests {
             .expect("watcher should exit after shutdown")
             .expect("watcher join should succeed")
             .expect("watcher should return ok");
+    }
+
+    #[tokio::test]
+    async fn stream_events_history_emits_only_invalidate_for_patch_with_hints() {
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
+
+        let deployment = <AppRuntime as Deployment>::new().await.unwrap();
+        let patch: Patch = serde_json::from_value(serde_json::json!([
+            { "op": "replace", "path": "/tasks/task-1", "value": { "id": "task-1" } }
+        ]))
+        .expect("valid json patch");
+        deployment.events().msg_store().push_patch(patch);
+
+        let stream = deployment.stream_events(Some(0)).await;
+        let (chunk, mut body_stream) = next_sse_event_text(stream).await;
+        let (event, id, data) = parse_sse_chunk(&chunk);
+
+        assert_eq!(event, Some("invalidate"));
+        assert_eq!(id, Some("1"));
+        let data = data.expect("expected invalidate payload");
+        let value: Value = serde_json::from_str(&data).expect("valid invalidate payload json");
+        assert_eq!(value["taskIds"], serde_json::json!(["task-1"]));
+
+        let second = tokio::time::timeout(Duration::from_millis(100), body_stream.next()).await;
+        assert!(
+            second.is_err(),
+            "expected no second SSE event for the same seq"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_events_history_falls_back_to_json_patch_when_hints_unavailable() {
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
+
+        let deployment = <AppRuntime as Deployment>::new().await.unwrap();
+        let patch: Patch = serde_json::from_value(serde_json::json!([
+            { "op": "replace", "path": "/unrelated", "value": { "hello": "world" } }
+        ]))
+        .expect("valid json patch");
+        deployment.events().msg_store().push_patch(patch);
+
+        let stream = deployment.stream_events(Some(0)).await;
+        let (chunk, mut body_stream) = next_sse_event_text(stream).await;
+        let (event, id, data) = parse_sse_chunk(&chunk);
+
+        assert_eq!(event, Some("json_patch"));
+        assert_eq!(id, Some("1"));
+        let data = data.expect("expected json patch payload");
+        let value: Value = serde_json::from_str(&data).expect("valid json patch payload json");
+        assert_eq!(value[0]["path"], "/unrelated");
+
+        let second = tokio::time::timeout(Duration::from_millis(100), body_stream.next()).await;
+        assert!(
+            second.is_err(),
+            "expected no second SSE event for the same seq"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_events_live_emits_only_invalidate_for_patch_with_hints() {
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
+
+        let deployment = <AppRuntime as Deployment>::new().await.unwrap();
+        let stream = deployment.stream_events(None).await;
+
+        let patch: Patch = serde_json::from_value(serde_json::json!([
+            { "op": "replace", "path": "/workspaces/workspace-1", "value": { "task_id": "task-1" } }
+        ]))
+        .expect("valid json patch");
+        deployment.events().msg_store().push_patch(patch);
+
+        let (chunk, mut body_stream) = next_sse_event_text(stream).await;
+        let (event, id, data) = parse_sse_chunk(&chunk);
+
+        assert_eq!(event, Some("invalidate"));
+        assert_eq!(id, Some("1"));
+        let data = data.expect("expected invalidate payload");
+        let value: Value = serde_json::from_str(&data).expect("valid invalidate payload json");
+        assert_eq!(value["workspaceIds"], serde_json::json!(["workspace-1"]));
+        assert_eq!(value["taskIds"], serde_json::json!(["task-1"]));
+
+        let second = tokio::time::timeout(Duration::from_millis(100), body_stream.next()).await;
+        assert!(
+            second.is_err(),
+            "expected no second SSE event for the same seq"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_events_resume_unavailable_emits_invalidate_all_with_watermark_id() {
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
+
+        let deployment = <AppRuntime as Deployment>::new().await.unwrap();
+        let stream = deployment.stream_events(Some(1)).await;
+
+        let (chunk, mut body_stream) = next_sse_event_text(stream).await;
+        let (event, id, data) = parse_sse_chunk(&chunk);
+
+        assert_eq!(event, Some("invalidate_all"));
+        assert_eq!(id, Some("0"));
+        let data = data.expect("expected invalidate_all payload");
+        let value: Value = serde_json::from_str(&data).expect("valid invalidate_all payload json");
+        assert_eq!(value["reason"], "resume_unavailable");
+        assert_eq!(value["requested_after_seq"], 1);
+        assert_eq!(value["watermark"], 0);
+
+        let second = tokio::time::timeout(Duration::from_millis(100), body_stream.next()).await;
+        assert!(
+            second.is_err(),
+            "expected no extra SSE events without new messages"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_events_lagged_emits_invalidate_all_with_watermark_id() {
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
+
+        let deployment = <AppRuntime as Deployment>::new().await.unwrap();
+        let stream = deployment.stream_events(None).await;
+
+        // Push a burst without polling the stream to induce a broadcast lag.
+        for _ in 0..6000 {
+            deployment.events().msg_store().push_stdout("x");
+        }
+
+        let (chunk, _body_stream) = next_sse_event_text(stream).await;
+        let (event, id, data) = parse_sse_chunk(&chunk);
+
+        assert_eq!(event, Some("invalidate_all"));
+        let id: u64 = id
+            .expect("expected invalidate_all id")
+            .parse()
+            .expect("expected numeric id");
+        let data = data.expect("expected invalidate_all payload");
+        let value: Value = serde_json::from_str(&data).expect("valid invalidate_all payload json");
+        assert_eq!(value["reason"], "lagged");
+        assert_eq!(value["watermark"].as_u64(), Some(id));
+        assert!(value.get("skipped").is_some(), "expected skipped field");
     }
 }

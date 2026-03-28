@@ -9,11 +9,8 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import type { Operation } from 'rfc6902';
 import { createEventSource } from '@/lib/api';
-import {
-  invalidateQueriesFromHints,
-  invalidateQueriesFromJsonPatch,
-  type InvalidationHints,
-} from '@/contexts/eventStreamInvalidation';
+import type { InvalidationHints } from '@/contexts/eventStreamInvalidation';
+import { createInvalidationBatcher } from '@/contexts/eventStreamInvalidationBatcher';
 
 type EventStreamContextType = {
   isConnected: boolean;
@@ -28,7 +25,7 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     const source = createEventSource('/api/events');
-    const hintedEventIds = new Set<string>();
+    const batcher = createInvalidationBatcher(queryClient);
 
     source.onopen = () => {
       setIsConnected(true);
@@ -41,12 +38,6 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
     };
 
     const handleJsonPatch = (event: MessageEvent<string>) => {
-      if (event.lastEventId && hintedEventIds.has(event.lastEventId)) {
-        // Prefer backend hints when available for the same sequenced update.
-        hintedEventIds.delete(event.lastEventId);
-        return;
-      }
-
       let patch: Operation[];
       try {
         patch = JSON.parse(event.data) as Operation[];
@@ -56,19 +47,10 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      invalidateQueriesFromJsonPatch(queryClient, patch);
+      batcher.enqueueJsonPatch(patch);
     };
 
     const handleInvalidate = (event: MessageEvent<string>) => {
-      if (event.lastEventId) {
-        hintedEventIds.add(event.lastEventId);
-        // Prevent unbounded growth; keep only recent ids.
-        if (hintedEventIds.size > 256) {
-          const first = hintedEventIds.values().next().value;
-          if (first) hintedEventIds.delete(first);
-        }
-      }
-
       let hints: InvalidationHints;
       try {
         hints = JSON.parse(event.data) as InvalidationHints;
@@ -78,7 +60,7 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      invalidateQueriesFromHints(queryClient, hints);
+      batcher.enqueueHints(hints);
     };
 
     const handleInvalidateAll = (event: MessageEvent<string>) => {
@@ -92,6 +74,7 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
         console.warn('Failed to parse SSE invalidate_all event', err);
       }
 
+      batcher.reset();
       queryClient.invalidateQueries();
     };
 
@@ -103,6 +86,7 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
       source.removeEventListener('json_patch', handleJsonPatch);
       source.removeEventListener('invalidate', handleInvalidate);
       source.removeEventListener('invalidate_all', handleInvalidateAll);
+      batcher.reset();
       source.close();
     };
   }, [queryClient]);
