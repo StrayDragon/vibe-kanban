@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Operation } from 'rfc6902';
 import { useJsonPatchWsStream } from '@/hooks/useJsonPatchWsStream';
 import { normalizeIdMapPatches } from '@/hooks/jsonPatchUtils';
 import type { TaskStatus, TaskWithAttemptStatus } from 'shared/types';
+import {
+  applyTaskDerivationChanges,
+  buildTaskDerivationCache,
+  EMPTY_TASKS_BY_STATUS,
+  type TaskDerivationCache,
+} from '../tasks/taskDerivation';
 
 type TasksState = {
   tasks: Record<string, TaskWithAttemptStatus>;
@@ -24,6 +30,8 @@ export const useArchivedKanbanTasks = (
     archiveId
   )}&include_archived=true`;
   const [connectEnabled, setConnectEnabled] = useState(false);
+  const invalidatedTaskIdsRef = useRef<Set<string>>(new Set());
+  const derivedCacheRef = useRef<TaskDerivationCache | null>(null);
 
   useEffect(() => {
     setConnectEnabled(false);
@@ -39,45 +47,63 @@ export const useArchivedKanbanTasks = (
     []
   );
 
+  const onInvalidate = useCallback((invalidate: unknown) => {
+    if (!invalidate || typeof invalidate !== 'object') return;
+    const record = invalidate as Record<string, unknown>;
+    const taskIds = record.taskIds;
+    if (!Array.isArray(taskIds)) return;
+    taskIds.forEach((id) => {
+      if (typeof id !== 'string') return;
+      invalidatedTaskIdsRef.current.add(id);
+    });
+  }, []);
+
   const { data, isConnected, error } = useJsonPatchWsStream<TasksState>(
     endpoint,
     connectEnabled,
     initialData,
-    { deduplicatePatches }
+    { deduplicatePatches, onInvalidate }
   );
 
-  const localTasksById = useMemo(() => data?.tasks ?? {}, [data?.tasks]);
+  const tasksById = useMemo(() => data?.tasks ?? {}, [data?.tasks]);
 
-  const { tasks, tasksById, tasksByStatus } = useMemo(() => {
-    const merged: Record<string, TaskWithAttemptStatus> = { ...localTasksById };
-    const byStatus: Record<TaskStatus, TaskWithAttemptStatus[]> = {
-      todo: [],
-      inprogress: [],
-      inreview: [],
-      done: [],
-      cancelled: [],
+  const { tasks, tasksByStatus } = useMemo(() => {
+    if (!data) {
+      derivedCacheRef.current = null;
+      return { tasks: [], tasksByStatus: EMPTY_TASKS_BY_STATUS };
+    }
+
+    const changedIds = new Set<string>();
+    invalidatedTaskIdsRef.current.forEach((id) => changedIds.add(id));
+    invalidatedTaskIdsRef.current.clear();
+
+    const prev = derivedCacheRef.current;
+    const needsFullRebuild = !prev || changedIds.size === 0;
+
+    const rebuild = () => {
+      const baseCache = buildTaskDerivationCache(Object.values(tasksById));
+      derivedCacheRef.current = baseCache;
+      return baseCache;
     };
 
-    Object.values(merged).forEach((task) => {
-      byStatus[task.status]?.push(task);
-    });
+    if (needsFullRebuild) {
+      const nextCache = rebuild();
+      return { tasks: nextCache.tasks, tasksByStatus: nextCache.tasksByStatus };
+    }
 
-    const sorted = Object.values(merged).sort(
-      (a, b) =>
-        new Date(b.created_at as string).getTime() -
-        new Date(a.created_at as string).getTime()
+    const applied = applyTaskDerivationChanges(
+      prev,
+      changedIds,
+      (id) => tasksById[id] ?? null
     );
 
-    (Object.values(byStatus) as TaskWithAttemptStatus[][]).forEach((list) => {
-      list.sort(
-        (a, b) =>
-          new Date(b.created_at as string).getTime() -
-          new Date(a.created_at as string).getTime()
-      );
-    });
+    if (!applied) {
+      const nextCache = rebuild();
+      return { tasks: nextCache.tasks, tasksByStatus: nextCache.tasksByStatus };
+    }
 
-    return { tasks: sorted, tasksById: merged, tasksByStatus: byStatus };
-  }, [localTasksById]);
+    return { tasks: prev.tasks, tasksByStatus: prev.tasksByStatus };
+  }, [data, tasksById]);
 
   const isLoading = !!archiveId && !data && !error;
 
