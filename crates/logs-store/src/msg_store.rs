@@ -495,17 +495,25 @@ impl MsgStore {
                                 ));
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                                tracing::warn!(
-                                    "raw entry stream lagged by {skipped} messages; resyncing"
-                                );
                                 let snapshot = store.raw_history_page(usize::MAX, None).0;
+                                let finished_now = store.inner.read().unwrap().finished;
+                                let min_index = snapshot.first().map(|entry| entry.entry_index);
+                                let max_index = snapshot.last().map(|entry| entry.entry_index);
+                                tracing::warn!(
+                                    skipped = skipped,
+                                    snapshot_len = snapshot.len(),
+                                    min_index = ?min_index,
+                                    max_index = ?max_index,
+                                    finished = finished_now,
+                                    "raw entry stream lagged; resyncing with snapshot"
+                                );
                                 for entry in snapshot {
                                     pending.push_back(LogEntryEvent::Replace {
                                         entry_index: entry.entry_index,
                                         entry: entry.entry_json,
                                     });
                                 }
-                                if store.inner.read().unwrap().finished {
+                                if finished_now {
                                     pending.push_back(LogEntryEvent::Finished);
                                 }
                             }
@@ -563,17 +571,25 @@ impl MsgStore {
                                 ));
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                                tracing::warn!(
-                                    "normalized entry stream lagged by {skipped} messages; resyncing"
-                                );
                                 let snapshot = store.normalized_history_page(usize::MAX, None).0;
+                                let finished_now = store.inner.read().unwrap().finished;
+                                let min_index = snapshot.first().map(|entry| entry.entry_index);
+                                let max_index = snapshot.last().map(|entry| entry.entry_index);
+                                tracing::warn!(
+                                    skipped = skipped,
+                                    snapshot_len = snapshot.len(),
+                                    min_index = ?min_index,
+                                    max_index = ?max_index,
+                                    finished = finished_now,
+                                    "normalized entry stream lagged; resyncing with snapshot"
+                                );
                                 for entry in snapshot {
                                     pending.push_back(LogEntryEvent::Replace {
                                         entry_index: entry.entry_index,
                                         entry: entry.entry_json,
                                     });
                                 }
-                                if store.inner.read().unwrap().finished {
+                                if finished_now {
                                     pending.push_back(LogEntryEvent::Finished);
                                 }
                             }
@@ -895,9 +911,60 @@ struct NormalizedEntryJson {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{
+        future::Future,
+        sync::{Mutex, MutexGuard},
+        time::Duration,
+    };
+
+    use tracing_subscriber::layer::SubscriberExt as _;
 
     use super::*;
+
+    #[derive(Clone)]
+    struct BufferMakeWriter(Arc<Mutex<Vec<u8>>>);
+
+    struct BufferWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for BufferWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let mut locked: MutexGuard<'_, Vec<u8>> = self.0.lock().unwrap();
+            locked.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for BufferMakeWriter {
+        type Writer = BufferWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            BufferWriter(self.0.clone())
+        }
+    }
+
+    async fn capture_tracing_logs<T>(future: impl Future<Output = T>) -> (String, T) {
+        let buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
+
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(BufferMakeWriter(buffer.clone()))
+                .with_current_span(false)
+                .with_span_list(false)
+                .with_target(false),
+        );
+
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let _guard = tracing::dispatcher::set_default(&dispatch);
+
+        let output = future.await;
+        let logs = String::from_utf8_lossy(&buffer.lock().unwrap()).into_owned();
+        (logs, output)
+    }
 
     fn store_with_broadcast_capacity(capacity: usize) -> MsgStore {
         let (sequenced_sender, _) = broadcast::channel(capacity);
@@ -967,6 +1034,148 @@ mod tests {
         assert_eq!(normalize_broadcast_capacity(0), DEFAULT_BROADCAST_CAPACITY);
         assert_eq!(normalize_broadcast_capacity(1), 1);
         assert_eq!(normalize_broadcast_capacity(123), 123);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn logmsg_stream_lagged_logs_include_required_fields() {
+        let (logs, ()) = capture_tracing_logs(async {
+            let store = Arc::new(store_with_broadcast_capacity(4));
+            let mut stream = store.clone().history_plus_stream();
+
+            for idx in 0..10 {
+                store.push_stdout(format!("msg {idx}"));
+            }
+
+            // First poll should observe lag and resync from retained history.
+            let _ = next_log_msg(&mut stream).await;
+        })
+        .await;
+
+        assert!(
+            logs.contains("log msg stream lagged; resyncing from history"),
+            "missing lagged log: {logs}"
+        );
+        assert!(
+            logs.contains("\"skipped\""),
+            "missing skipped field: {logs}"
+        );
+        assert!(
+            logs.contains("\"last_seq\""),
+            "missing last_seq field: {logs}"
+        );
+        assert!(
+            logs.contains("\"max_seq\""),
+            "missing max_seq field: {logs}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn logmsg_stream_lagged_beyond_retained_logs_include_window_fields() {
+        let chunk_len = 5 * 1024 * 1024;
+        let (logs, first_after_resync) = capture_tracing_logs(async {
+            let store = Arc::new(store_with_broadcast_capacity(4));
+            let mut stream = store.clone().history_plus_stream();
+
+            store.push_stdout("first");
+            let _ = next_log_msg(&mut stream).await;
+
+            // Force eviction of early history using the default 8MiB budget.
+            store.push_stdout("x".repeat(chunk_len));
+            store.push_stdout("y".repeat(chunk_len));
+
+            // Overflow the broadcast ring to trigger Lagged handling again.
+            for idx in 0..10 {
+                store.push_stdout(format!("after {idx}"));
+            }
+
+            next_log_msg(&mut stream).await
+        })
+        .await;
+
+        match first_after_resync {
+            LogMsg::Stdout(s) => {
+                assert_eq!(s.len(), chunk_len);
+                assert_eq!(s.as_bytes().first(), Some(&b'y'));
+            }
+            other => panic!("expected stdout after resync, got {other:?}"),
+        }
+
+        assert!(
+            logs.contains("log msg stream lagged beyond retained history"),
+            "missing beyond-retained log: {logs}"
+        );
+        assert!(
+            logs.contains("\"skipped\""),
+            "missing skipped field: {logs}"
+        );
+        assert!(
+            logs.contains("\"last_seq\""),
+            "missing last_seq field: {logs}"
+        );
+        assert!(
+            logs.contains("\"min_seq\""),
+            "missing min_seq field: {logs}"
+        );
+        assert!(
+            logs.contains("\"max_seq\""),
+            "missing max_seq field: {logs}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn raw_stream_lagged_logs_include_snapshot_fields() {
+        let (logs, ()) = capture_tracing_logs(async {
+            let store = Arc::new(store_with_broadcast_capacity(4));
+            let mut stream = store.clone().raw_history_plus_stream();
+
+            for idx in 0..10 {
+                store.push_stdout(format!("msg {idx}"));
+            }
+
+            let _ = next_event(&mut stream).await;
+        })
+        .await;
+
+        assert!(
+            logs.contains("raw entry stream lagged; resyncing with snapshot"),
+            "missing raw lagged log: {logs}"
+        );
+        assert!(
+            logs.contains("\"skipped\""),
+            "missing skipped field: {logs}"
+        );
+        assert!(
+            logs.contains("\"snapshot_len\""),
+            "missing snapshot_len field: {logs}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn normalized_stream_lagged_logs_include_snapshot_fields() {
+        let (logs, ()) = capture_tracing_logs(async {
+            let store = Arc::new(store_with_broadcast_capacity(4));
+            let mut stream = store.clone().normalized_history_plus_stream();
+
+            for idx in 0..10 {
+                store.push_patch(normalized_add_patch(idx, &format!("entry {idx}")));
+            }
+
+            let _ = next_event(&mut stream).await;
+        })
+        .await;
+
+        assert!(
+            logs.contains("normalized entry stream lagged; resyncing with snapshot"),
+            "missing normalized lagged log: {logs}"
+        );
+        assert!(
+            logs.contains("\"skipped\""),
+            "missing skipped field: {logs}"
+        );
+        assert!(
+            logs.contains("\"snapshot_len\""),
+            "missing snapshot_len field: {logs}"
+        );
     }
 
     #[test]
@@ -1234,5 +1443,119 @@ mod tests {
             stream.next().await.is_none(),
             "stream should end after Finished"
         );
+    }
+
+    #[tokio::test]
+    async fn logmsg_stream_multi_subscriber_resyncs_and_completes() {
+        let store = Arc::new(store_with_broadcast_capacity(4));
+        let mut streams = [
+            store.clone().history_plus_stream(),
+            store.clone().history_plus_stream(),
+            store.clone().history_plus_stream(),
+        ];
+
+        let expected: Vec<String> = (0..50).map(|idx| format!("msg {idx}")).collect();
+        for msg in &expected {
+            store.push_stdout(msg.clone());
+        }
+        store.push_finished();
+
+        for (stream_idx, stream) in streams.iter_mut().enumerate() {
+            let mut got = Vec::new();
+            loop {
+                match next_log_msg(stream).await {
+                    LogMsg::Stdout(s) => got.push(s),
+                    LogMsg::Finished => break,
+                    _ => {}
+                }
+            }
+            assert_eq!(got, expected, "subscriber stream {stream_idx} mismatch");
+            assert!(
+                stream.next().await.is_none(),
+                "subscriber stream {stream_idx} should end after Finished"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn raw_stream_multi_subscriber_resyncs_and_continues() {
+        let store = Arc::new(store_with_broadcast_capacity(4));
+        let mut streams = [
+            store.clone().raw_history_plus_stream(),
+            store.clone().raw_history_plus_stream(),
+        ];
+
+        for idx in 0..10 {
+            store.push_stdout(format!("msg {idx}"));
+        }
+
+        for stream in streams.iter_mut() {
+            for idx in 0..10 {
+                match next_event(stream).await {
+                    LogEntryEvent::Replace { entry_index, .. } => assert_eq!(entry_index, idx),
+                    other => panic!("expected replace event, got {other:?}"),
+                }
+            }
+            for idx in 6..10 {
+                match next_event(stream).await {
+                    LogEntryEvent::Append { entry_index, .. } => assert_eq!(entry_index, idx),
+                    other => panic!("expected append event, got {other:?}"),
+                }
+            }
+        }
+
+        store.push_stdout("after");
+        for stream in streams.iter_mut() {
+            match next_event(stream).await {
+                LogEntryEvent::Append { entry_index, .. } => assert_eq!(entry_index, 10),
+                other => panic!("expected append event, got {other:?}"),
+            }
+        }
+
+        store.push_finished();
+        for stream in streams.iter_mut() {
+            assert!(matches!(next_event(stream).await, LogEntryEvent::Finished));
+        }
+    }
+
+    #[tokio::test]
+    async fn normalized_stream_multi_subscriber_resyncs_and_continues() {
+        let store = Arc::new(store_with_broadcast_capacity(4));
+        let mut streams = [
+            store.clone().normalized_history_plus_stream(),
+            store.clone().normalized_history_plus_stream(),
+        ];
+
+        for idx in 0..10 {
+            store.push_patch(normalized_add_patch(idx, &format!("entry {idx}")));
+        }
+
+        for stream in streams.iter_mut() {
+            for idx in 0..10 {
+                match next_event(stream).await {
+                    LogEntryEvent::Replace { entry_index, .. } => assert_eq!(entry_index, idx),
+                    other => panic!("expected replace event, got {other:?}"),
+                }
+            }
+            for idx in 6..10 {
+                match next_event(stream).await {
+                    LogEntryEvent::Append { entry_index, .. } => assert_eq!(entry_index, idx),
+                    other => panic!("expected append event, got {other:?}"),
+                }
+            }
+        }
+
+        store.push_patch(normalized_add_patch(10, "after"));
+        for stream in streams.iter_mut() {
+            match next_event(stream).await {
+                LogEntryEvent::Append { entry_index, .. } => assert_eq!(entry_index, 10),
+                other => panic!("expected append event, got {other:?}"),
+            }
+        }
+
+        store.push_finished();
+        for stream in streams.iter_mut() {
+            assert!(matches!(next_event(stream).await, LogEntryEvent::Finished));
+        }
     }
 }

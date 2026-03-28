@@ -174,9 +174,92 @@ fn approx_json_string_len(s: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use proptest::{collection, prelude::*, string::string_regex};
     use serde_json::json;
 
     use super::*;
+
+    fn json_string_strategy() -> BoxedStrategy<String> {
+        collection::vec(any::<char>(), 0..64)
+            .prop_map(|chars| chars.into_iter().collect())
+            .boxed()
+    }
+
+    fn json_number_strategy() -> BoxedStrategy<Number> {
+        prop_oneof![
+            any::<i64>().prop_map(Number::from),
+            any::<u64>().prop_map(Number::from),
+            any::<f64>().prop_filter_map("finite f64", Number::from_f64),
+        ]
+        .boxed()
+    }
+
+    fn json_value_strategy() -> BoxedStrategy<Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::Bool),
+            json_number_strategy().prop_map(Value::Number),
+            json_string_strategy().prop_map(Value::String),
+        ]
+        .boxed();
+
+        leaf.prop_recursive(4, 256, 8, |inner| {
+            prop_oneof![
+                collection::vec(inner.clone(), 0..8).prop_map(Value::Array),
+                collection::vec((json_string_strategy(), inner), 0..8).prop_map(|pairs| {
+                    let mut map = serde_json::Map::new();
+                    for (k, v) in pairs {
+                        map.insert(k, v);
+                    }
+                    Value::Object(map)
+                }),
+            ]
+            .boxed()
+        })
+        .boxed()
+    }
+
+    fn json_pointer_strategy() -> BoxedStrategy<String> {
+        let token = string_regex("[A-Za-z0-9_.-]{1,16}").expect("valid regex");
+        collection::vec(token, 0..4)
+            .prop_map(|tokens| {
+                if tokens.is_empty() {
+                    String::new()
+                } else {
+                    format!("/{}", tokens.join("/"))
+                }
+            })
+            .boxed()
+    }
+
+    fn json_patch_strategy() -> BoxedStrategy<Patch> {
+        let value = json_value_strategy();
+        let path = json_pointer_strategy();
+        let from = json_pointer_strategy();
+
+        let op = prop_oneof![
+            (path.clone(), value.clone())
+                .prop_map(|(path, value)| { json!({ "op": "add", "path": path, "value": value }) }),
+            path.clone()
+                .prop_map(|path| json!({ "op": "remove", "path": path })),
+            (path.clone(), value.clone()).prop_map(|(path, value)| {
+                json!({ "op": "replace", "path": path, "value": value })
+            }),
+            (from.clone(), path.clone())
+                .prop_map(|(from, path)| { json!({ "op": "move", "from": from, "path": path }) }),
+            (from, path.clone())
+                .prop_map(|(from, path)| { json!({ "op": "copy", "from": from, "path": path }) }),
+            (path, value).prop_map(|(path, value)| {
+                json!({ "op": "test", "path": path, "value": value })
+            }),
+        ];
+
+        collection::vec(op, 0..8)
+            .prop_filter_map("valid JSON patch", |ops| {
+                serde_json::from_value::<Patch>(Value::Array(ops)).ok()
+            })
+            .boxed()
+    }
 
     #[test]
     fn approx_json_value_len_matches_serde_json() {
@@ -221,5 +304,27 @@ mod tests {
             got, expected,
             "patch length mismatch: got {got} expected {expected}"
         );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 256,
+            max_shrink_iters: 0,
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn approx_json_value_len_matches_serde_json_for_random_values(value in json_value_strategy()) {
+            let expected = serde_json::to_string(&value).unwrap().len();
+            let got = approx_json_value_len(&value);
+            prop_assert_eq!(got, expected);
+        }
+
+        #[test]
+        fn approx_json_patch_len_matches_serde_json_for_random_patches(patch in json_patch_strategy()) {
+            let expected = serde_json::to_string(&patch).unwrap().len();
+            let got = approx_json_patch_len(&patch);
+            prop_assert_eq!(got, expected);
+        }
     }
 }
