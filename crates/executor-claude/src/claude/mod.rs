@@ -374,13 +374,13 @@ impl ClaudeLogProcessor {
             let mut processor = Self::new_with_strategy(strategy);
 
             while let Some(Ok(msg)) = stream.next().await {
-                let chunk = match msg {
-                    LogMsg::Stdout(x) => x,
+                let chunk = match msg.as_ref() {
+                    LogMsg::Stdout(x) => x.as_str(),
                     LogMsg::JsonPatch(_) | LogMsg::SessionId(_) | LogMsg::Stderr(_) => continue,
                     LogMsg::Finished => break,
                 };
 
-                buffer.push_str(&chunk);
+                buffer.push_str(chunk);
 
                 // Process complete JSON lines
                 for line in buffer

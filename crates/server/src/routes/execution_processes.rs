@@ -168,7 +168,7 @@ async fn build_log_history_page(
         .entries
         .into_iter()
         .filter_map(
-            |entry| match serde_json::from_value::<PatchType>(entry.entry_json) {
+            |entry| match PatchType::deserialize(entry.entry_json.as_ref()) {
                 Ok(payload) => Some(IndexedLogEntry {
                     entry_index: entry.entry_index as i64,
                     entry: payload,
@@ -345,7 +345,7 @@ struct EncodedLogMessage {
 fn log_entry_event_to_message(event: LogEntryEvent) -> Option<EncodedLogMessage> {
     let payload = match event {
         LogEntryEvent::Append { entry_index, entry } => {
-            let entry = serde_json::from_value(entry)
+            let entry = PatchType::deserialize(entry.as_ref())
                 .map_err(|err| {
                     tracing::warn!("Failed to decode append entry: {}", err);
                 })
@@ -356,7 +356,7 @@ fn log_entry_event_to_message(event: LogEntryEvent) -> Option<EncodedLogMessage>
             }
         }
         LogEntryEvent::Replace { entry_index, entry } => {
-            let entry = serde_json::from_value(entry)
+            let entry = PatchType::deserialize(entry.as_ref())
                 .map_err(|err| {
                     tracing::warn!("Failed to decode replace entry: {}", err);
                 })

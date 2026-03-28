@@ -886,11 +886,13 @@ pub trait ContainerService {
         {
             while let Some(item) = stream.next().await {
                 match item {
-                    Ok(LogMsg::JsonPatch(patch)) => {
-                        entries.extend(extract_normalized_patch_entries(&patch));
-                    }
-                    Ok(LogMsg::Finished) => break,
-                    Ok(_) => {}
+                    Ok(msg) => match msg.as_ref() {
+                        LogMsg::JsonPatch(patch) => {
+                            entries.extend(extract_normalized_patch_entries(patch));
+                        }
+                        LogMsg::Finished => break,
+                        _ => {}
+                    },
                     Err(e) => {
                         return Err(ContainerError::Other(anyhow!(
                             "Normalized log stream error: {e}"
@@ -1167,7 +1169,7 @@ pub trait ContainerService {
     async fn stream_raw_logs(
         &self,
         id: &Uuid,
-    ) -> Option<futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>> {
+    ) -> Option<futures::stream::BoxStream<'static, Result<Arc<LogMsg>, std::io::Error>>> {
         if let Some(store) = self.get_msg_store_by_id(id).await {
             // First try in-memory store
             return Some(
@@ -1176,7 +1178,10 @@ pub trait ContainerService {
                     .filter(|msg| {
                         future::ready(matches!(
                             msg,
-                            Ok(LogMsg::Stdout(..) | LogMsg::Stderr(..) | LogMsg::Finished)
+                            Ok(msg) if matches!(
+                                msg.as_ref(),
+                                LogMsg::Stdout(..) | LogMsg::Stderr(..) | LogMsg::Finished
+                            )
                         ))
                     })
                     .boxed(),
@@ -1207,7 +1212,7 @@ pub trait ContainerService {
                     .into_iter()
                     .filter(|m| matches!(m, LogMsg::Stdout(_) | LogMsg::Stderr(_)))
                     .chain(std::iter::once(LogMsg::Finished))
-                    .map(Ok::<_, std::io::Error>),
+                    .map(|msg| Ok::<_, std::io::Error>(Arc::new(msg))),
             )
             .boxed();
 
@@ -1218,15 +1223,20 @@ pub trait ContainerService {
     async fn stream_normalized_logs(
         &self,
         id: &Uuid,
-    ) -> Option<futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>> {
+    ) -> Option<futures::stream::BoxStream<'static, Result<Arc<LogMsg>, std::io::Error>>> {
         // First try in-memory store (existing behavior)
         if let Some(store) = self.get_msg_store_by_id(id).await {
             Some(
                 store
-                    .history_plus_stream() // BoxStream<Result<LogMsg, io::Error>>
-                    .filter(|msg| future::ready(matches!(msg, Ok(LogMsg::JsonPatch(..)))))
+                    .history_plus_stream() // BoxStream<Result<Arc<LogMsg>, io::Error>>
+                    .filter(|msg| {
+                        future::ready(matches!(
+                            msg,
+                            Ok(msg) if matches!(msg.as_ref(), LogMsg::JsonPatch(..))
+                        ))
+                    })
                     .chain(futures::stream::once(async {
-                        Ok::<_, std::io::Error>(LogMsg::Finished)
+                        Ok::<_, std::io::Error>(Arc::new(LogMsg::Finished))
                     }))
                     .boxed(),
             )
@@ -1352,9 +1362,14 @@ pub trait ContainerService {
             Some(
                 temp_store
                     .history_plus_stream()
-                    .filter(|msg| future::ready(matches!(msg, Ok(LogMsg::JsonPatch(..)))))
+                    .filter(|msg| {
+                        future::ready(matches!(
+                            msg,
+                            Ok(msg) if matches!(msg.as_ref(), LogMsg::JsonPatch(..))
+                        ))
+                    })
                     .chain(futures::stream::once(async {
-                        Ok::<_, std::io::Error>(LogMsg::Finished)
+                        Ok::<_, std::io::Error>(Arc::new(LogMsg::Finished))
                     }))
                     .boxed(),
             )
@@ -1404,7 +1419,7 @@ pub trait ContainerService {
                     match serde_json::from_str::<serde_json::Value>(&row.entry_json) {
                         Ok(entry_json) => Some(LogEntrySnapshot {
                             entry_index: row.entry_index as usize,
-                            entry_json,
+                            entry_json: Arc::new(entry_json),
                         }),
                         Err(err) => {
                             tracing::warn!(
@@ -1568,7 +1583,7 @@ pub trait ContainerService {
                 .await?;
         }
 
-        let mut merged: BTreeMap<usize, serde_json::Value> = BTreeMap::new();
+        let mut merged: BTreeMap<usize, Arc<serde_json::Value>> = BTreeMap::new();
 
         if ExecutionProcessLogEntry::has_any(&self.db().pool, execution_process.id, channel).await?
         {
@@ -1589,7 +1604,7 @@ pub trait ContainerService {
 
                 match serde_json::from_str::<serde_json::Value>(&row.entry_json) {
                     Ok(value) => {
-                        merged.insert(index, value);
+                        merged.insert(index, Arc::new(value));
                     }
                     Err(err) => {
                         tracing::warn!(
@@ -1655,13 +1670,13 @@ pub trait ContainerService {
                 let mut stream = store.history_plus_stream();
 
                 while let Some(Ok(msg)) = stream.next().await {
-                    match &msg {
+                    match msg.as_ref() {
                         LogMsg::Stdout(_) | LogMsg::Stderr(_) => {
                             if !write_jsonl {
                                 continue;
                             }
                             // Serialize this individual message as a JSONL line
-                            match serde_json::to_string(&msg) {
+                            match serde_json::to_string(msg.as_ref()) {
                                 Ok(jsonl_line) => {
                                     let jsonl_line_with_newline = format!("{jsonl_line}\n");
 
@@ -1694,7 +1709,7 @@ pub trait ContainerService {
                             if let Err(e) = CodingAgentTurn::update_agent_session_id(
                                 &db.pool,
                                 execution_id,
-                                agent_session_id,
+                                agent_session_id.as_str(),
                             )
                             .await
                             {

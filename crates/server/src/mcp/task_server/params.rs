@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::*;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -719,7 +721,7 @@ pub struct McpIndexedLogEntry {
     #[schemars(
         description = "Log entry payload (normalized PatchType JSON). Treat as opaque JSON and render/inspect by `type`."
     )]
-    pub entry: Value,
+    pub entry: Arc<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

@@ -153,7 +153,7 @@ impl SequencedLogMsgAxumExt for SequencedLogMsg {
     }
 
     fn to_invalidate_sse_event(&self) -> Option<Event> {
-        let LogMsg::JsonPatch(patch) = &self.msg else {
+        let LogMsg::JsonPatch(patch) = self.msg.as_ref() else {
             return None;
         };
 
@@ -200,7 +200,7 @@ impl SequencedLogMsgAxumExt for SequencedLogMsg {
             },
         }
 
-        let msg = match &self.msg {
+        let msg = match self.msg.as_ref() {
             LogMsg::Finished => WsMsg::Finished {
                 seq: self.seq,
                 finished: true,
@@ -261,7 +261,7 @@ mod tests {
             .expect("valid JsonPatch log msg");
         let msg = SequencedLogMsg {
             seq: 42,
-            msg: log_msg,
+            msg: log_msg.into(),
         };
 
         let value = decode_text_message(msg.to_ws_message_unchecked());
@@ -273,7 +273,7 @@ mod tests {
     fn sequenced_ws_finished_includes_seq_and_finished_true() {
         let msg = SequencedLogMsg {
             seq: 7,
-            msg: LogMsg::Finished,
+            msg: LogMsg::Finished.into(),
         };
 
         let value = decode_text_message(msg.to_ws_message_unchecked());
@@ -297,7 +297,7 @@ mod tests {
 
         let msg = SequencedLogMsg {
             seq: 1,
-            msg: log_msg,
+            msg: log_msg.into(),
         };
         let value = decode_text_message(msg.to_ws_message_unchecked());
         assert_eq!(value["seq"], 1);
@@ -330,7 +330,7 @@ mod tests {
 
         let msg = SequencedLogMsg {
             seq: 1,
-            msg: log_msg,
+            msg: log_msg.into(),
         };
         let value = decode_text_message(msg.to_ws_message_unchecked());
         assert_eq!(value["seq"], 1);
@@ -365,7 +365,7 @@ mod tests {
 
         let msg = SequencedLogMsg {
             seq: 1,
-            msg: log_msg,
+            msg: log_msg.into(),
         };
         let value = decode_text_message(msg.to_ws_message_unchecked());
         assert_eq!(value["seq"], 1);
@@ -396,7 +396,7 @@ mod tests {
 
         let msg = SequencedLogMsg {
             seq: 2,
-            msg: log_msg,
+            msg: log_msg.into(),
         };
         let value = decode_text_message(msg.to_ws_message_unchecked());
 

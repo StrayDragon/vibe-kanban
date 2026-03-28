@@ -172,7 +172,7 @@ async fn send_projects_snapshot(
     let seq = next_ws_seq(last_seq);
     let msg = SequencedLogMsg {
         seq,
-        msg: LogMsg::JsonPatch(patch),
+        msg: LogMsg::JsonPatch(patch).into(),
     };
     sender.send(msg.to_ws_message_unchecked()).await?;
     Ok(())

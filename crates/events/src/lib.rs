@@ -630,7 +630,7 @@ mod tests {
 
         let first = stream.next().await.expect("snapshot msg").unwrap();
         assert_eq!(first.seq, 0);
-        let LogMsg::JsonPatch(patch) = first.msg else {
+        let LogMsg::JsonPatch(patch) = first.msg.as_ref() else {
             panic!("expected JsonPatch snapshot msg");
         };
         assert_eq!(patch.0.len(), 1, "snapshot patch must be single-op");
@@ -693,7 +693,7 @@ mod tests {
 
         let first = items[0].as_ref().unwrap();
         assert_eq!(first.seq, 1);
-        let LogMsg::JsonPatch(first_patch) = &first.msg else {
+        let LogMsg::JsonPatch(first_patch) = first.msg.as_ref() else {
             panic!("expected json patch");
         };
         let expected_path = format!("/tasks/{want_task_id}");
@@ -707,7 +707,7 @@ mod tests {
 
         let second = items[1].as_ref().unwrap();
         assert_eq!(second.seq, 2);
-        let LogMsg::JsonPatch(second_patch) = &second.msg else {
+        let LogMsg::JsonPatch(second_patch) = second.msg.as_ref() else {
             panic!("expected json patch");
         };
         let Some(JsonPatchOp::Remove(remove)) = second_patch.0.first() else {
@@ -774,7 +774,7 @@ mod tests {
 
         let first = stream.next().await.expect("snapshot msg").unwrap();
         assert_eq!(first.seq, 0);
-        let LogMsg::JsonPatch(patch) = first.msg else {
+        let LogMsg::JsonPatch(patch) = first.msg.as_ref() else {
             panic!("expected JsonPatch snapshot msg");
         };
         assert_eq!(patch.0.len(), 1, "snapshot patch must be single-op");
@@ -867,7 +867,7 @@ mod tests {
             .unwrap();
         let first = stream.next().await.expect("history msg").unwrap();
         assert_eq!(first.seq, 1);
-        let LogMsg::JsonPatch(patch) = first.msg else {
+        let LogMsg::JsonPatch(patch) = first.msg.as_ref() else {
             panic!("expected JsonPatch msg");
         };
         let Some(JsonPatchOp::Remove(remove)) = patch.0.first() else {

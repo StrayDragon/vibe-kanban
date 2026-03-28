@@ -78,12 +78,17 @@ impl EventService {
             )]))
         }
 
+        enum TaskPatchAction {
+            PassThrough,
+            Replace(json_patch::Patch),
+        }
+
         fn filter_task_patch(
-            patch: json_patch::Patch,
+            patch: &json_patch::Patch,
             project_id: Option<Uuid>,
             include_archived: bool,
             archived_kanban_id: Option<Uuid>,
-        ) -> Option<LogMsg> {
+        ) -> Option<TaskPatchAction> {
             let project_id_str = project_id.map(|id| id.to_string());
             let archived_kanban_id_str = archived_kanban_id.map(|id| id.to_string());
 
@@ -118,29 +123,29 @@ impl EventService {
                     json_patch::PatchOperation::Add(op) => {
                         let matches = matches_filter_value(&op.value)?;
                         if matches {
-                            return Some(LogMsg::JsonPatch(patch));
+                            return Some(TaskPatchAction::PassThrough);
                         }
 
                         let remove_patch =
                             json_patch::Patch(vec![PatchOperation::Remove(RemoveOperation {
                                 path: op.path.clone(),
                             })]);
-                        return Some(LogMsg::JsonPatch(remove_patch));
+                        return Some(TaskPatchAction::Replace(remove_patch));
                     }
                     json_patch::PatchOperation::Replace(op) => {
                         let matches = matches_filter_value(&op.value)?;
                         if matches {
-                            return Some(LogMsg::JsonPatch(patch));
+                            return Some(TaskPatchAction::PassThrough);
                         }
 
                         let remove_patch =
                             json_patch::Patch(vec![PatchOperation::Remove(RemoveOperation {
                                 path: op.path.clone(),
                             })]);
-                        return Some(LogMsg::JsonPatch(remove_patch));
+                        return Some(TaskPatchAction::Replace(remove_patch));
                     }
                     json_patch::PatchOperation::Remove(_) => {
-                        return Some(LogMsg::JsonPatch(patch));
+                        return Some(TaskPatchAction::PassThrough);
                     }
                     _ => {}
                 }
@@ -166,25 +171,38 @@ impl EventService {
             .await?;
             initial_msgs.push(SequencedLogMsg {
                 seq: snapshot_seq,
-                msg: build_tasks_snapshot(tasks),
+                msg: build_tasks_snapshot(tasks).into(),
             });
             initial_last_seq = snapshot_seq;
         } else {
             for item in history {
-                match item.msg {
+                match item.msg.as_ref() {
                     LogMsg::JsonPatch(patch) => {
-                        if let Some(msg) = filter_task_patch(
+                        if let Some(action) = filter_task_patch(
                             patch,
                             project_id,
                             include_archived,
                             archived_kanban_id,
                         ) {
-                            initial_msgs.push(SequencedLogMsg { seq: item.seq, msg });
+                            match action {
+                                TaskPatchAction::PassThrough => {
+                                    initial_msgs.push(SequencedLogMsg {
+                                        seq: item.seq,
+                                        msg: Arc::clone(&item.msg),
+                                    });
+                                }
+                                TaskPatchAction::Replace(patch) => {
+                                    initial_msgs.push(SequencedLogMsg {
+                                        seq: item.seq,
+                                        msg: LogMsg::JsonPatch(patch).into(),
+                                    });
+                                }
+                            }
                         }
                     }
-                    other => initial_msgs.push(SequencedLogMsg {
+                    _ => initial_msgs.push(SequencedLogMsg {
                         seq: item.seq,
-                        msg: other,
+                        msg: Arc::clone(&item.msg),
                     }),
                 }
             }
@@ -211,14 +229,17 @@ impl EventService {
                             return None;
                         }
 
-                        let msg = match item.msg {
-                            LogMsg::JsonPatch(patch) => filter_task_patch(
+                        let msg = match item.msg.as_ref() {
+                            LogMsg::JsonPatch(patch) => match filter_task_patch(
                                 patch,
                                 project_filter,
                                 include_archived,
                                 archived_filter,
-                            )?,
-                            other => other,
+                            )? {
+                                TaskPatchAction::PassThrough => Arc::clone(&item.msg),
+                                TaskPatchAction::Replace(patch) => LogMsg::JsonPatch(patch).into(),
+                            },
+                            _ => Arc::clone(&item.msg),
                         };
 
                         last_seq.store(item.seq, Ordering::Relaxed);
@@ -244,7 +265,7 @@ impl EventService {
                                 last_seq.store(watermark, Ordering::Relaxed);
                                 Some(Ok(SequencedLogMsg {
                                     seq: watermark,
-                                    msg: build_tasks_snapshot(tasks),
+                                    msg: build_tasks_snapshot(tasks).into(),
                                 }))
                             }
                             Err(err) => {
@@ -322,23 +343,23 @@ impl EventService {
             let projects = Project::find_all(&self.db.pool).await?;
             initial_msgs.push(SequencedLogMsg {
                 seq: snapshot_seq,
-                msg: build_projects_snapshot(projects),
+                msg: build_projects_snapshot(projects).into(),
             });
             initial_last_seq = snapshot_seq;
         } else {
             for item in history {
-                match item.msg {
+                match item.msg.as_ref() {
                     LogMsg::JsonPatch(patch) => {
-                        if patch_is_projects(&patch) {
+                        if patch_is_projects(patch) {
                             initial_msgs.push(SequencedLogMsg {
                                 seq: item.seq,
-                                msg: LogMsg::JsonPatch(patch),
+                                msg: Arc::clone(&item.msg),
                             });
                         }
                     }
-                    other => initial_msgs.push(SequencedLogMsg {
+                    _ => initial_msgs.push(SequencedLogMsg {
                         seq: item.seq,
-                        msg: other,
+                        msg: Arc::clone(&item.msg),
                     }),
                 }
             }
@@ -363,25 +384,19 @@ impl EventService {
                             return None;
                         }
 
-                        match item.msg {
+                        let msg = match item.msg.as_ref() {
                             LogMsg::JsonPatch(patch) => {
-                                if patch_is_projects(&patch) {
-                                    last_seq.store(item.seq, Ordering::Relaxed);
-                                    return Some(Ok(SequencedLogMsg {
-                                        seq: item.seq,
-                                        msg: LogMsg::JsonPatch(patch),
-                                    }));
+                                if patch_is_projects(patch) {
+                                    Arc::clone(&item.msg)
+                                } else {
+                                    return None;
                                 }
-                                None
                             }
-                            other => {
-                                last_seq.store(item.seq, Ordering::Relaxed);
-                                Some(Ok(SequencedLogMsg {
-                                    seq: item.seq,
-                                    msg: other,
-                                }))
-                            }
-                        }
+                            _ => Arc::clone(&item.msg),
+                        };
+
+                        last_seq.store(item.seq, Ordering::Relaxed);
+                        Some(Ok(SequencedLogMsg { seq: item.seq, msg }))
                     }
                     Err(BroadcastStreamRecvError::Lagged(skipped)) => {
                         let watermark = msg_store.max_seq().unwrap_or(0);
@@ -396,7 +411,7 @@ impl EventService {
                                 last_seq.store(watermark, Ordering::Relaxed);
                                 Some(Ok(SequencedLogMsg {
                                     seq: watermark,
-                                    msg: build_projects_snapshot(projects),
+                                    msg: build_projects_snapshot(projects).into(),
                                 }))
                             }
                             Err(err) => {
@@ -563,7 +578,7 @@ impl EventService {
                     .await?;
             initial_msgs.push(SequencedLogMsg {
                 seq: snapshot_seq,
-                msg: snapshot,
+                msg: snapshot.into(),
             });
             session_ids
         } else {
@@ -576,9 +591,9 @@ impl EventService {
             snapshot_seq
         } else {
             for item in history {
-                match item.msg {
+                match item.msg.as_ref() {
                     LogMsg::JsonPatch(patch) => {
-                        if !patch_is_execution_processes(&patch) {
+                        if !patch_is_execution_processes(patch) {
                             continue;
                         }
 
@@ -606,7 +621,8 @@ impl EventService {
                                                 seq: item.seq,
                                                 msg: LogMsg::JsonPatch(
                                                     execution_process_patch::remove(process_id),
-                                                ),
+                                                )
+                                                .into(),
                                             });
                                         }
                                         continue;
@@ -614,7 +630,7 @@ impl EventService {
 
                                     initial_msgs.push(SequencedLogMsg {
                                         seq: item.seq,
-                                        msg: LogMsg::JsonPatch(patch),
+                                        msg: Arc::clone(&item.msg),
                                     });
                                 }
                             }
@@ -637,7 +653,8 @@ impl EventService {
                                                 seq: item.seq,
                                                 msg: LogMsg::JsonPatch(
                                                     execution_process_patch::remove(process_id),
-                                                ),
+                                                )
+                                                .into(),
                                             });
                                         }
                                         continue;
@@ -645,22 +662,22 @@ impl EventService {
 
                                     initial_msgs.push(SequencedLogMsg {
                                         seq: item.seq,
-                                        msg: LogMsg::JsonPatch(patch),
+                                        msg: Arc::clone(&item.msg),
                                     });
                                 }
                             }
                             json_patch::PatchOperation::Remove(_) => {
                                 initial_msgs.push(SequencedLogMsg {
                                     seq: item.seq,
-                                    msg: LogMsg::JsonPatch(patch),
+                                    msg: Arc::clone(&item.msg),
                                 });
                             }
                             _ => {}
                         }
                     }
-                    other => initial_msgs.push(SequencedLogMsg {
+                    _ => initial_msgs.push(SequencedLogMsg {
                         seq: item.seq,
-                        msg: other,
+                        msg: Arc::clone(&item.msg),
                     }),
                 }
             }
@@ -687,9 +704,9 @@ impl EventService {
                             return None;
                         }
 
-                        match item.msg {
+                        match item.msg.as_ref() {
                             LogMsg::JsonPatch(patch) => {
-                                if !patch_is_execution_processes(&patch) {
+                                if !patch_is_execution_processes(patch) {
                                     return None;
                                 }
 
@@ -717,12 +734,13 @@ impl EventService {
                                                     seq: item.seq,
                                                     msg: LogMsg::JsonPatch(
                                                         execution_process_patch::remove(process_id),
-                                                    ),
+                                                    )
+                                                    .into(),
                                                 }));
                                             }
                                             return Some(Ok(SequencedLogMsg {
                                                 seq: item.seq,
-                                                msg: LogMsg::JsonPatch(patch),
+                                                msg: Arc::clone(&item.msg),
                                             }));
                                         }
                                     }
@@ -749,12 +767,13 @@ impl EventService {
                                                     seq: item.seq,
                                                     msg: LogMsg::JsonPatch(
                                                         execution_process_patch::remove(process_id),
-                                                    ),
+                                                    )
+                                                    .into(),
                                                 }));
                                             }
                                             return Some(Ok(SequencedLogMsg {
                                                 seq: item.seq,
-                                                msg: LogMsg::JsonPatch(patch),
+                                                msg: Arc::clone(&item.msg),
                                             }));
                                         }
                                     }
@@ -762,7 +781,7 @@ impl EventService {
                                         last_seq.store(item.seq, Ordering::Relaxed);
                                         return Some(Ok(SequencedLogMsg {
                                             seq: item.seq,
-                                            msg: LogMsg::JsonPatch(patch),
+                                            msg: Arc::clone(&item.msg),
                                         }));
                                     }
                                     _ => {}
@@ -770,11 +789,11 @@ impl EventService {
 
                                 None
                             }
-                            other => {
+                            _ => {
                                 last_seq.store(item.seq, Ordering::Relaxed);
                                 Some(Ok(SequencedLogMsg {
                                     seq: item.seq,
-                                    msg: other,
+                                    msg: Arc::clone(&item.msg),
                                 }))
                             }
                         }
@@ -799,7 +818,7 @@ impl EventService {
                                 last_seq.store(watermark, Ordering::Relaxed);
                                 Some(Ok(SequencedLogMsg {
                                     seq: watermark,
-                                    msg: snapshot,
+                                    msg: snapshot.into(),
                                 }))
                             }
                             Err(err) => {
@@ -916,23 +935,25 @@ impl EventService {
         if needs_snapshot {
             initial_msgs.push(SequencedLogMsg {
                 seq: snapshot_seq,
-                msg: load_scratch_snapshot(&self.db.pool, scratch_id, &scratch_type).await,
+                msg: load_scratch_snapshot(&self.db.pool, scratch_id, &scratch_type)
+                    .await
+                    .into(),
             });
             initial_last_seq = snapshot_seq;
         } else {
             for item in history {
-                match item.msg {
+                match item.msg.as_ref() {
                     LogMsg::JsonPatch(patch) => {
-                        if patch_matches_scratch(&patch, scratch_id, &scratch_type_str) {
+                        if patch_matches_scratch(patch, scratch_id, &scratch_type_str) {
                             initial_msgs.push(SequencedLogMsg {
                                 seq: item.seq,
-                                msg: LogMsg::JsonPatch(patch),
+                                msg: Arc::clone(&item.msg),
                             });
                         }
                     }
-                    other => initial_msgs.push(SequencedLogMsg {
+                    _ => initial_msgs.push(SequencedLogMsg {
                         seq: item.seq,
-                        msg: other,
+                        msg: Arc::clone(&item.msg),
                     }),
                 }
             }
@@ -958,25 +979,19 @@ impl EventService {
                             return None;
                         }
 
-                        match item.msg {
+                        let msg = match item.msg.as_ref() {
                             LogMsg::JsonPatch(patch) => {
-                                if patch_matches_scratch(&patch, scratch_id, &scratch_type_str) {
-                                    last_seq.store(item.seq, Ordering::Relaxed);
-                                    return Some(Ok(SequencedLogMsg {
-                                        seq: item.seq,
-                                        msg: LogMsg::JsonPatch(patch),
-                                    }));
+                                if patch_matches_scratch(patch, scratch_id, &scratch_type_str) {
+                                    Arc::clone(&item.msg)
+                                } else {
+                                    return None;
                                 }
-                                None
                             }
-                            other => {
-                                last_seq.store(item.seq, Ordering::Relaxed);
-                                Some(Ok(SequencedLogMsg {
-                                    seq: item.seq,
-                                    msg: other,
-                                }))
-                            }
-                        }
+                            _ => Arc::clone(&item.msg),
+                        };
+
+                        last_seq.store(item.seq, Ordering::Relaxed);
+                        Some(Ok(SequencedLogMsg { seq: item.seq, msg }))
                     }
                     Err(BroadcastStreamRecvError::Lagged(skipped)) => {
                         let watermark = msg_store.max_seq().unwrap_or(0);
@@ -988,7 +1003,9 @@ impl EventService {
                         last_seq.store(watermark, Ordering::Relaxed);
                         Some(Ok(SequencedLogMsg {
                             seq: watermark,
-                            msg: load_scratch_snapshot(&db_pool, scratch_id, &scratch_type).await,
+                            msg: load_scratch_snapshot(&db_pool, scratch_id, &scratch_type)
+                                .await
+                                .into(),
                         }))
                     }
                 }

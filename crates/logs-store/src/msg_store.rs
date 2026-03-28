@@ -78,14 +78,14 @@ fn normalize_limit(value: usize, name: &str) -> usize {
 #[derive(Clone)]
 struct StoredMsg {
     seq: u64,
-    msg: LogMsg,
+    msg: Arc<LogMsg>,
     bytes: usize,
 }
 
 #[derive(Clone, Debug)]
 pub struct SequencedLogMsg {
     pub seq: u64,
-    pub msg: LogMsg,
+    pub msg: Arc<LogMsg>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -98,7 +98,7 @@ pub struct SequencedHistoryMetadata {
 #[derive(Clone, Debug)]
 pub struct LogEntrySnapshot {
     pub entry_index: usize,
-    pub entry_json: Value,
+    pub entry_json: Arc<Value>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -109,14 +109,20 @@ pub struct HistoryMetadata {
 
 #[derive(Clone, Debug)]
 pub enum LogEntryEvent {
-    Append { entry_index: usize, entry: Value },
-    Replace { entry_index: usize, entry: Value },
+    Append {
+        entry_index: usize,
+        entry: Arc<Value>,
+    },
+    Replace {
+        entry_index: usize,
+        entry: Arc<Value>,
+    },
     Finished,
 }
 
 struct StoredEntry {
     entry_index: usize,
-    entry_json: Value,
+    entry_json: Arc<Value>,
     bytes: usize,
 }
 
@@ -180,15 +186,16 @@ impl MsgStore {
     }
 
     pub fn push(&self, msg: LogMsg) {
+        let msg = Arc::new(msg);
         let bytes = msg.approx_bytes();
 
-        let raw_entry = match &msg {
+        let raw_entry = match msg.as_ref() {
             LogMsg::Stdout(content) => Some((content.clone(), true)),
             LogMsg::Stderr(content) => Some((content.clone(), false)),
             _ => None,
         };
 
-        let normalized_updates = match &msg {
+        let normalized_updates = match msg.as_ref() {
             LogMsg::JsonPatch(patch) => extract_normalized_updates(patch),
             _ => Vec::new(),
         };
@@ -202,7 +209,7 @@ impl MsgStore {
             let seq = inner.next_seq;
             inner.next_seq = inner.next_seq.saturating_add(1);
             inner.max_seq = Some(seq);
-            inner.push_msg(seq, msg.clone(), bytes);
+            inner.push_msg(seq, Arc::clone(&msg), bytes);
             sequenced_msg = SequencedLogMsg { seq, msg };
 
             if let Some((content, stdout)) = raw_entry
@@ -217,7 +224,7 @@ impl MsgStore {
                 }
             }
 
-            if matches!(sequenced_msg.msg, LogMsg::Finished) {
+            if matches!(sequenced_msg.msg.as_ref(), LogMsg::Finished) {
                 inner.finished = true;
                 raw_events.push(LogEntryEvent::Finished);
                 normalized_events.push(LogEntryEvent::Finished);
@@ -286,7 +293,7 @@ impl MsgStore {
             .unwrap()
             .history
             .iter()
-            .map(|s| s.msg.clone())
+            .map(|s| s.msg.as_ref().clone())
             .collect()
     }
 
@@ -321,7 +328,7 @@ impl MsgStore {
         let history = iter
             .map(|entry| SequencedLogMsg {
                 seq: entry.seq,
-                msg: entry.msg.clone(),
+                msg: Arc::clone(&entry.msg),
             })
             .collect();
         (history, meta)
@@ -341,7 +348,7 @@ impl MsgStore {
             }
             entries.push(LogEntrySnapshot {
                 entry_index: entry.entry_index,
-                entry_json: entry.entry_json.clone(),
+                entry_json: Arc::clone(&entry.entry_json),
             });
             if entries.len() >= limit {
                 break;
@@ -370,7 +377,7 @@ impl MsgStore {
             }
             entries.push(LogEntrySnapshot {
                 entry_index: entry.entry_index,
-                entry_json: entry.entry_json.clone(),
+                entry_json: Arc::clone(&entry.entry_json),
             });
             if entries.len() >= limit {
                 break;
@@ -402,7 +409,7 @@ impl MsgStore {
             }
             entries.push(LogEntrySnapshot {
                 entry_index: *index,
-                entry_json: entry.entry_json.clone(),
+                entry_json: Arc::clone(&entry.entry_json),
             });
             if entries.len() >= limit {
                 break;
@@ -431,7 +438,7 @@ impl MsgStore {
         for (index, entry) in inner.normalized_entries.range((Excluded(after), Unbounded)) {
             entries.push(LogEntrySnapshot {
                 entry_index: *index,
-                entry_json: entry.entry_json.clone(),
+                entry_json: Arc::clone(&entry.entry_json),
             });
             if entries.len() >= limit {
                 break;
@@ -495,13 +502,20 @@ impl MsgStore {
                                 ));
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                                let snapshot_start = std::time::Instant::now();
                                 let snapshot = store.raw_history_page(usize::MAX, None).0;
-                                let finished_now = store.inner.read().unwrap().finished;
+                                let snapshot_ms = snapshot_start.elapsed().as_millis();
+                                let (finished_now, snapshot_bytes) = {
+                                    let inner = store.inner.read().unwrap();
+                                    (inner.finished, inner.raw_total_bytes)
+                                };
                                 let min_index = snapshot.first().map(|entry| entry.entry_index);
                                 let max_index = snapshot.last().map(|entry| entry.entry_index);
                                 tracing::warn!(
                                     skipped = skipped,
                                     snapshot_len = snapshot.len(),
+                                    snapshot_bytes = snapshot_bytes,
+                                    snapshot_ms = snapshot_ms,
                                     min_index = ?min_index,
                                     max_index = ?max_index,
                                     finished = finished_now,
@@ -571,13 +585,20 @@ impl MsgStore {
                                 ));
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                                let snapshot_start = std::time::Instant::now();
                                 let snapshot = store.normalized_history_page(usize::MAX, None).0;
-                                let finished_now = store.inner.read().unwrap().finished;
+                                let snapshot_ms = snapshot_start.elapsed().as_millis();
+                                let (finished_now, snapshot_bytes) = {
+                                    let inner = store.inner.read().unwrap();
+                                    (inner.finished, inner.normalized_total_bytes)
+                                };
                                 let min_index = snapshot.first().map(|entry| entry.entry_index);
                                 let max_index = snapshot.last().map(|entry| entry.entry_index);
                                 tracing::warn!(
                                     skipped = skipped,
                                     snapshot_len = snapshot.len(),
+                                    snapshot_bytes = snapshot_bytes,
+                                    snapshot_ms = snapshot_ms,
                                     min_index = ?min_index,
                                     max_index = ?max_index,
                                     finished = finished_now,
@@ -605,7 +626,7 @@ impl MsgStore {
     /// History then live, as `LogMsg`. Resynchronizes on broadcast lag when possible.
     pub fn history_plus_stream(
         self: Arc<Self>,
-    ) -> futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>> {
+    ) -> futures::stream::BoxStream<'static, Result<Arc<LogMsg>, std::io::Error>> {
         let (history, rx, _meta) = self.subscribe_sequenced_from(None);
         let pending: VecDeque<SequencedLogMsg> = history.into();
 
@@ -622,7 +643,7 @@ impl MsgStore {
                             continue;
                         }
                         last_seq = item.seq;
-                        let done = matches!(item.msg, LogMsg::Finished);
+                        let done = matches!(item.msg.as_ref(), LogMsg::Finished);
                         return Some((
                             Ok::<_, std::io::Error>(item.msg),
                             (store, pending, rx, last_seq, done),
@@ -635,20 +656,31 @@ impl MsgStore {
                                 continue;
                             }
                             last_seq = item.seq;
-                            let done = matches!(item.msg, LogMsg::Finished);
+                            let done = matches!(item.msg.as_ref(), LogMsg::Finished);
                             return Some((
                                 Ok::<_, std::io::Error>(item.msg),
                                 (store, pending, rx, last_seq, done),
                             ));
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                            let snapshot_start = std::time::Instant::now();
                             let (snapshot, meta) = store.sequenced_history_snapshot(Some(last_seq));
+                            let snapshot_ms = snapshot_start.elapsed().as_millis();
+                            let replayed = snapshot.len();
+                            let (retained_len, retained_bytes) = {
+                                let inner = store.inner.read().unwrap();
+                                (inner.history.len(), inner.total_bytes)
+                            };
                             if meta.evicted && meta.min_seq.is_some_and(|min| last_seq < min) {
                                 tracing::warn!(
                                     skipped = skipped,
                                     last_seq = last_seq,
                                     min_seq = meta.min_seq,
                                     max_seq = meta.max_seq,
+                                    replayed = replayed,
+                                    snapshot_ms = snapshot_ms,
+                                    retained_len = retained_len,
+                                    retained_bytes = retained_bytes,
                                     "log msg stream lagged beyond retained history; resyncing from newest retained"
                                 );
                             } else {
@@ -656,6 +688,10 @@ impl MsgStore {
                                     skipped = skipped,
                                     last_seq = last_seq,
                                     max_seq = meta.max_seq,
+                                    replayed = replayed,
+                                    snapshot_ms = snapshot_ms,
+                                    retained_len = retained_len,
+                                    retained_bytes = retained_bytes,
                                     "log msg stream lagged; resyncing from history"
                                 );
                             }
@@ -678,10 +714,18 @@ impl MsgStore {
     ) -> futures::stream::BoxStream<'static, Result<String, std::io::Error>> {
         self.clone()
             .history_plus_stream()
-            .take_while(|res| future::ready(!matches!(res, Ok(LogMsg::Finished))))
+            .take_while(|res| {
+                future::ready(!matches!(
+                    res,
+                    Ok(msg) if matches!(msg.as_ref(), LogMsg::Finished)
+                ))
+            })
             .filter_map(|res| async move {
                 match res {
-                    Ok(LogMsg::Stdout(s)) => Some(Ok(s)),
+                    Ok(msg) => match msg.as_ref() {
+                        LogMsg::Stdout(s) => Some(Ok(s.clone())),
+                        _ => None,
+                    },
                     _ => None,
                 }
             })
@@ -699,10 +743,18 @@ impl MsgStore {
     ) -> futures::stream::BoxStream<'static, Result<String, std::io::Error>> {
         self.clone()
             .history_plus_stream()
-            .take_while(|res| future::ready(!matches!(res, Ok(LogMsg::Finished))))
+            .take_while(|res| {
+                future::ready(!matches!(
+                    res,
+                    Ok(msg) if matches!(msg.as_ref(), LogMsg::Finished)
+                ))
+            })
             .filter_map(|res| async move {
                 match res {
-                    Ok(LogMsg::Stderr(s)) => Some(Ok(s)),
+                    Ok(msg) => match msg.as_ref() {
+                        LogMsg::Stderr(s) => Some(Ok(s.clone())),
+                        _ => None,
+                    },
                     _ => None,
                 }
             })
@@ -735,7 +787,7 @@ impl MsgStore {
 }
 
 impl Inner {
-    fn push_msg(&mut self, seq: u64, msg: LogMsg, bytes: usize) {
+    fn push_msg(&mut self, seq: u64, msg: Arc<LogMsg>, bytes: usize) {
         let limits = log_history_config();
 
         while self.history.len() >= limits.max_entries
@@ -756,16 +808,16 @@ impl Inner {
         let entry_index = self.raw_next_index;
         self.raw_next_index = self.raw_next_index.saturating_add(1);
 
-        let entry_json = if stdout {
+        let entry_json = Arc::new(if stdout {
             serde_json::json!({ "type": "STDOUT", "content": content })
         } else {
             serde_json::json!({ "type": "STDERR", "content": content })
-        };
+        });
 
-        let bytes = approx_json_bytes(&entry_json);
+        let bytes = approx_json_bytes(entry_json.as_ref());
         let stored = StoredEntry {
             entry_index,
-            entry_json: entry_json.clone(),
+            entry_json: Arc::clone(&entry_json),
             bytes,
         };
 
@@ -780,10 +832,10 @@ impl Inner {
     }
 
     fn upsert_normalized_entry(&mut self, update: NormalizedUpdate) -> Option<LogEntryEvent> {
-        let bytes = approx_json_bytes(&update.entry_json);
+        let bytes = approx_json_bytes(update.entry_json.as_ref());
         let stored = StoredEntry {
             entry_index: update.entry_index,
-            entry_json: update.entry_json.clone(),
+            entry_json: Arc::clone(&update.entry_json),
             bytes,
         };
 
@@ -851,7 +903,7 @@ impl Inner {
 #[derive(Clone)]
 struct NormalizedUpdate {
     entry_index: usize,
-    entry_json: Value,
+    entry_json: Arc<Value>,
     op: UpdateOp,
 }
 
@@ -896,7 +948,7 @@ fn normalize_patch_entry(path: &str, value: &Value) -> Option<NormalizedEntryJso
 
     Some(NormalizedEntryJson {
         entry_index: index,
-        entry_json: value.clone(),
+        entry_json: Arc::new(value.clone()),
     })
 }
 
@@ -906,7 +958,7 @@ fn approx_json_bytes(value: &Value) -> usize {
 
 struct NormalizedEntryJson {
     entry_index: usize,
-    entry_json: Value,
+    entry_json: Arc<Value>,
 }
 
 #[cfg(test)]
@@ -1004,8 +1056,8 @@ mod tests {
     }
 
     async fn next_log_msg(
-        stream: &mut futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>,
-    ) -> LogMsg {
+        stream: &mut futures::stream::BoxStream<'static, Result<Arc<LogMsg>, std::io::Error>>,
+    ) -> Arc<LogMsg> {
         tokio::time::timeout(Duration::from_secs(1), stream.next())
             .await
             .expect("stream stalled")
@@ -1067,6 +1119,18 @@ mod tests {
             logs.contains("\"max_seq\""),
             "missing max_seq field: {logs}"
         );
+        assert!(
+            logs.contains("\"replayed\""),
+            "missing replayed field: {logs}"
+        );
+        assert!(
+            logs.contains("\"snapshot_ms\""),
+            "missing snapshot_ms field: {logs}"
+        );
+        assert!(
+            logs.contains("\"retained_bytes\""),
+            "missing retained_bytes field: {logs}"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1092,7 +1156,7 @@ mod tests {
         })
         .await;
 
-        match first_after_resync {
+        match first_after_resync.as_ref() {
             LogMsg::Stdout(s) => {
                 assert_eq!(s.len(), chunk_len);
                 assert_eq!(s.as_bytes().first(), Some(&b'y'));
@@ -1119,6 +1183,14 @@ mod tests {
         assert!(
             logs.contains("\"max_seq\""),
             "missing max_seq field: {logs}"
+        );
+        assert!(
+            logs.contains("\"replayed\""),
+            "missing replayed field: {logs}"
+        );
+        assert!(
+            logs.contains("\"snapshot_ms\""),
+            "missing snapshot_ms field: {logs}"
         );
     }
 
@@ -1148,6 +1220,14 @@ mod tests {
             logs.contains("\"snapshot_len\""),
             "missing snapshot_len field: {logs}"
         );
+        assert!(
+            logs.contains("\"snapshot_bytes\""),
+            "missing snapshot_bytes field: {logs}"
+        );
+        assert!(
+            logs.contains("\"snapshot_ms\""),
+            "missing snapshot_ms field: {logs}"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -1175,6 +1255,14 @@ mod tests {
         assert!(
             logs.contains("\"snapshot_len\""),
             "missing snapshot_len field: {logs}"
+        );
+        assert!(
+            logs.contains("\"snapshot_bytes\""),
+            "missing snapshot_bytes field: {logs}"
+        );
+        assert!(
+            logs.contains("\"snapshot_ms\""),
+            "missing snapshot_ms field: {logs}"
         );
     }
 
@@ -1425,20 +1513,23 @@ mod tests {
         }
 
         for idx in 0..10 {
-            match next_log_msg(&mut stream).await {
-                LogMsg::Stdout(s) => assert_eq!(s, format!("msg {idx}")),
+            match next_log_msg(&mut stream).await.as_ref() {
+                LogMsg::Stdout(s) => assert_eq!(s, &format!("msg {idx}")),
                 other => panic!("expected stdout msg, got {other:?}"),
             }
         }
 
         store.push_stdout("after");
-        match next_log_msg(&mut stream).await {
+        match next_log_msg(&mut stream).await.as_ref() {
             LogMsg::Stdout(s) => assert_eq!(s, "after"),
             other => panic!("expected stdout msg, got {other:?}"),
         }
 
         store.push_finished();
-        assert!(matches!(next_log_msg(&mut stream).await, LogMsg::Finished));
+        assert!(matches!(
+            next_log_msg(&mut stream).await.as_ref(),
+            LogMsg::Finished
+        ));
         assert!(
             stream.next().await.is_none(),
             "stream should end after Finished"
@@ -1463,8 +1554,8 @@ mod tests {
         for (stream_idx, stream) in streams.iter_mut().enumerate() {
             let mut got = Vec::new();
             loop {
-                match next_log_msg(stream).await {
-                    LogMsg::Stdout(s) => got.push(s),
+                match next_log_msg(stream).await.as_ref() {
+                    LogMsg::Stdout(s) => got.push(s.clone()),
                     LogMsg::Finished => break,
                     _ => {}
                 }
