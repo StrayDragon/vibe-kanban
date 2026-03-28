@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, Set,
-    sea_query::{Alias, Expr, ExprTrait, JoinType, Order, Query},
+    sea_query::{Alias, Condition, Expr, ExprTrait, JoinType, Order, Query},
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -14,13 +14,14 @@ use super::{project::Project, task_dispatch_state::TaskDispatchState, workspace:
 pub use crate::types::{TaskKind, TaskStatus};
 use crate::{
     entities::{
-        execution_process, milestone, project, session, task, task_orchestration_state, workspace,
+        archived_kanban, execution_process, milestone, project, session, shared_task, task,
+        task_dispatch_state, task_orchestration_state, workspace,
     },
     events::{EVENT_TASK_CREATED, EVENT_TASK_DELETED, EVENT_TASK_UPDATED, TaskEventPayload},
     models::{event_outbox::EventOutbox, ids},
     types::{
-        TaskContinuationStopReasonCode, TaskControlTransferReasonCode, TaskCreatedByKind,
-        VkNextAction,
+        MilestoneAutomationMode, TaskContinuationStopReasonCode, TaskControlTransferReasonCode,
+        TaskCreatedByKind, VkNextAction,
     },
 };
 
@@ -538,6 +539,718 @@ impl Task {
         Ok((has_in_progress_attempt, last_attempt_failed, executor))
     }
 
+    async fn attempt_status_bulk<C: ConnectionTrait>(
+        db: &C,
+        task_row_ids: &[i64],
+    ) -> Result<HashMap<i64, (bool, bool, String)>, DbErr> {
+        if task_row_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let task_row_ids = task_row_ids.to_vec();
+        let run_reasons = vec![
+            crate::types::ExecutionProcessRunReason::SetupScript,
+            crate::types::ExecutionProcessRunReason::CleanupScript,
+            crate::types::ExecutionProcessRunReason::CodingAgent,
+        ];
+
+        let in_progress_query = Query::select()
+            .distinct()
+            .expr_as(
+                Expr::col((workspace::Entity, workspace::Column::TaskId)),
+                Alias::new("task_id"),
+            )
+            .from(execution_process::Entity)
+            .join(
+                JoinType::InnerJoin,
+                session::Entity,
+                Expr::col((session::Entity, session::Column::Id)).equals((
+                    execution_process::Entity,
+                    execution_process::Column::SessionId,
+                )),
+            )
+            .join(
+                JoinType::InnerJoin,
+                workspace::Entity,
+                Expr::col((workspace::Entity, workspace::Column::Id))
+                    .equals((session::Entity, session::Column::WorkspaceId)),
+            )
+            .and_where(
+                Expr::col((workspace::Entity, workspace::Column::TaskId))
+                    .is_in(task_row_ids.clone()),
+            )
+            .and_where(
+                Expr::col((execution_process::Entity, execution_process::Column::Status))
+                    .eq(crate::types::ExecutionProcessStatus::Running),
+            )
+            .and_where(
+                Expr::col((
+                    execution_process::Entity,
+                    execution_process::Column::RunReason,
+                ))
+                .is_in(run_reasons.clone()),
+            )
+            .to_owned();
+
+        let mut in_progress = HashSet::new();
+        for row in db.query_all(&in_progress_query).await? {
+            if let Ok(task_row_id) = row.try_get::<i64>("", "task_id") {
+                in_progress.insert(task_row_id);
+            }
+        }
+
+        // Latest execution_process status per task (stable tie-break by created_at then id).
+        let latest_status_time_query = Query::select()
+            .expr_as(
+                Expr::col((workspace::Entity, workspace::Column::TaskId)),
+                Alias::new("task_id"),
+            )
+            .expr_as(
+                Expr::col((
+                    execution_process::Entity,
+                    execution_process::Column::CreatedAt,
+                ))
+                .max(),
+                Alias::new("max_created_at"),
+            )
+            .from(execution_process::Entity)
+            .join(
+                JoinType::InnerJoin,
+                session::Entity,
+                Expr::col((session::Entity, session::Column::Id)).equals((
+                    execution_process::Entity,
+                    execution_process::Column::SessionId,
+                )),
+            )
+            .join(
+                JoinType::InnerJoin,
+                workspace::Entity,
+                Expr::col((workspace::Entity, workspace::Column::Id))
+                    .equals((session::Entity, session::Column::WorkspaceId)),
+            )
+            .and_where(
+                Expr::col((workspace::Entity, workspace::Column::TaskId))
+                    .is_in(task_row_ids.clone()),
+            )
+            .and_where(
+                Expr::col((
+                    execution_process::Entity,
+                    execution_process::Column::RunReason,
+                ))
+                .is_in(run_reasons.clone()),
+            )
+            .group_by_columns([(workspace::Entity, workspace::Column::TaskId)])
+            .to_owned();
+
+        let latest_status_id_query = Query::select()
+            .expr_as(
+                Expr::col((workspace::Entity, workspace::Column::TaskId)),
+                Alias::new("task_id"),
+            )
+            .expr_as(
+                Expr::col((execution_process::Entity, execution_process::Column::Id)).max(),
+                Alias::new("max_id"),
+            )
+            .from(execution_process::Entity)
+            .join(
+                JoinType::InnerJoin,
+                session::Entity,
+                Expr::col((session::Entity, session::Column::Id)).equals((
+                    execution_process::Entity,
+                    execution_process::Column::SessionId,
+                )),
+            )
+            .join(
+                JoinType::InnerJoin,
+                workspace::Entity,
+                Expr::col((workspace::Entity, workspace::Column::Id))
+                    .equals((session::Entity, session::Column::WorkspaceId)),
+            )
+            .join_subquery(
+                JoinType::InnerJoin,
+                latest_status_time_query,
+                Alias::new("latest_time"),
+                Condition::all()
+                    .add(
+                        Expr::col((workspace::Entity, workspace::Column::TaskId))
+                            .equals((Alias::new("latest_time"), Alias::new("task_id"))),
+                    )
+                    .add(
+                        Expr::col((
+                            execution_process::Entity,
+                            execution_process::Column::CreatedAt,
+                        ))
+                        .equals((Alias::new("latest_time"), Alias::new("max_created_at"))),
+                    ),
+            )
+            .and_where(
+                Expr::col((workspace::Entity, workspace::Column::TaskId))
+                    .is_in(task_row_ids.clone()),
+            )
+            .and_where(
+                Expr::col((
+                    execution_process::Entity,
+                    execution_process::Column::RunReason,
+                ))
+                .is_in(run_reasons),
+            )
+            .group_by_columns([(workspace::Entity, workspace::Column::TaskId)])
+            .to_owned();
+
+        let latest_status_query = Query::select()
+            .expr_as(
+                Expr::col((workspace::Entity, workspace::Column::TaskId)),
+                Alias::new("task_id"),
+            )
+            .expr_as(
+                Expr::col((execution_process::Entity, execution_process::Column::Status)),
+                Alias::new("status"),
+            )
+            .from(execution_process::Entity)
+            .join(
+                JoinType::InnerJoin,
+                session::Entity,
+                Expr::col((session::Entity, session::Column::Id)).equals((
+                    execution_process::Entity,
+                    execution_process::Column::SessionId,
+                )),
+            )
+            .join(
+                JoinType::InnerJoin,
+                workspace::Entity,
+                Expr::col((workspace::Entity, workspace::Column::Id))
+                    .equals((session::Entity, session::Column::WorkspaceId)),
+            )
+            .join_subquery(
+                JoinType::InnerJoin,
+                latest_status_id_query,
+                Alias::new("latest_status"),
+                Condition::all()
+                    .add(
+                        Expr::col((workspace::Entity, workspace::Column::TaskId))
+                            .equals((Alias::new("latest_status"), Alias::new("task_id"))),
+                    )
+                    .add(
+                        Expr::col((execution_process::Entity, execution_process::Column::Id))
+                            .equals((Alias::new("latest_status"), Alias::new("max_id"))),
+                    ),
+            )
+            .to_owned();
+
+        let mut last_status_by_task_row_id = HashMap::new();
+        for row in db.query_all(&latest_status_query).await? {
+            let task_row_id = row.try_get::<i64>("", "task_id")?;
+            let status = row.try_get::<crate::types::ExecutionProcessStatus>("", "status")?;
+            last_status_by_task_row_id
+                .entry(task_row_id)
+                .or_insert(status);
+        }
+
+        // Latest session executor per task (stable tie-break by created_at then id).
+        let latest_executor_time_query = Query::select()
+            .expr_as(
+                Expr::col((workspace::Entity, workspace::Column::TaskId)),
+                Alias::new("task_id"),
+            )
+            .expr_as(
+                Expr::col((session::Entity, session::Column::CreatedAt)).max(),
+                Alias::new("max_created_at"),
+            )
+            .from(session::Entity)
+            .join(
+                JoinType::InnerJoin,
+                workspace::Entity,
+                Expr::col((workspace::Entity, workspace::Column::Id))
+                    .equals((session::Entity, session::Column::WorkspaceId)),
+            )
+            .and_where(
+                Expr::col((workspace::Entity, workspace::Column::TaskId))
+                    .is_in(task_row_ids.clone()),
+            )
+            .group_by_columns([(workspace::Entity, workspace::Column::TaskId)])
+            .to_owned();
+
+        let latest_executor_id_query = Query::select()
+            .expr_as(
+                Expr::col((workspace::Entity, workspace::Column::TaskId)),
+                Alias::new("task_id"),
+            )
+            .expr_as(
+                Expr::col((session::Entity, session::Column::Id)).max(),
+                Alias::new("max_id"),
+            )
+            .from(session::Entity)
+            .join(
+                JoinType::InnerJoin,
+                workspace::Entity,
+                Expr::col((workspace::Entity, workspace::Column::Id))
+                    .equals((session::Entity, session::Column::WorkspaceId)),
+            )
+            .join_subquery(
+                JoinType::InnerJoin,
+                latest_executor_time_query,
+                Alias::new("latest_time"),
+                Condition::all()
+                    .add(
+                        Expr::col((workspace::Entity, workspace::Column::TaskId))
+                            .equals((Alias::new("latest_time"), Alias::new("task_id"))),
+                    )
+                    .add(
+                        Expr::col((session::Entity, session::Column::CreatedAt))
+                            .equals((Alias::new("latest_time"), Alias::new("max_created_at"))),
+                    ),
+            )
+            .and_where(
+                Expr::col((workspace::Entity, workspace::Column::TaskId))
+                    .is_in(task_row_ids.clone()),
+            )
+            .group_by_columns([(workspace::Entity, workspace::Column::TaskId)])
+            .to_owned();
+
+        let latest_executor_query = Query::select()
+            .expr_as(
+                Expr::col((workspace::Entity, workspace::Column::TaskId)),
+                Alias::new("task_id"),
+            )
+            .expr_as(
+                Expr::col((session::Entity, session::Column::Executor)),
+                Alias::new("executor"),
+            )
+            .from(session::Entity)
+            .join(
+                JoinType::InnerJoin,
+                workspace::Entity,
+                Expr::col((workspace::Entity, workspace::Column::Id))
+                    .equals((session::Entity, session::Column::WorkspaceId)),
+            )
+            .join_subquery(
+                JoinType::InnerJoin,
+                latest_executor_id_query,
+                Alias::new("latest_session"),
+                Condition::all()
+                    .add(
+                        Expr::col((workspace::Entity, workspace::Column::TaskId))
+                            .equals((Alias::new("latest_session"), Alias::new("task_id"))),
+                    )
+                    .add(
+                        Expr::col((session::Entity, session::Column::Id))
+                            .equals((Alias::new("latest_session"), Alias::new("max_id"))),
+                    ),
+            )
+            .to_owned();
+
+        let mut executor_by_task_row_id = HashMap::new();
+        for row in db.query_all(&latest_executor_query).await? {
+            let task_row_id = row.try_get::<i64>("", "task_id")?;
+            let executor = row
+                .try_get::<String>("", "executor")
+                .ok()
+                .unwrap_or_default();
+            executor_by_task_row_id
+                .entry(task_row_id)
+                .or_insert(executor);
+        }
+
+        let mut results = HashMap::with_capacity(task_row_ids.len());
+        for task_row_id in &task_row_ids {
+            let has_in_progress_attempt = in_progress.contains(task_row_id);
+            let last_attempt_failed = matches!(
+                last_status_by_task_row_id.get(task_row_id),
+                Some(crate::types::ExecutionProcessStatus::Failed)
+                    | Some(crate::types::ExecutionProcessStatus::Killed)
+            );
+            let executor = executor_by_task_row_id
+                .get(task_row_id)
+                .cloned()
+                .unwrap_or_default();
+            results.insert(
+                *task_row_id,
+                (has_in_progress_attempt, last_attempt_failed, executor),
+            );
+        }
+
+        Ok(results)
+    }
+
+    async fn with_attempt_status_bulk<C: ConnectionTrait>(
+        db: &C,
+        models: Vec<task::Model>,
+    ) -> Result<Vec<TaskWithAttemptStatus>, DbErr> {
+        if models.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut task_row_ids = Vec::with_capacity(models.len());
+        let mut task_uuid_by_row_id = HashMap::with_capacity(models.len());
+        let mut project_row_ids = Vec::with_capacity(models.len());
+
+        let mut parent_workspace_row_ids = Vec::new();
+        let mut origin_task_row_ids = Vec::new();
+        let mut shared_task_row_ids = Vec::new();
+        let mut archived_kanban_row_ids = Vec::new();
+        let mut milestone_row_ids = Vec::new();
+
+        for model in &models {
+            task_row_ids.push(model.id);
+            task_uuid_by_row_id.insert(model.id, model.uuid);
+            project_row_ids.push(model.project_id);
+            if let Some(id) = model.parent_workspace_id {
+                parent_workspace_row_ids.push(id);
+            }
+            if let Some(id) = model.origin_task_id {
+                origin_task_row_ids.push(id);
+            }
+            if let Some(id) = model.shared_task_id {
+                shared_task_row_ids.push(id);
+            }
+            if let Some(id) = model.archived_kanban_id {
+                archived_kanban_row_ids.push(id);
+            }
+            if let Some(id) = model.milestone_id {
+                milestone_row_ids.push(id);
+            }
+        }
+
+        project_row_ids.sort_unstable();
+        project_row_ids.dedup();
+        parent_workspace_row_ids.sort_unstable();
+        parent_workspace_row_ids.dedup();
+        origin_task_row_ids.sort_unstable();
+        origin_task_row_ids.dedup();
+        shared_task_row_ids.sort_unstable();
+        shared_task_row_ids.dedup();
+        archived_kanban_row_ids.sort_unstable();
+        archived_kanban_row_ids.dedup();
+        milestone_row_ids.sort_unstable();
+        milestone_row_ids.dedup();
+
+        let project_rows: Vec<(i64, Uuid, i32)> = project::Entity::find()
+            .select_only()
+            .column(project::Column::Id)
+            .column(project::Column::Uuid)
+            .column(project::Column::DefaultContinuationTurns)
+            .filter(project::Column::Id.is_in(project_row_ids.clone()))
+            .into_tuple()
+            .all(db)
+            .await?;
+
+        let mut project_uuid_by_row_id = HashMap::with_capacity(project_rows.len());
+        let mut project_default_continuation_turns_by_row_id =
+            HashMap::with_capacity(project_rows.len());
+        for (row_id, uuid, default_turns) in project_rows {
+            project_uuid_by_row_id.insert(row_id, uuid);
+            project_default_continuation_turns_by_row_id.insert(row_id, default_turns);
+        }
+
+        let workspace_uuid_by_row_id: HashMap<i64, Uuid> = if parent_workspace_row_ids.is_empty() {
+            HashMap::new()
+        } else {
+            workspace::Entity::find()
+                .select_only()
+                .column(workspace::Column::Id)
+                .column(workspace::Column::Uuid)
+                .filter(workspace::Column::Id.is_in(parent_workspace_row_ids))
+                .into_tuple::<(i64, Uuid)>()
+                .all(db)
+                .await?
+                .into_iter()
+                .collect()
+        };
+
+        let origin_task_uuid_by_row_id: HashMap<i64, Uuid> = if origin_task_row_ids.is_empty() {
+            HashMap::new()
+        } else {
+            task::Entity::find()
+                .select_only()
+                .column(task::Column::Id)
+                .column(task::Column::Uuid)
+                .filter(task::Column::Id.is_in(origin_task_row_ids))
+                .into_tuple::<(i64, Uuid)>()
+                .all(db)
+                .await?
+                .into_iter()
+                .collect()
+        };
+
+        let shared_task_uuid_by_row_id: HashMap<i64, Uuid> = if shared_task_row_ids.is_empty() {
+            HashMap::new()
+        } else {
+            shared_task::Entity::find()
+                .select_only()
+                .column(shared_task::Column::Id)
+                .column(shared_task::Column::Uuid)
+                .filter(shared_task::Column::Id.is_in(shared_task_row_ids))
+                .into_tuple::<(i64, Uuid)>()
+                .all(db)
+                .await?
+                .into_iter()
+                .collect()
+        };
+
+        let archived_kanban_uuid_by_row_id: HashMap<i64, Uuid> =
+            if archived_kanban_row_ids.is_empty() {
+                HashMap::new()
+            } else {
+                archived_kanban::Entity::find()
+                    .select_only()
+                    .column(archived_kanban::Column::Id)
+                    .column(archived_kanban::Column::Uuid)
+                    .filter(archived_kanban::Column::Id.is_in(archived_kanban_row_ids))
+                    .into_tuple::<(i64, Uuid)>()
+                    .all(db)
+                    .await?
+                    .into_iter()
+                    .collect()
+            };
+
+        let milestone_rows: Vec<(i64, Uuid, MilestoneAutomationMode)> =
+            if milestone_row_ids.is_empty() {
+                Vec::new()
+            } else {
+                milestone::Entity::find()
+                    .select_only()
+                    .column(milestone::Column::Id)
+                    .column(milestone::Column::Uuid)
+                    .column(milestone::Column::AutomationMode)
+                    .filter(milestone::Column::Id.is_in(milestone_row_ids))
+                    .into_tuple()
+                    .all(db)
+                    .await?
+            };
+
+        let mut milestone_uuid_by_row_id = HashMap::with_capacity(milestone_rows.len());
+        let mut milestone_automation_mode_by_row_id = HashMap::with_capacity(milestone_rows.len());
+        for (row_id, uuid, mode) in milestone_rows {
+            milestone_uuid_by_row_id.insert(row_id, uuid);
+            milestone_automation_mode_by_row_id.insert(row_id, mode);
+        }
+
+        let attempt_status_by_task_row_id = Self::attempt_status_bulk(db, &task_row_ids).await?;
+
+        let dispatch_state_models = task_dispatch_state::Entity::find()
+            .filter(task_dispatch_state::Column::TaskId.is_in(task_row_ids.clone()))
+            .all(db)
+            .await?;
+
+        let mut dispatch_state_by_task_row_id = HashMap::with_capacity(dispatch_state_models.len());
+        for model in dispatch_state_models {
+            let Some(task_uuid) = task_uuid_by_row_id.get(&model.task_id).copied() else {
+                continue;
+            };
+            dispatch_state_by_task_row_id.insert(
+                model.task_id,
+                TaskDispatchState {
+                    task_id: task_uuid,
+                    controller: model.controller,
+                    status: model.status,
+                    retry_count: model.retry_count,
+                    max_retries: model.max_retries,
+                    last_error: model.last_error,
+                    blocked_reason: model.blocked_reason,
+                    next_retry_at: model.next_retry_at.map(Into::into),
+                    claim_expires_at: model.claim_expires_at.map(Into::into),
+                    created_at: model.created_at.into(),
+                    updated_at: model.updated_at.into(),
+                },
+            );
+        }
+
+        let mut orchestration_state_by_task_row_id = HashMap::new();
+        let candidate_task_row_ids: Vec<i64> = models
+            .iter()
+            .filter(|model| model.milestone_id.is_some())
+            .filter(|model| model.task_kind != TaskKind::Milestone)
+            .filter(|model| {
+                model
+                    .milestone_node_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+                    .is_some()
+            })
+            .map(|model| model.id)
+            .collect();
+        if !candidate_task_row_ids.is_empty() {
+            let orchestration_models = task_orchestration_state::Entity::find()
+                .filter(task_orchestration_state::Column::TaskId.is_in(candidate_task_row_ids))
+                .all(db)
+                .await?;
+            orchestration_state_by_task_row_id = orchestration_models
+                .into_iter()
+                .map(|model| (model.task_id, model))
+                .collect();
+        }
+
+        let mut tasks = Vec::with_capacity(models.len());
+        for model in models {
+            let project_uuid = project_uuid_by_row_id
+                .get(&model.project_id)
+                .copied()
+                .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+
+            let parent_workspace_id = match model.parent_workspace_id {
+                Some(id) => workspace_uuid_by_row_id
+                    .get(&id)
+                    .copied()
+                    .ok_or(DbErr::RecordNotFound("Workspace not found".to_string()))
+                    .map(Some)?,
+                None => None,
+            };
+
+            let origin_task_id = match model.origin_task_id {
+                Some(id) => origin_task_uuid_by_row_id
+                    .get(&id)
+                    .copied()
+                    .ok_or(DbErr::RecordNotFound("Origin task not found".to_string()))
+                    .map(Some)?,
+                None => None,
+            };
+
+            let shared_task_id = match model.shared_task_id {
+                Some(id) => shared_task_uuid_by_row_id
+                    .get(&id)
+                    .copied()
+                    .ok_or(DbErr::RecordNotFound("Shared task not found".to_string()))
+                    .map(Some)?,
+                None => None,
+            };
+
+            let archived_kanban_id = match model.archived_kanban_id {
+                Some(id) => archived_kanban_uuid_by_row_id
+                    .get(&id)
+                    .copied()
+                    .ok_or(DbErr::RecordNotFound(
+                        "Archived kanban not found".to_string(),
+                    ))
+                    .map(Some)?,
+                None => None,
+            };
+
+            let milestone_id = match model.milestone_id {
+                Some(id) => milestone_uuid_by_row_id
+                    .get(&id)
+                    .copied()
+                    .ok_or(DbErr::RecordNotFound("Milestone not found".to_string()))
+                    .map(Some)?,
+                None => None,
+            };
+
+            let task = Task {
+                id: model.uuid,
+                project_id: project_uuid,
+                title: model.title,
+                description: model.description,
+                status: model.status,
+                task_kind: model.task_kind,
+                milestone_id,
+                milestone_node_id: model.milestone_node_id,
+                parent_workspace_id,
+                origin_task_id,
+                created_by_kind: model.created_by_kind,
+                continuation_turns_override: model.continuation_turns_override,
+                shared_task_id,
+                archived_kanban_id,
+                created_at: model.created_at.into(),
+                updated_at: model.updated_at.into(),
+            };
+
+            let (has_in_progress_attempt, last_attempt_failed, executor) =
+                attempt_status_by_task_row_id
+                    .get(&model.id)
+                    .cloned()
+                    .unwrap_or((false, false, String::new()));
+
+            let dispatch_state = dispatch_state_by_task_row_id.get(&model.id).cloned();
+
+            let orchestration = match model.milestone_id {
+                Some(milestone_row_id)
+                    if task.task_kind != TaskKind::Milestone
+                        && task
+                            .milestone_node_id
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|id| !id.is_empty())
+                            .is_some()
+                        && milestone_automation_mode_by_row_id
+                            .get(&milestone_row_id)
+                            .is_some_and(|mode| *mode == MilestoneAutomationMode::Auto) =>
+                {
+                    let default_turns = project_default_continuation_turns_by_row_id
+                        .get(&model.project_id)
+                        .copied()
+                        .ok_or(DbErr::RecordNotFound("Project not found".to_string()))?;
+
+                    let effective_budget =
+                        std::cmp::max(task.continuation_turns_override.unwrap_or(default_turns), 0);
+                    let budget_source = if task.continuation_turns_override.is_some() {
+                        TaskContinuationBudgetSource::TaskOverride
+                    } else {
+                        TaskContinuationBudgetSource::ProjectDefault
+                    };
+
+                    let state = orchestration_state_by_task_row_id.get(&model.id);
+                    let turns_used = std::cmp::max(
+                        state
+                            .as_ref()
+                            .map(|state| state.continuation_turns_used)
+                            .unwrap_or(0),
+                        0,
+                    );
+                    let turns_remaining = std::cmp::max(effective_budget - turns_used, 0);
+
+                    let stop_reason = state.as_ref().and_then(|state| {
+                        let code = state.last_continuation_stop_reason_code.clone()?;
+                        let at = state.last_continuation_stop_at.map(Into::into)?;
+                        Some(TaskContinuationStopReason {
+                            code,
+                            detail: state.last_continuation_stop_reason_detail.clone(),
+                            at,
+                        })
+                    });
+
+                    let last_control_transfer = state.as_ref().and_then(|state| {
+                        let reason_code = state.last_control_transfer_reason_code.clone()?;
+                        let at = state.last_control_transfer_at.map(Into::into)?;
+                        Some(TaskControlTransferDiagnostics {
+                            reason_code,
+                            detail: state.last_control_transfer_detail.clone(),
+                            at,
+                        })
+                    });
+
+                    Some(TaskOrchestrationDiagnostics {
+                        continuation: TaskContinuationDiagnostics {
+                            turns_used,
+                            turn_budget: effective_budget,
+                            turns_remaining,
+                            budget_source,
+                            last_vk_next_action: state
+                                .as_ref()
+                                .and_then(|state| state.last_vk_next_action.clone()),
+                            last_vk_next_at: state
+                                .as_ref()
+                                .and_then(|state| state.last_vk_next_at.map(Into::into)),
+                            stop_reason,
+                        },
+                        last_control_transfer,
+                    })
+                }
+                _ => None,
+            };
+
+            tasks.push(TaskWithAttemptStatus {
+                task,
+                has_in_progress_attempt,
+                last_attempt_failed,
+                executor,
+                dispatch_state,
+                orchestration,
+            });
+        }
+
+        Ok(tasks)
+    }
+
     async fn with_attempt_status<C: ConnectionTrait>(
         db: &C,
         model: task::Model,
@@ -691,12 +1404,7 @@ impl Task {
             .all(db)
             .await?;
 
-        let mut tasks = Vec::with_capacity(models.len());
-        for model in models {
-            tasks.push(Self::with_attempt_status(db, model).await?);
-        }
-
-        Ok(tasks)
+        Self::with_attempt_status_bulk(db, models).await
     }
 
     pub async fn find_by_milestone_id<C: ConnectionTrait>(
@@ -729,12 +1437,7 @@ impl Task {
             .all(db)
             .await?;
 
-        let mut tasks = Vec::with_capacity(models.len());
-        for model in models {
-            tasks.push(Self::with_attempt_status(db, model).await?);
-        }
-
-        Ok(tasks)
+        Self::with_attempt_status_bulk(db, models).await
     }
 
     pub async fn find_filtered_with_attempt_status<C: ConnectionTrait>(
@@ -776,12 +1479,7 @@ impl Task {
 
         let models = query.all(db).await?;
 
-        let mut tasks = Vec::with_capacity(models.len());
-        for model in models {
-            tasks.push(Self::with_attempt_status(db, model).await?);
-        }
-
-        Ok(tasks)
+        Self::with_attempt_status_bulk(db, models).await
     }
 
     pub async fn find_by_id<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<Option<Self>, DbErr> {
@@ -1452,5 +2150,424 @@ impl Task {
             current_workspace: workspace.clone(),
             children,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sea_orm::{ActiveModelTrait, Database, EntityTrait, Set};
+    use sea_orm_migration::MigratorTrait;
+    use uuid::Uuid;
+
+    use super::{CreateTask, Task};
+
+    use crate::{
+        entities::{archived_kanban, shared_task, task},
+        models::{
+            execution_process::{CreateExecutionProcess, ExecutionProcess},
+            milestone::{
+                CreateMilestone, Milestone, MilestoneGraph, MilestoneNode,
+                MilestoneNodeBaseStrategy, MilestoneNodeKind, MilestoneNodeLayout,
+            },
+            project::{CreateProject, Project, UpdateProject},
+            session::{CreateSession, Session},
+            task_dispatch_state::{TaskDispatchState, UpsertTaskDispatchState},
+            task_orchestration_state::TaskOrchestrationState,
+            workspace::{CreateWorkspace, Workspace},
+        },
+        types::{
+            ExecutionProcessRunReason, ExecutionProcessStatus, MilestoneAutomationMode,
+            TaskDispatchController, TaskDispatchStatus, TaskStatus,
+        },
+    };
+
+    use executors_protocol::actions::{
+        ExecutorAction, ExecutorActionType,
+        script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
+    };
+
+    async fn setup_db() -> sea_orm::DatabaseConnection {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        db_migration::Migrator::up(&db, None).await.unwrap();
+        db
+    }
+
+    fn script_executor_action() -> ExecutorAction {
+        ExecutorAction::new(
+            ExecutorActionType::ScriptRequest(ScriptRequest {
+                script: "echo test".to_string(),
+                language: ScriptRequestLanguage::Bash,
+                context: ScriptContext::SetupScript,
+                working_dir: None,
+            }),
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn list_hydration_includes_attempt_status_and_dispatch_state() {
+        let db = setup_db().await;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &db,
+            &CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let task_running_id = Uuid::new_v4();
+        Task::create(
+            &db,
+            &CreateTask::from_title_description(project_id, "Running".to_string(), None),
+            task_running_id,
+        )
+        .await
+        .unwrap();
+
+        let task_dispatch_id = Uuid::new_v4();
+        Task::create(
+            &db,
+            &CreateTask::from_title_description(project_id, "Dispatch".to_string(), None),
+            task_dispatch_id,
+        )
+        .await
+        .unwrap();
+
+        let workspace_id = Uuid::new_v4();
+        Workspace::create(
+            &db,
+            &CreateWorkspace {
+                branch: "main".to_string(),
+                agent_working_dir: None,
+            },
+            workspace_id,
+            task_running_id,
+        )
+        .await
+        .unwrap();
+
+        let session_id = Uuid::new_v4();
+        Session::create(
+            &db,
+            &CreateSession {
+                executor: Some("executor-1".to_string()),
+            },
+            session_id,
+            workspace_id,
+        )
+        .await
+        .unwrap();
+
+        let process_id = Uuid::new_v4();
+        ExecutionProcess::create(
+            &db,
+            &CreateExecutionProcess {
+                session_id,
+                executor_action: script_executor_action(),
+                run_reason: ExecutionProcessRunReason::CodingAgent,
+            },
+            process_id,
+            &[],
+        )
+        .await
+        .unwrap();
+
+        TaskDispatchState::upsert(
+            &db,
+            task_dispatch_id,
+            &UpsertTaskDispatchState {
+                controller: TaskDispatchController::Manual,
+                status: TaskDispatchStatus::Idle,
+                retry_count: 0,
+                max_retries: 3,
+                last_error: None,
+                blocked_reason: None,
+                next_retry_at: None,
+                claim_expires_at: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let tasks = Task::find_all_with_attempt_status(&db).await.unwrap();
+        let mut by_id = std::collections::HashMap::new();
+        for task in tasks {
+            by_id.insert(task.id, task);
+        }
+
+        let running = by_id.get(&task_running_id).expect("running task");
+        assert!(running.has_in_progress_attempt);
+        assert!(!running.last_attempt_failed);
+        assert_eq!(running.executor, "executor-1");
+        assert!(running.dispatch_state.is_none());
+
+        let dispatched = by_id.get(&task_dispatch_id).expect("dispatch task");
+        assert!(!dispatched.has_in_progress_attempt);
+        assert!(!dispatched.last_attempt_failed);
+        assert_eq!(dispatched.executor, "");
+        let state = dispatched
+            .dispatch_state
+            .as_ref()
+            .expect("dispatch state present");
+        assert_eq!(state.controller, TaskDispatchController::Manual);
+        assert_eq!(state.status, TaskDispatchStatus::Idle);
+
+        ExecutionProcess::update_completion(
+            &db,
+            process_id,
+            ExecutionProcessStatus::Failed,
+            Some(1),
+        )
+        .await
+        .unwrap();
+
+        let tasks = Task::find_all_with_attempt_status(&db).await.unwrap();
+        let failed = tasks
+            .into_iter()
+            .find(|task| task.id == task_running_id)
+            .expect("running task after update");
+        assert!(!failed.has_in_progress_attempt);
+        assert!(failed.last_attempt_failed);
+    }
+
+    #[tokio::test]
+    async fn list_hydration_resolves_optional_foreign_keys_and_archived_filter() {
+        let db = setup_db().await;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &db,
+            &CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let origin_task_id = Uuid::new_v4();
+        Task::create(
+            &db,
+            &CreateTask::from_title_description(project_id, "Origin".to_string(), None),
+            origin_task_id,
+        )
+        .await
+        .unwrap();
+
+        let workspace_id = Uuid::new_v4();
+        Workspace::create(
+            &db,
+            &CreateWorkspace {
+                branch: "main".to_string(),
+                agent_working_dir: None,
+            },
+            workspace_id,
+            origin_task_id,
+        )
+        .await
+        .unwrap();
+
+        let shared_task_uuid = Uuid::new_v4();
+        let now = chrono::Utc::now();
+        shared_task::ActiveModel {
+            uuid: Set(shared_task_uuid),
+            remote_project_id: Set(Uuid::new_v4()),
+            title: Set("Shared task".to_string()),
+            description: Set(None),
+            status: Set("todo".to_string()),
+            assignee_user_id: Set(None),
+            assignee_first_name: Set(None),
+            assignee_last_name: Set(None),
+            assignee_username: Set(None),
+            version: Set(1),
+            last_event_seq: Set(None),
+            created_at: Set(now.into()),
+            updated_at: Set(now.into()),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+
+        let follow_up_task_id = Uuid::new_v4();
+        Task::create(
+            &db,
+            &CreateTask {
+                project_id,
+                title: "Follow up".to_string(),
+                description: None,
+                status: Some(TaskStatus::Todo),
+                task_kind: None,
+                milestone_id: None,
+                milestone_node_id: None,
+                parent_workspace_id: Some(workspace_id),
+                origin_task_id: Some(origin_task_id),
+                created_by_kind: None,
+                image_ids: None,
+                shared_task_id: Some(shared_task_uuid),
+            },
+            follow_up_task_id,
+        )
+        .await
+        .unwrap();
+
+        let project_row_id = crate::models::ids::project_id_by_uuid(&db, project_id)
+            .await
+            .unwrap()
+            .expect("project row id");
+
+        let archived_kanban_uuid = Uuid::new_v4();
+        let archived_kanban_model = archived_kanban::ActiveModel {
+            uuid: Set(archived_kanban_uuid),
+            project_id: Set(project_row_id),
+            title: Set("Archived".to_string()),
+            created_at: Set(now.into()),
+            updated_at: Set(now.into()),
+            ..Default::default()
+        }
+        .insert(&db)
+        .await
+        .unwrap();
+
+        let follow_up_row_id = crate::models::ids::task_id_by_uuid(&db, follow_up_task_id)
+            .await
+            .unwrap()
+            .expect("task row id");
+        let record = task::Entity::find_by_id(follow_up_row_id)
+            .one(&db)
+            .await
+            .unwrap()
+            .expect("task record");
+        let mut active: task::ActiveModel = record.into();
+        active.archived_kanban_id = Set(Some(archived_kanban_model.id));
+        active.update(&db).await.unwrap();
+
+        let tasks = Task::find_filtered_with_attempt_status(
+            &db,
+            Some(project_id),
+            true,
+            Some(archived_kanban_uuid),
+        )
+        .await
+        .unwrap();
+        assert_eq!(tasks.len(), 1);
+        let task = &tasks[0];
+        assert_eq!(task.id, follow_up_task_id);
+        assert_eq!(task.origin_task_id, Some(origin_task_id));
+        assert_eq!(task.parent_workspace_id, Some(workspace_id));
+        assert_eq!(task.shared_task_id, Some(shared_task_uuid));
+        assert_eq!(task.archived_kanban_id, Some(archived_kanban_uuid));
+    }
+
+    #[tokio::test]
+    async fn list_hydration_computes_orchestration_diagnostics_for_auto_milestones() {
+        let db = setup_db().await;
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &db,
+            &CreateProject {
+                name: "Test project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        Project::update(
+            &db,
+            project_id,
+            &UpdateProject {
+                name: None,
+                dev_script: None,
+                dev_script_working_dir: None,
+                default_agent_working_dir: None,
+                git_no_verify_override: None,
+                scheduler_max_concurrent: None,
+                scheduler_max_retries: None,
+                default_continuation_turns: Some(4),
+                after_prepare_hook: None,
+                before_cleanup_hook: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let node_task_id = Uuid::new_v4();
+        Task::create(
+            &db,
+            &CreateTask::from_title_description(project_id, "Node task".to_string(), None),
+            node_task_id,
+        )
+        .await
+        .unwrap();
+
+        let graph = MilestoneGraph {
+            nodes: vec![MilestoneNode {
+                id: "node-1".to_string(),
+                task_id: node_task_id,
+                kind: MilestoneNodeKind::Task,
+                phase: 0,
+                executor_profile_id: None,
+                base_strategy: MilestoneNodeBaseStrategy::Topology,
+                instructions: None,
+                requires_approval: None,
+                layout: MilestoneNodeLayout { x: 0.0, y: 0.0 },
+                status: None,
+            }],
+            edges: Vec::new(),
+        };
+
+        let milestone_id = Uuid::new_v4();
+        Milestone::create(
+            &db,
+            &CreateMilestone {
+                project_id,
+                title: "Auto milestone".to_string(),
+                description: None,
+                objective: None,
+                definition_of_done: None,
+                default_executor_profile_id: None,
+                automation_mode: Some(MilestoneAutomationMode::Auto),
+                status: None,
+                baseline_ref: Some("main".to_string()),
+                schema_version: 1,
+                graph,
+            },
+            milestone_id,
+        )
+        .await
+        .unwrap();
+
+        TaskOrchestrationState::increment_continuation_turns_used(
+            &db,
+            node_task_id,
+            Uuid::new_v4(),
+        )
+        .await
+        .unwrap();
+
+        let tasks = Task::find_by_project_id_with_attempt_status(&db, project_id)
+            .await
+            .unwrap();
+        let node = tasks
+            .into_iter()
+            .find(|task| task.id == node_task_id)
+            .expect("node task");
+        let orch = node.orchestration.expect("orchestration");
+        assert_eq!(orch.continuation.turn_budget, 4);
+        assert_eq!(orch.continuation.turns_used, 1);
+        assert_eq!(orch.continuation.turns_remaining, 3);
+        assert!(matches!(
+            orch.continuation.budget_source,
+            super::TaskContinuationBudgetSource::ProjectDefault
+        ));
     }
 }
