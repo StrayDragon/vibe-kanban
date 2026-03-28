@@ -8,6 +8,7 @@ type ExecutionProcessesContextType = {
   isAttemptRunningAll: boolean;
 
   executionProcessesVisible: ExecutionProcess[];
+  executionProcessesVisibleSorted: ExecutionProcess[];
   executionProcessesByIdVisible: Record<string, ExecutionProcess>;
   isAttemptRunningVisible: boolean;
 
@@ -41,6 +42,24 @@ export const ExecutionProcessesProvider: React.FC<{
     [executionProcesses]
   );
 
+  const visibleSorted = useMemo(() => {
+    const createdAtMsById = new Map<string, number>();
+    const createdAtMs = (p: ExecutionProcess) => {
+      const cached = createdAtMsById.get(p.id);
+      if (typeof cached === 'number') return cached;
+      const parsed = Date.parse(p.created_at as unknown as string);
+      const ms = Number.isFinite(parsed) ? parsed : 0;
+      createdAtMsById.set(p.id, ms);
+      return ms;
+    };
+
+    return visible
+      .slice()
+      .sort(
+        (a, b) => createdAtMs(a) - createdAtMs(b) || a.id.localeCompare(b.id)
+      );
+  }, [visible]);
+
   const executionProcessesByIdVisible = useMemo(() => {
     const m: Record<string, ExecutionProcess> = {};
     for (const p of visible) m[p.id] = p;
@@ -65,6 +84,7 @@ export const ExecutionProcessesProvider: React.FC<{
       executionProcessesByIdAll: executionProcessesById,
       isAttemptRunningAll: isAttemptRunning,
       executionProcessesVisible: visible,
+      executionProcessesVisibleSorted: visibleSorted,
       executionProcessesByIdVisible,
       isAttemptRunningVisible,
       isLoading,
@@ -78,6 +98,7 @@ export const ExecutionProcessesProvider: React.FC<{
       executionProcessesById,
       isAttemptRunning,
       visible,
+      visibleSorted,
       executionProcessesByIdVisible,
       isAttemptRunningVisible,
       isLoading,

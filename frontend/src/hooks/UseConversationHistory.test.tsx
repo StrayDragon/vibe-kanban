@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { useConversationHistory } from './execution-processes/useConversationHistory';
+import { deriveConversationProcess } from './execution-processes/conversationHistoryDerivation';
 import { streamLogEntries } from '@/utils/streamLogEntries';
 import type {
   ApiResponse,
@@ -18,14 +19,57 @@ const mockExecutionContext = {
 };
 
 vi.mock('@/contexts/ExecutionProcessesContext', () => ({
-  useExecutionProcessesContext: () => mockExecutionContext,
+  useExecutionProcessesContext: () => {
+    const visible = mockExecutionContext.executionProcessesVisible;
+    const byId: Record<string, ExecutionProcess> = {};
+    for (const process of visible) {
+      byId[process.id] = process;
+    }
+
+    const createdAtMsById = new Map<string, number>();
+    const createdAtMs = (p: ExecutionProcess) => {
+      const cached = createdAtMsById.get(p.id);
+      if (typeof cached === 'number') return cached;
+      const parsed = Date.parse(p.created_at as unknown as string);
+      const ms = Number.isFinite(parsed) ? parsed : 0;
+      createdAtMsById.set(p.id, ms);
+      return ms;
+    };
+
+    const sorted = visible
+      .slice()
+      .sort(
+        (a, b) => createdAtMs(a) - createdAtMs(b) || a.id.localeCompare(b.id)
+      );
+
+    return {
+      ...mockExecutionContext,
+      executionProcessesVisibleSorted: sorted,
+      executionProcessesByIdVisible: byId,
+    };
+  },
 }));
 
 vi.mock('@/utils/streamLogEntries', () => ({
   streamLogEntries: vi.fn(),
 }));
 
+vi.mock(
+  './execution-processes/conversationHistoryDerivation',
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import('./execution-processes/conversationHistoryDerivation')
+      >();
+    return {
+      ...actual,
+      deriveConversationProcess: vi.fn(actual.deriveConversationProcess),
+    };
+  }
+);
+
 const streamLogEntriesMock = vi.mocked(streamLogEntries);
+const deriveConversationProcessMock = vi.mocked(deriveConversationProcess);
 
 const makeApiResponse = (
   data: LogHistoryPage
@@ -751,5 +795,244 @@ describe('useConversationHistory', () => {
 
     expect(streamLogEntriesMock).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
+  });
+
+  it('does not recompute derived entries for untouched processes when paging older history', async () => {
+    const now = new Date().toISOString();
+    const baseDate = new Date('2024-01-01T00:00:00.000Z');
+
+    const makeProcess = (id: string, createdAt: string): ExecutionProcess => ({
+      id,
+      session_id: `session-${id}`,
+      run_reason: 'codingagent',
+      executor_action: {
+        typ: {
+          type: 'CodingAgentInitialRequest',
+          prompt: `prompt-${id}`,
+          executor_profile_id: {
+            executor: BaseCodingAgent.CODEX,
+            variant: null,
+          },
+          image_paths: {},
+          working_dir: null,
+        },
+        next_action: null,
+      },
+      status: ExecutionProcessStatus.completed,
+      exit_code: null,
+      dropped: false,
+      started_at: createdAt,
+      completed_at: createdAt,
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+
+    const processes = Array.from({ length: 3 }, (_, index) => {
+      const date = new Date(baseDate);
+      date.setDate(baseDate.getDate() + index);
+      return makeProcess(`process-${index}`, date.toISOString());
+    });
+
+    mockExecutionContext.executionProcessesVisible = processes;
+    mockExecutionContext.isLoading = false;
+
+    const normalizedEntry: PatchType = {
+      type: 'NORMALIZED_ENTRY',
+      content: {
+        entry_type: { type: 'assistant_message' },
+        content: 'hi',
+        metadata: null,
+        timestamp: null,
+      },
+    };
+
+    const makePage = (): LogHistoryPage => ({
+      entries: Array.from({ length: 20 }, (_, i) => ({
+        entry_index: BigInt(i + 1),
+        entry: normalizedEntry,
+      })),
+      next_cursor: 1n,
+      has_more: false,
+      history_truncated: false,
+    });
+
+    const fetchMock = vi
+      .fn()
+      // initial load: newest process only
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => makeApiResponse(makePage()),
+      })
+      // loadOlderHistory: next oldest process
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => makeApiResponse(makePage()),
+      });
+
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    streamLogEntriesMock.mockImplementation(() => ({
+      close: vi.fn(),
+      isConnected: () => true,
+    }));
+
+    const attempt: Workspace = {
+      id: 'workspace-derived-locality',
+      task_id: 'task-derived-locality',
+      container_ref: null,
+      branch: 'main',
+      agent_working_dir: null,
+      setup_completed_at: null,
+      latest_hook_run: null,
+      after_prepare_hook_status: null,
+      after_prepare_hook_ran_at: null,
+      after_prepare_hook_error_summary: null,
+      before_cleanup_hook_status: null,
+      before_cleanup_hook_ran_at: null,
+      before_cleanup_hook_error_summary: null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const onEntriesUpdated = vi.fn();
+    const { result } = renderHook(() =>
+      useConversationHistory({ attempt, onEntriesUpdated })
+    );
+
+    await waitFor(() => expect(result.current.hasMoreHistory).toBe(true));
+
+    deriveConversationProcessMock.mockClear();
+
+    await act(async () => {
+      await result.current.loadOlderHistory();
+    });
+
+    await waitFor(() => {
+      expect(deriveConversationProcessMock.mock.calls.length).toBe(1);
+    });
+  });
+
+  it('evicts the oldest non-running processes when conversation entries exceed the limit', async () => {
+    const now = new Date().toISOString();
+    const baseDate = new Date('2024-01-01T00:00:00.000Z');
+
+    const makeProcess = (id: string, createdAt: string): ExecutionProcess => ({
+      id,
+      session_id: `session-${id}`,
+      run_reason: 'codingagent',
+      executor_action: {
+        typ: {
+          type: 'CodingAgentInitialRequest',
+          prompt: `prompt-${id}`,
+          executor_profile_id: {
+            executor: BaseCodingAgent.CODEX,
+            variant: null,
+          },
+          image_paths: {},
+          working_dir: null,
+        },
+        next_action: null,
+      },
+      status: ExecutionProcessStatus.completed,
+      exit_code: null,
+      dropped: false,
+      started_at: createdAt,
+      completed_at: createdAt,
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+
+    const oldDate = new Date(baseDate);
+    const newDate = new Date(baseDate);
+    newDate.setDate(baseDate.getDate() + 1);
+
+    const olderProcess = makeProcess('process-old', oldDate.toISOString());
+    const newerProcess = makeProcess('process-new', newDate.toISOString());
+
+    mockExecutionContext.executionProcessesVisible = [
+      olderProcess,
+      newerProcess,
+    ];
+    mockExecutionContext.isLoading = false;
+
+    const normalizedEntry: PatchType = {
+      type: 'NORMALIZED_ENTRY',
+      content: {
+        entry_type: { type: 'assistant_message' },
+        content: 'hi',
+        metadata: null,
+        timestamp: null,
+      },
+    };
+
+    const makePage = (history_truncated: boolean): LogHistoryPage => ({
+      entries: Array.from({ length: 15 }, (_, i) => ({
+        entry_index: BigInt(i + 1),
+        entry: normalizedEntry,
+      })),
+      next_cursor: 1n,
+      has_more: false,
+      history_truncated,
+    });
+
+    const fetchMock = vi.fn();
+    // initial load order: newest first, then older
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => makeApiResponse(makePage(false)),
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => makeApiResponse(makePage(true)),
+    });
+
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    streamLogEntriesMock.mockImplementation(() => ({
+      close: vi.fn(),
+      isConnected: () => true,
+    }));
+
+    const attempt: Workspace = {
+      id: 'workspace-evict-oldest',
+      task_id: 'task-evict-oldest',
+      container_ref: null,
+      branch: 'main',
+      agent_working_dir: null,
+      setup_completed_at: null,
+      latest_hook_run: null,
+      after_prepare_hook_status: null,
+      after_prepare_hook_ran_at: null,
+      after_prepare_hook_error_summary: null,
+      before_cleanup_hook_status: null,
+      before_cleanup_hook_ran_at: null,
+      before_cleanup_hook_error_summary: null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const onEntriesUpdated = vi.fn();
+    const { result } = renderHook(() =>
+      useConversationHistory({ attempt, onEntriesUpdated })
+    );
+
+    await waitFor(() => {
+      const lastCall =
+        onEntriesUpdated.mock.calls[onEntriesUpdated.mock.calls.length - 1];
+      expect(lastCall?.[2]).toBe(false);
+    });
+
+    await waitFor(() => expect(result.current.historyTruncated).toBe(false));
+
+    const calls = onEntriesUpdated.mock.calls;
+    const lastEntries: { executionProcessId?: string }[] =
+      calls[calls.length - 1]?.[0] ?? [];
+
+    expect(
+      lastEntries.some((e) => e.executionProcessId === olderProcess.id)
+    ).toBe(false);
+    expect(
+      lastEntries.some((e) => e.executionProcessId === newerProcess.id)
+    ).toBe(true);
   });
 });

@@ -1,25 +1,25 @@
 // useConversationHistory.ts
 import {
-  CommandExitStatus,
   ExecutionProcessPublic as ExecutionProcess,
   ExecutionProcessStatus,
   ExecutorAction,
   IndexedLogEntry,
   LogHistoryPage,
-  NormalizedEntry,
   PatchType,
-  ToolStatus,
   Workspace,
 } from 'shared/types';
 import { useExecutionProcessesContext } from '@/contexts/ExecutionProcessesContext';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { executionProcessesApi } from '@/lib/api';
 import { openLogStream } from '@/realtime';
+import {
+  deriveConversationProcess,
+  patchWithKey,
+  type ConversationProcessDerived,
+  type PatchTypeWithKey,
+} from './conversationHistoryDerivation';
 
-export type PatchTypeWithKey = PatchType & {
-  patchKey: string;
-  executionProcessId: string;
-};
+export type { PatchTypeWithKey } from './conversationHistoryDerivation';
 
 export type AddEntryType = 'initial' | 'running' | 'historic';
 
@@ -100,33 +100,9 @@ const nextActionPatch: (
 const isScriptProcess = (executionProcess: ExecutionProcess) =>
   executionProcess.executor_action.typ.type === 'ScriptRequest';
 
-const patchWithKey = (
-  patch: PatchType,
-  executionProcessId: string,
-  index: bigint | number | 'user'
-): PatchTypeWithKey => {
-  return {
-    ...patch,
-    patchKey: `${executionProcessId}:${index}`,
-    executionProcessId,
-  };
-};
-
 const isUserMessagePatch = (patch: PatchType) =>
   patch.type === 'NORMALIZED_ENTRY' &&
   patch.content.entry_type.type === 'user_message';
-
-const isSyntheticEntry = (entry: PatchTypeWithKey) =>
-  entry.type === 'NORMALIZED_ENTRY' &&
-  (entry.content.entry_type.type === 'user_message' ||
-    entry.content.entry_type.type === 'next_action' ||
-    entry.content.entry_type.type === 'loading');
-
-const countEntriesForLimit = (entries: PatchTypeWithKey[]) =>
-  entries.reduce(
-    (count, entry) => count + (isSyntheticEntry(entry) ? 0 : 1),
-    0
-  );
 
 const mapIndexedEntries = (
   entries: IndexedLogEntry[],
@@ -219,11 +195,20 @@ export const useConversationHistory = ({
   onEntriesUpdated,
 }: UseConversationHistoryParams): UseConversationHistoryResult => {
   const {
-    executionProcessesVisible: executionProcessesRaw,
+    executionProcessesVisibleSorted: executionProcessesRawSorted,
+    executionProcessesByIdVisible: executionProcessesByIdRaw,
     isLoading: executionProcessesLoading,
   } = useExecutionProcessesContext();
-  const executionProcesses = useRef<ExecutionProcess[]>(executionProcessesRaw);
+  const executionProcesses = useRef<ExecutionProcess[]>(
+    executionProcessesRawSorted
+  );
+  const executionProcessesById = useRef<Record<string, ExecutionProcess>>(
+    executionProcessesByIdRaw
+  );
   const displayedExecutionProcesses = useRef<ExecutionProcessStateStore>({});
+  const derivedExecutionProcesses = useRef<
+    Map<string, ConversationProcessDerived>
+  >(new Map());
   const loadedInitialEntries = useRef(false);
   const initialLoadInFlightRef = useRef(false);
   const streamingProcessIdsRef = useRef<Set<string>>(new Set());
@@ -231,11 +216,14 @@ export const useConversationHistory = ({
   const entryLimitRef = useRef(CONVERSATION_CACHE_LIMIT);
   const knownProcessIdsRef = useRef<Set<string>>(new Set());
   const hasSeededProcessIdsRef = useRef(false);
+  const lastStatusByIdRef = useRef<Map<string, ExecutionProcessStatus>>(
+    new Map()
+  );
   const onEntriesUpdatedRef = useRef<OnEntriesUpdated | null>(null);
   const [hasMoreHistory, setHasMoreHistory] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [historyTruncated, setHistoryTruncated] = useState(false);
-  const processCount = executionProcessesRaw?.length ?? 0;
+  const processCount = executionProcessesRawSorted?.length ?? 0;
 
   const mergeIntoDisplayed = (
     mutator: (state: ExecutionProcessStateStore) => void
@@ -247,20 +235,20 @@ export const useConversationHistory = ({
   const refreshHasMoreHistory = useCallback(() => {
     const displayed = displayedExecutionProcesses.current;
     const displayedIds = new Set(Object.keys(displayed));
-    const processesByAge = [...executionProcesses.current].sort(
-      (a, b) =>
-        new Date(a.created_at as unknown as string).getTime() -
-        new Date(b.created_at as unknown as string).getTime()
-    );
+    const processesByAge = executionProcesses.current;
 
     if (processesByAge.length === 0) {
       setHasMoreHistory(false);
       return;
     }
 
-    const oldestDisplayedIndex = processesByAge.findIndex((process) =>
-      displayedIds.has(process.id)
-    );
+    let oldestDisplayedIndex = -1;
+    for (let idx = 0; idx < processesByAge.length; idx++) {
+      if (displayedIds.has(processesByAge[idx].id)) {
+        oldestDisplayedIndex = idx;
+        break;
+      }
+    }
 
     if (oldestDisplayedIndex === -1) {
       setHasMoreHistory(processesByAge.length > 0);
@@ -288,13 +276,14 @@ export const useConversationHistory = ({
 
   // Keep executionProcesses up to date
   useEffect(() => {
-    executionProcesses.current = executionProcessesRaw.filter(
+    executionProcesses.current = executionProcessesRawSorted.filter(
       (ep) =>
         ep.run_reason === 'setupscript' ||
         ep.run_reason === 'cleanupscript' ||
         ep.run_reason === 'codingagent'
     );
-  }, [executionProcessesRaw]);
+    executionProcessesById.current = executionProcessesByIdRaw;
+  }, [executionProcessesRawSorted, executionProcessesByIdRaw]);
 
   const getActiveAgentProcesses = (): ExecutionProcess[] => {
     return (
@@ -306,262 +295,119 @@ export const useConversationHistory = ({
     );
   };
 
+  const recomputeDerivedForProcess = useCallback((processId: string) => {
+    const state = displayedExecutionProcesses.current[processId];
+    if (!state) {
+      derivedExecutionProcesses.current.delete(processId);
+      return;
+    }
+    const live = executionProcessesById.current[processId];
+    derivedExecutionProcesses.current.set(
+      processId,
+      deriveConversationProcess(state, live)
+    );
+  }, []);
+
   const flattenEntriesForEmit = useCallback(
     (executionProcessState: ExecutionProcessStateStore): PatchTypeWithKey[] => {
-      // Flags to control Next Action bar emit
+      const entries: PatchTypeWithKey[] = [];
+      const derived = derivedExecutionProcesses.current;
+
       let hasPendingApproval = false;
       let hasRunningProcess = false;
       let lastProcessFailedOrKilled = false;
       let needsSetup = false;
       let loadingIndicatorProcessId: string | null = null;
 
-      // Create user messages + tool calls for setup/cleanup scripts
-      const allEntries = Object.values(executionProcessState)
-        .sort(
-          (a, b) =>
-            new Date(
-              a.executionProcess.created_at as unknown as string
-            ).getTime() -
-            new Date(
-              b.executionProcess.created_at as unknown as string
-            ).getTime()
-        )
-        .flatMap((p, index) => {
-          const entries: PatchTypeWithKey[] = [];
-          if (
-            p.executionProcess.executor_action.typ.type ===
-              'CodingAgentInitialRequest' ||
-            p.executionProcess.executor_action.typ.type ===
-              'CodingAgentFollowUpRequest'
-          ) {
-            // New user message
-            const userNormalizedEntry: NormalizedEntry = {
-              entry_type: {
-                type: 'user_message',
-              },
-              content: p.executionProcess.executor_action.typ.prompt,
-              metadata: null,
-              timestamp: null,
-            };
-            const userPatch: PatchType = {
-              type: 'NORMALIZED_ENTRY',
-              content: userNormalizedEntry,
-            };
-            const userPatchTypeWithKey = patchWithKey(
-              userPatch,
-              p.executionProcess.id,
-              'user'
-            );
-            entries.push(userPatchTypeWithKey);
+      const displayedCount = Object.keys(executionProcessState).length;
 
-            // Remove all coding agent added user messages, replace with our custom one
-            const entriesExcludingUser = p.entries.filter(
-              (e) =>
-                e.type !== 'NORMALIZED_ENTRY' ||
-                e.content.entry_type.type !== 'user_message'
-            );
-
-            const hasPendingApprovalEntry = entriesExcludingUser.some(
-              (entry) => {
-                if (entry.type !== 'NORMALIZED_ENTRY') return false;
-                const entryType = entry.content.entry_type;
-                return (
-                  entryType.type === 'tool_use' &&
-                  entryType.status.status === 'pending_approval'
-                );
-              }
-            );
-
-            if (hasPendingApprovalEntry) {
-              hasPendingApproval = true;
-            }
-
-            entries.push(...entriesExcludingUser);
-
-            const liveProcessStatus = getLiveExecutionProcess(
-              p.executionProcess.id
-            )?.status;
-            const isProcessRunning =
-              liveProcessStatus === ExecutionProcessStatus.running;
-            const processFailedOrKilled =
-              liveProcessStatus === ExecutionProcessStatus.failed ||
-              liveProcessStatus === ExecutionProcessStatus.killed;
-
-            if (isProcessRunning) {
-              hasRunningProcess = true;
-            }
-
-            if (
-              processFailedOrKilled &&
-              index === Object.keys(executionProcessState).length - 1
-            ) {
-              lastProcessFailedOrKilled = true;
-
-              // Check if this failed process has a SetupRequired entry
-              const hasSetupRequired = entriesExcludingUser.some((entry) => {
-                if (entry.type !== 'NORMALIZED_ENTRY') return false;
-                return (
-                  entry.content.entry_type.type === 'error_message' &&
-                  entry.content.entry_type.error_type.type === 'setup_required'
-                );
-              });
-
-              if (hasSetupRequired) {
-                needsSetup = true;
-              }
-            }
-
-            if (isProcessRunning && !hasPendingApprovalEntry) {
-              // Keep a single loading indicator at the bottom of the full
-              // conversation (after any queued follow-ups), rather than inside
-              // the running process group.
-              loadingIndicatorProcessId = p.executionProcess.id;
-            }
-          } else if (
-            p.executionProcess.executor_action.typ.type === 'ScriptRequest'
-          ) {
-            // Add setup and cleanup script as a tool call
-            let toolName = '';
-            switch (p.executionProcess.executor_action.typ.context) {
-              case 'SetupScript':
-                toolName = 'Setup Script';
-                break;
-              case 'CleanupScript':
-                toolName = 'Cleanup Script';
-                break;
-              case 'DevServer':
-                toolName = 'Dev Server';
-                break;
-              case 'ToolInstallScript':
-                toolName = 'Tool Install Script';
-                break;
-            }
-
-            const executionProcess = getLiveExecutionProcess(
-              p.executionProcess.id
-            );
-
-            if (executionProcess?.status === ExecutionProcessStatus.running) {
-              hasRunningProcess = true;
-            }
-
-            if (
-              (executionProcess?.status === ExecutionProcessStatus.failed ||
-                executionProcess?.status === ExecutionProcessStatus.killed) &&
-              index === Object.keys(executionProcessState).length - 1
-            ) {
-              lastProcessFailedOrKilled = true;
-            }
-
-            const exitCode = Number(executionProcess?.exit_code) || 0;
-            const exit_status: CommandExitStatus | null =
-              executionProcess?.status === ExecutionProcessStatus.running
-                ? null
-                : {
-                    type: 'exit_code',
-                    code: exitCode,
-                  };
-
-            const toolStatus: ToolStatus =
-              executionProcess?.status === ExecutionProcessStatus.running
-                ? { status: 'created' }
-                : exitCode === 0
-                  ? { status: 'success' }
-                  : { status: 'failed' };
-
-            const output = p.entries.map((line) => line.content).join('\n');
-
-            const toolNormalizedEntry: NormalizedEntry = {
-              entry_type: {
-                type: 'tool_use',
-                tool_name: toolName,
-                action_type: {
-                  action: 'command_run',
-                  command: p.executionProcess.executor_action.typ.script,
-                  result: {
-                    output,
-                    exit_status,
-                  },
-                },
-                status: toolStatus,
-              },
-              content: toolName,
-              metadata: null,
-              timestamp: null,
-            };
-            const toolPatch: PatchType = {
-              type: 'NORMALIZED_ENTRY',
-              content: toolNormalizedEntry,
-            };
-            const toolPatchWithKey: PatchTypeWithKey = patchWithKey(
-              toolPatch,
-              p.executionProcess.id,
-              0
-            );
-
-            entries.push(toolPatchWithKey);
-          }
-
-          return entries;
-        });
-
-      if (loadingIndicatorProcessId) {
-        allEntries.push(makeLoadingPatch(loadingIndicatorProcessId));
+      let lastDisplayedProcessId: string | null = null;
+      for (let idx = executionProcesses.current.length - 1; idx >= 0; idx--) {
+        const candidate = executionProcesses.current[idx];
+        if (candidate && executionProcessState[candidate.id]) {
+          lastDisplayedProcessId = candidate.id;
+          break;
+        }
       }
 
-      // Emit the next action bar if no process running
+      for (const process of executionProcesses.current) {
+        const processState = executionProcessState[process.id];
+        if (!processState) continue;
+
+        let next = derived.get(process.id);
+        if (!next) {
+          next = deriveConversationProcess(
+            processState,
+            executionProcessesById.current[process.id]
+          );
+          derived.set(process.id, next);
+        }
+
+        entries.push(...next.entriesForEmit);
+
+        if (next.hasPendingApproval) hasPendingApproval = true;
+        if (next.isRunning) hasRunningProcess = true;
+        if (next.showsLoadingIndicator) {
+          loadingIndicatorProcessId = process.id;
+        }
+
+        if (process.id === lastDisplayedProcessId && next.failedOrKilled) {
+          lastProcessFailedOrKilled = true;
+          if (next.hasSetupRequired) needsSetup = true;
+        }
+      }
+
+      if (loadingIndicatorProcessId) {
+        entries.push(makeLoadingPatch(loadingIndicatorProcessId));
+      }
+
       if (!hasRunningProcess && !hasPendingApproval) {
-        allEntries.push(
-          nextActionPatch(
-            lastProcessFailedOrKilled,
-            Object.keys(executionProcessState).length,
-            needsSetup
-          )
+        entries.push(
+          nextActionPatch(lastProcessFailedOrKilled, displayedCount, needsSetup)
         );
       }
 
-      return allEntries;
+      return entries;
     },
     []
   );
 
   const trimOldestProcessesToLimit = useCallback(
     (executionProcessState: ExecutionProcessStateStore) => {
-      let entries = flattenEntriesForEmit(executionProcessState);
-      if (countEntriesForLimit(entries) <= entryLimitRef.current) return;
-      if (Object.keys(executionProcessState).length <= 1) return;
+      const limit = entryLimitRef.current;
+      const displayedIds = Object.keys(executionProcessState);
+      if (displayedIds.length <= 1) return;
 
-      const statusById = new Map(
-        executionProcesses.current.map((process) => [
-          process.id,
-          process.status,
-        ])
-      );
+      let total = 0;
+      for (const processId of displayedIds) {
+        const d = derivedExecutionProcesses.current.get(processId);
+        if (d) {
+          total += d.nonSyntheticCount;
+        } else {
+          recomputeDerivedForProcess(processId);
+          total +=
+            derivedExecutionProcesses.current.get(processId)
+              ?.nonSyntheticCount ?? 0;
+        }
+      }
 
-      const processesByAge = Object.values(executionProcessState)
-        .filter(
-          (process) =>
-            statusById.get(process.executionProcess.id) !==
-            ExecutionProcessStatus.running
-        )
-        .sort(
-          (a, b) =>
-            new Date(
-              a.executionProcess.created_at as unknown as string
-            ).getTime() -
-            new Date(
-              b.executionProcess.created_at as unknown as string
-            ).getTime()
-        );
+      if (total <= limit) return;
 
-      for (const process of processesByAge) {
+      for (const process of executionProcesses.current) {
         if (Object.keys(executionProcessState).length <= 1) break;
-        delete executionProcessState[process.executionProcess.id];
-        entries = flattenEntriesForEmit(executionProcessState);
-        if (countEntriesForLimit(entries) <= entryLimitRef.current) break;
+        if (!executionProcessState[process.id]) continue;
+        if (process.status === ExecutionProcessStatus.running) continue;
+
+        const d = derivedExecutionProcesses.current.get(process.id);
+        if (d) total -= d.nonSyntheticCount;
+
+        delete executionProcessState[process.id];
+        derivedExecutionProcesses.current.delete(process.id);
+
+        if (total <= limit) break;
       }
     },
-    [flattenEntriesForEmit]
+    [recomputeDerivedForProcess]
   );
 
   const emitEntries = useCallback(
@@ -587,6 +433,7 @@ export const useConversationHistory = ({
   // Reset state when attempt changes
   useEffect(() => {
     displayedExecutionProcesses.current = {};
+    derivedExecutionProcesses.current.clear();
     loadedInitialEntries.current = false;
     initialLoadInFlightRef.current = false;
     streamingProcessIdsRef.current.clear();
@@ -594,16 +441,9 @@ export const useConversationHistory = ({
     entryLimitRef.current = CONVERSATION_CACHE_LIMIT;
     knownProcessIdsRef.current.clear();
     hasSeededProcessIdsRef.current = false;
+    lastStatusByIdRef.current.clear();
     emitEntries(displayedExecutionProcesses.current, 'initial', true);
   }, [attempt.id, emitEntries]);
-
-  const getLiveExecutionProcess = (
-    executionProcessId: string
-  ): ExecutionProcess | undefined => {
-    return executionProcesses?.current.find(
-      (executionProcess) => executionProcess.id === executionProcessId
-    );
-  };
 
   const loadEntriesForHistoricExecutionProcess = async (
     executionProcess: ExecutionProcess,
@@ -628,24 +468,32 @@ export const useConversationHistory = ({
     }
   };
 
-  const ensureProcessVisible = useCallback((p: ExecutionProcess) => {
-    mergeIntoDisplayed((state) => {
-      if (!state[p.id]) {
-        state[p.id] = {
-          executionProcess: {
-            id: p.id,
-            created_at: p.created_at,
-            updated_at: p.updated_at,
-            executor_action: p.executor_action,
-          },
-          entries: [],
-          cursor: null,
-          hasMore: false,
-          historyTruncated: false,
-        };
+  const ensureProcessVisible = useCallback(
+    (p: ExecutionProcess) => {
+      let created = false;
+      mergeIntoDisplayed((state) => {
+        if (!state[p.id]) {
+          state[p.id] = {
+            executionProcess: {
+              id: p.id,
+              created_at: p.created_at,
+              updated_at: p.updated_at,
+              executor_action: p.executor_action,
+            },
+            entries: [],
+            cursor: null,
+            hasMore: false,
+            historyTruncated: false,
+          };
+          created = true;
+        }
+      });
+      if (created) {
+        recomputeDerivedForProcess(p.id);
       }
-    });
-  }, []);
+    },
+    [recomputeDerivedForProcess]
+  );
 
   const updateProcessHistory = useCallback(
     (
@@ -689,8 +537,9 @@ export const useConversationHistory = ({
             existing.historyTruncated || (page?.history_truncated ?? false),
         };
       });
+      recomputeDerivedForProcess(executionProcess.id);
     },
-    []
+    [recomputeDerivedForProcess]
   );
 
   const mergeLatestHistory = useCallback(
@@ -736,8 +585,9 @@ export const useConversationHistory = ({
           historyTruncated: existing.historyTruncated || page.history_truncated,
         };
       });
+      recomputeDerivedForProcess(executionProcess.id);
     },
-    []
+    [recomputeDerivedForProcess]
   );
 
   const refreshRunningHistory = useCallback(
@@ -789,7 +639,18 @@ export const useConversationHistory = ({
                 } else {
                   current.entries.push(patch);
                 }
-                current.entries = sortEntriesByIndex(current.entries);
+                if (existingIndex < 0 && current.entries.length > 1) {
+                  const prevIndex = entryIndexForCursor(
+                    current.entries[current.entries.length - 2]
+                  );
+                  const nextIndex =
+                    typeof entryIndex === 'bigint'
+                      ? entryIndex
+                      : BigInt(entryIndex);
+                  if (prevIndex !== null && prevIndex > nextIndex) {
+                    current.entries = sortEntriesByIndex(current.entries);
+                  }
+                }
                 const limited = applyEntryLimitWithCursor(
                   current.entries,
                   entryLimitRef.current,
@@ -799,6 +660,7 @@ export const useConversationHistory = ({
                 current.cursor = limited.cursor;
                 current.hasMore = current.hasMore || limited.trimmed;
               });
+              recomputeDerivedForProcess(executionProcess.id);
               emitEntries(
                 displayedExecutionProcesses.current,
                 'running',
@@ -825,7 +687,9 @@ export const useConversationHistory = ({
                 } else {
                   current.entries.push(patch);
                 }
-                current.entries = sortEntriesByIndex(current.entries);
+                if (existingIndex < 0) {
+                  current.entries = sortEntriesByIndex(current.entries);
+                }
                 const limited = applyEntryLimitWithCursor(
                   current.entries,
                   entryLimitRef.current,
@@ -835,6 +699,7 @@ export const useConversationHistory = ({
                 current.cursor = limited.cursor;
                 current.hasMore = current.hasMore || limited.trimmed;
               });
+              recomputeDerivedForProcess(executionProcess.id);
               emitEntries(
                 displayedExecutionProcesses.current,
                 'running',
@@ -864,7 +729,7 @@ export const useConversationHistory = ({
         }
       });
     },
-    [emitEntries, refreshRunningHistory]
+    [emitEntries, recomputeDerivedForProcess, refreshRunningHistory]
   );
 
   const loadRunningAndEmitWithBackoff = useCallback(
@@ -894,6 +759,9 @@ export const useConversationHistory = ({
     const localDisplayedExecutionProcesses: ExecutionProcessStateStore = {};
 
     if (!executionProcesses?.current) return localDisplayedExecutionProcesses;
+
+    const derivedById = new Map<string, ConversationProcessDerived>();
+    let totalNonSynthetic = 0;
 
     for (const executionProcess of [...executionProcesses.current].reverse()) {
       if (executionProcess.status === ExecutionProcessStatus.running) {
@@ -950,40 +818,35 @@ export const useConversationHistory = ({
             historyTruncated,
           };
 
-          if (
-            countEntriesForLimit(
-              flattenEntriesForEmit(localDisplayedExecutionProcesses)
-            ) >= entryLimitRef.current
-          ) {
-            break;
+          const nextDerived = deriveConversationProcess(
+            localDisplayedExecutionProcesses[executionProcess.id],
+            executionProcess
+          );
+          const prevDerived = derivedById.get(executionProcess.id);
+          if (prevDerived) {
+            totalNonSynthetic -= prevDerived.nonSyntheticCount;
           }
+          derivedById.set(executionProcess.id, nextDerived);
+          totalNonSynthetic += nextDerived.nonSyntheticCount;
+
+          if (totalNonSynthetic >= entryLimitRef.current) break;
         } while (hasMore);
       } finally {
         pendingHistoricLoadIdsRef.current.delete(executionProcess.id);
       }
 
-      if (
-        countEntriesForLimit(
-          flattenEntriesForEmit(localDisplayedExecutionProcesses)
-        ) >= entryLimitRef.current
-      ) {
-        break;
-      }
+      if (totalNonSynthetic >= entryLimitRef.current) break;
     }
 
     return localDisplayedExecutionProcesses;
-  }, [executionProcesses, flattenEntriesForEmit]);
+  }, []);
 
   const loadOlderHistory = useCallback(async () => {
     if (loadingOlder) return;
     if (!executionProcesses?.current) return;
 
     setLoadingOlder(true);
-    const processesByAge = [...executionProcesses.current].sort(
-      (a, b) =>
-        new Date(a.created_at as unknown as string).getTime() -
-        new Date(b.created_at as unknown as string).getTime()
-    );
+    const processesByAge = executionProcesses.current;
 
     if (processesByAge.length === 0) {
       setLoadingOlder(false);
@@ -1047,13 +910,14 @@ export const useConversationHistory = ({
   }, [executionProcesses, emitEntries, loadingOlder, updateProcessHistory]);
 
   const idListKey = useMemo(
-    () => executionProcessesRaw?.map((p) => p.id).join(','),
-    [executionProcessesRaw]
+    () => executionProcessesRawSorted.map((p) => p.id).join(','),
+    [executionProcessesRawSorted]
   );
 
   const idStatusKey = useMemo(
-    () => executionProcessesRaw?.map((p) => `${p.id}:${p.status}`).join(','),
-    [executionProcessesRaw]
+    () =>
+      executionProcessesRawSorted.map((p) => `${p.id}:${p.status}`).join(','),
+    [executionProcessesRawSorted]
   );
 
   // Initial load when attempt changes
@@ -1133,13 +997,25 @@ export const useConversationHistory = ({
 
   // Emit updates when process statuses change, even if no new log entries arrive.
   useEffect(() => {
+    const changedDisplayedIds: string[] = [];
+    const statusById = lastStatusByIdRef.current;
+    for (const process of executionProcesses.current) {
+      const prevStatus = statusById.get(process.id);
+      if (prevStatus === process.status) continue;
+      statusById.set(process.id, process.status);
+      if (displayedExecutionProcesses.current[process.id]) {
+        changedDisplayedIds.push(process.id);
+      }
+    }
+
     if (!loadedInitialEntries.current) return;
+    changedDisplayedIds.forEach(recomputeDerivedForProcess);
     const hasRunningProcess = executionProcesses.current.some(
       (process) => process.status === ExecutionProcessStatus.running
     );
     const addType: AddEntryType = hasRunningProcess ? 'running' : 'historic';
     emitEntries(displayedExecutionProcesses.current, addType, false);
-  }, [attempt.id, idStatusKey, emitEntries]);
+  }, [attempt.id, idStatusKey, emitEntries, recomputeDerivedForProcess]);
 
   useEffect(() => {
     if (executionProcessesLoading) return;
@@ -1202,11 +1078,9 @@ export const useConversationHistory = ({
 
   // If an execution process is removed, remove it from the state
   useEffect(() => {
-    if (!executionProcessesRaw) return;
-
     const removedProcessIds = Object.keys(
       displayedExecutionProcesses.current
-    ).filter((id) => !executionProcessesRaw.some((p) => p.id === id));
+    ).filter((id) => !executionProcessesById.current[id]);
 
     if (removedProcessIds.length > 0) {
       mergeIntoDisplayed((state) => {
@@ -1214,8 +1088,11 @@ export const useConversationHistory = ({
           delete state[id];
         });
       });
+      removedProcessIds.forEach((id) => {
+        derivedExecutionProcesses.current.delete(id);
+      });
     }
-  }, [attempt.id, idListKey, executionProcessesRaw]);
+  }, [attempt.id, idListKey]);
 
   return {
     loadOlderHistory,
