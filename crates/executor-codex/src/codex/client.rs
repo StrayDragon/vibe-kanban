@@ -723,6 +723,10 @@ impl JsonRpcCallbacks for AppServerClient {
         self.log_writer.log_raw(raw).await?;
 
         let method = notification.method.as_str();
+        // Codex app-server v0.117+ reports completion via `turn/completed` notifications.
+        if method == "turn/completed" {
+            return Ok(true);
+        }
         if !method.starts_with("codex/event") {
             return Ok(false);
         }
@@ -1153,6 +1157,30 @@ mod tests {
 
         let notification = JSONRPCNotification {
             method: "codex/event/turn_complete".to_string(),
+            params: None,
+        };
+
+        let finished = client
+            .on_notification(&peer, "raw", notification)
+            .await
+            .expect("notification");
+
+        assert!(finished);
+    }
+
+    #[tokio::test]
+    async fn on_notification_turn_completed_returns_true() {
+        let state = Arc::new(Mutex::new(ResponseState::default()));
+        let peer = spawn_peer(state).await;
+        let client = AppServerClient::new(
+            LogWriter::new(tokio::io::sink()),
+            None,
+            false,
+            VkDynamicToolContext::new(std::env::temp_dir()),
+        );
+
+        let notification = JSONRPCNotification {
+            method: "turn/completed".to_string(),
             params: None,
         };
 

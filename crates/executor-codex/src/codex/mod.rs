@@ -289,16 +289,26 @@ impl Codex {
         apply_overrides(builder, &self.cmd)
     }
 
+    fn effective_sandbox_mode(&self) -> SandboxMode {
+        // Default to full access. In practice this avoids sandbox-specific upstream issues (e.g.
+        // `/tmp` visibility under restricted filesystem policies on macOS). Users can opt into
+        // `auto` / `workspace-write` explicitly in config.
+        self.sandbox
+            .clone()
+            .unwrap_or(SandboxMode::DangerFullAccess)
+    }
+
     fn build_thread_start_params(&self, cwd: &Path) -> ThreadStartParams {
-        let sandbox = match self.sandbox.as_ref() {
-            None | Some(SandboxMode::Auto) => Some(ProtocolSandboxMode::WorkspaceWrite), // match the Auto preset in codex
-            Some(SandboxMode::ReadOnly) => Some(ProtocolSandboxMode::ReadOnly),
-            Some(SandboxMode::WorkspaceWrite) => Some(ProtocolSandboxMode::WorkspaceWrite),
-            Some(SandboxMode::DangerFullAccess) => Some(ProtocolSandboxMode::DangerFullAccess),
+        let sandbox_mode = self.effective_sandbox_mode();
+        let sandbox = match &sandbox_mode {
+            SandboxMode::Auto => Some(ProtocolSandboxMode::WorkspaceWrite), // match the Auto preset in codex
+            SandboxMode::ReadOnly => Some(ProtocolSandboxMode::ReadOnly),
+            SandboxMode::WorkspaceWrite => Some(ProtocolSandboxMode::WorkspaceWrite),
+            SandboxMode::DangerFullAccess => Some(ProtocolSandboxMode::DangerFullAccess),
         };
 
         let approval_policy = match self.ask_for_approval.as_ref() {
-            None if matches!(self.sandbox.as_ref(), None | Some(SandboxMode::Auto)) => {
+            None if matches!(sandbox_mode, SandboxMode::Auto) => {
                 // match the Auto preset in codex
                 Some(ProtocolAskForApproval::OnRequest)
             }
@@ -446,10 +456,8 @@ impl Codex {
 
         let params = self.build_thread_start_params(current_dir);
         let resume_session = resume_session.map(|s| s.to_string());
-        let auto_approve = matches!(
-            (&self.sandbox, &self.ask_for_approval),
-            (Some(SandboxMode::DangerFullAccess), None)
-        );
+        let auto_approve = self.ask_for_approval.is_none()
+            && matches!(self.effective_sandbox_mode(), SandboxMode::DangerFullAccess);
         let approvals = self.approvals.clone();
         let mut dynamic_tool_context =
             dynamic_tools::VkDynamicToolContext::new(current_dir.to_path_buf());

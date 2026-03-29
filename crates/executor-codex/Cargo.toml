@@ -31,12 +31,12 @@ strip-ansi-escapes = "0.2.1"
 sha2 = "0.10.9"
 tempfile = "3.10"
 
-codex-protocol = { git = "https://github.com/openai/codex.git", package = "codex-protocol", rev = "f028679abb30051cec2434e624cd99975986b41b" }
-codex-app-server-protocol = { git = "https://github.com/openai/codex.git", package = "codex-app-server-protocol", rev = "f028679abb30051cec2434e624cd99975986b41b" }
+codex-protocol = { git = "https://github.com/openai/codex.git", package = "codex-protocol", rev = "4c70bff480af37b1bf1a9b352b8341060fe55755" }
+codex-app-server-protocol = { git = "https://github.com/openai/codex.git", package = "codex-app-server-protocol", rev = "4c70bff480af37b1bf1a9b352b8341060fe55755" }
 
 [build-dependencies]
 sha2 = "0.10.9"
-codex-app-server-protocol = { git = "https://github.com/openai/codex.git", package = "codex-app-server-protocol", rev = "f028679abb30051cec2434e624cd99975986b41b" }
+codex-app-server-protocol = { git = "https://github.com/openai/codex.git", package = "codex-app-server-protocol", rev = "4c70bff480af37b1bf1a9b352b8341060fe55755" }
 serde_json = { workspace = true }
 
 [dev-dependencies]

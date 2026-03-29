@@ -824,9 +824,34 @@ source = "git+https://github.com/openai/codex.git?rev=f028679abb30051cec2434e624
 dependencies = [
  "anyhow",
  "clap",
- "codex-experimental-api-macros",
- "codex-protocol",
- "codex-utils-absolute-path",
+ "codex-experimental-api-macros 0.115.0",
+ "codex-protocol 0.115.0",
+ "codex-utils-absolute-path 0.115.0",
+ "inventory",
+ "rmcp 0.15.0",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "shlex",
+ "strum_macros 0.28.0",
+ "thiserror 2.0.17",
+ "tracing",
+ "ts-rs 11.1.0",
+ "uuid",
+]
+
+[[package]]
+name = "codex-app-server-protocol"
+version = "0.117.0"
+source = "git+https://github.com/openai/codex.git?rev=4c70bff480af37b1bf1a9b352b8341060fe55755#4c70bff480af37b1bf1a9b352b8341060fe55755"
+dependencies = [
+ "anyhow",
+ "clap",
+ "codex-experimental-api-macros 0.117.0",
+ "codex-git-utils",
+ "codex-protocol 0.117.0",
+ "codex-utils-absolute-path 0.117.0",
  "inventory",
  "rmcp 0.15.0",
  "schemars 0.8.22",
@@ -848,7 +873,23 @@ source = "git+https://github.com/openai/codex.git?rev=f028679abb30051cec2434e624
 dependencies = [
  "anyhow",
  "clap",
- "codex-utils-absolute-path",
+ "codex-utils-absolute-path 0.115.0",
+ "multimap",
+ "serde",
+ "serde_json",
+ "shlex",
+ "starlark",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "codex-execpolicy"
+version = "0.117.0"
+source = "git+https://github.com/openai/codex.git?rev=4c70bff480af37b1bf1a9b352b8341060fe55755#4c70bff480af37b1bf1a9b352b8341060fe55755"
+dependencies = [
+ "anyhow",
+ "clap",
+ "codex-utils-absolute-path 0.117.0",
  "multimap",
  "serde",
  "serde_json",
@@ -861,6 +902,16 @@ dependencies = [
 name = "codex-experimental-api-macros"
 version = "0.115.0"
 source = "git+https://github.com/openai/codex.git?rev=f028679abb30051cec2434e624cd99975986b41b#f028679abb30051cec2434e624cd99975986b41b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.108",
+]
+
+[[package]]
+name = "codex-experimental-api-macros"
+version = "0.117.0"
+source = "git+https://github.com/openai/codex.git?rev=4c70bff480af37b1bf1a9b352b8341060fe55755#4c70bff480af37b1bf1a9b352b8341060fe55755"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -883,18 +934,62 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-git-utils"
+version = "0.117.0"
+source = "git+https://github.com/openai/codex.git?rev=4c70bff480af37b1bf1a9b352b8341060fe55755#4c70bff480af37b1bf1a9b352b8341060fe55755"
+dependencies = [
+ "codex-utils-absolute-path 0.117.0",
+ "futures",
+ "once_cell",
+ "regex",
+ "schemars 0.8.22",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "ts-rs 11.1.0",
+ "walkdir",
+]
+
+[[package]]
 name = "codex-protocol"
 version = "0.115.0"
 source = "git+https://github.com/openai/codex.git?rev=f028679abb30051cec2434e624cd99975986b41b#f028679abb30051cec2434e624cd99975986b41b"
 dependencies = [
- "codex-execpolicy",
+ "codex-execpolicy 0.115.0",
  "codex-git",
- "codex-utils-absolute-path",
- "codex-utils-image",
+ "codex-utils-absolute-path 0.115.0",
+ "codex-utils-image 0.115.0",
  "icu_decimal",
  "icu_locale_core",
  "icu_provider",
  "mime_guess",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "strum",
+ "strum_macros 0.28.0",
+ "sys-locale",
+ "tracing",
+ "ts-rs 11.1.0",
+ "uuid",
+]
+
+[[package]]
+name = "codex-protocol"
+version = "0.117.0"
+source = "git+https://github.com/openai/codex.git?rev=4c70bff480af37b1bf1a9b352b8341060fe55755#4c70bff480af37b1bf1a9b352b8341060fe55755"
+dependencies = [
+ "codex-execpolicy 0.117.0",
+ "codex-git-utils",
+ "codex-utils-absolute-path 0.117.0",
+ "codex-utils-image 0.117.0",
+ "codex-utils-string",
+ "icu_decimal",
+ "icu_locale_core",
+ "icu_provider",
+ "quick-xml 0.38.4",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -920,9 +1015,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-utils-absolute-path"
+version = "0.117.0"
+source = "git+https://github.com/openai/codex.git?rev=4c70bff480af37b1bf1a9b352b8341060fe55755#4c70bff480af37b1bf1a9b352b8341060fe55755"
+dependencies = [
+ "dirs 6.0.0",
+ "path-absolutize",
+ "schemars 0.8.22",
+ "serde",
+ "ts-rs 11.1.0",
+]
+
+[[package]]
 name = "codex-utils-cache"
 version = "0.115.0"
 source = "git+https://github.com/openai/codex.git?rev=f028679abb30051cec2434e624cd99975986b41b#f028679abb30051cec2434e624cd99975986b41b"
+dependencies = [
+ "lru",
+ "sha1",
+ "tokio",
+]
+
+[[package]]
+name = "codex-utils-cache"
+version = "0.117.0"
+source = "git+https://github.com/openai/codex.git?rev=4c70bff480af37b1bf1a9b352b8341060fe55755#4c70bff480af37b1bf1a9b352b8341060fe55755"
 dependencies = [
  "lru",
  "sha1",
@@ -935,10 +1052,31 @@ version = "0.115.0"
 source = "git+https://github.com/openai/codex.git?rev=f028679abb30051cec2434e624cd99975986b41b#f028679abb30051cec2434e624cd99975986b41b"
 dependencies = [
  "base64",
- "codex-utils-cache",
+ "codex-utils-cache 0.115.0",
  "image",
  "thiserror 2.0.17",
  "tokio",
+]
+
+[[package]]
+name = "codex-utils-image"
+version = "0.117.0"
+source = "git+https://github.com/openai/codex.git?rev=4c70bff480af37b1bf1a9b352b8341060fe55755#4c70bff480af37b1bf1a9b352b8341060fe55755"
+dependencies = [
+ "base64",
+ "codex-utils-cache 0.117.0",
+ "image",
+ "mime_guess",
+ "thiserror 2.0.17",
+ "tokio",
+]
+
+[[package]]
+name = "codex-utils-string"
+version = "0.117.0"
+source = "git+https://github.com/openai/codex.git?rev=4c70bff480af37b1bf1a9b352b8341060fe55755#4c70bff480af37b1bf1a9b352b8341060fe55755"
+dependencies = [
+ "regex-lite",
 ]
 
 [[package]]
@@ -1790,8 +1928,8 @@ version = "0.0.143"
 dependencies = [
  "async-trait",
  "chrono",
- "codex-app-server-protocol",
- "codex-protocol",
+ "codex-app-server-protocol 0.117.0",
+ "codex-protocol 0.117.0",
  "command-group",
  "derivative",
  "directories",
@@ -1893,8 +2031,8 @@ name = "executor-fake-agent"
 version = "0.0.143"
 dependencies = [
  "async-trait",
- "codex-app-server-protocol",
- "codex-protocol",
+ "codex-app-server-protocol 0.115.0",
+ "codex-protocol 0.115.0",
  "command-group",
  "derivative",
  "executor-codex",
@@ -3869,7 +4007,7 @@ checksum = "740ebea15c5d1428f910cd1a5f52cebf8d25006245ed8ade92702f4943d91e07"
 dependencies = [
  "base64",
  "indexmap 2.12.0",
- "quick-xml 0.38.3",
+ "quick-xml 0.38.4",
  "serde",
  "time",
 ]
@@ -4083,11 +4221,12 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.38.3"
+version = "0.38.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42a232e7487fc2ef313d96dde7948e7a3c05101870d8985e4fd8d26aedd27b89"
+checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
 dependencies = [
  "memchr",
+ "serde",
 ]
 
 [[package]]
@@ -4317,6 +4456,12 @@ dependencies = [
  "memchr",
  "regex-syntax 0.8.8",
 ]
+
+[[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "regex-syntax"
