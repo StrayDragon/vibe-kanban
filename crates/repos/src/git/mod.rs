@@ -271,6 +271,81 @@ pub enum DiffContentPolicy {
     OmitContents,
 }
 
+#[derive(Debug)]
+pub struct WorktreeDiffPlan {
+    worktree_path: PathBuf,
+    base_rev: String,
+    entries: Vec<StatusDiffEntry>,
+    numstat_index: NumstatIndex,
+    additions: usize,
+    deletions: usize,
+    total_bytes: usize,
+    numstat_error: Option<String>,
+}
+
+impl WorktreeDiffPlan {
+    pub fn stats_error(&self) -> Option<&str> {
+        self.numstat_error.as_deref()
+    }
+
+    pub fn summary(&self) -> DiffSummary {
+        DiffSummary {
+            file_count: self.entries.len(),
+            added: self.additions,
+            deleted: self.deletions,
+            total_bytes: self.total_bytes,
+        }
+    }
+
+    pub fn listed_paths(&self) -> Vec<String> {
+        let mut seen = std::collections::BTreeSet::new();
+        for entry in &self.entries {
+            let (old_path_opt, new_path_opt) = GitService::entry_paths(entry);
+            if let Some(path) = new_path_opt.or(old_path_opt) {
+                seen.insert(path);
+            }
+        }
+        seen.into_iter().collect()
+    }
+
+    pub fn diffs(
+        &self,
+        content_policy: DiffContentPolicy,
+        path_filter: Option<&[&str]>,
+    ) -> Vec<Diff> {
+        let git = GitCli::new();
+        let filter: Option<std::collections::HashSet<&str>> =
+            path_filter.map(|paths| paths.iter().copied().collect());
+
+        self.entries
+            .iter()
+            .filter(|entry| {
+                let Some(filter) = filter.as_ref() else {
+                    return true;
+                };
+                if filter.contains(entry.path.as_str()) {
+                    return true;
+                }
+                entry
+                    .old_path
+                    .as_deref()
+                    .is_some_and(|old| filter.contains(old))
+            })
+            .cloned()
+            .map(|entry| {
+                GitService::status_entry_to_diff_worktree(
+                    &git,
+                    &self.worktree_path,
+                    &self.base_rev,
+                    entry,
+                    content_policy,
+                    &self.numstat_index,
+                )
+            })
+            .collect()
+    }
+}
+
 impl Default for GitService {
     fn default() -> Self {
         Self::new()
@@ -310,6 +385,49 @@ impl GitService {
             .map_err(|e| {
                 GitServiceError::InvalidRepository(format!("git remote get-url failed: {e}"))
             })
+    }
+
+    pub fn get_worktree_diff_plan(
+        &self,
+        worktree_path: &Path,
+        base_commit: &Commit,
+        path_filter: Option<&[&str]>,
+    ) -> Result<WorktreeDiffPlan, GitServiceError> {
+        let git = GitCli::new();
+        let cli_opts = StatusDiffOptions {
+            path_filter: path_filter.map(|fs| fs.iter().map(|s| s.to_string()).collect()),
+        };
+
+        let (entries, numstats, numstat_err) = git
+            .diff_status_and_numstat_entries_best_effort(worktree_path, base_commit, cli_opts)
+            .map_err(|e| GitServiceError::InvalidRepository(format!("git diff failed: {e}")))?;
+
+        let additions = numstats
+            .iter()
+            .map(|e| e.additions.unwrap_or(0))
+            .sum::<usize>();
+        let deletions = numstats
+            .iter()
+            .map(|e| e.deletions.unwrap_or(0))
+            .sum::<usize>();
+
+        let total_bytes = Self::compute_entry_total_bytes_worktree(
+            &git,
+            worktree_path,
+            base_commit.as_str(),
+            &entries,
+        );
+
+        Ok(WorktreeDiffPlan {
+            worktree_path: worktree_path.to_path_buf(),
+            base_rev: base_commit.as_str().to_string(),
+            entries,
+            numstat_index: Self::index_numstats(numstats),
+            additions,
+            deletions,
+            total_bytes,
+            numstat_error: numstat_err.map(|e| e.to_string()),
+        })
     }
 
     /// Ensure a local branch exists, creating it from `base_branch` when missing.
@@ -457,32 +575,8 @@ impl GitService {
                 worktree_path,
                 base_commit,
             } => {
-                let cli_opts = StatusDiffOptions {
-                    path_filter: path_filter.map(|fs| fs.iter().map(|s| s.to_string()).collect()),
-                };
-                let entries = git
-                    .diff_status(worktree_path, base_commit, cli_opts.clone())
-                    .map_err(|e| {
-                        GitServiceError::InvalidRepository(format!("git diff failed: {e}"))
-                    })?;
-                let numstats = git
-                    .diff_numstat_entries(worktree_path, base_commit, cli_opts)
-                    .unwrap_or_default();
-                let stats = Self::index_numstats(numstats);
-
-                Ok(entries
-                    .into_iter()
-                    .map(|e| {
-                        Self::status_entry_to_diff_worktree(
-                            &git,
-                            worktree_path,
-                            base_commit.as_str(),
-                            e,
-                            content_policy,
-                            &stats,
-                        )
-                    })
-                    .collect())
+                let plan = self.get_worktree_diff_plan(worktree_path, base_commit, path_filter)?;
+                Ok(plan.diffs(content_policy, None))
             }
             DiffTarget::Branch {
                 repo_path,
@@ -559,29 +653,13 @@ impl GitService {
         base_commit: &Commit,
         path_filter: Option<&[&str]>,
     ) -> Result<DiffSummary, GitServiceError> {
-        let git = GitCli::new();
-        let cli_opts = StatusDiffOptions {
-            path_filter: path_filter.map(|fs| fs.iter().map(|s| s.to_string()).collect()),
-        };
-        let entries = git
-            .diff_status(worktree_path, base_commit, cli_opts.clone())
-            .map_err(|e| GitServiceError::InvalidRepository(format!("git diff failed: {e}")))?;
-        let line_summary = git
-            .diff_numstat_summary(worktree_path, base_commit, cli_opts)
-            .map_err(|e| GitServiceError::InvalidRepository(format!("git diff failed: {e}")))?;
-        let total_bytes = Self::compute_entry_total_bytes_worktree(
-            &git,
-            worktree_path,
-            base_commit.as_str(),
-            &entries,
-        );
-
-        Ok(DiffSummary {
-            file_count: entries.len(),
-            added: line_summary.additions,
-            deleted: line_summary.deletions,
-            total_bytes,
-        })
+        let plan = self.get_worktree_diff_plan(worktree_path, base_commit, path_filter)?;
+        if let Some(err) = plan.stats_error() {
+            return Err(GitServiceError::InvalidRepository(format!(
+                "git diff failed: {err}"
+            )));
+        }
+        Ok(plan.summary())
     }
 
     /// Extract file path from a Diff (for indexing and ConversationPatch)
@@ -2050,6 +2128,39 @@ mod tests {
                 .load(std::sync::atomic::Ordering::SeqCst),
             1
         );
+    }
+
+    #[test]
+    fn worktree_diff_plan_stages_once_and_materializes_without_restaging() {
+        let _guard = git_test_lock();
+        super::cli::worktree_diff_test_support::reset_prepare_count();
+
+        let tmp = TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        let repo = root.join("repo");
+
+        git(root, &["init", repo.to_str().unwrap()]);
+        git_config_identity(&repo);
+        git(&repo, &["checkout", "-b", "main"]);
+        std::fs::write(repo.join("a.txt"), "a\n").expect("write file");
+        git(&repo, &["add", "a.txt"]);
+        git(&repo, &["commit", "-m", "init"]);
+
+        let base_oid = git(&repo, &["rev-parse", "HEAD"]);
+        let base_commit = Commit::new(base_oid.trim());
+
+        std::fs::write(repo.join("a.txt"), "b\n").expect("write file");
+        std::fs::write(repo.join("b.txt"), "new\n").expect("write file");
+
+        let service = GitService::new();
+        let plan = service
+            .get_worktree_diff_plan(&repo, &base_commit, None)
+            .expect("plan should succeed");
+        assert!(plan.stats_error().is_none());
+        assert_eq!(super::cli::worktree_diff_test_support::prepare_count(), 1);
+
+        let _diffs = plan.diffs(DiffContentPolicy::Full, None);
+        assert_eq!(super::cli::worktree_diff_test_support::prepare_count(), 1);
     }
 
     #[test]

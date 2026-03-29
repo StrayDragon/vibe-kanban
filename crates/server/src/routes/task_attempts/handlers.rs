@@ -42,8 +42,8 @@ use executors_protocol::actions::{
     script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
 };
 use repos::git::{
-    ConflictOp, DiffContentPolicy, DiffTarget, GitBranchType, GitCliError, GitMergeOptions,
-    GitService, GitServiceError,
+    ConflictOp, DiffContentPolicy, GitBranchType, GitCliError, GitMergeOptions, GitService,
+    GitServiceError, WorktreeDiffPlan,
 };
 use tasks::orchestration::{self, CreateTaskAttemptInput};
 use utils_core::{
@@ -419,16 +419,31 @@ pub async fn get_task_attempt_changes(
 
     let mut summary = DiffSummary::default();
     let mut summary_failed = false;
+    let mut plans: Vec<(String, WorktreeDiffPlan)> = Vec::new();
+
     for (repo, worktree_path, base_commit) in &repo_inputs {
         match deployment
             .git()
-            .get_worktree_diff_summary(worktree_path, base_commit, None)
+            .get_worktree_diff_plan(worktree_path, base_commit, None)
         {
-            Ok(repo_summary) => {
-                summary.file_count = summary.file_count.saturating_add(repo_summary.file_count);
-                summary.added = summary.added.saturating_add(repo_summary.added);
-                summary.deleted = summary.deleted.saturating_add(repo_summary.deleted);
-                summary.total_bytes = summary.total_bytes.saturating_add(repo_summary.total_bytes);
+            Ok(plan) => {
+                if let Some(err) = plan.stats_error() {
+                    summary_failed = true;
+                    tracing::warn!(
+                        workspace_id = %workspace.id,
+                        repo_name = %repo.name,
+                        error = %err,
+                        "Failed to compute diff stats for attempt changes"
+                    );
+                } else {
+                    let repo_summary = plan.summary();
+                    summary.file_count = summary.file_count.saturating_add(repo_summary.file_count);
+                    summary.added = summary.added.saturating_add(repo_summary.added);
+                    summary.deleted = summary.deleted.saturating_add(repo_summary.deleted);
+                    summary.total_bytes =
+                        summary.total_bytes.saturating_add(repo_summary.total_bytes);
+                }
+                plans.push((repo.name.clone(), plan));
             }
             Err(err) => {
                 summary_failed = true;
@@ -436,7 +451,7 @@ pub async fn get_task_attempt_changes(
                     workspace_id = %workspace.id,
                     repo_name = %repo.name,
                     error = %err,
-                    "Failed to compute diff summary for attempt changes"
+                    "Failed to compute diff plan for attempt changes"
                 );
             }
         }
@@ -459,34 +474,11 @@ pub async fn get_task_attempt_changes(
     let mut files: Vec<String> = Vec::new();
     if !blocked {
         let mut seen = std::collections::BTreeSet::new();
-        for (repo, worktree_path, base_commit) in &repo_inputs {
-            match deployment.git().get_diffs(
-                DiffTarget::Worktree {
-                    worktree_path,
-                    base_commit,
-                },
-                None,
-                DiffContentPolicy::OmitContents,
-            ) {
-                Ok(diffs) => {
-                    for diff in diffs {
-                        let Some(path) = diff.new_path.or(diff.old_path) else {
-                            continue;
-                        };
-                        seen.insert(format!("{}/{}", repo.name, path));
-                    }
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        workspace_id = %workspace.id,
-                        repo_name = %repo.name,
-                        error = %err,
-                        "Failed to compute changed files for attempt changes"
-                    );
-                }
+        for (repo_name, plan) in &plans {
+            for path in plan.listed_paths() {
+                seen.insert(format!("{repo_name}/{path}"));
             }
         }
-
         files = seen.into_iter().collect();
     }
 
@@ -685,7 +677,8 @@ pub async fn get_task_attempt_patch(
         ),
     };
 
-    let mut repo_inputs = Vec::new();
+    let mut repo_plans: Vec<(String, WorktreeDiffPlan)> = Vec::new();
+    let mut failed_plans: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut summary = DiffSummary::default();
     let mut summary_failed = false;
 
@@ -711,20 +704,26 @@ pub async fn get_task_attempt_patch(
 
         match deployment
             .git()
-            .get_worktree_diff_summary(&worktree_path, &base_commit, None)
+            .get_worktree_diff_plan(&worktree_path, &base_commit, None)
         {
-            Ok(repo_summary) => {
-                summary.file_count = summary.file_count.saturating_add(repo_summary.file_count);
-                summary.added = summary.added.saturating_add(repo_summary.added);
-                summary.deleted = summary.deleted.saturating_add(repo_summary.deleted);
-                summary.total_bytes = summary.total_bytes.saturating_add(repo_summary.total_bytes);
+            Ok(plan) => {
+                if plan.stats_error().is_some() {
+                    summary_failed = true;
+                } else {
+                    let repo_summary = plan.summary();
+                    summary.file_count = summary.file_count.saturating_add(repo_summary.file_count);
+                    summary.added = summary.added.saturating_add(repo_summary.added);
+                    summary.deleted = summary.deleted.saturating_add(repo_summary.deleted);
+                    summary.total_bytes =
+                        summary.total_bytes.saturating_add(repo_summary.total_bytes);
+                }
+                repo_plans.push((repo.name.clone(), plan));
             }
             Err(_) => {
                 summary_failed = true;
+                failed_plans.insert(repo.name.clone());
             }
         }
-
-        repo_inputs.push((repo, worktree_path, base_commit));
     }
 
     let guard_enabled = diff_stream::diff_preview_guard_thresholds(guard_preset.clone()).is_some();
@@ -789,33 +788,27 @@ pub async fn get_task_attempt_patch(
             .push(rel.to_string());
     }
 
+    for repo_name in requested_by_repo.keys() {
+        if failed_plans.contains(repo_name) {
+            return Ok(ResponseJson(ApiResponse::success(AttemptPatchResponse {
+                blocked: true,
+                blocked_reason: Some(AttemptArtifactBlockedReason::SummaryFailed),
+                truncated: false,
+                bytes: 0,
+                paths: request.paths,
+                patch: None,
+            })));
+        }
+    }
+
     let mut patch = String::new();
-    for (repo, worktree_path, base_commit) in &repo_inputs {
-        let Some(rel_paths) = requested_by_repo.get(&repo.name) else {
+    for (repo_name, plan) in &repo_plans {
+        let Some(rel_paths) = requested_by_repo.get(repo_name) else {
             continue;
         };
 
         let filter: Vec<&str> = rel_paths.iter().map(|s| s.as_str()).collect();
-        let diffs = match deployment.git().get_diffs(
-            DiffTarget::Worktree {
-                worktree_path,
-                base_commit,
-            },
-            Some(&filter),
-            DiffContentPolicy::Full,
-        ) {
-            Ok(diffs) => diffs,
-            Err(_) => {
-                return Ok(ResponseJson(ApiResponse::success(AttemptPatchResponse {
-                    blocked: true,
-                    blocked_reason: Some(AttemptArtifactBlockedReason::SummaryFailed),
-                    truncated: false,
-                    bytes: 0,
-                    paths: request.paths,
-                    patch: None,
-                })));
-            }
-        };
+        let diffs = plan.diffs(DiffContentPolicy::Full, Some(&filter));
 
         for diff in diffs {
             let Some(path) = diff.new_path.or(diff.old_path) else {
@@ -824,7 +817,7 @@ pub async fn get_task_attempt_patch(
 
             let old = diff.old_content.unwrap_or_default();
             let new = diff.new_content.unwrap_or_default();
-            let file_path = format!("{}/{}", repo.name, path);
+            let file_path = format!("{repo_name}/{path}");
             patch.push_str(&create_unified_diff(&file_path, &old, &new));
             if !patch.ends_with('\n') {
                 patch.push('\n');
@@ -2368,12 +2361,12 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        AttemptChangesBlockedReason, AttemptChangesQuery, AttemptState, CreateTaskAttemptBody,
-        RenameBranchError, RenameBranchRequest, WorkspaceRepoInput, blocked_predecessors,
-        cleanup_failed_attempt_start, create_task_attempt, get_task_attempt_changes,
-        get_task_attempt_status, normalize_dev_server_working_dir, rename_branch,
-        resolve_executor_profile_id, resolve_topology_base_branches, run_git_operation,
-        validate_dev_server_script,
+        AttemptChangesBlockedReason, AttemptChangesQuery, AttemptPatchRequest, AttemptState,
+        CreateTaskAttemptBody, RenameBranchError, RenameBranchRequest, WorkspaceRepoInput,
+        blocked_predecessors, cleanup_failed_attempt_start, create_task_attempt,
+        get_task_attempt_changes, get_task_attempt_patch, get_task_attempt_status,
+        normalize_dev_server_working_dir, rename_branch, resolve_executor_profile_id,
+        resolve_topology_base_branches, run_git_operation, validate_dev_server_script,
     };
     use crate::{
         DeploymentImpl,
@@ -3225,6 +3218,115 @@ mod tests {
             changes.files.len() >= 201,
             "expected files list to include created files"
         );
+
+        WorkspaceManager::cleanup_workspace(&workspace_dir, &[repo])
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn attempt_patch_returns_unified_diff_for_requested_paths() {
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let _env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+
+        {
+            let mut config = deployment.config().write().await;
+            config.diff_preview_guard = DiffPreviewGuardPreset::Safe;
+        }
+
+        let repo_path = temp_root.join("repo");
+        GitService::new()
+            .initialize_repo_with_main_branch(&repo_path)
+            .unwrap();
+
+        let project_id = Uuid::new_v4();
+        Project::create(
+            &deployment.db().pool,
+            &CreateProject {
+                name: "Attempt patch project".to_string(),
+                repositories: Vec::new(),
+            },
+            project_id,
+        )
+        .await
+        .unwrap();
+
+        let repo = Repo::find_or_create(&deployment.db().pool, &repo_path, "Repo")
+            .await
+            .unwrap();
+        ProjectRepo::create(&deployment.db().pool, project_id, repo.id)
+            .await
+            .unwrap();
+
+        let task_id = Uuid::new_v4();
+        Task::create(
+            &deployment.db().pool,
+            &CreateTask::from_title_description(project_id, "Attempt patch task".to_string(), None),
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        let branch_name = format!("attempt-patch-{}", Uuid::new_v4());
+        let workspace_id = Uuid::new_v4();
+        let mut workspace = Workspace::create(
+            &deployment.db().pool,
+            &CreateWorkspace {
+                branch: branch_name.clone(),
+                agent_working_dir: None,
+            },
+            workspace_id,
+            task_id,
+        )
+        .await
+        .unwrap();
+
+        WorkspaceRepo::create_many(
+            &deployment.db().pool,
+            workspace.id,
+            &[CreateWorkspaceRepo {
+                repo_id: repo.id,
+                target_branch: "main".to_string(),
+            }],
+        )
+        .await
+        .unwrap();
+
+        let workspace_dir_name =
+            LocalContainerService::dir_name_from_workspace(&workspace.id, "Attempt patch task");
+        let workspace_dir = WorkspaceManager::get_workspace_base_dir().join(&workspace_dir_name);
+        let _container = WorkspaceManager::create_workspace(
+            &workspace_dir,
+            &[repos::workspace_manager::RepoWorkspaceInput::new(
+                repo.clone(),
+                "main".to_string(),
+            )],
+            &branch_name,
+        )
+        .await
+        .unwrap();
+
+        let worktree_path = workspace_dir.join(&repo.name);
+        let changed_file = worktree_path.join("patch-me.txt");
+        std::fs::write(&changed_file, "hello\n").unwrap();
+
+        workspace.container_ref = Some(workspace_dir.to_string_lossy().to_string());
+
+        let req = AttemptPatchRequest {
+            paths: vec![format!("{}/patch-me.txt", repo.name)],
+            max_bytes: None,
+            force: true,
+        };
+        let ResponseJson(response) =
+            get_task_attempt_patch(Extension(workspace), State(deployment), Json(req))
+                .await
+                .unwrap();
+        let patch = response.into_data().expect("patch response").patch.unwrap();
+        assert!(patch.contains("patch-me.txt"));
+        assert!(patch.contains("+hello"));
 
         WorkspaceManager::cleanup_workspace(&workspace_dir, &[repo])
             .await
