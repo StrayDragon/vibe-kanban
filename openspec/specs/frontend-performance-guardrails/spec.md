@@ -57,3 +57,11 @@ The frontend SHALL NOT statically import dev-only tooling modules from the produ
 - **THEN** the dev-only tooling modules are loaded via dynamic import and rendered
 - **AND** when `import.meta.env.DEV` is false the dev-only tooling is not loaded and not rendered
 
+### Requirement: Optimistic resync checks are scheduled, not polled
+When the frontend maintains optimistic task state that may require a resync, it SHALL schedule the next optimistic-stale check using a one-shot timer based on the earliest eligible resync time, and SHALL NOT rely on a fixed high-frequency polling loop.
+
+#### Scenario: Optimistic state triggers one-shot scheduling
+- **WHEN** optimistic task state exists and a resync is not yet eligible due to time gates
+- **THEN** the frontend schedules a single next check at the earliest eligible time
+- **AND** it does not wake on a fixed 250ms polling loop while waiting
+

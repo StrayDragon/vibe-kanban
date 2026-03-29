@@ -10,6 +10,7 @@ import {
   EMPTY_TASKS_BY_STATUS,
   type TaskDerivationCache,
 } from '../tasks/taskDerivation';
+import { nextOptimisticResyncEligibleAtMs } from '../tasks/optimisticResyncScheduler';
 
 type TasksState = {
   tasks: Record<string, TaskWithAttemptStatus>;
@@ -113,11 +114,34 @@ export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
   useEffect(() => {
     if (!connectEnabled) return;
     if (!hasOptimisticState) return;
+    const now = Date.now();
+    const nextEligibleAt = nextOptimisticResyncEligibleAtMs(
+      [
+        ...Object.values(inserts).map((entry) => entry.meta),
+        ...Object.values(overrides).map((entry) => entry.meta),
+        ...Object.values(tombstones).map((entry) => entry.meta),
+      ],
+      {
+        now,
+        resyncAfterMs: 1200,
+        minResyncGapMs: 800,
+        maxAttempts: 2,
+      }
+    );
+    if (nextEligibleAt === null) return;
+
     const timer = window.setTimeout(() => {
       setOptimisticStaleTick((value) => value + 1);
-    }, 250);
+    }, nextEligibleAt - now);
     return () => window.clearTimeout(timer);
-  }, [connectEnabled, hasOptimisticState, optimisticStaleTick]);
+  }, [
+    connectEnabled,
+    hasOptimisticState,
+    inserts,
+    optimisticStaleTick,
+    overrides,
+    tombstones,
+  ]);
 
   const { tasks, tasksById, tasksByStatus } = useMemo(() => {
     if (!data) {
