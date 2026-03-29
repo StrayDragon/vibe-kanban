@@ -1279,11 +1279,16 @@ impl GitService {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "HEAD".to_string());
 
-        let oid = git.rev_parse(repo_path, "HEAD").map_err(|_| {
-            GitServiceError::InvalidRepository("Repository HEAD has no target commit".to_string())
-        })?;
+        let oid = self.get_head_oid(repo_path)?;
 
         Ok(HeadInfo { branch, oid })
+    }
+
+    /// Get current HEAD commit OID as a hex string.
+    pub fn get_head_oid(&self, repo_path: &Path) -> Result<String, GitServiceError> {
+        GitCli::new().rev_parse(repo_path, "HEAD").map_err(|_| {
+            GitServiceError::InvalidRepository("Repository HEAD has no target commit".to_string())
+        })
     }
 
     /// Get the commit OID (as hex string) for a given ref without modifying HEAD.

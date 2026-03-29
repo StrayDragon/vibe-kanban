@@ -828,6 +828,11 @@ impl AppRuntime {
             "Cache budget"
         );
         tracing::info!(
+            cache = "file_search_head_check",
+            ttl_secs = budgets.file_search_head_check_ttl.as_secs(),
+            "Cache budget"
+        );
+        tracing::info!(
             cache = "file_search_watchers",
             max_entries = budgets.file_search_watchers_max,
             ttl_secs = budgets.file_search_watcher_ttl.as_secs(),

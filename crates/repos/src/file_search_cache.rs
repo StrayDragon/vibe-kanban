@@ -111,10 +111,12 @@ pub enum CacheError {
 /// File search cache with indexed files
 pub struct FileSearchCache {
     cache: Cache<PathBuf, Arc<CachedRepo>>,
-    git_service: GitService,
     file_ranker: FileRanker,
     build_queue: mpsc::Sender<PathBuf>,
     pending_builds: Arc<DashMap<PathBuf, ()>>,
+    head_check_queue: mpsc::Sender<PathBuf>,
+    pending_head_checks: Arc<DashMap<PathBuf, ()>>,
+    last_head_check: Arc<DashMap<PathBuf, Instant>>,
     watchers: DashMap<PathBuf, RepoWatcher>,
 }
 
@@ -126,6 +128,12 @@ impl FileSearchCache {
             .saturating_mul(4)
             .clamp(1, 1024);
         let (build_sender, build_receiver) = mpsc::channel(build_queue_capacity);
+
+        let head_check_queue_capacity = budgets
+            .file_search_cache_max_repos
+            .saturating_mul(2)
+            .clamp(1, 1024);
+        let (head_check_sender, head_check_receiver) = mpsc::channel(head_check_queue_capacity);
         let mut cache_builder =
             Cache::builder().max_capacity(budgets.file_search_cache_max_repos as u64);
         if !budgets.file_search_cache_ttl.is_zero() {
@@ -134,6 +142,8 @@ impl FileSearchCache {
         let cache = cache_builder.build();
 
         let pending_builds = Arc::new(DashMap::new());
+        let pending_head_checks = Arc::new(DashMap::new());
+        let last_head_check = Arc::new(DashMap::new());
 
         let cache_for_worker = cache.clone();
         let git_service = GitService::new();
@@ -154,12 +164,33 @@ impl FileSearchCache {
             .await;
         });
 
+        let head_worker_cache = cache.clone();
+        let head_worker_git_service = git_service.clone();
+        let head_worker_build_queue = build_sender.clone();
+        let head_worker_pending_builds = Arc::clone(&pending_builds);
+        let head_worker_pending_head_checks = Arc::clone(&pending_head_checks);
+        let head_worker_last_head_check = Arc::clone(&last_head_check);
+        tokio::spawn(async move {
+            Self::head_check_worker(
+                head_check_receiver,
+                head_worker_cache,
+                head_worker_git_service,
+                head_worker_build_queue,
+                head_worker_pending_builds,
+                head_worker_pending_head_checks,
+                head_worker_last_head_check,
+            )
+            .await;
+        });
+
         Self {
             cache,
-            git_service,
             file_ranker,
             build_queue: build_sender,
             pending_builds,
+            head_check_queue: head_check_sender,
+            pending_head_checks,
+            last_head_check,
             watchers: DashMap::new(),
         }
     }
@@ -269,6 +300,42 @@ impl FileSearchCache {
         }
     }
 
+    fn enqueue_head_check(&self, repo_path: PathBuf) {
+        let ttl = cache_budgets().file_search_head_check_ttl;
+        if ttl.is_zero() {
+            return;
+        }
+
+        if self.pending_builds.contains_key(&repo_path) {
+            return;
+        }
+
+        if let Some(last) = self.last_head_check.get(&repo_path)
+            && last.elapsed() < ttl
+        {
+            return;
+        }
+
+        if self
+            .pending_head_checks
+            .insert(repo_path.clone(), ())
+            .is_some()
+        {
+            return;
+        }
+
+        if let Err(err) = self.head_check_queue.try_send(repo_path.clone()) {
+            self.pending_head_checks.remove(&repo_path);
+            if should_warn("file_search_head_check_queue") {
+                warn!(
+                    repo = ?repo_path,
+                    error = %err,
+                    "Failed to enqueue repo HEAD check"
+                );
+            }
+        }
+    }
+
     /// Search files in repository using cache
     pub async fn search(
         &self,
@@ -278,12 +345,9 @@ impl FileSearchCache {
     ) -> Result<RepoSearchResponse, CacheError> {
         let repo_path_buf = repo_path.to_path_buf();
 
-        // Check if we have a valid cache entry
-        if let Some(cached) = self.cache.get(&repo_path_buf).await
-            && let Ok(head_info) = self.git_service.get_head_info(&repo_path_buf)
-            && head_info.oid == cached.head_sha
-        {
-            // Cache hit - perform fast search with mode-based filtering
+        // Cache hit - return results immediately, and validate HEAD asynchronously.
+        if let Some(cached) = self.cache.get(&repo_path_buf).await {
+            self.enqueue_head_check(repo_path_buf.clone());
             return Ok(RepoSearchResponse {
                 results: self.search_in_cache(cached.as_ref(), query, mode).await,
                 index_truncated: cached.index_truncated,
@@ -469,8 +533,8 @@ impl FileSearchCache {
         info!("Building cache for repo: {:?}", repo_path);
 
         // Get current HEAD
-        let head_info = git_service
-            .get_head_info(&repo_path_buf)
+        let head_oid = git_service
+            .get_head_oid(&repo_path_buf)
             .map_err(|e| format!("Failed to get HEAD info: {e}"))?;
 
         // Get git stats
@@ -499,7 +563,7 @@ impl FileSearchCache {
         }
 
         Ok(CachedRepo {
-            head_sha: head_info.oid,
+            head_sha: head_oid,
             indexed_files: file_index.files,
             stats,
             index_truncated: file_index.index_truncated,
@@ -676,6 +740,59 @@ impl FileSearchCache {
         }
     }
 
+    async fn head_check_worker(
+        mut head_receiver: mpsc::Receiver<PathBuf>,
+        cache: Cache<PathBuf, Arc<CachedRepo>>,
+        git_service: GitService,
+        build_queue: mpsc::Sender<PathBuf>,
+        pending_builds: Arc<DashMap<PathBuf, ()>>,
+        pending_head_checks: Arc<DashMap<PathBuf, ()>>,
+        last_head_check: Arc<DashMap<PathBuf, Instant>>,
+    ) {
+        while let Some(repo_path) = head_receiver.recv().await {
+            let now = Instant::now();
+            let _pending = pending_head_checks.remove(&repo_path);
+            last_head_check.insert(repo_path.clone(), now);
+
+            if pending_builds.contains_key(&repo_path) {
+                continue;
+            }
+
+            let Some(cached) = cache.get(&repo_path).await else {
+                continue;
+            };
+
+            let head_oid = match git_service.get_head_oid(&repo_path) {
+                Ok(oid) => oid,
+                Err(err) => {
+                    if should_warn("file_search_head_check_failed") {
+                        warn!(repo = ?repo_path, error = %err, "Failed to check repo HEAD");
+                    }
+                    continue;
+                }
+            };
+
+            if head_oid == cached.head_sha {
+                continue;
+            }
+
+            if pending_builds.insert(repo_path.clone(), ()).is_some() {
+                continue;
+            }
+
+            if let Err(err) = build_queue.try_send(repo_path.clone()) {
+                pending_builds.remove(&repo_path);
+                if should_warn("file_search_cache_build_queue") {
+                    warn!(
+                        repo = ?repo_path,
+                        error = %err,
+                        "Failed to enqueue repo cache rebuild after HEAD change"
+                    );
+                }
+            }
+        }
+    }
+
     /// Setup file watcher for repository
     pub async fn setup_watcher(&self, repo_path: &Path) -> Result<(), String> {
         let repo_path_buf = repo_path.to_path_buf();
@@ -768,11 +885,57 @@ impl Default for FileSearchCache {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, fs, time::Instant};
+    use std::{collections::HashMap, fs, process::Command, time::Instant};
 
     use tempfile::tempdir;
 
     use super::*;
+
+    fn git(repo_path: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn git_commit_all(repo_path: &Path, message: &str) {
+        git(repo_path, &["add", "."]);
+        git(
+            repo_path,
+            &[
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "user.name=vk-test",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                message,
+            ],
+        );
+    }
+
+    async fn wait_for_cached_repo(cache: &FileSearchCache, repo_path: &PathBuf) {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if cache.cache.get(repo_path).await.is_some() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("repo cached in time");
+    }
 
     #[test]
     fn build_file_index_enforces_cap_and_records_truncation() {
@@ -816,5 +979,60 @@ mod tests {
             .expect("setup_watcher should succeed");
 
         assert_eq!(cache.watcher_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn search_does_not_sync_miss_on_head_change_and_refreshes_in_background() {
+        let dir = tempdir().expect("tempdir");
+        git(dir.path(), &["init"]);
+        fs::write(dir.path().join("a.txt"), "hello").expect("write a.txt");
+        git_commit_all(dir.path(), "first");
+
+        let repo_path = dir.path().to_path_buf();
+
+        let cache = FileSearchCache::new();
+        cache
+            .warm_repos(vec![repo_path.clone()])
+            .await
+            .expect("warm repos");
+        wait_for_cached_repo(&cache, &repo_path).await;
+
+        let cached_before = cache
+            .cache
+            .get(&repo_path)
+            .await
+            .expect("cached repo entry");
+        let head_before = cached_before.head_sha.clone();
+
+        fs::write(dir.path().join("b.txt"), "world").expect("write b.txt");
+        git_commit_all(dir.path(), "second");
+
+        let head_after = GitService::new()
+            .get_head_oid(&repo_path)
+            .expect("get head oid");
+        assert_ne!(head_before, head_after);
+
+        // With the async head-check, this should still be a cache hit even when HEAD changed.
+        let resp = cache
+            .search(&repo_path, "a", SearchMode::TaskForm)
+            .await
+            .expect("cache hit search");
+        assert!(!resp.results.is_empty());
+
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let cached = cache
+                    .cache
+                    .get(&repo_path)
+                    .await
+                    .expect("cached repo entry");
+                if cached.head_sha == head_after {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("head refresh rebuild completes");
     }
 }

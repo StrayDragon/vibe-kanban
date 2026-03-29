@@ -11,6 +11,7 @@ use tracing::warn;
 const DEFAULT_FILE_SEARCH_CACHE_MAX_REPOS: usize = 25;
 const DEFAULT_FILE_SEARCH_CACHE_TTL_SECS: u64 = 3600;
 const DEFAULT_FILE_SEARCH_MAX_FILES: usize = 200_000;
+const DEFAULT_FILE_SEARCH_HEAD_CHECK_TTL_SECS: u64 = 5;
 const DEFAULT_FILE_SEARCH_WATCHERS_MAX: usize = 25;
 const DEFAULT_FILE_SEARCH_WATCHER_TTL_SECS: u64 = 21600;
 const DEFAULT_FILE_STATS_CACHE_MAX_REPOS: usize = 25;
@@ -27,6 +28,7 @@ pub struct CacheBudgetConfig {
     pub file_search_cache_max_repos: usize,
     pub file_search_cache_ttl: Duration,
     pub file_search_max_files: usize,
+    pub file_search_head_check_ttl: Duration,
     pub file_search_watchers_max: usize,
     pub file_search_watcher_ttl: Duration,
     pub file_stats_cache_max_repos: usize,
@@ -45,6 +47,9 @@ impl Default for CacheBudgetConfig {
             file_search_cache_max_repos: DEFAULT_FILE_SEARCH_CACHE_MAX_REPOS,
             file_search_cache_ttl: Duration::from_secs(DEFAULT_FILE_SEARCH_CACHE_TTL_SECS),
             file_search_max_files: DEFAULT_FILE_SEARCH_MAX_FILES,
+            file_search_head_check_ttl: Duration::from_secs(
+                DEFAULT_FILE_SEARCH_HEAD_CHECK_TTL_SECS,
+            ),
             file_search_watchers_max: DEFAULT_FILE_SEARCH_WATCHERS_MAX,
             file_search_watcher_ttl: Duration::from_secs(DEFAULT_FILE_SEARCH_WATCHER_TTL_SECS),
             file_stats_cache_max_repos: DEFAULT_FILE_STATS_CACHE_MAX_REPOS,
@@ -80,6 +85,11 @@ impl CacheBudgetConfig {
         let file_search_max_files = read_env_usize(
             "VK_FILE_SEARCH_MAX_FILES",
             defaults.file_search_max_files,
+            &get_env,
+        );
+        let file_search_head_check_ttl = read_env_duration(
+            "VK_FILE_SEARCH_HEAD_CHECK_TTL_SECS",
+            defaults.file_search_head_check_ttl,
             &get_env,
         );
         let file_search_watchers_max = read_env_usize(
@@ -119,6 +129,7 @@ impl CacheBudgetConfig {
                 "VK_FILE_SEARCH_MAX_FILES",
                 defaults.file_search_max_files,
             ),
+            file_search_head_check_ttl,
             file_search_watchers_max: normalize_max(
                 file_search_watchers_max,
                 "VK_FILE_SEARCH_WATCHERS_MAX",
@@ -292,6 +303,10 @@ mod tests {
             DEFAULT_FILE_SEARCH_CACHE_TTL_SECS
         );
         assert_eq!(cfg.file_search_max_files, DEFAULT_FILE_SEARCH_MAX_FILES);
+        assert_eq!(
+            cfg.file_search_head_check_ttl.as_secs(),
+            DEFAULT_FILE_SEARCH_HEAD_CHECK_TTL_SECS
+        );
         assert_eq!(
             cfg.file_search_watchers_max,
             DEFAULT_FILE_SEARCH_WATCHERS_MAX
