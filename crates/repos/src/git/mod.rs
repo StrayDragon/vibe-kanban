@@ -1,9 +1,13 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use chrono::{DateTime, Utc};
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ts_rs::TS;
@@ -42,6 +46,94 @@ pub enum GitServiceError {
 /// Service for managing Git operations in task execution workflows
 #[derive(Clone)]
 pub struct GitService {}
+
+const GIT_REMOTE_STATUS_FETCH_TTL_ENV: &str = "VK_GIT_REMOTE_STATUS_FETCH_TTL_SECS";
+const DEFAULT_GIT_REMOTE_STATUS_FETCH_TTL_SECS: u64 = 30;
+const DEFAULT_GIT_REMOTE_STATUS_FETCH_FAILURE_COOLDOWN_SECS: u64 = 10;
+
+static REMOTE_STATUS_FETCH_TTL: Lazy<Duration> = Lazy::new(|| {
+    match std::env::var(GIT_REMOTE_STATUS_FETCH_TTL_ENV) {
+        Ok(value) => match value.trim().parse::<u64>() {
+            Ok(parsed) => Duration::from_secs(parsed),
+            Err(err) => {
+                tracing::warn!(
+                    "Invalid {GIT_REMOTE_STATUS_FETCH_TTL_ENV}='{value}': {err}. Using default {DEFAULT_GIT_REMOTE_STATUS_FETCH_TTL_SECS}s."
+                );
+                Duration::from_secs(DEFAULT_GIT_REMOTE_STATUS_FETCH_TTL_SECS)
+            }
+        },
+        Err(_) => Duration::from_secs(DEFAULT_GIT_REMOTE_STATUS_FETCH_TTL_SECS),
+    }
+});
+
+fn remote_status_fetch_ttl() -> Duration {
+    #[cfg(test)]
+    if let Some(secs) = remote_status_fetch_test_support::ttl_override() {
+        return Duration::from_secs(secs);
+    }
+    *REMOTE_STATUS_FETCH_TTL
+}
+
+fn remote_status_fetch_failure_cooldown(ttl: Duration) -> Duration {
+    let default = Duration::from_secs(DEFAULT_GIT_REMOTE_STATUS_FETCH_FAILURE_COOLDOWN_SECS);
+    if ttl.is_zero() {
+        default
+    } else {
+        default.min(ttl)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RemoteStatusFetchKey {
+    repo_path: PathBuf,
+    remote: String,
+    branch: String,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct RemoteStatusFetchState {
+    in_progress: bool,
+    last_success: Option<Instant>,
+    last_failure: Option<Instant>,
+}
+
+static REMOTE_STATUS_FETCH_STATE: Lazy<
+    DashMap<RemoteStatusFetchKey, Arc<Mutex<RemoteStatusFetchState>>>,
+> = Lazy::new(DashMap::new);
+
+#[cfg(test)]
+mod remote_status_fetch_test_support {
+    use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+
+    use super::REMOTE_STATUS_FETCH_STATE;
+
+    pub(super) static REMOTE_STATUS_FETCH_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+    static REMOTE_STATUS_FETCH_TTL_OVERRIDE_SECS: AtomicI64 = AtomicI64::new(-1);
+
+    pub(super) fn record_attempt() {
+        REMOTE_STATUS_FETCH_ATTEMPTS.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub(super) fn set_ttl_override(secs: u64) {
+        let value = i64::try_from(secs).unwrap_or(i64::MAX);
+        REMOTE_STATUS_FETCH_TTL_OVERRIDE_SECS.store(value, Ordering::SeqCst);
+    }
+
+    pub(super) fn ttl_override() -> Option<u64> {
+        let value = REMOTE_STATUS_FETCH_TTL_OVERRIDE_SECS.load(Ordering::SeqCst);
+        if value < 0 {
+            None
+        } else {
+            u64::try_from(value).ok()
+        }
+    }
+
+    pub(super) fn reset_state() {
+        REMOTE_STATUS_FETCH_STATE.clear();
+        REMOTE_STATUS_FETCH_ATTEMPTS.store(0, Ordering::SeqCst);
+        REMOTE_STATUS_FETCH_TTL_OVERRIDE_SECS.store(-1, Ordering::SeqCst);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitBranchType {
@@ -933,6 +1025,92 @@ impl GitService {
         branch_name: &str,
         base_branch_name: Option<&str>,
     ) -> Result<(usize, usize), GitServiceError> {
+        fn split_remote_tracking_branch(base: &str) -> Option<(&str, &str)> {
+            let (remote, rest) = base.split_once('/')?;
+            if remote.is_empty() || rest.is_empty() {
+                return None;
+            }
+            Some((remote, rest))
+        }
+
+        fn maybe_refresh_remote_tracking_branch(
+            repo_path: &Path,
+            remote: &str,
+            remote_branch: &str,
+        ) {
+            let ttl = remote_status_fetch_ttl();
+            let failure_cooldown = remote_status_fetch_failure_cooldown(ttl);
+            let now = Instant::now();
+
+            let key = RemoteStatusFetchKey {
+                repo_path: repo_path.to_path_buf(),
+                remote: remote.to_string(),
+                branch: remote_branch.to_string(),
+            };
+
+            let state = REMOTE_STATUS_FETCH_STATE
+                .entry(key)
+                .or_insert_with(|| Arc::new(Mutex::new(RemoteStatusFetchState::default())))
+                .clone();
+
+            {
+                let mut locked = state.lock().unwrap();
+                if locked.in_progress {
+                    return;
+                }
+
+                if !ttl.is_zero()
+                    && locked
+                        .last_success
+                        .is_some_and(|last| now.duration_since(last) < ttl)
+                {
+                    return;
+                }
+
+                if locked
+                    .last_failure
+                    .is_some_and(|last| now.duration_since(last) < failure_cooldown)
+                {
+                    return;
+                }
+
+                locked.in_progress = true;
+            }
+
+            let git = GitCli::new();
+            let refspec =
+                format!("+refs/heads/{remote_branch}:refs/remotes/{remote}/{remote_branch}");
+
+            #[cfg(test)]
+            remote_status_fetch_test_support::record_attempt();
+
+            let result = git.fetch_with_refspec(repo_path, remote, &refspec);
+
+            {
+                let mut locked = state.lock().unwrap();
+                locked.in_progress = false;
+                match result {
+                    Ok(()) => {
+                        locked.last_success = Some(now);
+                        locked.last_failure = None;
+                    }
+                    Err(_) => {
+                        locked.last_failure = Some(now);
+                    }
+                }
+            }
+
+            if let Err(err) = result {
+                tracing::debug!(
+                    repo = ?repo_path,
+                    remote = remote,
+                    remote_branch = remote_branch,
+                    error = %err,
+                    "remote tracking ref refresh failed; using existing refs"
+                );
+            }
+        }
+
         let git = GitCli::new();
 
         let base = if let Some(bn) = base_branch_name {
@@ -951,15 +1129,14 @@ impl GitService {
             upstream
         };
 
-        let remote = base
-            .split('/')
-            .next()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("origin")
-            .to_string();
-        // Update remote tracking refs so ahead/behind uses latest info.
-        let refspec = format!("+refs/heads/*:refs/remotes/{remote}/*");
-        git.fetch_with_refspec(repo_path, &remote, &refspec)?;
+        let (remote, remote_branch) = split_remote_tracking_branch(&base).ok_or_else(|| {
+            GitServiceError::InvalidRepository(format!(
+                "Remote-tracking branch '{base}' is not in '<remote>/<branch>' form"
+            ))
+        })?;
+
+        // Best-effort: refresh the specific remote-tracking branch, TTL-gated.
+        maybe_refresh_remote_tracking_branch(repo_path, remote, remote_branch);
 
         git.rev_list_left_right_count(repo_path, branch_name, &base)
             .map_err(GitServiceError::from)
@@ -1693,5 +1870,221 @@ impl GitService {
 
         // NOTE: We intentionally do not attempt to resolve renames here; we rank by current paths.
         Ok(stats)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        path::Path,
+        process::Command,
+        sync::{Mutex, OnceLock},
+    };
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    fn git_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    fn git(workdir: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(workdir)
+            .args(args)
+            .output()
+            .expect("git command should spawn");
+        if !output.status.success() {
+            panic!(
+                "git {:?} failed (code={:?})\nstdout:\n{}\nstderr:\n{}",
+                args,
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        String::from_utf8_lossy(&output.stdout).to_string()
+    }
+
+    fn git_config_identity(repo: &Path) {
+        git(repo, &["config", "user.email", "vk-test@example.com"]);
+        git(repo, &["config", "user.name", "vk-test"]);
+    }
+
+    fn commit_and_push(repo: &Path, msg: &str) {
+        std::fs::write(repo.join("file.txt"), format!("{msg}\n")).expect("write file");
+        git(repo, &["add", "file.txt"]);
+        git(repo, &["commit", "-m", msg]);
+        git(repo, &["push"]);
+    }
+
+    #[test]
+    fn remote_branch_status_fetch_is_ttl_gated() {
+        let _guard = git_test_lock();
+        remote_status_fetch_test_support::reset_state();
+        remote_status_fetch_test_support::set_ttl_override(3600);
+
+        let tmp = TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        let remote = root.join("remote.git");
+        let local = root.join("local");
+        let other = root.join("other");
+
+        git(root, &["init", "--bare", remote.to_str().unwrap()]);
+
+        git(
+            root,
+            &["clone", remote.to_str().unwrap(), local.to_str().unwrap()],
+        );
+        git_config_identity(&local);
+        git(&local, &["checkout", "-b", "main"]);
+        std::fs::write(local.join("file.txt"), "init\n").expect("write file");
+        git(&local, &["add", "file.txt"]);
+        git(&local, &["commit", "-m", "init"]);
+        git(&local, &["push", "-u", "origin", "main"]);
+
+        git(
+            root,
+            &[
+                "clone",
+                "--branch",
+                "main",
+                remote.to_str().unwrap(),
+                other.to_str().unwrap(),
+            ],
+        );
+        git_config_identity(&other);
+        commit_and_push(&other, "remote-1");
+
+        let service = GitService::new();
+        let (ahead, behind) = service
+            .get_remote_branch_status(&local, "main", None)
+            .expect("remote status should succeed");
+        assert_eq!((ahead, behind), (0, 1));
+        assert_eq!(
+            remote_status_fetch_test_support::REMOTE_STATUS_FETCH_ATTEMPTS
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+
+        commit_and_push(&other, "remote-2");
+
+        // TTL-gated: should not refetch, therefore stays stale (behind=1).
+        let (ahead, behind) = service
+            .get_remote_branch_status(&local, "main", None)
+            .expect("remote status should still succeed");
+        assert_eq!((ahead, behind), (0, 1));
+        assert_eq!(
+            remote_status_fetch_test_support::REMOTE_STATUS_FETCH_ATTEMPTS
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+
+        // Clearing state forces a refresh, which observes the second remote commit.
+        remote_status_fetch_test_support::reset_state();
+        remote_status_fetch_test_support::set_ttl_override(3600);
+        let (ahead, behind) = service
+            .get_remote_branch_status(&local, "main", None)
+            .expect("remote status should succeed after refresh");
+        assert_eq!((ahead, behind), (0, 2));
+        assert_eq!(
+            remote_status_fetch_test_support::REMOTE_STATUS_FETCH_ATTEMPTS
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[test]
+    fn remote_branch_status_supports_slash_branch_names() {
+        let _guard = git_test_lock();
+        remote_status_fetch_test_support::reset_state();
+        remote_status_fetch_test_support::set_ttl_override(3600);
+
+        let tmp = TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        let remote = root.join("remote.git");
+        let local = root.join("local");
+        let other = root.join("other");
+
+        git(root, &["init", "--bare", remote.to_str().unwrap()]);
+        git(
+            root,
+            &["clone", remote.to_str().unwrap(), local.to_str().unwrap()],
+        );
+        git_config_identity(&local);
+
+        git(&local, &["checkout", "-b", "main"]);
+        std::fs::write(local.join("file.txt"), "init\n").expect("write file");
+        git(&local, &["add", "file.txt"]);
+        git(&local, &["commit", "-m", "init"]);
+        git(&local, &["push", "-u", "origin", "main"]);
+
+        git(&local, &["checkout", "-b", "feature/test"]);
+        std::fs::write(local.join("file.txt"), "feature\n").expect("write file");
+        git(&local, &["add", "file.txt"]);
+        git(&local, &["commit", "-m", "feature-init"]);
+        git(&local, &["push", "-u", "origin", "feature/test"]);
+
+        git(
+            root,
+            &[
+                "clone",
+                "--branch",
+                "feature/test",
+                remote.to_str().unwrap(),
+                other.to_str().unwrap(),
+            ],
+        );
+        git_config_identity(&other);
+        commit_and_push(&other, "remote-1");
+
+        let service = GitService::new();
+        let (ahead, behind) = service
+            .get_remote_branch_status(&local, "feature/test", None)
+            .expect("remote status should succeed for slash branch");
+        assert_eq!((ahead, behind), (0, 1));
+        assert_eq!(
+            remote_status_fetch_test_support::REMOTE_STATUS_FETCH_ATTEMPTS
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[test]
+    fn remote_branch_status_without_upstream_returns_error() {
+        let _guard = git_test_lock();
+        remote_status_fetch_test_support::reset_state();
+        remote_status_fetch_test_support::set_ttl_override(3600);
+
+        let tmp = TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&repo).expect("create repo dir");
+
+        git(root, &["init", repo.to_str().unwrap()]);
+        git_config_identity(&repo);
+        git(&repo, &["checkout", "-b", "main"]);
+        std::fs::write(repo.join("file.txt"), "init\n").expect("write file");
+        git(&repo, &["add", "file.txt"]);
+        git(&repo, &["commit", "-m", "init"]);
+
+        let service = GitService::new();
+        let err = service
+            .get_remote_branch_status(&repo, "main", None)
+            .expect_err("missing upstream should be an error");
+        assert!(
+            matches!(
+                err,
+                GitServiceError::InvalidRepository(ref msg) if msg.contains("no upstream")
+            ),
+            "unexpected error: {err:?}"
+        );
+        assert_eq!(
+            remote_status_fetch_test_support::REMOTE_STATUS_FETCH_ATTEMPTS
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
     }
 }
