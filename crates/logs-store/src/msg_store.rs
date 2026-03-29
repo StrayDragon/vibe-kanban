@@ -120,6 +120,12 @@ pub enum LogEntryEvent {
     Finished,
 }
 
+struct ResyncSnapshot {
+    snapshot: Vec<LogEntrySnapshot>,
+    next_pos: usize,
+    emit_finished: bool,
+}
+
 struct StoredEntry {
     entry_index: usize,
     entry_json: Arc<Value>,
@@ -478,19 +484,35 @@ impl MsgStore {
             let store = self.clone();
             let rx = store.raw_sender.subscribe();
             let live = futures::stream::unfold(
-                (store, VecDeque::<LogEntryEvent>::new(), rx, false),
-                |(store, mut pending, mut rx, finished)| async move {
+                (store, rx, None::<ResyncSnapshot>, false),
+                |(store, mut rx, mut resync, finished)| async move {
                     if finished {
                         return None;
                     }
 
                     loop {
-                        if let Some(event) = pending.pop_front() {
-                            let done = matches!(event, LogEntryEvent::Finished);
-                            return Some((
-                                Ok::<_, std::io::Error>(event),
-                                (store, pending, rx, done),
-                            ));
+                        if let Some(mut snapshot) = resync {
+                            if snapshot.next_pos < snapshot.snapshot.len() {
+                                let entry = snapshot.snapshot[snapshot.next_pos].clone();
+                                snapshot.next_pos = snapshot.next_pos.saturating_add(1);
+                                return Some((
+                                    Ok::<_, std::io::Error>(LogEntryEvent::Replace {
+                                        entry_index: entry.entry_index,
+                                        entry: entry.entry_json,
+                                    }),
+                                    (store, rx, Some(snapshot), false),
+                                ));
+                            }
+
+                            if snapshot.emit_finished {
+                                return Some((
+                                    Ok::<_, std::io::Error>(LogEntryEvent::Finished),
+                                    (store, rx, None, true),
+                                ));
+                            }
+
+                            resync = None;
+                            continue;
                         }
 
                         match rx.recv().await {
@@ -498,7 +520,7 @@ impl MsgStore {
                                 let done = matches!(event, LogEntryEvent::Finished);
                                 return Some((
                                     Ok::<_, std::io::Error>(event),
-                                    (store, pending, rx, done),
+                                    (store, rx, None, done),
                                 ));
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
@@ -521,15 +543,12 @@ impl MsgStore {
                                     finished = finished_now,
                                     "raw entry stream lagged; resyncing with snapshot"
                                 );
-                                for entry in snapshot {
-                                    pending.push_back(LogEntryEvent::Replace {
-                                        entry_index: entry.entry_index,
-                                        entry: entry.entry_json,
-                                    });
-                                }
-                                if finished_now {
-                                    pending.push_back(LogEntryEvent::Finished);
-                                }
+
+                                resync = Some(ResyncSnapshot {
+                                    snapshot,
+                                    next_pos: 0,
+                                    emit_finished: finished_now,
+                                });
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
                         }
@@ -561,19 +580,35 @@ impl MsgStore {
             let store = self.clone();
             let rx = store.normalized_sender.subscribe();
             let live = futures::stream::unfold(
-                (store, VecDeque::<LogEntryEvent>::new(), rx, false),
-                |(store, mut pending, mut rx, finished)| async move {
+                (store, rx, None::<ResyncSnapshot>, false),
+                |(store, mut rx, mut resync, finished)| async move {
                     if finished {
                         return None;
                     }
 
                     loop {
-                        if let Some(event) = pending.pop_front() {
-                            let done = matches!(event, LogEntryEvent::Finished);
-                            return Some((
-                                Ok::<_, std::io::Error>(event),
-                                (store, pending, rx, done),
-                            ));
+                        if let Some(mut snapshot) = resync {
+                            if snapshot.next_pos < snapshot.snapshot.len() {
+                                let entry = snapshot.snapshot[snapshot.next_pos].clone();
+                                snapshot.next_pos = snapshot.next_pos.saturating_add(1);
+                                return Some((
+                                    Ok::<_, std::io::Error>(LogEntryEvent::Replace {
+                                        entry_index: entry.entry_index,
+                                        entry: entry.entry_json,
+                                    }),
+                                    (store, rx, Some(snapshot), false),
+                                ));
+                            }
+
+                            if snapshot.emit_finished {
+                                return Some((
+                                    Ok::<_, std::io::Error>(LogEntryEvent::Finished),
+                                    (store, rx, None, true),
+                                ));
+                            }
+
+                            resync = None;
+                            continue;
                         }
 
                         match rx.recv().await {
@@ -581,7 +616,7 @@ impl MsgStore {
                                 let done = matches!(event, LogEntryEvent::Finished);
                                 return Some((
                                     Ok::<_, std::io::Error>(event),
-                                    (store, pending, rx, done),
+                                    (store, rx, None, done),
                                 ));
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
@@ -604,15 +639,12 @@ impl MsgStore {
                                     finished = finished_now,
                                     "normalized entry stream lagged; resyncing with snapshot"
                                 );
-                                for entry in snapshot {
-                                    pending.push_back(LogEntryEvent::Replace {
-                                        entry_index: entry.entry_index,
-                                        entry: entry.entry_json,
-                                    });
-                                }
-                                if finished_now {
-                                    pending.push_back(LogEntryEvent::Finished);
-                                }
+
+                                resync = Some(ResyncSnapshot {
+                                    snapshot,
+                                    next_pos: 0,
+                                    emit_finished: finished_now,
+                                });
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
                         }

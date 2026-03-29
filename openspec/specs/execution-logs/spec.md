@@ -175,3 +175,11 @@ When resynchronizing within the retained window, the server MUST replay only mes
 - **THEN** the stream continues from the newest retained message and the gap is detectable via `seq` semantics
 - **AND** the server logs a warning that the gap exceeded retained history and includes `last_seq` plus the retained `min_seq`/`max_seq`
 
+### Requirement: Lag resync snapshot emission avoids duplicate buffering
+When resynchronizing entry-indexed log streams after a broadcast lag, the system SHALL emit snapshot Replace events without constructing a second full in-memory event buffer that duplicates the snapshot contents.
+
+#### Scenario: Lagged receiver resync does not double-buffer snapshot
+- **WHEN** a log entry stream receiver lags and the server performs a snapshot resync
+- **THEN** the server emits Replace events derived from the snapshot
+- **AND** the resync implementation does not allocate an additional full in-memory queue that duplicates the snapshot entries
+
