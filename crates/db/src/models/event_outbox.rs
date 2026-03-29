@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, Set,
+    sea_query::{Expr, ExprTrait},
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -69,23 +70,27 @@ impl EventOutbox {
         event_outbox::Entity::find()
             .filter(event_outbox::Column::PublishedAt.is_null())
             .order_by_asc(event_outbox::Column::CreatedAt)
+            .order_by_asc(event_outbox::Column::Id)
             .limit(limit)
             .all(db)
             .await
     }
 
     pub async fn mark_published<C: ConnectionTrait>(db: &C, id: i64) -> Result<(), DbErr> {
-        let record =
-            event_outbox::Entity::find_by_id(id)
-                .one(db)
-                .await?
-                .ok_or(DbErr::RecordNotFound(
-                    "Event outbox record not found".to_string(),
-                ))?;
+        let result = event_outbox::Entity::update_many()
+            .col_expr(
+                event_outbox::Column::PublishedAt,
+                Expr::value(Some::<sea_orm::prelude::DateTimeUtc>(Utc::now().into())),
+            )
+            .filter(event_outbox::Column::Id.eq(id))
+            .exec(db)
+            .await?;
 
-        let mut active: event_outbox::ActiveModel = record.into();
-        active.published_at = Set(Some(Utc::now().into()));
-        active.update(db).await?;
+        if result.rows_affected == 0 {
+            return Err(DbErr::RecordNotFound(
+                "Event outbox record not found".to_string(),
+            ));
+        }
         Ok(())
     }
 
@@ -94,19 +99,24 @@ impl EventOutbox {
         id: i64,
         error: &str,
     ) -> Result<(), DbErr> {
-        let record =
-            event_outbox::Entity::find_by_id(id)
-                .one(db)
-                .await?
-                .ok_or(DbErr::RecordNotFound(
-                    "Event outbox record not found".to_string(),
-                ))?;
+        let result = event_outbox::Entity::update_many()
+            .col_expr(
+                event_outbox::Column::Attempts,
+                Expr::col(event_outbox::Column::Attempts).add(Expr::val(1)),
+            )
+            .col_expr(
+                event_outbox::Column::LastError,
+                Expr::value(Some(error.to_string())),
+            )
+            .filter(event_outbox::Column::Id.eq(id))
+            .exec(db)
+            .await?;
 
-        let attempts = record.attempts + 1;
-        let mut active: event_outbox::ActiveModel = record.into();
-        active.attempts = Set(attempts);
-        active.last_error = Set(Some(error.to_string()));
-        active.update(db).await?;
+        if result.rows_affected == 0 {
+            return Err(DbErr::RecordNotFound(
+                "Event outbox record not found".to_string(),
+            ));
+        }
         Ok(())
     }
 

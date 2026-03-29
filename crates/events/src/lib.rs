@@ -8,8 +8,7 @@ use db::{
         EVENT_EXECUTION_PROCESS_UPDATED, EVENT_PROJECT_CREATED, EVENT_PROJECT_DELETED,
         EVENT_PROJECT_UPDATED, EVENT_SCRATCH_CREATED, EVENT_SCRATCH_DELETED, EVENT_SCRATCH_UPDATED,
         EVENT_TASK_CREATED, EVENT_TASK_DELETED, EVENT_TASK_UPDATED, EVENT_WORKSPACE_CREATED,
-        EVENT_WORKSPACE_DELETED, EVENT_WORKSPACE_UPDATED, ExecutionProcessEventPayload,
-        ProjectEventPayload, ScratchEventPayload, TaskEventPayload, WorkspaceEventPayload,
+        EVENT_WORKSPACE_DELETED, EVENT_WORKSPACE_UPDATED,
     },
     models::{
         event_outbox::EventOutbox,
@@ -22,6 +21,7 @@ use db::{
     },
 };
 use logs_store::MsgStore;
+use serde_json::Value;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -35,7 +35,8 @@ pub use patches::{
 };
 pub use types::EventError;
 
-const OUTBOX_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const OUTBOX_IDLE_SLEEP_MIN: Duration = Duration::from_millis(250);
+const OUTBOX_IDLE_SLEEP_MAX: Duration = Duration::from_secs(2);
 const OUTBOX_BATCH_LIMIT: u64 = 100;
 const DISABLE_BACKGROUND_TASKS_ENV: &str = "VIBE_DISABLE_BACKGROUND_TASKS";
 
@@ -92,6 +93,7 @@ impl EventService {
 
     async fn run_outbox_loop(&self) {
         let shutdown_token = self.shutdown_token.clone();
+        let mut idle_sleep = OUTBOX_IDLE_SLEEP_MIN;
 
         loop {
             let result = tokio::select! {
@@ -109,10 +111,16 @@ impl EventService {
                             tracing::info!("Stopping event outbox worker");
                             break;
                         }
-                        _ = tokio::time::sleep(OUTBOX_POLL_INTERVAL) => {}
+                        _ = tokio::time::sleep(idle_sleep) => {}
                     }
+
+                    idle_sleep = idle_sleep
+                        .checked_mul(2)
+                        .unwrap_or(OUTBOX_IDLE_SLEEP_MAX)
+                        .min(OUTBOX_IDLE_SLEEP_MAX);
                 }
                 Ok(_) => {
+                    idle_sleep = OUTBOX_IDLE_SLEEP_MIN;
                     // Drain as fast as possible when backlog exists, but yield to avoid starving
                     // request handling on single-thread runtimes.
                     tokio::task::yield_now().await;
@@ -124,8 +132,13 @@ impl EventService {
                             tracing::info!("Stopping event outbox worker");
                             break;
                         }
-                        _ = tokio::time::sleep(OUTBOX_POLL_INTERVAL) => {}
+                        _ = tokio::time::sleep(idle_sleep) => {}
                     }
+
+                    idle_sleep = idle_sleep
+                        .checked_mul(2)
+                        .unwrap_or(OUTBOX_IDLE_SLEEP_MAX)
+                        .min(OUTBOX_IDLE_SLEEP_MAX);
                 }
             }
         }
@@ -160,72 +173,86 @@ impl EventService {
     ) -> Result<(), EventError> {
         match entry.event_type.as_str() {
             EVENT_TASK_CREATED => {
-                let payload: TaskEventPayload = serde_json::from_value(entry.payload.clone())?;
-                self.emit_task_patch(payload, PatchKind::Add).await?;
+                let task_id =
+                    parse_uuid_field_matching(&entry.payload, "task_id", entry.entity_uuid)?;
+                self.emit_task_patch(task_id, PatchKind::Add).await?;
             }
             EVENT_TASK_UPDATED => {
-                let payload: TaskEventPayload = serde_json::from_value(entry.payload.clone())?;
-                self.emit_task_patch(payload, PatchKind::Replace).await?;
+                let task_id =
+                    parse_uuid_field_matching(&entry.payload, "task_id", entry.entity_uuid)?;
+                self.emit_task_patch(task_id, PatchKind::Replace).await?;
             }
             EVENT_TASK_DELETED => {
-                let payload: TaskEventPayload = serde_json::from_value(entry.payload.clone())?;
-                self.emit_task_patch(payload, PatchKind::Remove).await?;
+                let task_id =
+                    parse_uuid_field_matching(&entry.payload, "task_id", entry.entity_uuid)?;
+                self.emit_task_patch(task_id, PatchKind::Remove).await?;
             }
             EVENT_PROJECT_CREATED => {
-                let payload: ProjectEventPayload = serde_json::from_value(entry.payload.clone())?;
-                self.emit_project_patch(payload.project_id, PatchKind::Add)
-                    .await?;
+                let project_id =
+                    parse_uuid_field_matching(&entry.payload, "project_id", entry.entity_uuid)?;
+                self.emit_project_patch(project_id, PatchKind::Add).await?;
             }
             EVENT_PROJECT_UPDATED => {
-                let payload: ProjectEventPayload = serde_json::from_value(entry.payload.clone())?;
-                self.emit_project_patch(payload.project_id, PatchKind::Replace)
+                let project_id =
+                    parse_uuid_field_matching(&entry.payload, "project_id", entry.entity_uuid)?;
+                self.emit_project_patch(project_id, PatchKind::Replace)
                     .await?;
             }
             EVENT_PROJECT_DELETED => {
-                let payload: ProjectEventPayload = serde_json::from_value(entry.payload.clone())?;
-                self.emit_project_patch(payload.project_id, PatchKind::Remove)
+                let project_id =
+                    parse_uuid_field_matching(&entry.payload, "project_id", entry.entity_uuid)?;
+                self.emit_project_patch(project_id, PatchKind::Remove)
                     .await?;
             }
             EVENT_WORKSPACE_CREATED | EVENT_WORKSPACE_UPDATED | EVENT_WORKSPACE_DELETED => {
-                let payload: WorkspaceEventPayload = serde_json::from_value(entry.payload.clone())?;
-                self.emit_task_patch_for_workspace(payload.task_id).await?;
+                parse_uuid_field_matching(&entry.payload, "workspace_id", entry.entity_uuid)?;
+                let task_id = parse_uuid_field(&entry.payload, "task_id")?;
+                self.emit_task_patch_for_workspace(task_id).await?;
             }
             EVENT_EXECUTION_PROCESS_CREATED => {
-                let payload: ExecutionProcessEventPayload =
-                    serde_json::from_value(entry.payload.clone())?;
-                self.emit_execution_process_patch(payload.process_id, PatchKind::Add)
+                let process_id =
+                    parse_uuid_field_matching(&entry.payload, "process_id", entry.entity_uuid)?;
+                let session_id = parse_uuid_field(&entry.payload, "session_id")?;
+                self.emit_execution_process_patch(process_id, PatchKind::Add)
                     .await?;
-                self.push_task_update_for_session(payload.session_id)
-                    .await?;
+                self.push_task_update_for_session(session_id).await?;
             }
             EVENT_EXECUTION_PROCESS_UPDATED => {
-                let payload: ExecutionProcessEventPayload =
-                    serde_json::from_value(entry.payload.clone())?;
-                self.emit_execution_process_patch(payload.process_id, PatchKind::Replace)
+                let process_id =
+                    parse_uuid_field_matching(&entry.payload, "process_id", entry.entity_uuid)?;
+                let session_id = parse_uuid_field(&entry.payload, "session_id")?;
+                self.emit_execution_process_patch(process_id, PatchKind::Replace)
                     .await?;
-                self.push_task_update_for_session(payload.session_id)
-                    .await?;
+                self.push_task_update_for_session(session_id).await?;
             }
             EVENT_EXECUTION_PROCESS_DELETED => {
-                let payload: ExecutionProcessEventPayload =
-                    serde_json::from_value(entry.payload.clone())?;
-                self.emit_execution_process_patch(payload.process_id, PatchKind::Remove)
+                let process_id =
+                    parse_uuid_field_matching(&entry.payload, "process_id", entry.entity_uuid)?;
+                let session_id = parse_uuid_field(&entry.payload, "session_id")?;
+                self.emit_execution_process_patch(process_id, PatchKind::Remove)
                     .await?;
-                self.push_task_update_for_session(payload.session_id)
-                    .await?;
+                self.push_task_update_for_session(session_id).await?;
             }
             EVENT_SCRATCH_CREATED => {
-                let payload: ScratchEventPayload = serde_json::from_value(entry.payload.clone())?;
-                self.emit_scratch_patch(&payload, PatchKind::Add).await?;
+                let scratch_id =
+                    parse_uuid_field_matching(&entry.payload, "scratch_id", entry.entity_uuid)?;
+                let scratch_type = parse_string_field(&entry.payload, "scratch_type")?;
+                self.emit_scratch_patch(scratch_id, scratch_type, PatchKind::Add)
+                    .await?;
             }
             EVENT_SCRATCH_UPDATED => {
-                let payload: ScratchEventPayload = serde_json::from_value(entry.payload.clone())?;
-                self.emit_scratch_patch(&payload, PatchKind::Replace)
+                let scratch_id =
+                    parse_uuid_field_matching(&entry.payload, "scratch_id", entry.entity_uuid)?;
+                let scratch_type = parse_string_field(&entry.payload, "scratch_type")?;
+                self.emit_scratch_patch(scratch_id, scratch_type, PatchKind::Replace)
                     .await?;
             }
             EVENT_SCRATCH_DELETED => {
-                let payload: ScratchEventPayload = serde_json::from_value(entry.payload.clone())?;
-                self.emit_scratch_patch(&payload, PatchKind::Remove).await?;
+                let scratch_id =
+                    parse_uuid_field_matching(&entry.payload, "scratch_id", entry.entity_uuid)?;
+                let scratch_type = parse_string_field(&entry.payload, "scratch_type")?;
+                self.emit_scratch_patch(scratch_id, scratch_type, PatchKind::Remove)
+                    .await?;
             }
             _ => {
                 tracing::debug!(event_type = entry.event_type.as_str(), "unknown event type");
@@ -235,18 +262,13 @@ impl EventService {
         Ok(())
     }
 
-    async fn emit_task_patch(
-        &self,
-        payload: TaskEventPayload,
-        kind: PatchKind,
-    ) -> Result<(), EventError> {
+    async fn emit_task_patch(&self, task_id: Uuid, kind: PatchKind) -> Result<(), EventError> {
         if matches!(kind, PatchKind::Remove) {
-            self.msg_store
-                .push_patch(task_patch::remove(payload.task_id));
+            self.msg_store.push_patch(task_patch::remove(task_id));
             return Ok(());
         }
 
-        let task = Task::find_by_id_with_attempt_status(&self.db.pool, payload.task_id).await?;
+        let task = Task::find_by_id_with_attempt_status(&self.db.pool, task_id).await?;
         if let Some(task) = task {
             match kind {
                 PatchKind::Add => {
@@ -314,28 +336,25 @@ impl EventService {
 
     async fn emit_scratch_patch(
         &self,
-        payload: &ScratchEventPayload,
+        scratch_id: Uuid,
+        scratch_type: &str,
         kind: PatchKind,
     ) -> Result<(), EventError> {
         if matches!(kind, PatchKind::Remove) {
-            self.msg_store.push_patch(scratch_patch::remove(
-                payload.scratch_id,
-                &payload.scratch_type,
-            ));
+            self.msg_store
+                .push_patch(scratch_patch::remove(scratch_id, scratch_type));
             return Ok(());
         }
 
-        let scratch_type = ScratchType::from_str(&payload.scratch_type)
+        let scratch_type = ScratchType::from_str(scratch_type)
             .map_err(|err| EventError::Other(anyhow!("invalid scratch type: {err}")))?;
 
-        let scratch = Scratch::find_by_id(&self.db.pool, payload.scratch_id, &scratch_type).await?;
+        let scratch = Scratch::find_by_id(&self.db.pool, scratch_id, &scratch_type).await?;
         if let Some(scratch) = scratch {
             let patch = match kind {
                 PatchKind::Add => scratch_patch::add(&scratch),
                 PatchKind::Replace => scratch_patch::replace(&scratch),
-                PatchKind::Remove => {
-                    scratch_patch::remove(payload.scratch_id, &payload.scratch_type)
-                }
+                PatchKind::Remove => unreachable!("handled by early return"),
             };
             self.msg_store.push_patch(patch);
         }
@@ -344,16 +363,7 @@ impl EventService {
     }
 
     async fn emit_task_patch_for_workspace(&self, task_id: Uuid) -> Result<(), EventError> {
-        let task = Task::find_by_id(&self.db.pool, task_id).await?;
-        let Some(task) = task else {
-            return Ok(());
-        };
-
-        let payload = TaskEventPayload {
-            task_id,
-            project_id: task.project_id,
-        };
-        self.emit_task_patch(payload, PatchKind::Replace).await
+        self.emit_task_patch(task_id, PatchKind::Replace).await
     }
 
     async fn push_task_update_for_session(&self, session_id: Uuid) -> Result<(), EventError> {
@@ -372,8 +382,40 @@ impl EventService {
     }
 }
 
+fn parse_uuid_field(payload: &Value, field: &'static str) -> Result<Uuid, EventError> {
+    let raw = payload
+        .get(field)
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| EventError::Other(anyhow!("outbox payload missing '{field}'")))?;
+
+    Uuid::parse_str(raw)
+        .map_err(|err| EventError::Other(anyhow!("outbox payload invalid '{field}': {err}")))
+}
+
+fn parse_uuid_field_matching(
+    payload: &Value,
+    field: &'static str,
+    expected: Uuid,
+) -> Result<Uuid, EventError> {
+    let parsed = parse_uuid_field(payload, field)?;
+    if parsed != expected {
+        return Err(EventError::Other(anyhow!(
+            "outbox payload field '{field}' mismatched: expected {expected} got {parsed}"
+        )));
+    }
+    Ok(parsed)
+}
+
+fn parse_string_field<'a>(payload: &'a Value, field: &'static str) -> Result<&'a str, EventError> {
+    payload
+        .get(field)
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| EventError::Other(anyhow!("outbox payload missing '{field}'")))
+}
+
 #[cfg(test)]
 mod tests {
+    use db::events::TaskEventPayload;
     use futures::StreamExt;
     use json_patch::{AddOperation, Patch, PatchOperation as JsonPatchOp};
     use logs_protocol::LogMsg;
