@@ -534,7 +534,7 @@ impl FileSearchCache {
 
         // Get current HEAD
         let head_oid = git_service
-            .get_head_oid(&repo_path_buf)
+            .get_head_oid_fast(&repo_path_buf)
             .map_err(|e| format!("Failed to get HEAD info: {e}"))?;
 
         // Get git stats
@@ -762,7 +762,7 @@ impl FileSearchCache {
                 continue;
             };
 
-            let head_oid = match git_service.get_head_oid(&repo_path) {
+            let head_oid = match git_service.get_head_oid_fast(&repo_path) {
                 Ok(oid) => oid,
                 Err(err) => {
                     if should_warn("file_search_head_check_failed") {
@@ -773,6 +773,14 @@ impl FileSearchCache {
             };
 
             if head_oid == cached.head_sha {
+                continue;
+            }
+
+            let min_interval = cache_budgets().file_search_truncated_rebuild_min_interval;
+            if cached.index_truncated
+                && !min_interval.is_zero()
+                && cached.build_ts.elapsed() < min_interval
+            {
                 continue;
             }
 
@@ -1034,5 +1042,86 @@ mod tests {
         })
         .await
         .expect("head refresh rebuild completes");
+    }
+
+    #[tokio::test]
+    async fn head_check_worker_throttles_truncated_repo_rebuilds() {
+        let dir = tempdir().expect("tempdir");
+        git(dir.path(), &["init"]);
+        fs::write(dir.path().join("a.txt"), "hello").expect("write a.txt");
+        git_commit_all(dir.path(), "first");
+
+        let repo_path = dir.path().to_path_buf();
+
+        let cache = Cache::builder().max_capacity(10).build();
+        cache
+            .insert(
+                repo_path.clone(),
+                Arc::new(CachedRepo {
+                    head_sha: "stale".to_string(),
+                    indexed_files: vec![],
+                    stats: Arc::new(HashMap::new()),
+                    index_truncated: true,
+                    build_ts: Instant::now(),
+                }),
+            )
+            .await;
+
+        let (head_tx, head_rx) = tokio::sync::mpsc::channel(4);
+        let (build_tx, mut build_rx) = tokio::sync::mpsc::channel(4);
+
+        let pending_builds = Arc::new(DashMap::new());
+        let pending_head_checks = Arc::new(DashMap::new());
+        let last_head_check = Arc::new(DashMap::new());
+
+        let cache_for_worker = cache.clone();
+        let worker = tokio::spawn(FileSearchCache::head_check_worker(
+            head_rx,
+            cache_for_worker,
+            GitService::new(),
+            build_tx,
+            Arc::clone(&pending_builds),
+            Arc::clone(&pending_head_checks),
+            Arc::clone(&last_head_check),
+        ));
+
+        // build_ts is "now" and index is truncated, so rebuild should be throttled by default.
+        head_tx
+            .send(repo_path.clone())
+            .await
+            .expect("send head check");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), build_rx.recv())
+                .await
+                .is_err(),
+            "expected no rebuild enqueue within throttle window"
+        );
+
+        // Simulate an older build to allow rebuild enqueue.
+        cache
+            .insert(
+                repo_path.clone(),
+                Arc::new(CachedRepo {
+                    head_sha: "stale".to_string(),
+                    indexed_files: vec![],
+                    stats: Arc::new(HashMap::new()),
+                    index_truncated: true,
+                    build_ts: Instant::now() - Duration::from_secs(3600),
+                }),
+            )
+            .await;
+
+        head_tx
+            .send(repo_path.clone())
+            .await
+            .expect("send head check");
+        let enqueued = tokio::time::timeout(Duration::from_secs(1), build_rx.recv())
+            .await
+            .expect("rebuild enqueue arrives")
+            .expect("rebuild enqueue has value");
+        assert_eq!(enqueued, repo_path);
+
+        drop(head_tx);
+        worker.await.expect("head check worker");
     }
 }

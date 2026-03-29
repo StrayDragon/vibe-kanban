@@ -1291,6 +1291,22 @@ impl GitService {
         })
     }
 
+    /// Best-effort HEAD OID resolution that avoids spawning `git` when possible.
+    ///
+    /// This resolves the HEAD OID by reading git metadata files in common layouts:
+    /// - normal repos (`.git/HEAD` + `.git/refs/*`)
+    /// - worktrees (`.git` file pointing at `gitdir`, with `commondir`)
+    /// - packed refs (`packed-refs`)
+    ///
+    /// Falls back to `git rev-parse HEAD` when metadata parsing is unavailable.
+    pub fn get_head_oid_fast(&self, repo_path: &Path) -> Result<String, GitServiceError> {
+        match try_resolve_head_oid_via_git_files(repo_path) {
+            Ok(Some(oid)) => Ok(oid),
+            Ok(None) => self.get_head_oid(repo_path),
+            Err(_) => self.get_head_oid(repo_path),
+        }
+    }
+
     /// Get the commit OID (as hex string) for a given ref without modifying HEAD.
     pub fn get_branch_oid(
         &self,
@@ -1956,6 +1972,138 @@ impl GitService {
     }
 }
 
+fn try_resolve_head_oid_via_git_files(repo_path: &Path) -> Result<Option<String>, std::io::Error> {
+    fn is_hex_oid(value: &str) -> bool {
+        value.len() == 40 && value.as_bytes().iter().all(|b| b.is_ascii_hexdigit())
+    }
+
+    fn read_trimmed(path: &Path) -> Result<String, std::io::Error> {
+        Ok(std::fs::read_to_string(path)?.trim().to_string())
+    }
+
+    fn resolve_git_dir(repo_path: &Path) -> Result<Option<PathBuf>, std::io::Error> {
+        let dot_git = repo_path.join(".git");
+        let meta = match std::fs::metadata(&dot_git) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err),
+        };
+
+        if meta.is_dir() {
+            return Ok(Some(dot_git));
+        }
+
+        if !meta.is_file() {
+            return Ok(None);
+        }
+
+        let contents = read_trimmed(&dot_git)?;
+        let gitdir = contents
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("gitdir:"))
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        let Some(gitdir) = gitdir else {
+            return Ok(None);
+        };
+
+        let gitdir_path = PathBuf::from(gitdir);
+        if gitdir_path.is_absolute() {
+            Ok(Some(gitdir_path))
+        } else {
+            Ok(Some(repo_path.join(gitdir_path)))
+        }
+    }
+
+    fn resolve_common_dir(git_dir: &Path) -> Result<PathBuf, std::io::Error> {
+        let commondir_path = git_dir.join("commondir");
+        let commondir = match read_trimmed(&commondir_path) {
+            Ok(commondir) => commondir,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(git_dir.to_path_buf());
+            }
+            Err(err) => return Err(err),
+        };
+
+        let commondir_path = PathBuf::from(commondir);
+        if commondir_path.is_absolute() {
+            Ok(commondir_path)
+        } else {
+            Ok(git_dir.join(commondir_path))
+        }
+    }
+
+    fn find_packed_ref_oid(
+        packed_refs_path: &Path,
+        ref_name: &str,
+    ) -> Result<Option<String>, std::io::Error> {
+        use std::io::BufRead as _;
+
+        let file = match std::fs::File::open(packed_refs_path) {
+            Ok(file) => file,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err),
+        };
+
+        let reader = std::io::BufReader::new(file);
+        for line in reader.lines() {
+            let line = line?;
+            let line = line.trim();
+            if line.is_empty()
+                || line.starts_with('#')
+                || line.starts_with('^')
+                || line.starts_with("@@")
+            {
+                continue;
+            }
+
+            let Some((oid, name)) = line.split_once(' ') else {
+                continue;
+            };
+            if name == ref_name && is_hex_oid(oid) {
+                return Ok(Some(oid.to_string()));
+            }
+        }
+        Ok(None)
+    }
+
+    let Some(git_dir) = resolve_git_dir(repo_path)? else {
+        return Ok(None);
+    };
+    let common_dir = resolve_common_dir(&git_dir)?;
+
+    let head_path = git_dir.join("HEAD");
+    let head = match read_trimmed(&head_path) {
+        Ok(head) => head,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    };
+
+    if let Some(rest) = head.strip_prefix("ref:") {
+        let ref_name = rest.trim();
+        if ref_name.is_empty() {
+            return Ok(None);
+        }
+
+        let ref_path = common_dir.join(ref_name);
+        match read_trimmed(&ref_path) {
+            Ok(oid) if is_hex_oid(&oid) => return Ok(Some(oid)),
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err),
+        }
+
+        return find_packed_ref_oid(&common_dir.join("packed-refs"), ref_name);
+    }
+
+    if is_hex_oid(&head) {
+        Ok(Some(head))
+    } else {
+        Ok(None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -2202,5 +2350,103 @@ mod tests {
                 .load(std::sync::atomic::Ordering::SeqCst),
             0
         );
+    }
+
+    #[test]
+    fn head_oid_fast_matches_git_rev_parse_in_normal_repo() {
+        let _guard = git_test_lock();
+
+        let tmp = TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        let repo = root.join("repo");
+
+        git(root, &["init", repo.to_str().unwrap()]);
+        git_config_identity(&repo);
+        git(&repo, &["checkout", "-b", "main"]);
+        std::fs::write(repo.join("file.txt"), "init\n").expect("write file");
+        git(&repo, &["add", "file.txt"]);
+        git(&repo, &["commit", "-m", "init"]);
+
+        let service = GitService::new();
+        let fast = service.get_head_oid_fast(&repo).expect("fast head oid");
+        let cli = git(&repo, &["rev-parse", "HEAD"]);
+        assert_eq!(fast, cli.trim());
+    }
+
+    #[test]
+    fn head_oid_fast_resolves_in_worktree_layout() {
+        let _guard = git_test_lock();
+
+        let tmp = TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        let repo = root.join("repo");
+        let wt = root.join("worktree");
+
+        git(root, &["init", repo.to_str().unwrap()]);
+        git_config_identity(&repo);
+        git(&repo, &["checkout", "-b", "main"]);
+        std::fs::write(repo.join("file.txt"), "init\n").expect("write file");
+        git(&repo, &["add", "file.txt"]);
+        git(&repo, &["commit", "-m", "init"]);
+
+        git(
+            &repo,
+            &["worktree", "add", wt.to_str().unwrap(), "-b", "wt-branch"],
+        );
+
+        let service = GitService::new();
+        let fast = service.get_head_oid_fast(&wt).expect("fast head oid");
+        let cli = git(&wt, &["rev-parse", "HEAD"]);
+        assert_eq!(fast, cli.trim());
+    }
+
+    #[test]
+    fn head_oid_fast_resolves_packed_refs_when_loose_ref_is_missing() {
+        let _guard = git_test_lock();
+
+        let tmp = TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        let repo = root.join("repo");
+
+        git(root, &["init", repo.to_str().unwrap()]);
+        git_config_identity(&repo);
+        git(&repo, &["checkout", "-b", "main"]);
+        std::fs::write(repo.join("file.txt"), "init\n").expect("write file");
+        git(&repo, &["add", "file.txt"]);
+        git(&repo, &["commit", "-m", "init"]);
+
+        git(&repo, &["pack-refs", "--all", "--prune"]);
+        let loose_ref = repo.join(".git/refs/heads/main");
+        if loose_ref.exists() {
+            std::fs::remove_file(&loose_ref).expect("remove loose ref");
+        }
+
+        let service = GitService::new();
+        let fast = service.get_head_oid_fast(&repo).expect("fast head oid");
+        let cli = git(&repo, &["rev-parse", "HEAD"]);
+        assert_eq!(fast, cli.trim());
+    }
+
+    #[test]
+    fn head_oid_fast_resolves_detached_head() {
+        let _guard = git_test_lock();
+
+        let tmp = TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        let repo = root.join("repo");
+
+        git(root, &["init", repo.to_str().unwrap()]);
+        git_config_identity(&repo);
+        git(&repo, &["checkout", "-b", "main"]);
+        std::fs::write(repo.join("file.txt"), "init\n").expect("write file");
+        git(&repo, &["add", "file.txt"]);
+        git(&repo, &["commit", "-m", "init"]);
+
+        git(&repo, &["checkout", "--detach"]);
+
+        let service = GitService::new();
+        let fast = service.get_head_oid_fast(&repo).expect("fast head oid");
+        let cli = git(&repo, &["rev-parse", "HEAD"]);
+        assert_eq!(fast, cli.trim());
     }
 }

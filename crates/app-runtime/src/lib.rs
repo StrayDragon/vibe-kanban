@@ -833,6 +833,11 @@ impl AppRuntime {
             "Cache budget"
         );
         tracing::info!(
+            cache = "file_search_truncated_rebuild",
+            min_interval_secs = budgets.file_search_truncated_rebuild_min_interval.as_secs(),
+            "Cache budget"
+        );
+        tracing::info!(
             cache = "file_search_watchers",
             max_entries = budgets.file_search_watchers_max,
             ttl_secs = budgets.file_search_watcher_ttl.as_secs(),
