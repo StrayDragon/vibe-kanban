@@ -260,6 +260,10 @@ async fn run_schema_fingerprint(
 
     let output = tokio::process::Command::new(program)
         .args(base_args)
+        // Ensure schema generation doesn't inherit restrictive Codex defaults/config.toml.
+        // This command should be as environment-independent as possible.
+        .args(["--sandbox", "danger-full-access"])
+        .args(["--ask-for-approval", "never"])
         .arg("app-server")
         .args(additional_params)
         .args(["generate-json-schema", "--out"])
@@ -603,9 +607,16 @@ if [ "${1:-}" = "--version" ]; then
   exit 0
 fi
 
-if [ "${1:-}" = "--oss" ]; then
-  shift
-fi
+# VK injects CLI flags before the app-server subcommand.
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --oss) shift ;;
+    --sandbox) shift 2 ;;
+    --ask-for-approval) shift 2 ;;
+    --dangerously-bypass-approvals-and-sandbox) shift ;;
+    *) break ;;
+  esac
+done
 
 if [ "${1:-}" = "app-server" ] && [ "${2:-}" = "generate-json-schema" ]; then
   out=""

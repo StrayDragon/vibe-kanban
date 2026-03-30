@@ -726,9 +726,16 @@ if [ "${1:-}" = "--version" ]; then
   exit 0
 fi
 
-if [ "${1:-}" = "--oss" ]; then
-  shift
-fi
+# VK injects CLI flags before the app-server subcommand.
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --oss) shift ;;
+    --sandbox) shift 2 ;;
+    --ask-for-approval) shift 2 ;;
+    --dangerously-bypass-approvals-and-sandbox) shift ;;
+    *) break ;;
+  esac
+done
 
 if [ "${1:-}" = "app-server" ] && [ "${2:-}" = "generate-json-schema" ]; then
   out=""

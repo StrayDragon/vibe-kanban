@@ -284,6 +284,31 @@ impl Codex {
             // `--oss` is a top-level Codex flag and must come before subcommands.
             builder = builder.extend_params(["--oss"]);
         }
+
+        // Ensure Codex CLI sandbox / approval defaults match VK executor config. Without this,
+        // Codex can fall back to config.toml defaults (often workspace-write + approval prompts),
+        // which can break execution in some environments (e.g. missing /tmp or shell binaries).
+        let sandbox_mode = self.effective_sandbox_mode();
+        let cli_sandbox_mode = match sandbox_mode {
+            SandboxMode::Auto | SandboxMode::WorkspaceWrite => "workspace-write",
+            SandboxMode::ReadOnly => "read-only",
+            SandboxMode::DangerFullAccess => "danger-full-access",
+        };
+        builder = builder.extend_params(["--sandbox", cli_sandbox_mode]);
+
+        let cli_approval_policy = match self.ask_for_approval.as_ref() {
+            Some(AskForApproval::UnlessTrusted) => Some("untrusted"),
+            Some(AskForApproval::OnFailure) => Some("on-failure"),
+            Some(AskForApproval::OnRequest) => Some("on-request"),
+            Some(AskForApproval::Never) => Some("never"),
+            None if matches!(sandbox_mode, SandboxMode::Auto) => Some("on-request"),
+            None if matches!(sandbox_mode, SandboxMode::DangerFullAccess) => Some("never"),
+            None => None,
+        };
+        if let Some(policy) = cli_approval_policy {
+            builder = builder.extend_params(["--ask-for-approval", policy]);
+        }
+
         builder = builder.extend_params(["app-server"]);
 
         apply_overrides(builder, &self.cmd)
@@ -750,19 +775,29 @@ mod tests {
             r#"#!/bin/sh
 set -eu
 
-if [ "${1:-}" = "--version" ]; then
-  echo "codex-cli 0.0.0-test"
-  exit 0
-fi
+	    if [ "${1:-}" = "--version" ]; then
+	      echo "codex-cli 0.0.0-test"
+	      exit 0
+	    fi
 
-if [ "${1:-}" = "--oss" ]; then
-  shift
-fi
+	    echo " $* " | grep -q " --sandbox danger-full-access " || { echo "missing --sandbox danger-full-access" >&2; exit 1; }
+	    echo " $* " | grep -q " --ask-for-approval never " || { echo "missing --ask-for-approval never" >&2; exit 1; }
 
-if [ "${1:-}" = "app-server" ] && [ "${2:-}" = "generate-json-schema" ]; then
-  out=""
-  while [ "$#" -gt 0 ]; do
-    if [ "$1" = "--out" ]; then
+	    # VK injects CLI flags before the app-server subcommand.
+	    while [ "$#" -gt 0 ]; do
+	      case "$1" in
+	        --oss) shift ;;
+	        --sandbox) shift 2 ;;
+	        --ask-for-approval) shift 2 ;;
+	        --dangerously-bypass-approvals-and-sandbox) shift ;;
+	        *) break ;;
+	      esac
+	    done
+	
+	    if [ "${1:-}" = "app-server" ] && [ "${2:-}" = "generate-json-schema" ]; then
+	      out=""
+	      while [ "$#" -gt 0 ]; do
+	        if [ "$1" = "--out" ]; then
       out="$2"
       shift 2
       continue
@@ -833,19 +868,29 @@ set -eu
 BUNDLE_PATH="__BUNDLE_PATH__"
 ATTEMPT_ID_EXPECT="__ATTEMPT_ID_EXPECT__"
 
-if [ "${1:-}" = "--version" ]; then
-  echo "codex-cli 0.0.0-test"
-  exit 0
-fi
+	if [ "${1:-}" = "--version" ]; then
+	  echo "codex-cli 0.0.0-test"
+	  exit 0
+	fi
 
-if [ "${1:-}" = "--oss" ]; then
-  shift
-fi
+	echo " $* " | grep -q " --sandbox danger-full-access " || { echo "missing --sandbox danger-full-access" >&2; exit 1; }
+	echo " $* " | grep -q " --ask-for-approval never " || { echo "missing --ask-for-approval never" >&2; exit 1; }
 
-if [ "${1:-}" = "app-server" ] && [ "${2:-}" = "generate-json-schema" ]; then
-  out=""
-  while [ "$#" -gt 0 ]; do
-    if [ "$1" = "--out" ]; then
+	# VK injects CLI flags before the app-server subcommand.
+	while [ "$#" -gt 0 ]; do
+	  case "$1" in
+	    --oss) shift ;;
+	    --sandbox) shift 2 ;;
+	    --ask-for-approval) shift 2 ;;
+	    --dangerously-bypass-approvals-and-sandbox) shift ;;
+	    *) break ;;
+	  esac
+	done
+	
+	if [ "${1:-}" = "app-server" ] && [ "${2:-}" = "generate-json-schema" ]; then
+	  out=""
+	  while [ "$#" -gt 0 ]; do
+	    if [ "$1" = "--out" ]; then
       out="$2"
       shift 2
       continue
