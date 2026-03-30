@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useHotkeysContext } from 'react-hotkeys-hook';
@@ -35,11 +43,6 @@ import {
 import { TasksLayout, type LayoutMode } from '@/components/layout/TasksLayout';
 import { AttemptHeaderActions } from '@/components/panels/AttemptHeaderActions';
 import { TaskPanelHeaderActions } from '@/components/panels/TaskPanelHeaderActions';
-import TaskAttemptPanel from '@/components/panels/TaskAttemptPanel';
-import TaskPanel from '@/components/panels/TaskPanel';
-import { PreviewPanel } from '@/components/panels/PreviewPanel';
-import { DiffsPanel } from '@/components/panels/DiffsPanel';
-import TodoPanel from '@/components/tasks/TodoPanel';
 import { AttemptCompletionTasksResync } from '@/components/tasks/AttemptCompletionTasksResync';
 import { CreateAttemptDialog } from '@/components/dialogs/tasks/CreateAttemptDialog';
 
@@ -90,6 +93,22 @@ import type {
 } from 'shared/types';
 
 type Task = TaskWithAttemptStatus;
+
+const TaskAttemptPanel = lazy(() =>
+  import('@/components/panels/TaskAttemptPanel')
+);
+const TaskPanel = lazy(() => import('@/components/panels/TaskPanel'));
+const TodoPanel = lazy(() => import('@/components/tasks/TodoPanel'));
+const PreviewPanel = lazy(() =>
+  import('@/components/panels/PreviewPanel').then((mod) => ({
+    default: mod.PreviewPanel,
+  }))
+);
+const DiffsPanel = lazy(() =>
+  import('@/components/panels/DiffsPanel').then((mod) => ({
+    default: mod.DiffsPanel,
+  }))
+);
 
 const STATUS_ORDER: TaskStatus[] = [
   'todo',
@@ -309,20 +328,26 @@ function DiffsPanelContainer({
   const { isAttemptRunning } = useAttemptExecution(attempt?.id);
 
   return (
-    <DiffsPanel
-      key={attempt?.id}
-      selectedAttempt={attempt}
-      gitOps={
-        attempt && selectedTask && !isMilestoneEntry(selectedTask)
-          ? {
-              task: selectedTask,
-              branchStatus: branchStatus ?? null,
-              isAttemptRunning,
-              selectedBranch: branchStatus?.[0]?.target_branch_name ?? null,
-            }
-          : undefined
+    <Suspense
+      fallback={
+        <div className="p-6 text-sm text-muted-foreground">Loading diffs…</div>
       }
-    />
+    >
+      <DiffsPanel
+        key={attempt?.id}
+        selectedAttempt={attempt}
+        gitOps={
+          attempt && selectedTask && !isMilestoneEntry(selectedTask)
+            ? {
+                task: selectedTask,
+                branchStatus: branchStatus ?? null,
+                isAttemptRunning,
+                selectedBranch: branchStatus?.[0]?.target_branch_name ?? null,
+              }
+            : undefined
+        }
+      />
+    </Suspense>
   );
 }
 
@@ -1161,37 +1186,55 @@ export function TasksOverview() {
   const attemptContent = selectedTask ? (
     <NewCard className="h-full min-h-0 flex flex-col bg-diagonal-lines bg-muted border-0">
       {isTaskView ? (
-        <TaskPanel
-          task={selectedTask}
-          projectId={selectedTask.project_id}
-          buildTaskPath={paths.overviewTask}
-          buildAttemptPath={paths.overviewAttempt}
-        />
+        <Suspense
+          fallback={
+            <div className="p-6 text-sm text-muted-foreground">
+              Loading task…
+            </div>
+          }
+        >
+          <TaskPanel
+            task={selectedTask}
+            projectId={selectedTask.project_id}
+            buildTaskPath={paths.overviewTask}
+            buildAttemptPath={paths.overviewAttempt}
+          />
+        </Suspense>
       ) : showNoAttemptsPanel ? (
         <NoAttemptsPanel taskId={selectedTask.id} />
       ) : (
-        <TaskAttemptPanel attempt={attempt} task={selectedTask}>
-          {({ logs, followUp }) => (
-            <>
-              <GitErrorBanner />
-              <div className="flex-1 min-h-0 flex flex-col">
-                <div className="flex-1 min-h-0 flex flex-col">{logs}</div>
+        <Suspense
+          fallback={
+            <div className="p-6 text-sm text-muted-foreground">
+              Loading attempt…
+            </div>
+          }
+        >
+          <TaskAttemptPanel attempt={attempt} task={selectedTask}>
+            {({ logs, followUp }) => (
+              <>
+                <GitErrorBanner />
+                <div className="flex-1 min-h-0 flex flex-col">
+                  <div className="flex-1 min-h-0 flex flex-col">{logs}</div>
 
-                <div className="shrink-0 border-t">
-                  <div className="mx-auto w-full max-w-[50rem]">
-                    <TodoPanel />
+                  <div className="shrink-0 border-t">
+                    <div className="mx-auto w-full max-w-[50rem]">
+                      <Suspense fallback={null}>
+                        <TodoPanel />
+                      </Suspense>
+                    </div>
+                  </div>
+
+                  <div className="min-h-0 max-h-[50%] border-t overflow-hidden bg-background">
+                    <div className="mx-auto w-full max-w-[50rem] h-full min-h-0">
+                      {followUp}
+                    </div>
                   </div>
                 </div>
-
-                <div className="min-h-0 max-h-[50%] border-t overflow-hidden bg-background">
-                  <div className="mx-auto w-full max-w-[50rem] h-full min-h-0">
-                    {followUp}
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-        </TaskAttemptPanel>
+              </>
+            )}
+          </TaskAttemptPanel>
+        </Suspense>
       )}
     </NewCard>
   ) : null;
@@ -1199,7 +1242,17 @@ export function TasksOverview() {
   const auxContent =
     selectedTask && attempt ? (
       <div className="relative h-full w-full">
-        {activeMode === 'preview' && <PreviewPanel />}
+        {activeMode === 'preview' && (
+          <Suspense
+            fallback={
+              <div className="p-6 text-sm text-muted-foreground">
+                Loading preview…
+              </div>
+            }
+          >
+            <PreviewPanel />
+          </Suspense>
+        )}
         {activeMode === 'diffs' && (
           <DiffsPanelContainer
             attempt={attempt}
