@@ -968,12 +968,22 @@ impl LocalContainerService {
         .await?;
         let cleanup_action = self.cleanup_actions_for_repos(&project_repos);
 
-        let working_dir = ctx
-            .workspace
-            .agent_working_dir
-            .as_ref()
-            .filter(|dir| !dir.is_empty())
-            .cloned();
+        let project_config =
+            super::find_config_project_by_id(&self.config, ctx.task.project_id).await;
+        let working_dir_raw = ctx.workspace.agent_working_dir.as_deref();
+        let working_dir = super::normalize_and_resolve_workspace_working_dir(
+            working_dir_raw,
+            project_config.as_ref(),
+        );
+        if working_dir.as_deref() != working_dir_raw {
+            tracing::debug!(
+                task_id = %ctx.task.id,
+                workspace_id = %ctx.workspace.id,
+                working_dir = ?working_dir_raw,
+                resolved_working_dir = ?working_dir,
+                "Resolved workspace working_dir display_name alias"
+            );
+        }
         let image_paths = match self
             .image_service
             .image_path_map_for_task(ctx.task.id)
@@ -1792,12 +1802,22 @@ impl LocalContainerService {
         .await?;
         let cleanup_action = self.cleanup_actions_for_repos(&project_repos);
 
-        let working_dir = ctx
-            .workspace
-            .agent_working_dir
-            .as_ref()
-            .filter(|dir| !dir.is_empty())
-            .cloned();
+        let project_config =
+            super::find_config_project_by_id(&self.config, ctx.task.project_id).await;
+        let working_dir_raw = ctx.workspace.agent_working_dir.as_deref();
+        let working_dir = super::normalize_and_resolve_workspace_working_dir(
+            working_dir_raw,
+            project_config.as_ref(),
+        );
+        if working_dir.as_deref() != working_dir_raw {
+            tracing::debug!(
+                task_id = %ctx.task.id,
+                workspace_id = %ctx.workspace.id,
+                working_dir = ?working_dir_raw,
+                resolved_working_dir = ?working_dir,
+                "Resolved workspace working_dir display_name alias"
+            );
+        }
         let image_paths = match self
             .image_service
             .image_path_map_for_task(ctx.task.id)
@@ -1867,12 +1887,22 @@ impl LocalContainerService {
         .await?;
         let cleanup_action = self.cleanup_actions_for_repos(&project_repos);
 
-        let working_dir = ctx
-            .workspace
-            .agent_working_dir
-            .as_ref()
-            .filter(|dir| !dir.is_empty())
-            .cloned();
+        let project_config =
+            super::find_config_project_by_id(&self.config, ctx.task.project_id).await;
+        let working_dir_raw = ctx.workspace.agent_working_dir.as_deref();
+        let working_dir = super::normalize_and_resolve_workspace_working_dir(
+            working_dir_raw,
+            project_config.as_ref(),
+        );
+        if working_dir.as_deref() != working_dir_raw {
+            tracing::debug!(
+                task_id = %ctx.task.id,
+                workspace_id = %ctx.workspace.id,
+                working_dir = ?working_dir_raw,
+                resolved_working_dir = ?working_dir,
+                "Resolved workspace working_dir display_name alias"
+            );
+        }
         let image_paths = match self
             .image_service
             .image_path_map_for_task(ctx.task.id)

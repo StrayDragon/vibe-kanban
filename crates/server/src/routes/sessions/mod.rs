@@ -22,7 +22,7 @@ use db::{
         workspace_repo::WorkspaceRepo,
     },
 };
-use execution::container::ContainerService;
+use execution::container::{ContainerService, normalize_and_resolve_workspace_working_dir};
 use executors_protocol::{
     ExecutorProfileId,
     actions::{
@@ -343,11 +343,18 @@ pub async fn follow_up(
                 .container()
                 .cleanup_actions_for_repos(&project_repos);
 
-            let working_dir = workspace
-                .agent_working_dir
-                .as_ref()
-                .filter(|dir| !dir.is_empty())
-                .cloned();
+            let working_dir_raw = workspace.agent_working_dir.as_deref();
+            let working_dir =
+                normalize_and_resolve_workspace_working_dir(working_dir_raw, project_config);
+            if working_dir.as_deref() != working_dir_raw {
+                tracing::debug!(
+                    session_id = %session.id,
+                    workspace_id = %workspace.id,
+                    working_dir = ?working_dir_raw,
+                    resolved_working_dir = ?working_dir,
+                    "Resolved workspace working_dir display_name alias"
+                );
+            }
 
             let action_type = if let Some(agent_session_id) = latest_agent_session_id {
                 ExecutorActionType::CodingAgentFollowUpRequest(CodingAgentFollowUpRequest {

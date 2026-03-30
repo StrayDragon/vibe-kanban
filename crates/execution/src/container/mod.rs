@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::Arc,
     time::Instant,
 };
@@ -114,6 +114,67 @@ fn repo_display_name_from_path(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| "repo".to_string())
+}
+
+fn repo_dir_name_from_path(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "repo".to_string())
+}
+
+pub fn normalize_and_resolve_workspace_working_dir(
+    working_dir: Option<&str>,
+    project_config: Option<&config::ProjectConfig>,
+) -> Option<String> {
+    let trimmed = working_dir?.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(resolve_workspace_working_dir_alias(trimmed, project_config))
+}
+
+fn resolve_workspace_working_dir_alias(
+    working_dir: &str,
+    project_config: Option<&config::ProjectConfig>,
+) -> String {
+    let Some(project) = project_config else {
+        return working_dir.to_string();
+    };
+
+    let mut components = Path::new(working_dir).components();
+    let first = loop {
+        match components.next() {
+            Some(Component::CurDir) => continue,
+            other => break other,
+        }
+    };
+
+    let Some(Component::Normal(first)) = first else {
+        return working_dir.to_string();
+    };
+    let first = first.to_string_lossy();
+
+    for repo in &project.repos {
+        let repo_path = Path::new(&repo.path);
+        let repo_dir = repo_dir_name_from_path(repo_path);
+        let display_name = repo
+            .display_name
+            .clone()
+            .unwrap_or_else(|| repo_display_name_from_path(repo_path));
+
+        if display_name == first && display_name != repo_dir {
+            let rest = components.as_path();
+            let resolved = if rest.as_os_str().is_empty() {
+                PathBuf::from(repo_dir)
+            } else {
+                PathBuf::from(repo_dir).join(rest)
+            };
+            return resolved.to_string_lossy().to_string();
+        }
+    }
+
+    working_dir.to_string()
 }
 
 async fn resolve_project_repos_from_config(
@@ -2022,11 +2083,18 @@ pub trait ContainerService {
 
         let cleanup_action = self.cleanup_actions_for_repos(&project_repos);
 
-        let working_dir = workspace
-            .agent_working_dir
-            .as_ref()
-            .filter(|dir| !dir.is_empty())
-            .cloned();
+        let working_dir_raw = workspace.agent_working_dir.as_deref();
+        let working_dir =
+            normalize_and_resolve_workspace_working_dir(working_dir_raw, project_config.as_ref());
+        if working_dir.as_deref() != working_dir_raw {
+            tracing::debug!(
+                task_id = %task.id,
+                workspace_id = %workspace.id,
+                working_dir = ?working_dir_raw,
+                resolved_working_dir = ?working_dir,
+                "Resolved workspace working_dir display_name alias"
+            );
+        }
 
         let coding_action = ExecutorAction::new(
             ExecutorActionType::CodingAgentInitialRequest(CodingAgentInitialRequest {
@@ -2505,6 +2573,57 @@ mod tests {
             base
         );
         assert_eq!(append_milestone_context_to_prompt(base, None, None), base);
+    }
+
+    #[test]
+    fn resolve_working_dir_alias_maps_repo_display_name_to_repo_dir() {
+        let project = config::ProjectConfig {
+            id: None,
+            remote_project_id: None,
+            name: "p".to_string(),
+            repos: vec![config::ProjectRepoConfig {
+                path: "/Users/test/projects/vibe-kanban".to_string(),
+                display_name: Some("repo".to_string()),
+                setup_script: None,
+                cleanup_script: None,
+                copy_files: None,
+                parallel_setup_script: false,
+            }],
+            dev_script: None,
+            dev_script_working_dir: None,
+            default_agent_working_dir: None,
+            git_no_verify_override: None,
+            scheduler_max_concurrent: 1,
+            scheduler_max_retries: 0,
+            default_continuation_turns: 0,
+            mcp_auto_executor_policy_mode: config::ProjectMcpExecutorPolicyMode::InheritAll,
+            mcp_auto_executor_policy_allow_list: vec![],
+            after_prepare_hook: None,
+            before_cleanup_hook: None,
+        };
+
+        assert_eq!(
+            normalize_and_resolve_workspace_working_dir(Some("repo"), Some(&project)).as_deref(),
+            Some("vibe-kanban")
+        );
+        assert_eq!(
+            normalize_and_resolve_workspace_working_dir(Some("repo/frontend"), Some(&project))
+                .as_deref(),
+            Some("vibe-kanban/frontend")
+        );
+        assert_eq!(
+            normalize_and_resolve_workspace_working_dir(Some("./repo/frontend"), Some(&project))
+                .as_deref(),
+            Some("vibe-kanban/frontend")
+        );
+        assert_eq!(
+            normalize_and_resolve_workspace_working_dir(
+                Some("vibe-kanban/frontend"),
+                Some(&project)
+            )
+            .as_deref(),
+            Some("vibe-kanban/frontend")
+        );
     }
 
     #[test]
