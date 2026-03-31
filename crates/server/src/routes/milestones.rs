@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use app_runtime::Deployment;
 use axum::{
@@ -14,6 +14,7 @@ use db::{
     DbErr, TransactionTrait,
     models::{
         milestone::{CreateMilestone, Milestone, MilestoneError, UpdateMilestone},
+        repo::Repo,
         task::{CreateTask, Task},
     },
     types::{TaskCreatedByKind, TaskKind},
@@ -71,6 +72,51 @@ fn resolve_seed_branch(
     None
 }
 
+async fn resolve_project_repos_for_milestone(
+    deployment: &DeploymentImpl,
+    project_id: Uuid,
+) -> Result<Vec<Repo>, ApiError> {
+    let repos = {
+        let config = deployment.config().read().await;
+        config
+            .projects
+            .iter()
+            .find(|project| project.id == Some(project_id))
+            .map(|project| {
+                project
+                    .repos
+                    .iter()
+                    .map(|repo| {
+                        let path = PathBuf::from(repo.path.clone());
+                        let display_name = repo
+                            .display_name
+                            .clone()
+                            .or_else(|| {
+                                path.file_name()
+                                    .map(|name| name.to_string_lossy().to_string())
+                            })
+                            .unwrap_or_else(|| "repo".to_string());
+                        (path, display_name)
+                    })
+                    .collect::<Vec<_>>()
+            })
+    };
+
+    let Some(repos) = repos else {
+        return Ok(deployment
+            .project()
+            .get_repositories(&deployment.db().pool, project_id)
+            .await?);
+    };
+
+    let mut resolved = Vec::with_capacity(repos.len());
+    for (path, display_name) in repos {
+        let repo = Repo::find_or_create(&deployment.db().pool, &path, &display_name).await?;
+        resolved.push(repo);
+    }
+    Ok(resolved)
+}
+
 async fn ensure_project_baseline_branch(
     deployment: &DeploymentImpl,
     project_id: Uuid,
@@ -83,10 +129,7 @@ async fn ensure_project_baseline_branch(
         ));
     }
 
-    let repos = deployment
-        .project()
-        .get_repositories(&deployment.db().pool, project_id)
-        .await?;
+    let repos = resolve_project_repos_for_milestone(deployment, project_id).await?;
     if repos.is_empty() {
         return Ok(());
     }
@@ -419,10 +462,7 @@ pub async fn push_baseline_branch(
     ensure_project_baseline_branch(&deployment, milestone.project_id, &milestone.baseline_ref)
         .await?;
 
-    let repos = deployment
-        .project()
-        .get_repositories(&deployment.db().pool, milestone.project_id)
-        .await?;
+    let repos = resolve_project_repos_for_milestone(&deployment, milestone.project_id).await?;
 
     let branch = milestone.baseline_ref.trim().to_string();
     let mut results = Vec::with_capacity(repos.len());

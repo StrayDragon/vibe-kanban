@@ -232,6 +232,7 @@ pub struct ConfigStatusResponse {
     pub config_path: String,
     pub projects_path: String,
     pub projects_dir: String,
+    pub projects_ui_path: String,
     pub secret_env_path: String,
     pub schema_path: String,
     pub projects_schema_path: String,
@@ -261,6 +262,9 @@ async fn get_config_status(
             .to_string_lossy()
             .to_string(),
         projects_dir: utils_core::vk_projects_dir().to_string_lossy().to_string(),
+        projects_ui_path: utils_core::vk_projects_ui_yaml_path()
+            .to_string_lossy()
+            .to_string(),
         secret_env_path: status.secret_env_path.to_string_lossy().to_string(),
         schema_path: utils_core::vk_config_schema_path()
             .to_string_lossy()
@@ -292,6 +296,9 @@ async fn reload_config(
             .to_string_lossy()
             .to_string(),
         projects_dir: utils_core::vk_projects_dir().to_string_lossy().to_string(),
+        projects_ui_path: utils_core::vk_projects_ui_yaml_path()
+            .to_string_lossy()
+            .to_string(),
         secret_env_path: status.secret_env_path.to_string_lossy().to_string(),
         schema_path: utils_core::vk_config_schema_path()
             .to_string_lossy()

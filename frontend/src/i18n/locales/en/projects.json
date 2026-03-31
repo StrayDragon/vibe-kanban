@@ -38,7 +38,34 @@
   "switcher": {
     "label": "Switch project",
     "placeholder": "Select project",
-    "empty": "No projects yet"
+    "empty": "No projects yet",
+    "addRepository": "Add repository\u2026"
+  },
+  "addRepositoryDialog": {
+    "title": "Add repository",
+    "description": "Append a repository to project \"{{projectName}}\" from a local path.",
+    "path": {
+      "label": "Repository path",
+      "placeholder": "/absolute/path/to/repo"
+    },
+    "displayName": {
+      "label": "Display name (optional)",
+      "placeholder": "Repo"
+    },
+    "browse": "Browse",
+    "submit": "Add",
+    "submitting": "Adding...",
+    "errors": {
+      "pathRequired": "Repository path is required."
+    },
+    "toast": {
+      "added": "Repository added",
+      "exists": "Repository already exists"
+    },
+    "picker": {
+      "title": "Select repository folder",
+      "description": "Pick a folder to add to project \"{{projectName}}\"."
+    }
   },
   "linkToOrganization": "Link to Remote Project",
   "loading": "Loading projects...",

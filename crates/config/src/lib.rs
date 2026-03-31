@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod cache_budget;
@@ -405,6 +406,7 @@ struct ConfigDiskInputs {
     config_raw: Option<String>,
     projects_raw: Option<String>,
     projects_extra: Vec<(PathBuf, Option<String>)>,
+    projects_ui_raw: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -452,11 +454,13 @@ fn read_config_disk_inputs_once(
 
     let projects_path = config_dir.join("projects.yaml");
     let projects_dir = config_dir.join("projects.d");
+    let projects_ui_path = config_dir.join("projects.ui.yaml");
 
     let projects_extra_paths = list_projects_extra_paths(&projects_dir);
 
     let config_raw = read_optional_file(config_path)?;
     let projects_raw = read_optional_file(&projects_path)?;
+    let projects_ui_raw = read_optional_file(&projects_ui_path)?;
 
     let mut projects_extra = Vec::with_capacity(projects_extra_paths.len());
     for path in projects_extra_paths {
@@ -469,7 +473,107 @@ fn read_config_disk_inputs_once(
         config_raw,
         projects_raw,
         projects_extra,
+        projects_ui_raw,
     })
+}
+
+const PROJECTS_UI_FILENAME: &str = "projects.ui.yaml";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+struct ProjectsUiFile {
+    #[serde(default)]
+    project_repo_overrides: Vec<ProjectRepoOverride>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectRepoOverride {
+    project_id: uuid::Uuid,
+    #[serde(default)]
+    repos: Vec<ProjectRepoOverrideRepo>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectRepoOverrideRepo {
+    path: String,
+    display_name: Option<String>,
+}
+
+fn normalize_repo_path_key(path: &str) -> String {
+    let trimmed = path.trim();
+    let trimmed = trimmed.trim_end_matches(['/', '\\']);
+    let normalized =
+        utils_core::path::normalize_macos_private_alias(std::path::Path::new(trimmed));
+    normalized.to_string_lossy().to_string()
+}
+
+fn apply_projects_ui_overrides(
+    projects: &mut [ProjectConfig],
+    projects_ui_raw: Option<&str>,
+) -> Result<(), ConfigError> {
+    let Some(raw) = projects_ui_raw else {
+        return Ok(());
+    };
+
+    let ui = serde_yaml::from_str::<ProjectsUiFile>(raw)?;
+    if ui.project_repo_overrides.is_empty() {
+        return Ok(());
+    }
+
+    for (override_index, project_override) in ui.project_repo_overrides.into_iter().enumerate() {
+        let project_id = project_override.project_id;
+        let Some(project) = projects
+            .iter_mut()
+            .find(|candidate| candidate.id == Some(project_id))
+        else {
+            return Err(ConfigError::ValidationError(format!(
+                "{PROJECTS_UI_FILENAME}: project_repo_overrides[{override_index}].project_id '{project_id}' not found in projects config"
+            )));
+        };
+
+        let mut seen_paths = std::collections::HashSet::new();
+        for repo in &project.repos {
+            seen_paths.insert(normalize_repo_path_key(&repo.path));
+        }
+
+        for (repo_index, repo_override) in project_override.repos.into_iter().enumerate() {
+            let path = repo_override.path.trim();
+            if path.is_empty() {
+                return Err(ConfigError::ValidationError(format!(
+                    "{PROJECTS_UI_FILENAME}: project_repo_overrides[{override_index}].repos[{repo_index}].path must not be empty"
+                )));
+            }
+            if !std::path::Path::new(path).is_absolute() {
+                return Err(ConfigError::ValidationError(format!(
+                    "{PROJECTS_UI_FILENAME}: project_repo_overrides[{override_index}].repos[{repo_index}].path must be an absolute path"
+                )));
+            }
+
+            let path_key = normalize_repo_path_key(path);
+            if seen_paths.contains(&path_key) {
+                continue;
+            }
+            seen_paths.insert(path_key);
+
+            project.repos.push(ProjectRepoConfig {
+                path: path.to_string(),
+                display_name: repo_override
+                    .display_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| value.to_string()),
+                setup_script: None,
+                cleanup_script: None,
+                copy_files: None,
+                parallel_setup_script: false,
+            });
+        }
+    }
+
+    Ok(())
 }
 
 fn read_stable_with_retries<T, F>(mut read_once: F) -> Result<T, ConfigError>
@@ -590,6 +694,8 @@ pub fn try_load_public_config_from_file(config_path: &Path) -> Result<Config, Co
         config.projects = projects_override;
     }
 
+    apply_projects_ui_overrides(&mut config.projects, disk.projects_ui_raw.as_deref())?;
+
     let config = config.normalized();
     config
         .validate_config_version()
@@ -629,6 +735,8 @@ pub fn try_load_config_from_file(config_path: &Path) -> Result<Config, ConfigErr
     if has_projects_override {
         config.projects = projects_override;
     }
+
+    apply_projects_ui_overrides(&mut config.projects, disk.projects_ui_raw.as_deref())?;
 
     validate_templates_are_whitelisted(&config)?;
     resolve_whitelisted_templates(&mut config, &env)?;
@@ -683,6 +791,8 @@ fn build_public_config_from_disk(disk: &ConfigDiskInputs) -> Result<Config, Conf
         config.projects = projects_override;
     }
 
+    apply_projects_ui_overrides(&mut config.projects, disk.projects_ui_raw.as_deref())?;
+
     let config = config.normalized();
     config
         .validate_config_version()
@@ -722,6 +832,8 @@ fn build_runtime_config_from_disk(
     if has_projects_override {
         config.projects = projects_override;
     }
+
+    apply_projects_ui_overrides(&mut config.projects, disk.projects_ui_raw.as_deref())?;
 
     validate_templates_are_whitelisted(&config)?;
     resolve_whitelisted_templates(&mut config, env)?;
@@ -1183,6 +1295,115 @@ projects:
             ConfigError::ValidationError(message) => {
                 assert!(message.contains("Duplicate project id"));
                 assert!(message.contains("11111111-1111-1111-1111-111111111111"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn projects_ui_overlay_appends_repo_to_existing_project() {
+        let temp_root = TempRoot::new("vk-config-test-");
+        let config_path = temp_root.join("config.yaml");
+        let projects_path = temp_root.join("projects.yaml");
+        let projects_ui_path = temp_root.join("projects.ui.yaml");
+
+        write_file(&config_path, "github: {}\n");
+        write_file(
+            &projects_path,
+            r#"
+projects:
+  - id: 00000000-0000-0000-0000-000000000001
+    name: test
+    repos:
+      - path: "/tmp/repo1"
+"#,
+        );
+        write_file(
+            &projects_ui_path,
+            r#"
+project_repo_overrides:
+  - project_id: 00000000-0000-0000-0000-000000000001
+    repos:
+      - path: "/tmp/repo2"
+        display_name: "Repo2"
+"#,
+        );
+
+        let loaded = try_load_config_from_file(&config_path).expect("load config");
+        assert_eq!(loaded.projects.len(), 1);
+        assert_eq!(loaded.projects[0].repos.len(), 2);
+        assert_eq!(loaded.projects[0].repos[0].path, "/tmp/repo1");
+        assert_eq!(loaded.projects[0].repos[1].path, "/tmp/repo2");
+        assert_eq!(loaded.projects[0].repos[1].display_name.as_deref(), Some("Repo2"));
+    }
+
+    #[test]
+    fn projects_ui_overlay_is_idempotent_for_duplicate_repo_paths() {
+        let temp_root = TempRoot::new("vk-config-test-");
+        let config_path = temp_root.join("config.yaml");
+        let projects_path = temp_root.join("projects.yaml");
+        let projects_ui_path = temp_root.join("projects.ui.yaml");
+
+        write_file(&config_path, "github: {}\n");
+        write_file(
+            &projects_path,
+            r#"
+projects:
+  - id: 00000000-0000-0000-0000-000000000001
+    name: test
+    repos:
+      - path: "/tmp/repo1"
+"#,
+        );
+        write_file(
+            &projects_ui_path,
+            r#"
+project_repo_overrides:
+  - project_id: 00000000-0000-0000-0000-000000000001
+    repos:
+      - path: "/tmp/repo1/"
+"#,
+        );
+
+        let loaded = try_load_config_from_file(&config_path).expect("load config");
+        assert_eq!(loaded.projects.len(), 1);
+        assert_eq!(loaded.projects[0].repos.len(), 1);
+        assert_eq!(loaded.projects[0].repos[0].path, "/tmp/repo1");
+    }
+
+    #[test]
+    fn projects_ui_overlay_missing_project_is_validation_error() {
+        let temp_root = TempRoot::new("vk-config-test-");
+        let config_path = temp_root.join("config.yaml");
+        let projects_path = temp_root.join("projects.yaml");
+        let projects_ui_path = temp_root.join("projects.ui.yaml");
+
+        write_file(&config_path, "github: {}\n");
+        write_file(
+            &projects_path,
+            r#"
+projects:
+  - id: 00000000-0000-0000-0000-000000000001
+    name: test
+    repos:
+      - path: "/tmp/repo1"
+"#,
+        );
+        write_file(
+            &projects_ui_path,
+            r#"
+project_repo_overrides:
+  - project_id: 00000000-0000-0000-0000-000000000002
+    repos:
+      - path: "/tmp/repo2"
+"#,
+        );
+
+        let err = try_load_config_from_file(&config_path).expect_err("expected error");
+        match err {
+            ConfigError::ValidationError(message) => {
+                assert!(message.contains(PROJECTS_UI_FILENAME));
+                assert!(message.contains("not found"));
             }
             other => panic!("unexpected error: {other:?}"),
         }

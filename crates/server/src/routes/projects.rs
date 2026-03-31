@@ -287,8 +287,242 @@ pub async fn get_project_repositories(
     Ok(ResponseJson(ApiResponse::success(repositories)))
 }
 
-pub async fn add_project_repository() -> (StatusCode, ResponseJson<ApiResponse<()>>) {
-    settings_write_disabled()
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct AddProjectRepositoryRequest {
+    #[serde(alias = "git_repo_path")]
+    pub path: String,
+    pub display_name: Option<String>,
+    pub reload: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+pub struct AddProjectRepositoryResponse {
+    pub project_id: Uuid,
+    pub path: String,
+    pub display_name: String,
+    pub used_git_root: bool,
+    pub was_added: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+struct ProjectsUiFile {
+    #[serde(default)]
+    project_repo_overrides: Vec<ProjectRepoOverride>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectRepoOverride {
+    project_id: Uuid,
+    #[serde(default)]
+    repos: Vec<ProjectRepoOverrideRepo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectRepoOverrideRepo {
+    path: String,
+    display_name: Option<String>,
+}
+
+fn normalize_repo_path_key(path: &str) -> String {
+    let trimmed = path.trim();
+    let trimmed = trimmed.trim_end_matches(['/', '\\']);
+    let normalized =
+        utils_core::path::normalize_macos_private_alias(std::path::Path::new(trimmed));
+    normalized.to_string_lossy().to_string()
+}
+
+fn detect_git_toplevel(dir: &std::path::Path) -> Option<PathBuf> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let toplevel = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if toplevel.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(toplevel))
+}
+
+fn atomic_write_text(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    std::fs::create_dir_all(parent)?;
+
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("file");
+    let tmp_path = parent.join(format!(".{file_name}.tmp-{}", Uuid::new_v4()));
+    std::fs::write(&tmp_path, contents)?;
+
+    match std::fs::rename(&tmp_path, path) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            // Windows may fail to rename over an existing file; fall back to remove+rename.
+            let _ = std::fs::remove_file(path);
+            std::fs::rename(&tmp_path, path).map_err(|_| {
+                let _ = std::fs::remove_file(&tmp_path);
+                err
+            })
+        }
+    }
+}
+
+fn load_projects_ui_file(path: &std::path::Path) -> Result<ProjectsUiFile, ApiError> {
+    match std::fs::read_to_string(path) {
+        Ok(raw) => serde_yaml::from_str::<ProjectsUiFile>(&raw).map_err(|err| {
+            ApiError::BadRequest(format!(
+                "Invalid {}: {err}",
+                path.to_string_lossy()
+            ))
+        }),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(ProjectsUiFile::default()),
+        Err(err) => Err(ApiError::BadRequest(format!(
+            "Failed to read {}: {err}",
+            path.to_string_lossy()
+        ))),
+    }
+}
+
+pub async fn add_project_repository(
+    Extension(project): Extension<ProjectPublic>,
+    State(deployment): State<DeploymentImpl>,
+    ResponseJson(payload): ResponseJson<AddProjectRepositoryRequest>,
+) -> Result<ResponseJson<ApiResponse<AddProjectRepositoryResponse>>, ApiError> {
+    let input_path = payload.path.trim();
+    if input_path.is_empty() {
+        return Err(ApiError::BadRequest("path must not be empty".to_string()));
+    }
+
+    let normalized = std::path::absolute(utils_core::path::expand_tilde(input_path))
+        .map_err(|err| ApiError::BadRequest(format!("Invalid path: {err}")))?;
+    if !normalized.exists() {
+        return Err(ApiError::BadRequest(format!(
+            "Path does not exist: {}",
+            normalized.display()
+        )));
+    }
+    if !normalized.is_dir() {
+        return Err(ApiError::BadRequest(format!(
+            "Path is not a directory: {}",
+            normalized.display()
+        )));
+    }
+
+    let (repo_path, used_git_root) = detect_git_toplevel(&normalized)
+        .filter(|path| path.is_absolute() && path.is_dir())
+        .map(|path| (path, true))
+        .unwrap_or((normalized, false));
+
+    let display_name = payload
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .or_else(|| {
+            repo_path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+        })
+        .unwrap_or_else(|| "repo".to_string());
+
+    let repo_path_str = repo_path.to_string_lossy().to_string();
+    let repo_path_key = normalize_repo_path_key(&repo_path_str);
+
+    let already_in_config = {
+        let config = deployment.config().read().await;
+        config
+            .projects
+            .iter()
+            .find(|candidate| candidate.id == Some(project.id))
+            .is_some_and(|project_config| {
+                project_config
+                    .repos
+                    .iter()
+                    .any(|repo| normalize_repo_path_key(&repo.path) == repo_path_key)
+            })
+    };
+    if already_in_config {
+        return Ok(ResponseJson(ApiResponse::success(AddProjectRepositoryResponse {
+            project_id: project.id,
+            path: repo_path_str,
+            display_name,
+            used_git_root,
+            was_added: false,
+        })));
+    }
+
+    let ui_path = utils_core::vk_projects_ui_yaml_path();
+    let mut ui_file = load_projects_ui_file(&ui_path)?;
+
+    let override_entry = ui_file
+        .project_repo_overrides
+        .iter_mut()
+        .find(|entry| entry.project_id == project.id);
+    let override_entry = match override_entry {
+        Some(entry) => entry,
+        None => {
+            ui_file.project_repo_overrides.push(ProjectRepoOverride {
+                project_id: project.id,
+                repos: Vec::new(),
+            });
+            ui_file
+                .project_repo_overrides
+                .last_mut()
+                .expect("just pushed")
+        }
+    };
+
+    let mut was_added = false;
+    let already_exists = override_entry.repos.iter().any(|repo| {
+        normalize_repo_path_key(&repo.path) == repo_path_key
+    });
+    if !already_exists {
+        override_entry.repos.push(ProjectRepoOverrideRepo {
+            path: repo_path_str.clone(),
+            display_name: Some(display_name.clone()),
+        });
+        was_added = true;
+    }
+
+    ui_file
+        .project_repo_overrides
+        .sort_by_key(|entry| entry.project_id);
+    for entry in &mut ui_file.project_repo_overrides {
+        entry.repos.sort_by(|a, b| a.path.cmp(&b.path));
+    }
+
+    let serialized = serde_yaml::to_string(&ui_file).map_err(|err| {
+        ApiError::BadRequest(format!("Failed to serialize projects.ui.yaml content: {err}"))
+    })?;
+    atomic_write_text(&ui_path, &serialized).map_err(|err| {
+        ApiError::BadRequest(format!(
+            "Failed to write {}: {err}",
+            ui_path.to_string_lossy()
+        ))
+    })?;
+
+    if payload.reload.unwrap_or(true) {
+        deployment.reload_user_config().await.map_err(|err| {
+            ApiError::BadRequest(format!("Config reload failed after writing projects.ui.yaml: {err}"))
+        })?;
+    }
+
+    Ok(ResponseJson(ApiResponse::success(AddProjectRepositoryResponse {
+        project_id: project.id,
+        path: repo_path_str,
+        display_name,
+        used_git_root,
+        was_added,
+    })))
 }
 
 pub async fn delete_project_repository() -> (StatusCode, ResponseJson<ApiResponse<()>>) {
@@ -562,6 +796,255 @@ mod tests {
                 .unwrap_or_default()
                 .contains("projects.yaml")
         );
+    }
+
+    #[tokio::test]
+    async fn add_project_repository_writes_projects_ui_yaml_and_reload() {
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
+
+        let vk_config_dir = env_guard.vk_config_dir().to_path_buf();
+        let repo_a = temp_root.join("repo-a");
+        let repo_b = temp_root.join("repo-b");
+        fs::create_dir_all(&repo_a).unwrap();
+        fs::create_dir_all(&repo_b).unwrap();
+
+        let project_id = Uuid::new_v4();
+        fs::write(
+            vk_config_dir.join("projects.yaml"),
+            format!(
+                r#"projects:
+  - id: "{project_id}"
+    name: "Test"
+    repos:
+      - path: "{}"
+"#,
+                repo_a.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let app = crate::http::router(deployment);
+
+        let payload = serde_json::json!({
+            "path": repo_b.to_string_lossy(),
+        });
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/projects/{project_id}/repositories"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json.pointer("/data/was_added"),
+            Some(&serde_json::Value::Bool(true))
+        );
+
+        let ui_path = vk_config_dir.join("projects.ui.yaml");
+        assert!(ui_path.is_file());
+        let ui_raw = fs::read_to_string(&ui_path).unwrap();
+        assert!(ui_raw.contains(repo_b.to_string_lossy().as_ref()));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/projects/{project_id}/repositories"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json.pointer("/data").and_then(|v| v.as_array()).map(|v| v.len()),
+            Some(2)
+        );
+    }
+
+    #[tokio::test]
+    async fn add_project_repository_rejects_missing_path() {
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
+
+        let vk_config_dir = env_guard.vk_config_dir().to_path_buf();
+        let repo_a = temp_root.join("repo-a");
+        fs::create_dir_all(&repo_a).unwrap();
+
+        let project_id = Uuid::new_v4();
+        fs::write(
+            vk_config_dir.join("projects.yaml"),
+            format!(
+                r#"projects:
+  - id: "{project_id}"
+    name: "Test"
+    repos:
+      - path: "{}"
+"#,
+                repo_a.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let app = crate::http::router(deployment);
+
+        let payload = serde_json::json!({
+            "path": temp_root.join("does-not-exist").to_string_lossy(),
+        });
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/projects/{project_id}/repositories"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn add_project_repository_is_idempotent() {
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
+
+        let vk_config_dir = env_guard.vk_config_dir().to_path_buf();
+        let repo_a = temp_root.join("repo-a");
+        let repo_b = temp_root.join("repo-b");
+        fs::create_dir_all(&repo_a).unwrap();
+        fs::create_dir_all(&repo_b).unwrap();
+
+        let project_id = Uuid::new_v4();
+        fs::write(
+            vk_config_dir.join("projects.yaml"),
+            format!(
+                r#"projects:
+  - id: "{project_id}"
+    name: "Test"
+    repos:
+      - path: "{}"
+"#,
+                repo_a.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let app = crate::http::router(deployment);
+
+        let payload = serde_json::json!({
+            "path": repo_b.to_string_lossy(),
+        });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/projects/{project_id}/repositories"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/projects/{project_id}/repositories"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json.pointer("/data/was_added"),
+            Some(&serde_json::Value::Bool(false))
+        );
+
+        let ui_path = vk_config_dir.join("projects.ui.yaml");
+        let ui_raw = fs::read_to_string(&ui_path).unwrap();
+        let ui_file: ProjectsUiFile = serde_yaml::from_str(&ui_raw).unwrap();
+        let entry = ui_file
+            .project_repo_overrides
+            .iter()
+            .find(|e| e.project_id == project_id)
+            .unwrap();
+        assert_eq!(entry.repos.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn add_project_repository_returns_error_on_write_failure() {
+        let temp_root = TempRoot::new("vk-test-");
+        let db = TestDb::sqlite_file(&temp_root);
+        let env_guard = TestEnvGuard::new(temp_root.path(), db.url().to_string());
+
+        let vk_config_dir = env_guard.vk_config_dir().to_path_buf();
+        let repo_a = temp_root.join("repo-a");
+        let repo_b = temp_root.join("repo-b");
+        fs::create_dir_all(&repo_a).unwrap();
+        fs::create_dir_all(&repo_b).unwrap();
+
+        let project_id = Uuid::new_v4();
+        fs::write(
+            vk_config_dir.join("projects.yaml"),
+            format!(
+                r#"projects:
+  - id: "{project_id}"
+    name: "Test"
+    repos:
+      - path: "{}"
+"#,
+                repo_a.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let deployment = DeploymentImpl::new().await.unwrap();
+        let app = crate::http::router(deployment);
+
+        // Make the overlay path non-writable by turning it into a directory (after config load).
+        fs::create_dir_all(vk_config_dir.join("projects.ui.yaml")).unwrap();
+
+        let payload = serde_json::json!({
+            "path": repo_b.to_string_lossy(),
+        });
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/projects/{project_id}/repositories"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

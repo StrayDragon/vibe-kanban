@@ -111,6 +111,10 @@ pub fn vk_projects_dir() -> std::path::PathBuf {
     vk_config_dir().join("projects.d")
 }
 
+pub fn vk_projects_ui_yaml_path() -> std::path::PathBuf {
+    vk_config_dir().join("projects.ui.yaml")
+}
+
 #[cfg(test)]
 mod vk_config_dir_tests {
     use std::sync::{Mutex, OnceLock};

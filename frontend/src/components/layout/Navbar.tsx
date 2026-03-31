@@ -30,6 +30,7 @@ import { openTaskForm } from '@/lib/openTaskForm';
 import { useProject } from '@/contexts/ProjectContext';
 import { useNavigateWithSearch } from '@/hooks';
 import { ArchiveKanbanDialog } from '@/components/dialogs';
+import { AddProjectRepositoryDialog } from '@/components/dialogs';
 import { paths } from '@/lib/paths';
 import { uiIds } from '@/lib/uiIds';
 import type { ProjectPublic } from 'shared/types';
@@ -145,6 +146,18 @@ export function Navbar() {
     }
   };
 
+  const handleAddRepositoryByPath = async () => {
+    if (!projectId) return;
+    try {
+      await AddProjectRepositoryDialog.show({
+        projectId,
+        projectName: project?.name,
+      });
+    } finally {
+      AddProjectRepositoryDialog.hide();
+    }
+  };
+
   const renderProjectOption = (item: ProjectPublic) => (
     // Disambiguate same-name projects by showing a stable identifier.
     <DropdownMenuRadioItem
@@ -213,6 +226,16 @@ export function Navbar() {
                       {projects.map(renderProjectOption)}
                     </DropdownMenuRadioGroup>
                   )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    disabled={!projectId || !project}
+                    onSelect={(event) => {
+                      event.preventDefault();
+                      void handleAddRepositoryByPath();
+                    }}
+                  >
+                    {t('switcher.addRepository')}
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
@@ -384,6 +407,17 @@ export function Navbar() {
                           {projects.map(renderProjectOption)}
                         </DropdownMenuRadioGroup>
                       )}
+                      <DropdownMenuSeparator className="sm:hidden" />
+                      <DropdownMenuItem
+                        className="sm:hidden"
+                        disabled={!projectId || !project}
+                        onSelect={(event) => {
+                          event.preventDefault();
+                          void handleAddRepositoryByPath();
+                        }}
+                      >
+                        {t('switcher.addRepository')}
+                      </DropdownMenuItem>
                     </>
                   )}
 

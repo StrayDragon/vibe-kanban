@@ -12,6 +12,20 @@ import type {
 
 import { handleApiResponse, makeRequest } from './client';
 
+export type AddProjectRepositoryByPathRequest = {
+  path: string;
+  display_name?: string;
+  reload?: boolean;
+};
+
+export type AddProjectRepositoryByPathResponse = {
+  project_id: string;
+  path: string;
+  display_name: string;
+  used_git_root: boolean;
+  was_added: boolean;
+};
+
 export const projectsApi = {
   create: async (data: CreateProject): Promise<Project> => {
     const response = await makeRequest('/api/projects', {
@@ -69,6 +83,20 @@ export const projectsApi = {
       }
     );
     return handleApiResponse<Repo>(response);
+  },
+
+  addRepositoryByPath: async (
+    projectId: string,
+    data: AddProjectRepositoryByPathRequest
+  ): Promise<AddProjectRepositoryByPathResponse> => {
+    const response = await makeRequest(
+      `/api/projects/${projectId}/repositories`,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+    return handleApiResponse<AddProjectRepositoryByPathResponse>(response);
   },
 
   deleteRepository: async (

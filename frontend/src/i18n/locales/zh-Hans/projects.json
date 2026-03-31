@@ -38,7 +38,34 @@
   "switcher": {
     "label": "切换项目",
     "placeholder": "选择项目",
-    "empty": "暂无项目"
+    "empty": "暂无项目",
+    "addRepository": "添加仓库…"
+  },
+  "addRepositoryDialog": {
+    "title": "添加仓库",
+    "description": "通过本地路径向项目“{{projectName}}”追加一个仓库配置。",
+    "path": {
+      "label": "仓库路径",
+      "placeholder": "/绝对路径/到/仓库"
+    },
+    "displayName": {
+      "label": "显示名称（可选）",
+      "placeholder": "仓库"
+    },
+    "browse": "浏览",
+    "submit": "添加",
+    "submitting": "添加中...",
+    "errors": {
+      "pathRequired": "请填写仓库路径。"
+    },
+    "toast": {
+      "added": "仓库已添加",
+      "exists": "仓库已存在"
+    },
+    "picker": {
+      "title": "选择仓库目录",
+      "description": "选择要追加到项目“{{projectName}}”的目录。"
+    }
   },
   "linkToOrganization": "链接到远程项目",
   "loading": "加载项目中...",
