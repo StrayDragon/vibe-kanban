@@ -601,14 +601,48 @@ impl FileSearchCache {
 
             if let Some(mut stdin) = child.stdin.take() {
                 for file in files {
-                    stdin.write_all(file.path.as_bytes())?;
-                    stdin.write_all(b"\0")?;
+                    if let Err(err) = stdin.write_all(file.path.as_bytes()) {
+                        if matches!(
+                            err.kind(),
+                            std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::Interrupted
+                        ) {
+                            let _ = child.wait();
+                            return Ok(HashSet::new());
+                        }
+                        return Err(err);
+                    }
+                    if let Err(err) = stdin.write_all(b"\0") {
+                        if matches!(
+                            err.kind(),
+                            std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::Interrupted
+                        ) {
+                            let _ = child.wait();
+                            return Ok(HashSet::new());
+                        }
+                        return Err(err);
+                    }
                 }
             }
 
-            let out = child.wait_with_output()?;
+            let out = match child.wait_with_output() {
+                Ok(out) => out,
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    return Ok(HashSet::new());
+                }
+                Err(err) => return Err(err),
+            };
             // `git check-ignore` exits with 1 when no paths are ignored.
-            if !out.status.success() && out.status.code() != Some(1) {
+            let status_code = out.status.code();
+            if !out.status.success() && status_code != Some(1) {
+                // If the process gets interrupted (SIGINT/SIGTERM), treat as a best-effort skip.
+                if matches!(status_code, Some(130) | Some(143) | None) {
+                    return Ok(HashSet::new());
+                }
                 let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
                 return Err(std::io::Error::other(format!(
                     "git check-ignore failed: {stderr}"
