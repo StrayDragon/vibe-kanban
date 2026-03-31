@@ -223,8 +223,7 @@ export function Navbar() {
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     disabled={!projectId || !project}
-                    onSelect={(event) => {
-                      event.preventDefault();
+                    onSelect={() => {
                       void handleAddRepositoryByPath();
                     }}
                   >
@@ -392,8 +391,7 @@ export function Navbar() {
                       <DropdownMenuItem
                         className="sm:hidden"
                         disabled={!projectId || !project}
-                        onSelect={(event) => {
-                          event.preventDefault();
+                        onSelect={() => {
                           void handleAddRepositoryByPath();
                         }}
                       >
