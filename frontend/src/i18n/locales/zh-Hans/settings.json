@@ -296,6 +296,8 @@
     "agents": {
       "title": "编码代理配置",
       "description": "使用不同的配置自定义编码代理的行为。",
+      "readOnlyTitle": "代理由文件配置",
+      "readOnlyDescription": "执行器配置文件和与代理相关的设置在 config.yaml 中配置。UI 中无法编辑。",
       "loading": "加载代理配置中...",
       "save": {
         "button": "保存代理配置",
@@ -358,6 +360,11 @@
     "mcp": {
       "title": "MCP 服务器配置",
       "description": "配置模型上下文协议服务器，使用自定义工具和资源扩展编码代理功能。",
+      "readOnlyDescription": "MCP 配置在你的执行器配置文件中管理。Vibe Kanban 不会在 UI 中读取或显示这些文件。",
+      "howToTitle": "如何配置 Vibe Kanban MCP",
+      "howToDescription": "将以下 server 条目添加到你的执行器 MCP 配置中。",
+      "jsonSnippet": "JSON 片段（大多数代理）",
+      "codexSnippet": "Codex 片段（TOML）",
       "loading": "加载 MCP 配置中...",
       "applying": "应用配置中...",
       "labels": {
@@ -394,6 +401,21 @@
     "projects": {
       "title": "项目配置",
       "description": "配置特定于项目的脚本和设置。",
+      "readOnlyTitle": "项目由文件配置",
+      "readOnlyDescription": "项目和仓库在 projects.yaml（或 projects.d/*.yaml）中配置。UI 中无法编辑。",
+      "snippetTitle": "YAML 片段生成器",
+      "snippetDescription": "生成一个最小的 projects 条目，然后粘贴到 projects.yaml（或 projects.d/ 下的文件）中并重新加载。",
+      "snippetNewId": "生成新 ID",
+      "snippetCopy": "复制片段",
+      "configured": "已配置的项目",
+      "configuredDescription": "从 projects.yaml / projects.d 读取并加载的项目只读视图。",
+      "connected": "实时",
+      "disconnected": "已断开",
+      "empty": "尚未配置任何项目。请在 projects.yaml（或 projects.d/*.yaml）中添加项目条目并重新加载。",
+      "table": {
+        "name": "名称",
+        "id": "ID"
+      },
       "loading": "加载项目中...",
       "loadError": "加载项目失败。",
       "selector": {
@@ -564,6 +586,34 @@
           "beforeCleanupCommandRequired": "请填写“清理前”命令，或先关闭该 Hook 再保存。"
         }
       }
+    },
+    "table": {
+      "columns": {
+        "item": "条目",
+        "value": "值",
+        "actions": "操作"
+      }
+    },
+    "config": {
+      "title": "配置",
+      "description": "在磁盘上编辑 config.yaml / projects.yaml / projects.d/*.yaml，然后重新加载以应用更改。",
+      "reload": "重新加载",
+      "reloading": "重新加载中",
+      "refresh": "刷新状态",
+      "loadedAt": "加载时间",
+      "configDir": "配置目录",
+      "dirtyTitle": "已修改但未应用",
+      "dirtyDescription": "配置文件在磁盘上已发生变化，但尚未应用。点击重新加载以应用更改。",
+      "lastError": "上次错误",
+      "projectsHint": "项目和仓库在此配置（也可拆分到 projects.d/*.yaml）。",
+      "projectsDirHint": "可选：将项目拆分到多个 YAML 文件中（确定性合并）。",
+      "secretHint": "使用 {{secret.NAME}} 引用 secret.env 中的值（优先级高于系统环境变量）。模板仅在部分白名单字段中支持（见 schema）。",
+      "schemaUpsertHint": "使用以下命令生成/更新 schema：",
+      "schemaUpsertCommandLabel": "Schema 更新命令",
+      "schemaHint": "将此行添加到 config.yaml 顶部以启用 YAML LSP 校验：",
+      "configYamlSchemaHeader": "config.yaml schema 头",
+      "projectsSchemaHint": "将此行添加到 projects.yaml（或 projects.d/*.yaml）顶部以启用 YAML LSP 校验：",
+      "projectsYamlSchemaHeader": "projects.yaml schema 头"
     }
   },
   "integrations": {

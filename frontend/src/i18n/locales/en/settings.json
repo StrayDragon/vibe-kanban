@@ -296,6 +296,8 @@
     "agents": {
       "title": "Coding Agent Configurations",
       "description": "Customize the behavior of coding agents with different configurations.",
+      "readOnlyTitle": "Agents are file-configured",
+      "readOnlyDescription": "Executor profiles and agent-related settings are configured in config.yaml. Editing via UI is disabled.",
       "loading": "Loading agent configurations...",
       "save": {
         "button": "Save Agent Configurations",
@@ -358,6 +360,11 @@
     "mcp": {
       "title": "MCP Server Configuration",
       "description": "Configure Model Context Protocol servers to extend coding agent capabilities with custom tools and resources.",
+      "readOnlyDescription": "MCP configuration is managed in your executor config files on disk. Vibe Kanban does not read or display those files in the UI.",
+      "howToTitle": "How to configure Vibe Kanban MCP",
+      "howToDescription": "Add the following server entry to your executor MCP config.",
+      "jsonSnippet": "JSON snippet (most agents)",
+      "codexSnippet": "Codex snippet (TOML)",
       "loading": "Loading MCP configuration...",
       "applying": "Applying configuration...",
       "labels": {
@@ -394,6 +401,21 @@
     "projects": {
       "title": "Project Configuration",
       "description": "Configure project-specific scripts and settings.",
+      "readOnlyTitle": "Projects are file-configured",
+      "readOnlyDescription": "Projects and repos are configured in projects.yaml (or projects.d/*.yaml). Editing via UI is disabled.",
+      "snippetTitle": "YAML snippet generator",
+      "snippetDescription": "Generate a minimal projects entry, then paste it into projects.yaml (or a file under projects.d/) and reload.",
+      "snippetNewId": "New id",
+      "snippetCopy": "Copy snippet",
+      "configured": "Configured projects",
+      "configuredDescription": "Read-only view of projects currently loaded from projects.yaml / projects.d.",
+      "connected": "Live",
+      "disconnected": "Disconnected",
+      "empty": "No projects configured. Add a projects entry to projects.yaml (or projects.d/*.yaml) and reload.",
+      "table": {
+        "name": "Name",
+        "id": "ID"
+      },
       "loading": "Loading projects...",
       "loadError": "Failed to load projects.",
       "selector": {
@@ -564,6 +586,34 @@
           "beforeCleanupCommandRequired": "Add a command or disable the Before cleanup hook before saving."
         }
       }
+    },
+    "table": {
+      "columns": {
+        "item": "Item",
+        "value": "Value",
+        "actions": "Actions"
+      }
+    },
+    "config": {
+      "title": "Config",
+      "description": "Edit config.yaml / projects.yaml / projects.d/*.yaml on disk, then reload to apply changes.",
+      "reload": "Reload",
+      "reloading": "Reloading",
+      "refresh": "Refresh status",
+      "loadedAt": "Loaded at",
+      "configDir": "Config directory",
+      "dirtyTitle": "Modified but not applied",
+      "dirtyDescription": "Config files have changed on disk but are not applied yet. Click Reload to apply.",
+      "lastError": "Last error",
+      "projectsHint": "Projects and repos are configured here (or split across projects.d/*.yaml).",
+      "projectsDirHint": "Optional: split projects into multiple YAML files (merged deterministically).",
+      "secretHint": "Use {{secret.NAME}} to reference values from secret.env (higher priority than system env). Templates are only supported in specific whitelisted fields (see schema).",
+      "schemaUpsertHint": "Generate/update schema files with:",
+      "schemaUpsertCommandLabel": "Schema upsert command",
+      "schemaHint": "Add this line to the top of config.yaml to enable YAML LSP validation:",
+      "configYamlSchemaHeader": "config.yaml schema header",
+      "projectsSchemaHint": "Add this line to the top of projects.yaml (or projects.d/*.yaml) to enable YAML LSP validation:",
+      "projectsYamlSchemaHeader": "projects.yaml schema header"
     }
   },
   "integrations": {

@@ -11,8 +11,16 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import {
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+} from '@/components/ui/table';
 import { useProject } from '@/contexts/ProjectContext';
 import { useCopyToClipboard } from '@/hooks/utils/useCopyToClipboard';
+import { SettingsTable } from '@/pages/settings/components/SettingsTable';
 
 function generateUuid(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -37,6 +45,7 @@ export function ProjectSettings() {
   const { t } = useTranslation(['settings', 'common']);
   const { projects, isLoading, error, isConnected } = useProject();
   const copyToClipboard = useCopyToClipboard();
+  const copyText = t('common:buttons.copy', 'Copy');
   const [snippetProjectId, setSnippetProjectId] = useState(() =>
     generateUuid()
   );
@@ -153,19 +162,52 @@ export function ProjectSettings() {
             </div>
           )}
 
-          {!error &&
-            !isLoading &&
-            projects.map((project) => (
-              <div
-                key={project.id}
-                className="flex flex-col gap-1 rounded-md border border-border/60 p-3"
-              >
-                <div className="text-sm font-medium">{project.name}</div>
-                <div className="text-xs text-muted-foreground font-mono break-all">
-                  {project.id}
-                </div>
-              </div>
-            ))}
+          {!error && !isLoading && projects.length > 0 && (
+            <SettingsTable>
+              <TableHead className="bg-muted/50 sticky top-0 z-10 border-b normal-case">
+                <tr>
+                  <TableHeaderCell className="p-2 text-xs font-medium">
+                    {t('settings.projects.table.name', 'Name')}
+                  </TableHeaderCell>
+                  <TableHeaderCell className="p-2 text-xs font-medium">
+                    {t('settings.projects.table.id', 'ID')}
+                  </TableHeaderCell>
+                  <TableHeaderCell className="p-2 text-xs font-medium text-right w-14">
+                    {t('settings.table.columns.actions', 'Actions')}
+                  </TableHeaderCell>
+                </tr>
+              </TableHead>
+              <TableBody>
+                {projects.map((project) => (
+                  <TableRow key={project.id} className="hover:bg-muted/30">
+                    <TableCell className="p-2 align-top text-sm font-medium">
+                      {project.name}
+                    </TableCell>
+                    <TableCell className="p-2 align-top">
+                      <code className="text-xs font-mono break-all text-muted-foreground">
+                        {project.id}
+                      </code>
+                    </TableCell>
+                    <TableCell className="p-2 align-top text-right">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        title={`${copyText}: ${project.name} ID`}
+                        aria-label={`${copyText}: ${project.name} ID`}
+                        onClick={() =>
+                          copyToClipboard(`${project.name} id`, project.id)
+                        }
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </SettingsTable>
+          )}
         </CardContent>
       </Card>
     </div>
