@@ -28,12 +28,71 @@ import { SettingsTable } from '@/pages/settings/components/SettingsTable';
 
 const CONFIG_STATUS_QUERY_KEY = ['configStatus'] as const;
 
-function basename(path: string): string {
-  const trimmed = path.trim();
-  if (!trimmed) return trimmed;
+type ConfigInfoRow = {
+  id: string;
+  item: string;
+  value: ReactNode;
+  hint?: ReactNode;
+  copyValue?: string;
+};
 
-  const parts = trimmed.split(/[/\\]/);
-  return parts[parts.length - 1] ?? trimmed;
+function ConfigInfoTable({
+  rows,
+  copyText,
+  onCopy,
+}: {
+  rows: Array<ConfigInfoRow>;
+  copyText: string;
+  onCopy: (label: string, value: string) => void;
+}) {
+  const { t } = useTranslation('settings');
+
+  return (
+    <SettingsTable tableClassName="md:min-w-0">
+      <TableHead className="bg-muted/50 sticky top-0 z-10 border-b normal-case">
+        <tr>
+          <TableHeaderCell className="p-2 text-xs font-medium w-32 sm:w-44">
+            {t('settings.table.columns.item', 'Item')}
+          </TableHeaderCell>
+          <TableHeaderCell className="p-2 text-xs font-medium">
+            {t('settings.table.columns.value', 'Value')}
+          </TableHeaderCell>
+        </tr>
+      </TableHead>
+      <TableBody>
+        {rows.map((row) => (
+          <TableRow key={row.id} className="hover:bg-muted/30">
+            <TableCell className="p-2 align-top text-xs text-muted-foreground font-medium">
+              {row.item}
+            </TableCell>
+            <TableCell className="p-2 align-top">
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-start gap-2">
+                  <div className="min-w-0">{row.value}</div>
+                  {row.copyValue ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      title={`${copyText}: ${row.item}`}
+                      aria-label={`${copyText}: ${row.item}`}
+                      onClick={() => onCopy(row.item, row.copyValue!)}
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  ) : null}
+                </div>
+                {row.hint ? (
+                  <div className="text-xs text-muted-foreground">{row.hint}</div>
+                ) : null}
+              </div>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </SettingsTable>
+  );
 }
 
 export function GeneralSettings() {
@@ -105,14 +164,7 @@ export function GeneralSettings() {
   const projectsSchemaHeader =
     '# yaml-language-server: $schema=./projects.schema.json';
   const schemaUpsertCommand = 'vk config schema upsert';
-  const secretEnvLabel = basename(status.secret_env_path) || 'secret.env';
-  const rows: Array<{
-    id: string;
-    item: string;
-    value: ReactNode;
-    hint?: ReactNode;
-    copyValue?: string;
-  }> = [
+  const pathRows: Array<ConfigInfoRow> = [
     {
       id: 'loaded-at',
       item: t('settings.config.loadedAt', 'Loaded at'),
@@ -172,11 +224,8 @@ export function GeneralSettings() {
       id: 'secret-env',
       item: 'secret.env',
       value: (
-        <code
-          className="text-xs font-mono break-all"
-          title={status.secret_env_path}
-        >
-          {secretEnvLabel}
+        <code className="text-xs font-mono break-all">
+          {status.secret_env_path}
         </code>
       ),
       hint: t(
@@ -193,6 +242,19 @@ export function GeneralSettings() {
       ),
       copyValue: status.schema_path,
     },
+    {
+      id: 'projects-schema-path',
+      item: 'projects.schema.json',
+      value: (
+        <code className="text-xs font-mono break-all">
+          {status.projects_schema_path}
+        </code>
+      ),
+      copyValue: status.projects_schema_path,
+    },
+  ];
+
+  const helpRows: Array<ConfigInfoRow> = [
     {
       id: 'schema-upsert-command',
       item: t('settings.config.schemaUpsertCommandLabel', 'Schema upsert command'),
@@ -216,16 +278,6 @@ export function GeneralSettings() {
         'Add this line to the top of config.yaml to enable YAML LSP validation:'
       ),
       copyValue: schemaHeader,
-    },
-    {
-      id: 'projects-schema-path',
-      item: 'projects.schema.json',
-      value: (
-        <code className="text-xs font-mono break-all">
-          {status.projects_schema_path}
-        </code>
-      ),
-      copyValue: status.projects_schema_path,
     },
     {
       id: 'projects-yaml-schema-header',
@@ -319,59 +371,30 @@ export function GeneralSettings() {
               {t('settings.config.refresh', 'Refresh status')}
             </Button>
           </div>
-          <SettingsTable>
-            <TableHead className="bg-muted/50 sticky top-0 z-10 border-b normal-case">
-              <tr>
-                <TableHeaderCell className="p-2 text-xs font-medium w-32 sm:w-44">
-                  {t('settings.table.columns.item', 'Item')}
-                </TableHeaderCell>
-                <TableHeaderCell className="p-2 text-xs font-medium">
-                  {t('settings.table.columns.value', 'Value')}
-                </TableHeaderCell>
-                <TableHeaderCell className="p-2 text-xs font-medium text-right w-14">
-                  {t('settings.table.columns.actions', 'Actions')}
-                </TableHeaderCell>
-              </tr>
-            </TableHead>
-            <TableBody>
-              {rows.map((row) => (
-                <TableRow key={row.id} className="hover:bg-muted/30">
-                  <TableCell className="p-2 align-top text-xs text-muted-foreground font-medium">
-                    {row.item}
-                  </TableCell>
-                  <TableCell className="p-2 align-top">
-                    <div className="space-y-1">
-                      {row.value}
-                      {row.hint && (
-                        <div className="text-xs text-muted-foreground">
-                          {row.hint}
-                        </div>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="p-2 align-top text-right">
-                    {row.copyValue ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        title={`${copyText}: ${row.item}`}
-                        aria-label={`${copyText}: ${row.item}`}
-                        onClick={() => copyToClipboard(row.item, row.copyValue!)}
-                      >
-                        <Copy className="h-4 w-4" />
-                      </Button>
-                    ) : (
-                      <span className="sr-only">
-                        {t('settings.table.columns.actions', 'Actions')}
-                      </span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </SettingsTable>
+
+          <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+            <div className="space-y-2">
+              <div className="text-sm font-medium">
+                {t('settings.config.pathsTitle', 'Path configuration')}
+              </div>
+              <ConfigInfoTable
+                rows={pathRows}
+                copyText={copyText}
+                onCopy={copyToClipboard}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-sm font-medium">
+                {t('settings.config.helpTitle', 'Help & snippets')}
+              </div>
+              <ConfigInfoTable
+                rows={helpRows}
+                copyText={copyText}
+                onCopy={copyToClipboard}
+              />
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>

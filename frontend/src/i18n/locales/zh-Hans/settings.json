@@ -597,6 +597,8 @@
     "config": {
       "title": "配置",
       "description": "在磁盘上编辑 config.yaml / projects.yaml / projects.d/*.yaml，然后重新加载以应用更改。",
+      "pathsTitle": "路径配置",
+      "helpTitle": "说明配置",
       "reload": "重新加载",
       "reloading": "重新加载中",
       "refresh": "刷新状态",

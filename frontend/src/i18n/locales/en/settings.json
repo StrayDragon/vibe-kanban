@@ -597,6 +597,8 @@
     "config": {
       "title": "Config",
       "description": "Edit config.yaml / projects.yaml / projects.d/*.yaml on disk, then reload to apply changes.",
+      "pathsTitle": "Path configuration",
+      "helpTitle": "Help & snippets",
       "reload": "Reload",
       "reloading": "Reloading",
       "refresh": "Refresh status",
